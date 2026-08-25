@@ -12,14 +12,22 @@ import pytest
 
 from llama_index.core.base.llms.types import ChatResponse
 from llama_index.core.llms import ChatMessage
+from llama_index.core.instrumentation.events.embedding import (
+    EmbeddingEndEvent,
+    EmbeddingStartEvent,
+)
+from llama_index.core.instrumentation.events.exception import ExceptionEvent
 from llama_index.core.instrumentation.events.llm import (
     LLMChatEndEvent,
     LLMChatStartEvent,
 )
+from llama_index.core.instrumentation.events.span import SpanDropEvent
 
 from llm.activity import (
     ActivityRecorder,
     call_origin,
+    error_category,
+    error_traceback,
     prompt_text,
     provider_for_base_url,
 )
@@ -697,3 +705,261 @@ def test_an_untagged_call_records_no_model_uuid():
     recorder.handle(end_event())
 
     assert rows[0]["model_uuid"] is None
+
+
+# --- Failures ---------------------------------------------------------------
+
+
+def drop_event(span="span-1", err="Request timed out."):
+    return SpanDropEvent(span_id=span, tags={}, err_str=err)
+
+
+def exception_event(span="span-1", exc=None):
+    return ExceptionEvent(span_id=span, tags={},
+                          exception=exc or TimeoutError("timed out"))
+
+
+def embedding_start_event(span="emb-1", model_dict=None, tags=None):
+    return EmbeddingStartEvent(
+        span_id=span,
+        tags=tags or {},
+        model_dict=model_dict if model_dict is not None else OPENAI_EMBED_MODEL_DICT,
+    )
+
+
+def embedding_end_event(span="emb-1"):
+    return EmbeddingEndEvent(span_id=span, tags={}, chunks=["hi"], embeddings=[[0.1]])
+
+
+# Shaped like OpenAIEmbedding's own model_dict, which names the two facts we
+# want under different keys from a chat model's: `model_name`, not `model`,
+# and `api_base`, not `base_url`.
+OPENAI_EMBED_MODEL_DICT = {
+    "model_name": "embeddinggemma:300m",
+    "api_base": "http://localhost:11434/v1",
+    "class_name": "OpenAIEmbedding",
+}
+
+
+def raise_and_drop(recorder, exc, span="span-1"):
+    """Fire a drop event from inside a live `except` block, the way LlamaIndex
+    does — which is what puts the exception in `sys.exc_info()` for the
+    recorder to read a traceback off."""
+    try:
+        raise exc
+    except Exception:
+        recorder.handle(drop_event(span=span, err=str(exc)))
+
+
+class TestFailedChatCalls:
+    def test_a_dropped_span_records_a_failed_row(self):
+        recorder, rows = make_recorder()
+        recorder.handle(start_event())
+        raise_and_drop(recorder, TimeoutError("timed out"))
+        assert len(rows) == 1
+        assert rows[0]["ok"] is False
+        assert rows[0]["model"] == "llama3.2:3b"
+        assert rows[0]["total_ms"] >= 0
+
+    def test_the_row_names_the_exception_type_not_its_message(self):
+        """The category groups recurring faults, so it must not carry a
+        hostname or a timeout figure that differs on every occurrence."""
+        recorder, rows = make_recorder()
+        recorder.handle(start_event())
+        raise_and_drop(recorder, TimeoutError("timed out after 10.0s to host xyz"))
+        assert rows[0]["error_category"] == "TimeoutError"
+
+    def test_the_row_carries_the_traceback(self):
+        recorder, rows = make_recorder()
+        recorder.handle(start_event())
+        raise_and_drop(recorder, TimeoutError("timed out"))
+        text = rows[0]["error_text"]
+        assert "Traceback (most recent call last)" in text
+        assert "TimeoutError: timed out" in text
+        assert "raise exc" in text  # the frame that actually raised
+
+    def test_the_traceback_keeps_the_whole_cause_chain(self):
+        """The useful sentence in an embedding timeout is three exceptions
+        down, so a row that kept only the outermost would say nothing."""
+        recorder, rows = make_recorder()
+        recorder.handle(start_event())
+        try:
+            try:
+                raise OSError("connection reset by peer")
+            except OSError as inner:
+                raise TimeoutError("Request timed out.") from inner
+        except Exception:
+            recorder.handle(drop_event())
+        text = rows[0]["error_text"]
+        assert "connection reset by peer" in text
+        assert "Request timed out." in text
+        assert "direct cause" in text
+
+    def test_the_failed_row_keeps_the_prompt_that_died(self):
+        recorder, rows = make_recorder()
+        recorder.handle(
+            start_event(messages=[ChatMessage(role="user", content="why so slow")])
+        )
+        raise_and_drop(recorder, TimeoutError("timed out"))
+        assert rows[0]["messages"] == [{"role": "user", "content": "why so slow"}]
+
+    def test_the_failed_row_keeps_caller_and_origin(self):
+        recorder, rows = make_recorder()
+        recorder.handle(start_event(tags={"caller": "assistant.decide"}))
+        raise_and_drop(recorder, TimeoutError("timed out"))
+        assert rows[0]["caller"] == "assistant.decide"
+        assert rows[0]["origin"]
+
+    def test_an_enclosing_span_dropping_too_records_only_one_row(self):
+        """LlamaIndex drops every span on the way out with the same error.
+        Only the one holding a Start is the call."""
+        recorder, rows = make_recorder()
+        recorder.handle(start_event(span="inner"))
+        try:
+            raise TimeoutError("timed out")
+        except Exception:
+            recorder.handle(drop_event(span="inner"))
+            recorder.handle(drop_event(span="outer"))
+            recorder.handle(drop_event(span="inner"))
+        assert len(rows) == 1
+
+    def test_a_drop_with_no_start_records_nothing(self):
+        """Every non-LLM span in LlamaIndex drops through here too."""
+        recorder, rows = make_recorder()
+        raise_and_drop(recorder, RuntimeError("some unrelated span"), span="whatever")
+        assert rows == []
+
+    def test_a_call_that_succeeded_cannot_also_fail(self):
+        recorder, rows = make_recorder()
+        recorder.handle(start_event())
+        recorder.handle(end_event())
+        recorder.handle(drop_event())
+        assert len(rows) == 1
+        assert rows[0]["ok"] is True
+
+    def test_no_prefix_chain_on_a_failed_row(self):
+        """A prompt the model never saw must not become the baseline the next
+        call's cache reuse is measured against."""
+        recorder, rows = make_recorder()
+        recorder.handle(start_event())
+        raise_and_drop(recorder, TimeoutError("timed out"))
+        assert rows[0].get("prefix_chain") is None
+
+    def test_a_drop_outside_an_except_block_still_records_the_error(self):
+        """No live exception to read, so the event's own err_str carries it.
+        Belt and braces: nothing observed does this, but an empty panel would
+        be worse than a message with no frames."""
+        recorder, rows = make_recorder()
+        recorder.handle(start_event())
+        recorder.handle(drop_event(err="Connection error."))
+        assert rows[0]["ok"] is False
+        assert rows[0]["error_category"] == "Connection error."
+        assert rows[0]["error_text"] == "Connection error."
+
+
+class TestFailedStreamingCalls:
+    """A streaming call never drops its span — the generator is handed back
+    before the request is made, so the span exits cleanly and the failure
+    arrives later as an ExceptionEvent. /chat and the direct-chat responder
+    both stream, so this is the route most chat outages take."""
+
+    def test_a_streaming_failure_records_a_failed_row(self):
+        recorder, rows = make_recorder()
+        recorder.handle(start_event())
+        try:
+            raise TimeoutError("timed out")
+        except TimeoutError as exc:
+            recorder.handle(exception_event(exc=exc))
+        assert len(rows) == 1
+        assert rows[0]["ok"] is False
+        assert rows[0]["error_category"] == "TimeoutError"
+        assert "raise TimeoutError" in rows[0]["error_text"]
+
+    def test_the_exception_is_read_off_the_event_not_the_live_stack(self):
+        """It arrives while the generator is being consumed, long after any
+        `except` block the recorder could have borrowed context from."""
+        recorder, rows = make_recorder()
+        recorder.handle(start_event())
+        recorder.handle(exception_event(exc=ValueError("mid-stream")))
+        assert rows[0]["error_category"] == "ValueError"
+        assert "mid-stream" in rows[0]["error_text"]
+
+    def test_both_failure_events_for_one_call_record_one_row(self):
+        recorder, rows = make_recorder()
+        recorder.handle(start_event())
+        raise_and_drop(recorder, TimeoutError("timed out"))
+        recorder.handle(exception_event())
+        assert len(rows) == 1
+
+    def test_an_exception_event_with_no_start_records_nothing(self):
+        recorder, rows = make_recorder()
+        recorder.handle(exception_event(span="unrelated"))
+        assert rows == []
+
+
+class TestEmbeddingCalls:
+    def test_a_successful_embedding_is_not_recorded(self):
+        """Hundreds land in a row during a memory sync, they have no prompt
+        tokens and no prefix to reuse, and counting them would swamp every
+        rollup on the page."""
+        recorder, rows = make_recorder()
+        recorder.handle(embedding_start_event())
+        recorder.handle(embedding_end_event())
+        assert rows == []
+        assert recorder.pending == {}
+
+    def test_a_failed_embedding_is_recorded(self):
+        recorder, rows = make_recorder()
+        recorder.handle(embedding_start_event())
+        raise_and_drop(recorder, TimeoutError("Request timed out."), span="emb-1")
+        assert len(rows) == 1
+        assert rows[0]["ok"] is False
+        assert rows[0]["model"] == "embeddinggemma:300m"
+        assert "Request timed out." in rows[0]["error_text"]
+
+    def test_a_failed_embedding_names_where_it_was_called_from(self):
+        recorder, rows = make_recorder()
+        recorder.handle(embedding_start_event())
+        raise_and_drop(recorder, TimeoutError("nope"), span="emb-1")
+        assert rows[0]["caller"] != "unknown"
+        assert rows[0]["origin"]
+
+    def test_embedding_starts_do_not_accumulate_forever(self):
+        recorder, _ = make_recorder()
+        for i in range(recorder.max_pending + 50):
+            recorder.handle(embedding_start_event(span=f"emb-{i}"))
+        assert len(recorder.pending) <= recorder.max_pending
+
+
+class TestErrorFormatting:
+    def test_a_dotted_type_for_a_library_exception(self):
+        """`openai.APITimeoutError`, the name that appears in the server log
+        and the one an operator would search for."""
+        import openai
+
+        exc = openai.APITimeoutError(request=SimpleNamespace(url="x"))
+        assert error_category(exc, None) == "openai.APITimeoutError"
+
+    def test_a_builtin_is_not_prefixed_with_builtins(self):
+        assert error_category(ValueError("x"), None) == "ValueError"
+
+    def test_a_long_traceback_is_truncated_from_the_front(self):
+        """The last block names the exception that actually surfaced."""
+        long_exc = RuntimeError("tail marker")
+        try:
+            raise long_exc
+        except RuntimeError:
+            text = error_traceback(long_exc, None)
+        padded = RuntimeError("x" * 40_000)
+        try:
+            raise padded
+        except RuntimeError:
+            big = error_traceback(padded, None)
+        assert "tail marker" in text
+        assert big.startswith("[... earlier frames dropped ...]")
+        assert big.rstrip().endswith("x")
+        assert len(big) < 40_000
+
+    def test_no_exception_and_no_fallback_leaves_the_column_empty(self):
+        assert error_traceback(None, None) is None
+        assert error_category(None, None) == "failed"

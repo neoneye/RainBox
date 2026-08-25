@@ -434,15 +434,42 @@ def recent_llm_calls(limit: int = 50, model: str | None = None) -> list[LlmCall]
 
 
 def get_llm_call(call_uuid: UUID) -> LlmCall | None:
-    """One recorded call WITH its prompt and response text, for the detail
-    view. None for an unknown uuid — and a row found with both text columns
+    """One recorded call WITH its prompt, response and traceback text, for the
+    detail view. None for an unknown uuid — and a row found with those columns
     NULL is the ordinary state of a call recorded before the columns existed,
     or one whose text has aged out, not an error."""
     return (
         db.session.query(LlmCall)
-        .options(undefer(LlmCall.messages), undefer(LlmCall.response_text))
+        .options(
+            undefer(LlmCall.messages),
+            undefer(LlmCall.response_text),
+            undefer(LlmCall.error_text),
+        )
         .filter(LlmCall.uuid == call_uuid)
         .one_or_none()
+    )
+
+
+def recent_llm_failures(
+    start: datetime, end: datetime, limit: int = 20, model: str | None = None
+) -> list[LlmCall]:
+    """The window's failed calls, newest first, WITH their tracebacks.
+
+    Its own query rather than a filter over `recent_llm_calls`: failures are
+    rare and bursty, so the newest fifty calls routinely contain none of the
+    ones an operator came to the page to read about. Windowed like every other
+    panel, so the range picker means the same thing here as everywhere else.
+
+    `error_text` is undeferred — the traceback is what the caller is going to
+    render, and `limit` is small precisely because these rows are fat.
+    """
+    return (
+        db.session.query(LlmCall)
+        .options(undefer(LlmCall.error_text))
+        .filter(LlmCall.ok.is_(False), *_window(start, end, model))
+        .order_by(LlmCall.started_at.desc())
+        .limit(limit)
+        .all()
     )
 
 
@@ -501,7 +528,12 @@ def prune_llm_call_prompts(older_than_days: int = PROMPT_RETENTION_DAYS) -> int:
     An UPDATE rather than a DELETE: the metrics on these rows are still what
     the charts are drawn from, and only the text has outlived its question.
     Guarded on the text already being present so a steady-state daily pass
-    over an old table updates nothing."""
+    over an old table updates nothing.
+
+    `error_text` is deliberately not cleared here. It is the whole reason a
+    failed row is worth keeping, it exists on a vanishing fraction of rows,
+    and a fault noticed a month later is exactly when the traceback is
+    wanted; it goes with the row at RETENTION_DAYS."""
     cutoff = datetime.now(UTC) - timedelta(days=older_than_days)
     cleared = (
         db.session.query(LlmCall)

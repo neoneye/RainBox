@@ -352,6 +352,10 @@ def init_db(app: Flask) -> None:
         # this, and on rows whose text has aged past PROMPT_RETENTION_DAYS.
         _add_column_if_missing("llm_call", "messages", "messages JSONB")
         _add_column_if_missing("llm_call", "response_text", "response_text TEXT")
+        # llm_call gained the traceback of a failed call, so /activity can
+        # show what went wrong rather than only that something did. NULL on
+        # every successful row and on failures recorded before this column.
+        _add_column_if_missing("llm_call", "error_text", "error_text TEXT")
         # llm_call gained the assistant run and step it belongs to, so
         # /assistant can reach a call's prefill/decode split and cache reuse.
         _add_column_if_missing("llm_call", "run_uuid", "run_uuid UUID")

@@ -6,6 +6,24 @@ passes through LlamaIndex — assistant, chat, cron, kanban, benchmarks, evals
 `capture_reasoning`'s `_ReasoningTally`, but global and permanent rather than
 scoped to a `with` block.
 
+Failures are recorded too, and by a different route: a call that raises never
+fires an End event. It is caught instead from whichever of the two failure
+events LlamaIndex emits — a dropped span for an ordinary call, an
+ExceptionEvent for a streaming one, which never drops its span because the
+generator was handed back before the request was made. Both name the span, so
+both find the Start this handler is already holding.
+
+That row carries the formatted traceback, which is the only place an operator
+can read *why* — the call sites that swallow these exceptions (memory
+retrieval degrading to lexical-only, seed retrieval to full-text) log a
+WARNING to a terminal nobody is watching and carry on.
+
+Embedding calls are held for the same reason, and ONLY for that reason: a
+successful embedding is not recorded. It has no prompt tokens to account for
+and no prefix to reuse, and a memory sync makes hundreds in a row — counting
+them would swamp every rollup on the page with calls that say nothing about
+the cache. A failed one is precisely what the page was missing.
+
 The handler is observational and defensive in equal measure: nothing reads
 these rows back into a decision, and every failure path swallows its
 exception. A telemetry bug must never be able to break an inference call.
@@ -18,15 +36,23 @@ without leaving holes in the totals.
 from __future__ import annotations
 
 import logging
+import sys
+import traceback
 from datetime import UTC, datetime
 from uuid import UUID
 from typing import Any, Callable
 
 from llama_index.core.instrumentation.event_handlers import BaseEventHandler
+from llama_index.core.instrumentation.events.embedding import (
+    EmbeddingEndEvent,
+    EmbeddingStartEvent,
+)
+from llama_index.core.instrumentation.events.exception import ExceptionEvent
 from llama_index.core.instrumentation.events.llm import (
     LLMChatEndEvent,
     LLMChatStartEvent,
 )
+from llama_index.core.instrumentation.events.span import SpanDropEvent
 from pydantic import Field, PrivateAttr
 
 import providers
@@ -47,6 +73,20 @@ _NS_PER_MS = 1_000_000
 # their whole prompts — in memory forever. The cap is far above any plausible
 # number of genuinely concurrent calls on one box.
 _MAX_PENDING = 256
+
+# How much of a failure's formatted traceback a row keeps. Generous, because
+# the whole chain is the diagnosis and a chained httpx/openai timeout runs to
+# a few kilobytes; bounded, because a runaway recursion must not be able to
+# write a megabyte into a telemetry table.
+#
+# Truncated from the FRONT when it overflows: the last block names the
+# exception that actually surfaced, and the frames nearest it are the ones
+# worth having.
+_MAX_ERROR_CHARS = 20_000
+
+# Cap on the category label, which is a table cell. Only a pathological
+# exception class name gets near it.
+_MAX_CATEGORY_CHARS = 200
 
 
 def provider_for_base_url(base_url: str | None) -> str | None:
@@ -210,12 +250,64 @@ def response_text(response: Any) -> str | None:
     return content if isinstance(content, str) and content else None
 
 
+def error_category(exc: BaseException | None, fallback: str | None) -> str:
+    """A short, groupable name for a failure: the exception's dotted type,
+    `openai.APITimeoutError`.
+
+    The type without its message, deliberately. A message carries the
+    hostname, the timeout and often an id, so grouping on it would turn one
+    recurring outage into a hundred one-off categories.
+
+    `fallback` is the drop event's own `err_str`, used only if the live
+    exception could not be read — its first line, since a message may be a
+    paragraph and this is a table cell.
+    """
+    if exc is None:
+        first = (fallback or "").strip().splitlines()
+        return (first[0][:_MAX_CATEGORY_CHARS] if first else "") or "failed"
+    cls = type(exc)
+    module = getattr(cls, "__module__", "") or ""
+    name = getattr(cls, "__qualname__", None) or cls.__name__
+    dotted = name if module in ("", "builtins") else f"{module}.{name}"
+    return dotted[:_MAX_CATEGORY_CHARS]
+
+
+def error_traceback(exc: BaseException | None, fallback: str | None) -> str | None:
+    """The failure formatted as Python would print it, chained causes first.
+
+    The chain is the point. An embedding timeout arrives as an
+    `openai.APITimeoutError` whose cause is an `httpx.ReadTimeout` whose
+    cause is the `httpcore` read that actually gave up — and only the
+    innermost block names the socket that stopped answering.
+
+    Falls back to the drop event's `err_str` when there is no live exception
+    to format: a message with no frames is still better than an empty panel.
+    """
+    if exc is None:
+        return fallback or None
+    try:
+        text = "".join(
+            traceback.format_exception(type(exc), exc, exc.__traceback__)
+        )
+    except Exception:  # a __str__ of its own that raises
+        return fallback or repr(exc)
+    if len(text) > _MAX_ERROR_CHARS:
+        text = "[... earlier frames dropped ...]\n" + text[-_MAX_ERROR_CHARS:]
+    return text
+
+
 class ActivityRecorder(BaseEventHandler):
-    """Turns paired chat Start/End events into `llm_call` rows.
+    """Turns paired chat Start/End events into `llm_call` rows, and dropped
+    spans into failed ones.
 
     `sink` takes the finished row dict and `history` answers the two per-model
     questions the cache metrics need. Both are injected rather than imported
     so the handler can be exercised without a database.
+
+    Three event pairs feed `_pending`, all keyed on the span the call ran in:
+    a chat Start/End writes a successful row, an embedding Start/End writes
+    nothing (see the module docstring), and a drop on either writes a failed
+    one. Whichever arrives first pops the entry, so a call is recorded once.
     """
 
     model_config = {"arbitrary_types_allowed": True}
@@ -240,6 +332,14 @@ class ActivityRecorder(BaseEventHandler):
                 self._on_start(event)
             elif isinstance(event, LLMChatEndEvent):
                 self._on_end(event)
+            elif isinstance(event, EmbeddingStartEvent):
+                self._on_embedding_start(event)
+            elif isinstance(event, EmbeddingEndEvent):
+                self._pending.pop(str(event.span_id), None)
+            elif isinstance(event, SpanDropEvent):
+                self._on_failure(event.span_id, sys.exc_info()[1], event.err_str)
+            elif isinstance(event, ExceptionEvent):
+                self._on_failure(event.span_id, event.exception, None)
         except Exception:
             # Never propagate: this handler runs inside the caller's LLM call.
             logger.debug("activity recorder failed on %r", event, exc_info=True)
@@ -269,6 +369,84 @@ class ActivityRecorder(BaseEventHandler):
         }
         if len(self._pending) > self.max_pending:
             self._drop_oldest_pending()
+
+    def _on_embedding_start(self, event: EmbeddingStartEvent) -> None:
+        """Hold an embedding request, so that a failure has a row to write.
+
+        Only the failure is written; the matching End event pops this entry
+        and records nothing. See the module docstring for why a successful
+        embedding stays out of the table.
+
+        The embedder names its endpoint `api_base` and its model
+        `model_name`, where a chat model dict says `base_url` and `model` —
+        different keys for the same two facts, which is the only reason this
+        is not `_on_start`. There is no text to keep: the Start event carries
+        the model's configuration, and the chunks only arrive on the End
+        event that a failed call never reaches.
+        """
+        model_dict = event.model_dict or {}
+        derived_caller, origin = call_origin()
+        self._pending[str(event.span_id)] = {
+            "started_at": datetime.now(UTC),
+            "model": model_dict.get("model_name"),
+            "provider": provider_for_base_url(model_dict.get("api_base")),
+            "caller": _caller_from(event.tags, derived_caller),
+            "origin": origin,
+            "run_uuid": _uuid_tag(event.tags, "run_uuid"),
+            "model_uuid": _uuid_tag(event.tags, "model_uuid"),
+            "model_group_uuid": _uuid_tag(event.tags, "model_group_uuid"),
+        }
+        if len(self._pending) > self.max_pending:
+            self._drop_oldest_pending()
+
+    def _on_failure(
+        self, span_id: Any, exc: BaseException | None, err_str: str | None
+    ) -> None:
+        """Record the call that just raised, from either failure event.
+
+        A dropped span carries only `err_str`, but LlamaIndex fires it from
+        inside the `except` block unwinding the call, so the live exception
+        is still in `sys.exc_info()` and the caller reads it from there. A
+        streaming call's ExceptionEvent hands over the exception itself.
+        Either way the traceback comes off the exception object, which is
+        why both routes end up here.
+
+        A drop fires for every enclosing span on the way out; the one that
+        matters is the span we are holding a Start for, and popping it makes
+        the rest — and the other event, if both arrive — no-ops.
+
+        Nothing else reports these. A failed call never fires an End event,
+        so before this it left no row at all: the page showed the calls that
+        worked and silently omitted the ones that didn't.
+        """
+        start = self._pending.pop(str(span_id), None)
+        if start is None:
+            return
+        row: dict[str, Any] = {
+            "started_at": start.get("started_at"),
+            "finished_at": datetime.now(UTC),
+            "provider": start.get("provider"),
+            "model": start.get("model"),
+            "model_uuid": start.get("model_uuid"),
+            "model_group_uuid": start.get("model_group_uuid"),
+            "caller": start.get("caller") or "unknown",
+            "origin": start.get("origin"),
+            "run_uuid": start.get("run_uuid"),
+            "ok": False,
+            "error_category": error_category(exc, err_str),
+            "error_text": error_traceback(exc, err_str),
+            # How long it spent failing — the number that tells a timeout
+            # apart from a refused connection at a glance.
+            "total_ms": _elapsed_ms(start.get("started_at")),
+            # What was sent, when we have it. A chat Start captured the whole
+            # message list, and reading the prompt a call died on is the
+            # first thing anyone wants; an embedding Start carries no text.
+            "messages": start.get("messages"),
+            # No prefix chain: it is a cache-reuse measurement against calls
+            # that completed, and a call that never reached the model has
+            # nothing to contribute to the next one's baseline.
+        }
+        self._emit(row)
 
     def _drop_oldest_pending(self) -> None:
         """Forget the least recent unmatched start. Its End is never coming —
@@ -314,21 +492,24 @@ class ActivityRecorder(BaseEventHandler):
             "response_text": response_text(event.response),
         }
         self._add_cache_metrics(row, start, model)
+        self._emit(row)
+
+    def _emit(self, row: dict[str, Any]) -> None:
+        """Hand one finished row to the sink, swallowing whatever it raises.
+
+        Once, at WARNING, with the traceback: this used to be a DEBUG line,
+        which hid the real cause and left only the confusing knock-on error
+        downstream. Once, because a persistent fault would otherwise log on
+        every LLM call the process makes.
+        """
         try:
             self.sink(row)
         except Exception:
-            # Once, at WARNING, with the traceback: this used to be a DEBUG
-            # line, which hid the real cause and left only the confusing
-            # knock-on error downstream. Once, because a persistent fault
-            # would otherwise log on every LLM call the process makes.
-            if not self._warned:
-                self._warned = True
-                logger.warning(
-                    "activity recording failed; further failures will be "
-                    "silent until the process restarts. The call itself was "
-                    "unaffected.",
-                    exc_info=True,
-                )
+            self._warn_once(
+                "activity recording failed; further failures will be "
+                "silent until the process restarts. The call itself was "
+                "unaffected."
+            )
 
     def _warn_once(self, message: str) -> None:
         """Report the first failure with its traceback, then stay quiet —

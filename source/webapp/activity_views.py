@@ -13,6 +13,12 @@ before, which needs no provider cooperation and so is exact. Blending them
 into one number would hide the only diagnostic that matters: whether a low
 hit rate is the runtime's fault or our own prompt construction's.
 
+Failures get a panel of their own, above the charts and printed in full with
+their tracebacks. They are not a metric — a call that never reached the model
+contributes nothing to a hit rate — and most of them are swallowed at the
+call site so the assistant degrades rather than stops, which leaves this page
+as the only place they are visible at all.
+
 NOTE: this template is a plain (non-raw) Python string — no backslash
 escapes in any inline script.
 """
@@ -84,6 +90,12 @@ DEFAULT_METRIC = "cached_tokens"
 
 _DIMENSION_LABELS = {"model": "Model", "caller": "Caller", "provider": "Provider"}
 DEFAULT_DIMENSION = "model"
+
+# How many failures the errors panel prints in full. Small because each one
+# carries a whole traceback, and because a fault that has happened twenty
+# times in the window is one fault: the twenty-first copy adds nothing the
+# first twenty didn't already say.
+MAX_ERRORS_SHOWN = 20
 
 
 def resolve_range(key: str, now: datetime) -> tuple[datetime, datetime, str]:
@@ -408,6 +420,10 @@ def build_context(args: Any, now: datetime) -> dict:
         else db.activity_rollup(start, end, dimension="caller")
     )
     recent = db.recent_llm_calls(limit=50)
+    # Fetched separately from `recent`, not filtered out of it: failures are
+    # rare and bursty, so the newest fifty calls routinely contain none of
+    # the ones worth reading.
+    errors = db.recent_llm_failures(start, end, limit=MAX_ERRORS_SHOWN)
 
     _label, _field, kind = _METRICS[metric]
     return {
@@ -427,6 +443,7 @@ def build_context(args: Any, now: datetime) -> dict:
         "by_caller": by_caller,
         "grouped": grouped,
         "recent": recent,
+        "errors": errors,
         "any_reported": any(
             c.cached_tokens_reported is not None for c in recent
         ),
@@ -503,12 +520,33 @@ ACTIVITY_TEMPLATE = """
   .pp-act td.origin { font-family: ui-monospace, monospace; font-size: 0.8rem; }
   .pp-act .warn { color: #b06f00; }
   .pp-act .bad { color: #c0392b; }
+  .pp-act a.bad { text-decoration: underline; text-underline-offset: 2px; }
   .pp-act .empty { color: #6c757d; padding: 2rem 0; text-align: center; }
   .pp-act .gap { display: flex; gap: 2.2rem; flex-wrap: wrap; align-items: flex-start; }
   .pp-act .gap .reading { max-width: 34rem; color: #374151; font-size: 0.9rem;
                           line-height: 1.45; }
   .pp-act a.inspect { color: #0653a8; text-decoration: none; font-size: 0.85rem; }
   .pp-act a.inspect:hover { text-decoration: underline; }
+  /* Failures. Bordered in red and placed above the charts because a call
+     that never reached the model is not a data point about caching — it is
+     the thing to go and look at. */
+  .pp-act .panel.errors { border-color: #f0c4bd; background: #fefaf9; }
+  .pp-act .err { border-top: 1px solid #f2ddd9; padding: 0.7rem 0; }
+  .pp-act .err:first-of-type { border-top: 0; padding-top: 0.2rem; }
+  .pp-act .err .head { display: flex; gap: 0.6rem; align-items: baseline;
+                       flex-wrap: wrap; }
+  .pp-act .err .cat { font-weight: 600; color: #c0392b;
+                      font-family: ui-monospace, monospace; font-size: 0.88rem; }
+  .pp-act .err .meta { color: #6c757d; font-size: 0.85rem; }
+  .pp-act .err .meta code { font-family: ui-monospace, monospace; }
+  .pp-act .err summary { cursor: pointer; color: #0653a8; font-size: 0.85rem;
+                         margin-top: 0.35rem; width: fit-content; }
+  /* The traceback scrolls inside its own box: these lines are long, and the
+     page must not gain a horizontal scrollbar because one frame was deep. */
+  .pp-act .err pre { margin: 0.4rem 0 0; overflow-x: auto;
+                     font-family: ui-monospace, monospace; font-size: 0.78rem;
+                     line-height: 1.45; background: #fff; border: 1px solid #f2ddd9;
+                     border-radius: 8px; padding: 0.7rem 0.8rem; }
 </style>
 <main class="pp-act">
   <h1>Activity</h1>
@@ -567,10 +605,52 @@ ACTIVITY_TEMPLATE = """
     <div class="tile">
       <div class="k">Calls</div>
       <div class="v">{{ summary.calls }}</div>
-      <div class="n">{% if summary.failures %}<span class="bad">{{ summary.failures }}
-          failed</span>{% else %}all succeeded{% endif %}</div>
+      <div class="n">{% if summary.failures %}<a class="bad" href="#failures">{{
+          summary.failures }} failed</a>{% else %}all succeeded{% endif %}</div>
     </div>
   </div>
+
+  {% if errors %}
+  <div class="panel errors" id="failures">
+    <h2>Failures</h2>
+    <p class="note">Calls that raised instead of answering, newest first
+       &mdash; {{ range_label|lower }}. Most of these are swallowed at the
+       call site so that rainbox degrades instead of stopping (memory
+       retrieval falls back to lexical, seed retrieval to full-text), which
+       means this panel is the only place they surface.</p>
+    {% for err in errors %}
+    <div class="err">
+      <div class="head">
+        <span class="cat">{{ err.error_category or 'failed' }}</span>
+        <span class="meta">
+          {{ err.started_at.strftime('%b %-d %H:%M:%S') if err.started_at else '—' }}
+          &middot; {{ err.model or 'unknown model' }}
+          &middot; {{ err.caller }}
+          {% if err.origin %}&middot; <code>{{ err.origin }}</code>{% endif %}
+          {% if err.total_ms is not none %}&middot; gave up after
+            {{ ms(err.total_ms) }}{% endif %}
+        </span>
+        <a class="inspect" href="{{ url_for('activity_call_page',
+             call_uuid=err.uuid) }}">inspect</a>
+      </div>
+      {% if err.error_text %}
+      <details>
+        <summary>traceback</summary>
+        <pre>{{ err.error_text }}</pre>
+      </details>
+      {% else %}
+      <p class="meta">No traceback on this row &mdash; it was recorded before
+         rainbox kept them.</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+    {% if summary.failures > errors|length %}
+    <p class="note" style="margin:0.8rem 0 0">
+      Showing the newest {{ errors|length }} of {{ summary.failures }} failures
+      in this window.</p>
+    {% endif %}
+  </div>
+  {% endif %}
 
   <div class="panel">
     <h2>{{ chart.metric_label }}</h2>
@@ -818,12 +898,35 @@ CALL_TEMPLATE = """
                  line-height: 1.45; background: #f8fafc; border: 1px solid #eef2f7;
                  border-radius: 8px; padding: 0.7rem 0.8rem; }
   .pp-call .gone { color: #6c757d; font-style: italic; }
+  /* The failure panel leads the page when there is one: on a call that never
+     reached the model, every tile below it reads "—" and the traceback is
+     the only thing on the page with anything to say. */
+  .pp-call .panel.failed { border-color: #f0c4bd; background: #fefaf9; }
+  .pp-call .panel.failed h2 { color: #c0392b; font-family: ui-monospace, monospace; }
+  .pp-call .panel.failed pre { background: #fff; border-color: #f2ddd9;
+                               white-space: pre; overflow-x: auto;
+                               overflow-wrap: normal; }
 </style>
 <main class="pp-call">
   <h1>{{ call.caller }} &middot; {{ call.model or 'unknown model' }}</h1>
   <p class="sub">{{ call.started_at.strftime('%b %-d %Y, %H:%M:%S')
                     if call.started_at else 'unknown time' }}
      &middot; <a href="{{ url_for('activity_page') }}">back to Activity</a></p>
+
+  {% if not call.ok %}
+  <div class="panel failed">
+    <h2>{{ call.error_category or 'failed' }}</h2>
+    <p class="note">This call raised instead of answering{%
+       if call.total_ms is not none %}, after {{ ms(call.total_ms) }}{% endif %}.
+       The counters below are empty because there was no response to count.</p>
+    {% if call.error_text %}
+    <pre>{{ call.error_text }}</pre>
+    {% else %}
+    <p class="gone">No traceback stored &mdash; this failure was recorded
+       before rainbox kept them.</p>
+    {% endif %}
+  </div>
+  {% endif %}
 
   <div class="facts">
     <div class="fact"><div class="k">Prompt</div>
@@ -851,6 +954,14 @@ CALL_TEMPLATE = """
       <pre>{{ m.content }}</pre>
     </div>
     {% endfor %}
+  {% elif not call.ok %}
+    <div class="panel">
+      <h2>Prompt</h2>
+      <p class="gone">Not stored. An embedding request names only its model on
+         the way out &mdash; the text it was given arrives with the response,
+         which this call never reached. A failed chat call does keep the
+         messages it sent.</p>
+    </div>
   {% else %}
     <div class="panel">
       <h2>Prompt</h2>
@@ -865,6 +976,9 @@ CALL_TEMPLATE = """
     {% if call.response_text %}
     <p class="note">{{ '{:,}'.format(call.response_text|length) }} characters</p>
     <pre>{{ call.response_text }}</pre>
+    {% elif not call.ok %}
+    <p class="gone">Nothing came back &mdash; the call failed. See the
+       traceback above.</p>
     {% else %}
     <p class="gone">No response text on this row &mdash; the call returned
        nothing, or its text has been cleared.</p>

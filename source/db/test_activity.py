@@ -571,3 +571,48 @@ class TestPrune:
         assert deleted >= 1
         left = db.db.session.query(LlmCall).filter(LlmCall.model == model).all()
         assert len(left) == 1
+
+
+class TestRecentFailures:
+    """The rows behind the /activity failures panel."""
+
+    WINDOW = (NOW - timedelta(hours=1), NOW + timedelta(hours=1))
+
+    def test_only_failed_calls_come_back(self, model):
+        add_call(model)
+        add_call(model, ok=False, error_category="openai.APITimeoutError")
+        rows = db.recent_llm_failures(*self.WINDOW, model=model)
+        assert [r.ok for r in rows] == [False]
+
+    def test_the_traceback_is_loaded(self, model):
+        """Deferred on the model, and the panel's whole purpose — so this
+        query has to ask for it or every row renders blank."""
+        add_call(model, ok=False, error_text="Traceback...\nBoom: it broke")
+        row = db.recent_llm_failures(*self.WINDOW, model=model)[0]
+        assert row.error_text == "Traceback...\nBoom: it broke"
+
+    def test_newest_first_and_capped(self, model):
+        for i in range(5):
+            add_call(model, ok=False, started_at=NOW - timedelta(minutes=i),
+                     error_category=f"Error{i}")
+        rows = db.recent_llm_failures(*self.WINDOW, limit=3, model=model)
+        assert [r.error_category for r in rows] == ["Error0", "Error1", "Error2"]
+
+    def test_failures_outside_the_window_are_left_out(self, model):
+        add_call(model, ok=False, started_at=NOW - timedelta(days=2))
+        assert db.recent_llm_failures(*self.WINDOW, model=model) == []
+
+
+class TestPromptPruneKeepsTracebacks:
+    def test_the_prompt_prune_clears_text_but_not_the_traceback(self, model):
+        """A failed row's whole value is the traceback, and a fault noticed a
+        month later is exactly when it is wanted — so it outlives the shorter
+        text horizon and goes with the row instead."""
+        old = datetime.now(UTC) - timedelta(days=60)
+        add_call(model, started_at=old, ok=False,
+                 messages=[{"role": "user", "content": "why so slow"}],
+                 error_text="Traceback...\nopenai.APITimeoutError: timed out")
+        db.prune_llm_call_prompts(older_than_days=14)
+        row = db.db.session.query(LlmCall).filter(LlmCall.model == model).one()
+        assert row.messages is None
+        assert "openai.APITimeoutError" in row.error_text

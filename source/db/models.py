@@ -1688,7 +1688,13 @@ class LlmCall(db.Model):
     # end when something looks wrong. NULL only if the stack held nothing but
     # library frames.
     origin: Mapped[str | None] = mapped_column(Text)
+    # Whether the call returned at all. A failed call is recorded from the
+    # failure event the runtime emits on its way out, so a timeout is a row
+    # here rather than only a WARNING in the server log — see llm.activity.
     ok: Mapped[bool] = mapped_column(default=True)
+    # The exception's dotted type, "openai.APITimeoutError". The type alone,
+    # without its message: messages carry hostnames, ids and timings that
+    # would split one recurring fault into a hundred distinct categories.
     error_category: Mapped[str | None] = mapped_column(Text)
     prompt_tokens: Mapped[int | None] = mapped_column()
     completion_tokens: Mapped[int | None] = mapped_column()
@@ -1737,6 +1743,17 @@ class LlmCall(db.Model):
     messages: Mapped[list | None] = mapped_column(
         JSONB(none_as_null=True), deferred=True)
     response_text: Mapped[str | None] = mapped_column(Text, deferred=True)
+    # The formatted traceback of an `ok = False` row, chained causes and all,
+    # exactly as Python would print it. The chain is the diagnosis and not a
+    # detail of it: an embedding timeout surfaces as an openai error whose
+    # cause is an httpx error whose cause is the httpcore read that actually
+    # gave up, and only the innermost block names the socket.
+    #
+    # Deferred with the two above: kilobytes per row that no chart or rollup
+    # reads. NOT cleared by the prompt prune, though — the traceback is the
+    # whole reason a failed row is worth keeping, and a fault noticed a month
+    # later is exactly when it is needed.
+    error_text: Mapped[str | None] = mapped_column(Text, deferred=True)
     # Which assistant run and step this call belongs to, from the
     # instrumentation tags the call site sets alongside `caller`. NULL for
     # every call made outside an assistant turn, and on rows recorded before

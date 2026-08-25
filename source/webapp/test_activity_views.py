@@ -508,3 +508,150 @@ class TestAdminCoverage:
         from webapp.core import admin
 
         assert any(getattr(v, "model", None) is LlmCall for v in admin._views)
+
+
+# A traceback shaped like the ones that actually land here: an embedding
+# timeout, three exceptions deep, where only the innermost block names the
+# socket that stopped answering.
+FAILED_TRACEBACK = """Traceback (most recent call last):
+  File "httpcore/_sync/http11.py", line 106, in handle_request
+    raise exc
+httpcore.ReadTimeout: timed out
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "httpx/_transports/default.py", line 250, in handle_request
+    resp = self._pool.handle_request(req)
+httpx.ReadTimeout: timed out
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "memory/seed_memory.py", line 162, in _embed_query_cached
+    return tuple(_embed_model().get_query_embedding(text))
+openai.APITimeoutError: Request timed out.
+"""
+
+
+def add_failed_call(model: str, minutes_ago: int = 1, **overrides):
+    """A call that raised instead of answering: no tokens, no timings, and a
+    traceback where the response would have been."""
+    row = {
+        "ok": False,
+        "error_category": "openai.APITimeoutError",
+        "error_text": FAILED_TRACEBACK,
+        "caller": "memory.retrieval._vector_sims",
+        "origin": "memory/retrieval.py:291 in _vector_sims",
+        "prompt_tokens": None,
+        "completion_tokens": None,
+        "prefill_ms": None,
+        "decode_ms": None,
+        "total_ms": 10_042,
+        "cached_tokens_estimated": None,
+        "reusable_prefix_tokens": None,
+        "prefix_chain": None,
+    }
+    row.update(overrides)
+    return add_call(model, minutes_ago=minutes_ago, **row)
+
+
+class TestFailuresOnThePage:
+    """An LLM error is the one thing on this page that isn't a metric, and the
+    only place it surfaces at all: the call sites swallow these so that
+    retrieval degrades instead of stopping."""
+
+    def test_a_failed_call_shows_its_traceback_on_the_page(self, client, model):
+        add_failed_call(model)
+        body = client.get("/activity?range=24h").get_data(as_text=True)
+        assert "openai.APITimeoutError" in body
+        assert "httpcore.ReadTimeout: timed out" in body
+        assert "_embed_query_cached" in body
+
+    def test_the_failure_names_where_it_was_called_from(self, client, model):
+        add_failed_call(model)
+        body = client.get("/activity?range=24h").get_data(as_text=True)
+        assert "memory.retrieval._vector_sims" in body
+        assert "memory/retrieval.py:291 in _vector_sims" in body
+
+    def test_the_failure_says_how_long_it_spent_failing(self, client, model):
+        """What tells a timeout apart from a refused connection at a glance."""
+        add_failed_call(model)
+        body = client.get("/activity?range=24h").get_data(as_text=True)
+        assert "gave up after" in body
+        assert "10.0s" in body
+
+    def test_no_failures_means_no_panel(self, client, model):
+        add_call(model)
+        body = client.get("/activity?range=24h").get_data(as_text=True)
+        assert "<h2>Failures</h2>" not in body
+
+    def test_a_window_with_only_a_failure_still_renders_the_page(
+        self, client, model
+    ):
+        """The empty state is keyed on the call count, and a failure is a
+        call — so this must not fall through to "no LLM calls recorded"."""
+        add_failed_call(model)
+        body = client.get(f"/activity?range=24h").get_data(as_text=True)
+        assert "<h2>Failures</h2>" in body
+        assert "No LLM calls recorded" not in body
+
+    def test_a_failure_outside_the_window_is_not_shown(self, client, model):
+        add_failed_call(model, minutes_ago=60 * 24 * 3)
+        body = client.get("/activity?range=1h").get_data(as_text=True)
+        assert "openai.APITimeoutError" not in body
+
+    def test_the_panel_is_capped_and_says_so(self, client, model):
+        from webapp.activity_views import MAX_ERRORS_SHOWN
+
+        for i in range(MAX_ERRORS_SHOWN + 3):
+            add_failed_call(model, minutes_ago=i + 1)
+        body = client.get("/activity?range=24h").get_data(as_text=True)
+        assert body.count("<summary>traceback</summary>") == MAX_ERRORS_SHOWN
+        assert f"newest {MAX_ERRORS_SHOWN} of {MAX_ERRORS_SHOWN + 3}" in body
+
+    def test_the_detail_page_leads_with_the_traceback(self, client, model):
+        call_uuid = uuid4()
+        add_failed_call(model, uuid=call_uuid)
+        body = client.get(f"/activity/call/{call_uuid}").get_data(as_text=True)
+        # Ahead of the fact tiles, which on a failed call are all em dashes.
+        assert body.index("openai.APITimeoutError") < body.index(
+            '<div class="k">Prompt</div>'
+        )
+        assert "httpcore.ReadTimeout: timed out" in body
+        assert "raised instead of answering" in body
+
+    def test_the_detail_page_of_a_failure_does_not_claim_an_empty_response(
+        self, client, model
+    ):
+        call_uuid = uuid4()
+        add_failed_call(model, uuid=call_uuid)
+        body = client.get(f"/activity/call/{call_uuid}").get_data(as_text=True)
+        assert "Nothing came back" in body
+
+    def test_a_failed_embedding_does_not_claim_its_prompt_aged_out(self, client, model):
+        """It never had one on the row: an embedding's text arrives with the
+        response event, which a failed call never reaches. Saying "older than
+        14 days" about a call made a minute ago sends a reader hunting for a
+        retention bug that isn't there."""
+        call_uuid = uuid4()
+        add_failed_call(model, uuid=call_uuid, messages=None)
+        body = client.get(f"/activity/call/{call_uuid}").get_data(as_text=True)
+        assert "An embedding request names only its model" in body
+        assert "days (whose text" not in body
+
+    def test_a_failed_chat_still_shows_the_prompt_it_died_on(self, client, model):
+        call_uuid = uuid4()
+        add_failed_call(model, uuid=call_uuid,
+                        messages=[{"role": "user", "content": "why so slow"}])
+        body = client.get(f"/activity/call/{call_uuid}").get_data(as_text=True)
+        assert "why so slow" in body
+
+    def test_a_failure_recorded_before_tracebacks_were_kept_says_so(
+        self, client, model
+    ):
+        call_uuid = uuid4()
+        add_failed_call(model, uuid=call_uuid, error_text=None)
+        body = client.get(f"/activity/call/{call_uuid}").get_data(as_text=True)
+        assert client.get(f"/activity/call/{call_uuid}").status_code == 200
+        assert "before rainbox kept them" in body
