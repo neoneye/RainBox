@@ -412,15 +412,52 @@ def _python_run(event: dict) -> list[dict]:
 
 
 def _memory_query(event: dict) -> list[dict]:
-    """The recalled text first: it is what the rest of the turn reasons from."""
+    """The recalled text first: it is what the rest of the turn reasons from.
+
+    What it took to get there is not repeated here. The counts are on the meta
+    line, the phases are rows in the waterfall, and everything else the action
+    recorded is in the `data` block every action pane ends with — this used to
+    print that same payload above it, expanded, which put seventeen kilobytes
+    of candidate documents on the page twice.
+    """
     payload = event.get("payload") or {}
-    observation = payload.get("observation") or {}
-    data = observation.get("data") if isinstance(observation, dict) else None
     return _blocks(
         _block("query", (payload.get("args") or {}).get("query")),
         _block("recalled", _result_text(payload)),
-        _block("retrieval", data),
     )
+
+
+#: Observation keys that a phase row of the SAME action already prints in
+#: full, by action and by the phase that prints them. memory_query's recall
+#: filter is the case: its payload is every candidate's document and score,
+#: and `_recall_filter_phase` renders it split into what was sent and what
+#: came back. Printing it in the action's pane as well put the same seventeen
+#: kilobytes on the page a second time.
+_DATA_WITH_ITS_OWN_PHASE: dict[str, dict[str, str]] = {
+    "memory_query": {"recall_filter": "recall filter"},
+}
+
+
+def _pane_data(label: str, observation: Any) -> Any:
+    """What an action recorded, minus what another row on the page already
+    shows in full.
+
+    Keyed on the phase that shows it, and dropped only when that phase is
+    actually in this step's timing: a run recorded before the phase existed
+    has no row to send the reader to, and hiding its payload would lose it
+    rather than move it.
+    """
+    data = observation.get("data") if isinstance(observation, dict) else None
+    if not isinstance(data, dict):
+        return data
+    elsewhere = _DATA_WITH_ITS_OWN_PHASE.get(label)
+    if not elsewhere:
+        return data
+    phases = {phase.get("name") for phase in
+              ((data.get("timing") or {}).get("phases") or [])
+              if isinstance(phase, dict)}
+    return {key: value for key, value in data.items()
+            if not (key in elsewhere and elsewhere[key] in phases)} or None
 
 
 #: Actions whose payload earned a renderer of its own.
@@ -736,7 +773,7 @@ def event_blocks(event: dict) -> list[dict]:
         # so a bespoke renderer cannot be the one that drops it.
         status = (event.get("kpis") or {}).get("status")
         observation = (event.get("payload") or {}).get("observation") or {}
-        data = observation.get("data") if isinstance(observation, dict) else None
+        data = _pane_data(label, observation)
         return (
             _blocks(_block("status", status))
             + _ACTION_RENDERERS.get(label, _generic_action)(event)
