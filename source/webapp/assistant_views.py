@@ -195,12 +195,17 @@ ASSISTANT_TEMPLATE = """
      kind of every other call is already written next to it in the name
      column, so colouring it too said nothing twice and left the row that is
      actually a problem as one colour among five. */
-  .as-main .wf { display:flex; flex-direction:column; gap:2px; }
+  /* No gap between the rows. A gap belongs to the container, not to either
+     row beside it, so a click landing in one selected nothing — and on a
+     timeline every row is a click target. The rows carry the spacing as their
+     own padding instead, which keeps the pitch and gives every pixel an
+     owner. */
+  .as-main .wf { display:flex; flex-direction:column; }
   /* A button, because the row selects the pane below rather than navigating.
      The reset is what keeps it looking like a row and not a form control. */
   .as-main .wf-row { display:grid; grid-template-columns:14rem 1fr 4rem; gap:0.8rem;
                      align-items:center; text-decoration:none; color:inherit;
-                     padding:2px 4px; border-radius:4px;
+                     padding:3px 4px; border-radius:4px;
                      width:100%; text-align:left; background:none; border:0;
                      font:inherit; cursor:pointer; }
   .as-main .wf-row:hover { background:#f3f4f6; }

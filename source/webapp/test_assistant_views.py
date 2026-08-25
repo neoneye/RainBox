@@ -2250,6 +2250,26 @@ def test_the_chat_room_is_reachable_from_the_menu(app_ctx, client):
     assert "Open chat room" in ASSISTANT_TEMPLATE
 
 
+def test_no_click_between_two_timeline_rows_is_wasted():
+    """The rows were spaced by a gap on their container, which belongs to
+    neither row: a click landing in it selected nothing. The spacing is the
+    rows' own padding now, so every pixel of the timeline belongs to a row and
+    the pitch is unchanged.
+    """
+    import re
+
+    from webapp.assistant_views import ASSISTANT_TEMPLATE
+
+    container = re.search(r"\.as-main \.wf \{[^}]*\}", ASSISTANT_TEMPLATE)
+    assert container, "the timeline container rule is gone"
+    assert "gap" not in container.group(0), "the dead strip is back"
+
+    row = re.search(r"\.as-main \.wf-row \{[^}]*\}", ASSISTANT_TEMPLATE)
+    # The padding absorbs what the gap used to add, so a row is as tall as the
+    # row plus the gap it replaced.
+    assert re.search(r"padding:3px \d+px", row.group(0)), row.group(0)
+
+
 def test_a_row_can_be_linked_to(app_ctx, client):
     """Any row on the timeline is something to send someone. Its identity is
     the key the live refresh already mints — a second identity for one row is
