@@ -295,11 +295,19 @@ Four things came out differently from the sketch above, each for a reason:
   a settle time of now drew a 27-day `unaccounted` bar across the run. The
   stream was right and the fixtures were not; they pin both ends now.
 
-### Deliberately not carried over
+### The one thing the removal would have lost
 
-The export's `warm-up` / `follow-up` labels, which named the code-driven rows
-that ran before and after the model's first decision. They came from
-`_step_kinds`, and the page stopped rendering them when the step sections were
-retired — the export was the last surface carrying them. Restoring the
-distinction means putting it on the event, next to `step_ref`, which is a
-change to the read model and belongs in its own change.
+`warm-up` / `follow-up` — which side of the model's first decision a
+loop-issued call fell on. It came from `_step_kinds`, and the page had stopped
+rendering it when the step sections were retired, so the export was the last
+surface carrying it. Deleting the export's copy would have taken it out of the
+product entirely.
+
+It is on the event now, as part of `step_ref`: `Step 1 · warm-up`. That is
+where it belongs — the number says which step, and the kind says the thing the
+number cannot, that the loop issued the call and the model never chose it. Both
+surfaces already render `step_ref`, so it cost no plumbing on either.
+
+Still decided on the clock rather than on row order, for the reason it always
+was: the reply audit's row is written before the reply row it audits, because
+the reply lands only once the audit says send. Read by row it is a warm-up.

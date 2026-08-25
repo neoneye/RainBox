@@ -772,6 +772,12 @@ def test_rows_are_attributed_to_a_step_by_position_not_by_step_index(
     Rows are attributed by position instead, and a decide step's two ends are
     named as such: its call opens it and its action closes it.
 
+    A call the loop issued itself says so, and says which side of the model's
+    first decision it fell on — the two pre-loop calls are warm-up, the audit of
+    what the model decided is follow-up. That is what the number alone does not
+    carry: the row is not part of the ReAct sequence and consumed none of its
+    budget.
+
     Both surfaces read the attribution off the same events, so the page and the
     export can be read against each other line by line."""
     room = _room()
@@ -786,8 +792,10 @@ def test_rows_are_attributed_to_a_step_by_position_not_by_step_index(
     try:
         page, md = _rendered(client, run)
         assert sorted(set(re.findall(r'data-step="([^"]*)"', page))) == [
-            "Step 1", "Step 2", "Step 3", "Step 3 end", "Step 3 start",
-            "Step 4"]
+            "Step 1 · warm-up", "Step 2 · warm-up", "Step 3", "Step 3 end",
+            "Step 3 start", "Step 4 · follow-up"]
+        # And the export says the same, off the same events.
+        assert "Step 1 · warm-up" in md and "Step 4 · follow-up" in md
         # In reading order — the order the calls RAN. The audit's row was
         # written first, but it audits a reply the decide call had already
         # produced, so it reads after it.

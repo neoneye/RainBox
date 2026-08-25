@@ -760,6 +760,40 @@ def _step_span(step):
     return start, end
 
 
+def _code_driven_kinds(steps: list) -> dict[str, str]:
+    """Label the steps that are not the model's, by uuid.
+
+    A code-driven row is a call the loop made on its own initiative, and it
+    consumes none of the step budget — so a reader needs to see at a glance
+    that it is not part of the ReAct sequence. Which label depends on when it
+    ran: the response-language classifier and the step-0 acceptance criteria go
+    out before the first decide call (`warm-up`), while the reply audit and a
+    mid-run criteria refresh react to something the model has already decided
+    (`follow-up`).
+
+    `requested_at`, not row order, decides. The audit's row is written before
+    the reply row it audits (the reply lands only once the audit says send), so
+    ordering by row would call it a warm-up. Timing rather than action name also
+    means a code-driven call added later is labelled right the day it lands.
+    Rows predating `requested_at` capture fall back to row order.
+    """
+    first_decide = min(
+        (s.requested_at for s in steps
+         if not s.code_driven and s.phase != "control" and s.requested_at),
+        default=None)
+    kinds: dict[str, str] = {}
+    seen_decide = False
+    for s in steps:
+        if not s.code_driven:
+            if s.phase != "control":
+                seen_decide = True
+            continue
+        after = (s.requested_at > first_decide
+                 if s.requested_at and first_decide else seen_decide)
+        kinds[str(s.uuid)] = "follow-up" if after else "warm-up"
+    return kinds
+
+
 def _attach_step_refs(events: list[dict], steps: list) -> None:
     """Say which step each row belongs to.
 
@@ -775,7 +809,9 @@ def _attach_step_refs(events: list[dict], steps: list) -> None:
     A step's call is labelled its start and its action its end, because those
     are the two moments the step is bounded by. A code-driven step has no
     action, so its one row IS the step: calling that row a start would promise
-    an end the stream never delivers.
+    an end the stream never delivers. It carries `warm-up` or `follow-up`
+    instead, which is the thing its number does not say — that the loop issued
+    it and the model never chose it.
     """
     for event in events:
         event["step_ref"] = ""
@@ -784,19 +820,23 @@ def _attach_step_refs(events: list[dict], steps: list) -> None:
     number = {str(s.uuid): i + 1 for i, s in enumerate(steps)}
     bounded = {str(s.uuid) for s in steps
                if getattr(s, "action", None) and not s.code_driven}
+    kinds = _code_driven_kinds(steps)
     spans = [(_step_span(s), i + 1) for i, s in enumerate(steps)]
     spans = [((a, b), n) for (a, b), n in spans if a and b]
     spans.sort()
     for event in events:
-        n = number.get(str(event.get("anchor") or ""))
+        anchor = str(event.get("anchor") or "")
+        n = number.get(anchor)
         if n is not None:
-            if str(event["anchor"]) in bounded and event["kind"] == "llm" \
+            if anchor in bounded and event["kind"] == "llm" \
                     and event["variant"] in ("decide", "code-driven"):
                 event["step_ref"] = f"Step {n} start"
             elif event["kind"] == "action":
                 event["step_ref"] = f"Step {n} end"
             else:
-                event["step_ref"] = f"Step {n}"
+                kind = kinds.get(anchor)
+                event["step_ref"] = f"Step {n}" + (f" \u00b7 {kind}" if kind
+                                                   else "")
             continue
         event["step_ref"] = _ref_by_time(event["start"], spans)
 
