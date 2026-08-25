@@ -1964,9 +1964,11 @@ def test_query_memory_reranker_backend_scores_without_an_llm(app_ctx, monkeypatc
 
     def fake_rerank(query, documents, *, model, **kwargs):
         seen.update(query=query, model=model, documents=documents)
-        scores = {"qa-1": 0.91, "qa-2": 0.77, "qa-3": 0.02,
-                  "qa-4": 0.01, "qa-5": 0.0}
-        return scores, 37
+        return rr.RerankResult(
+            scores={"qa-1": 0.91, "qa-2": 0.77, "qa-3": 0.02,
+                    "qa-4": 0.01, "qa-5": 0.0},
+            service_ms=37, max_length=512,
+            tokens={"qa-1": 11, "qa-2": 11, "qa-3": 900})
 
     monkeypatch.setattr(rr, "rerank", fake_rerank)
     obs = _action_query_memory(_ctx(), {"query": "question 1"})
@@ -1987,6 +1989,45 @@ def test_query_memory_reranker_backend_scores_without_an_llm(app_ctx, monkeypatc
     assert seen["query"] == "question 1"
     assert seen["documents"][0] == {"id": "qa-1",
                                     "text": "question 1\nanswer 1."}
+    # This backend writes no step row, so the trace has to carry the whole
+    # input here: the message scored against, and the exact bytes of every
+    # candidate — including the ones that were dropped.
+    assert debug["query"] == "question 1"
+    assert top["document"] == "question 1\nanswer 1." and top["tokens"] == 11
+    assert "matched_question" not in top   # the document opens with it
+    dropped = {c["qa_id"]: c for c in debug["candidates"]}["qa-5"]
+    assert dropped["kept"] is False and dropped["document"] == (
+        "question 5\nanswer 5.")
+
+
+def test_query_memory_reranker_trace_says_where_a_long_candidate_was_cut(
+        app_ctx, monkeypatch):
+    """A pair over the service's max_length is cut at the tokenizer. A fact
+    that scored low because half of it was dropped has to be tellable apart
+    from a fact that scored low."""
+    import agents.query_filter_router as qfr
+    import agents.recall_reranker as rr
+    from memory import seed_memory as qkb
+    from memory.seed_memory import Match
+
+    _stub_seed_kb(monkeypatch, qkb)
+    _use_reranker(monkeypatch)
+    _seed_entries(monkeypatch, qkb, {
+        "qa-1": {"kind": "static", "path": "p", "_source": "upstream",
+                 "answer": "a very long answer."},
+    })
+    monkeypatch.setattr(qkb, "_hybrid_seed_ranked", lambda q, vs, **_: [
+        Match(qa_id="qa-1", method="semantic", score=0.8, matched_question="q")])
+    monkeypatch.setattr(qfr, "get_entry", qkb.get_entry)
+    monkeypatch.setattr(db, "get_agent_model_binding", lambda agent_uuid: None)
+    monkeypatch.setattr(rr, "rerank", lambda *a, **k: rr.RerankResult(
+        scores={"qa-1": 0.4}, service_ms=12, max_length=512,
+        tokens={"qa-1": 800}))
+
+    debug = _action_query_memory(_ctx(), {"query": "q"}).data["recall_filter"]
+    assert debug["max_length"] == 512
+    row = debug["candidates"][0]
+    assert row["tokens"] == 800 and row["truncated_to"] == 512
 
 
 def test_query_memory_falls_back_to_gated_when_the_reranker_is_down(

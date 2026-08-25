@@ -185,19 +185,37 @@ def test_rerank_posts_the_documents_and_returns_scores_by_id(monkeypatch):
 
     def fake_post(url, json=None, timeout=None):
         seen.update(url=url, body=json, timeout=timeout)
-        return _Response(200, {"model": json["model"], "ms": 41, "scores": [
-            {"id": "a", "score": 0.9}, {"id": "b", "score": 0.01}]})
+        return _Response(200, {
+            "model": json["model"], "ms": 41, "max_length": 512, "scores": [
+                {"id": "a", "score": 0.9, "tokens": 12},
+                {"id": "b", "score": 0.01, "tokens": 700}]})
 
     monkeypatch.setattr(requests, "post", fake_post)
-    scores, ms = rerank(
+    result = rerank(
         "where do we deploy?",
         [{"id": "a", "text": "prod-web-01"}, {"id": "b", "text": "Paris"}],
         model="mmarco-mMiniLMv2-L12-H384-v1", url="http://127.0.0.1:5008")
-    assert scores == {"a": 0.9, "b": 0.01}
-    assert ms == 41
+    assert result.scores == {"a": 0.9, "b": 0.01}
+    assert result.service_ms == 41
+    # What the caller cannot see for itself: how long each pair was, and the
+    # ceiling it was measured against (here 'b' was cut at the tokenizer).
+    assert result.tokens == {"a": 12, "b": 700}
+    assert result.max_length == 512
     assert seen["url"] == "http://127.0.0.1:5008/rerank"
     assert seen["body"]["query"] == "where do we deploy?"
     assert [d["id"] for d in seen["body"]["documents"]] == ["a", "b"]
+
+
+def test_rerank_survives_a_service_that_reports_no_token_counts(monkeypatch):
+    """The counts are extra detail for the trace, not the contract."""
+    import requests
+
+    monkeypatch.setattr(requests, "post", lambda *a, **k: _Response(
+        200, {"ms": 9, "scores": [{"id": "a", "score": 0.5}]}))
+    result = rerank("q", [{"id": "a", "text": "t"}],
+                    model="mmarco-mMiniLMv2-L12-H384-v1")
+    assert result.scores == {"a": 0.5}
+    assert result.tokens == {}
 
 
 def test_rerank_raises_on_a_service_error(monkeypatch):

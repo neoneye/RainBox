@@ -18,7 +18,8 @@ MODEL = "mmarco-mMiniLMv2-L12-H384-v1"
 
 def _fake_score(model, query, texts):
     """Deterministic: a document containing the query scores high."""
-    return [0.99 if query in text else 0.01 for text in texts]
+    return {"scores": [0.99 if query in text else 0.01 for text in texts],
+            "tokens": [len(text.split()) for text in texts]}
 
 
 def _client(score=_fake_score):
@@ -45,9 +46,27 @@ def test_rerank_scores_every_document_in_order():
     body = resp.get_json()
     assert resp.status_code == 200
     assert body["model"] == MODEL
-    assert body["scores"] == [{"id": "d0", "score": 0.99},
-                              {"id": "d1", "score": 0.01}]
+    assert body["scores"] == [{"id": "d0", "score": 0.99, "tokens": 3},
+                              {"id": "d1", "score": 0.01, "tokens": 1}]
     assert body["ms"] >= 0
+
+
+def test_rerank_reports_the_pair_length_and_the_ceiling_it_was_measured_on():
+    """A pair longer than max_length is cut at the tokenizer, and a fact that
+    scored low because half of it was dropped looks exactly like a fact that
+    scored low. The caller can only tell the two apart from these numbers."""
+    body = _client().post("/rerank", json={
+        "model": MODEL, "query": "alma",
+        "documents": _docs("alma is 10")}).get_json()
+    assert body["max_length"] == server.MAX_LENGTH
+    assert body["scores"][0]["tokens"] == 3
+
+
+def test_a_scorer_that_counts_no_tokens_still_answers():
+    """The token count is reported where it is known, not required."""
+    body = _client(lambda *_a: {"scores": [0.5]}).post("/rerank", json={
+        "model": MODEL, "query": "q", "documents": _docs("t")}).get_json()
+    assert body["scores"] == [{"id": "d0", "score": 0.5, "tokens": None}]
 
 
 def test_an_empty_document_list_is_answered_without_loading_a_model():

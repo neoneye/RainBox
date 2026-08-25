@@ -22,6 +22,7 @@ score rather than empty Likert columns.
 import ast
 import logging
 import os
+from dataclasses import dataclass, field
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -103,17 +104,34 @@ def _unquote(value: str) -> str:
     return parsed if isinstance(parsed, str) else value
 
 
+@dataclass(frozen=True)
+class RerankResult:
+    """One scoring pass, as the trace needs to read it back.
+
+    `scores` is what the models answered. The rest is what the operator cannot
+    reconstruct from the candidates alone: how long the service spent, and how
+    long each pair actually was against the ceiling it was measured on — a
+    pair over `max_length` was cut at the tokenizer, and a fact that scored low
+    because half of it was dropped looks exactly like a fact that scored low.
+    """
+
+    scores: dict[str, float]
+    service_ms: int = 0
+    max_length: int = 0
+    tokens: dict[str, int] = field(default_factory=dict)
+
+
 def rerank(
     query: str, documents: list[dict[str, str]], *, model: str,
     url: str | None = None, timeout: float = RERANK_TIMEOUT_S,
-) -> tuple[dict[str, float], int]:
+) -> RerankResult:
     """Score `documents` (each `{"id", "text"}`) against `query` on the sidecar.
 
-    Returns `({id: score}, service_ms)` — the scores are relevance
-    probabilities in 0..1 and `service_ms` is the sidecar's own measurement of
-    the scoring pass, which is the number the operator is comparing against the
-    LLM scorer's twenty seconds. Any failure (service down, unknown model, bad
-    response) raises; the caller falls back to gated retrieval."""
+    `service_ms` is the sidecar's own measurement of the scoring pass, which is
+    the number the operator is comparing against the LLM scorer's twenty
+    seconds — this function's HTTP round trip is not in it. Any failure
+    (service down, unknown model, bad response) raises; the caller falls back
+    to gated retrieval."""
     import requests
 
     base = (url or service_url()).rstrip("/")
@@ -128,10 +146,14 @@ def rerank(
             f"{response.text[:200]}"
         )
     body = response.json()
-    scores = {
-        str(row["id"]): float(row["score"]) for row in body.get("scores") or []
-    }
-    return scores, int(body.get("ms") or 0)
+    rows = body.get("scores") or []
+    return RerankResult(
+        scores={str(row["id"]): float(row["score"]) for row in rows},
+        service_ms=int(body.get("ms") or 0),
+        max_length=int(body.get("max_length") or 0),
+        tokens={str(row["id"]): int(row["tokens"]) for row in rows
+                if row.get("tokens") is not None},
+    )
 
 
 # The keep/drop policy over reranker scores. It is RELATIVE first, because the

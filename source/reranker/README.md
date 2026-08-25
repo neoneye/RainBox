@@ -67,9 +67,15 @@ turn still answers, with less recall.
 
 - `GET /health` → `{"status":"ok","models":{key:repo},"loaded":[key],"device":str}`
 - `POST /rerank` — `{"model":key,"query":str,"documents":[{"id","text"}]}`
-  → `{"model","ms","scores":[{"id","score"}]}`. Scores are relevance
-  probabilities in 0..1, one per document, in the order given. `ms` is the
-  scoring pass alone (no HTTP, no model load).
+  → `{"model","ms","max_length","scores":[{"id","score","tokens"}]}`. Scores
+  are relevance probabilities in 0..1, one per document, in the order given.
+  `tokens` is the tokenizer's length for that (query, document) pair *before*
+  truncation, and `max_length` the ceiling it was measured against: a pair over
+  it was silently cut, and a fact that scored low because half of it was
+  dropped otherwise looks exactly like a fact that scored low. `ms` is the
+  scoring pass (no HTTP) — it includes the model load on the first call that
+  names a model, and on MPS the first forward pass after that pays a further
+  1-2s warm-up.
 
 The **absolute** scores are not comparable between the two models — only the
 ordering is. On one candidate list the correct answer scored 0.21 on mMARCO and

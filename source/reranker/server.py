@@ -20,7 +20,8 @@ API:
   GET  /health   -> {"status":"ok","models":{<key>:<repo>},"loaded":[<key>,...],
                      "device":str}
   POST /rerank   -> {"model":<key>,"query":str,"documents":[{"id","text"},...]}
-                    => {"model","scores":[{"id","score"},...],"ms"}
+                    => {"model","ms","max_length",
+                        "scores":[{"id","score","tokens"},...]}
                        (or {"error"} 4xx/5xx)
 """
 
@@ -65,10 +66,16 @@ BATCH_SIZE = int(os.environ.get("RERANKER_BATCH_SIZE", "16"))
 # MPS.
 DEVICE = os.environ.get("RERANKER_DEVICE", "auto")
 
-# score signature: (model_key: str, query: str, texts: list[str]) -> list[float]
-# Scores are relevance probabilities in 0..1 (higher = more relevant), one per
-# text, in the order given.
-ScoreFn = Callable[[str, str, list], list]
+# score signature: (model_key: str, query: str, texts: list[str]) -> dict with
+#   "scores": relevance probabilities in 0..1 (higher = more relevant), one per
+#             text, in the order given.
+#   "tokens": the tokenizer's length for each (query, text) pair BEFORE
+#             truncation, or None when the scorer does not count.
+# The token count is reported because it is the one part of the input the
+# caller cannot see for itself: a pair longer than MAX_LENGTH is silently cut
+# at the tokenizer, and a fact that scored low because its half was dropped
+# looks exactly like a fact that scored low.
+ScoreFn = Callable[[str, str, list], dict]
 
 
 def create_app(score_fn: ScoreFn | None = None) -> Flask:
@@ -116,23 +123,30 @@ def create_app(score_fn: ScoreFn | None = None) -> Flask:
         # nothing to score), and answering it without loading a model keeps a
         # cold service cheap for the case where there is no work.
         if not documents:
-            return jsonify({"model": model, "scores": [], "ms": 0})
+            return jsonify({"model": model, "scores": [], "ms": 0,
+                            "max_length": MAX_LENGTH})
 
         texts = [str(d.get("text") or "") for d in documents]
         t0 = time.monotonic()
         try:
             with lock:
-                scores = get_score()(model, query, texts)
+                result = get_score()(model, query, texts)
         except Exception as e:  # pragma: no cover - real-model failure path
             logger.exception("rerank failed")
             return jsonify({"error": f"rerank failed: {e}"}), 500
         ms = int((time.monotonic() - t0) * 1000)
+        scores = result["scores"]
+        tokens = result.get("tokens") or [None] * len(scores)
         return jsonify({
             "model": model,
             "ms": ms,
+            # The ceiling the pairs were measured against, so a caller can tell
+            # a truncated pair from a short one without knowing this service's
+            # configuration.
+            "max_length": MAX_LENGTH,
             "scores": [
-                {"id": doc["id"], "score": float(score)}
-                for doc, score in zip(documents, scores)
+                {"id": doc["id"], "score": float(score), "tokens": count}
+                for doc, score, count in zip(documents, scores, tokens)
             ],
         })
 
@@ -179,9 +193,15 @@ def _build_transformers_score(loaded: list) -> ScoreFn:  # pragma: no cover - ne
         logger.info("loaded %r in %.1fs", key, time.monotonic() - t0)
         return cache[key]
 
-    def score(key: str, query: str, texts: list) -> list:
+    def score(key: str, query: str, texts: list) -> dict:
         tokenizer, model = load(key)
         pairs = [(query, text) for text in texts]
+        # Measured before anything is scored, and deliberately WITHOUT
+        # truncation: this is how long each pair really is, which is the only
+        # way the caller can see that MAX_LENGTH cut one of them.
+        lengths = [len(ids) for ids in tokenizer(
+            [p[0] for p in pairs], [p[1] for p in pairs],
+            truncation=False)["input_ids"]]
         # A model that ships its own scoring code knows how to run itself
         # (jina's `compute_score` applies its own pooling and sigmoid); the
         # generic path below is for the plain cross-encoders.
@@ -189,7 +209,9 @@ def _build_transformers_score(loaded: list) -> ScoreFn:  # pragma: no cover - ne
         if callable(compute):
             with torch.inference_mode():
                 out = compute(pairs, max_length=MAX_LENGTH, batch_size=BATCH_SIZE)
-            return [float(x) for x in (out if isinstance(out, list) else [out])]
+            return {"scores": [float(x) for x in
+                               (out if isinstance(out, list) else [out])],
+                    "tokens": lengths}
         scores: list[float] = []
         for start in range(0, len(pairs), BATCH_SIZE):
             batch = pairs[start:start + BATCH_SIZE]
@@ -204,7 +226,7 @@ def _build_transformers_score(loaded: list) -> ScoreFn:  # pragma: no cover - ne
             # scale; sigmoid puts every model's output on the same 0..1 scale
             # so the keep/drop thresholds in the main app mean one thing.
             scores.extend(torch.sigmoid(logits[:, 0]).float().cpu().tolist())
-        return scores
+        return {"scores": scores, "tokens": lengths}
 
     return score
 

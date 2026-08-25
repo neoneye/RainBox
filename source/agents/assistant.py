@@ -1353,21 +1353,27 @@ def _filter_recalled_candidates(
         for cid, m in claims_by_id.items()
     ]
     by_qa_id = {c.qa_id: c for c in candidates}
+    rerank_result = None
+    sent_documents: dict[str, str] = {}
     if rerank_model is not None:
         # The cross-encoder reads the candidate itself, not a prompt: no turn
         # prefix, no history, no instructions — which is where the two orders
         # of magnitude between the backends come from.
         documents = [{"id": row["id"], "text": document_text(row)}
                      for row in rows]
-        scores, service_ms = rerank(query, documents, model=rerank_model)
-        scored = apply_rerank_scores(scores, candidates, top_k=TOP_K_FILTER)
-        # What the backend was and what it cost. `service_ms` is the sidecar's
-        # own measurement of the scoring pass — the figure to hold against the
-        # LLM scorer's step row, with this function's HTTP round trip and the
-        # candidate build left out of it.
+        sent_documents = {d["id"]: d["text"] for d in documents}
+        rerank_result = rerank(query, documents, model=rerank_model)
+        scored = apply_rerank_scores(
+            rerank_result.scores, candidates, top_k=TOP_K_FILTER)
+        # What the backend was, what it was asked, and what it cost. The LLM
+        # backend's input is recorded on its own step row; this one has no step
+        # row, so THIS is where the exact input has to be — `query` and the
+        # per-candidate `document` below are the whole request, verbatim.
         head: dict[str, Any] = {
             "mode": "reranker", "scorer_model": rerank_model,
-            "service_ms": service_ms,
+            "service_ms": rerank_result.service_ms,
+            "query": query,
+            "max_length": rerank_result.max_length,
         }
     else:
         filter_user_prompt = _build_recall_filter_prompt(
@@ -1421,17 +1427,33 @@ def _filter_recalled_candidates(
         row: dict[str, Any] = {
             "qa_id": s.qa_id, "path": path, "kind": kind,
             "score": qkb.score_permille(cand.score), "signals": cand.method,
-            "matched_question": question, "kept": s.kept,
+            "kept": s.kept,
         }
         # A row shows the scores its backend produced and no others. The
         # reranker leaves the three Likert scales at 0, and three zeroes in a
         # trace read as a scorer that rated everything irrelevant rather than
         # as a scorer that was never asked.
         if s.rerank_score is None:
+            row["matched_question"] = question
             row.update(direct=s.direct, indirect=s.indirect,
                        relevancy=s.relevancy)
-        else:
-            row["rerank_score"] = round(s.rerank_score, 4)
+            return row
+        row["rerank_score"] = round(s.rerank_score, 4)
+        # The bytes this candidate was scored as. It replaces
+        # matched_question rather than joining it: the document opens with
+        # that same question, and the reranker read the document. What it
+        # shows that nothing else can is where a candidate's text stopped —
+        # a claim is cut to _FILTER_CLAIM_PREVIEW_CHARS before it ever gets
+        # here, and a pair over `max_length` is cut again at the tokenizer.
+        document = sent_documents.get(s.qa_id)
+        if document is not None:
+            row["document"] = document
+        tokens = (rerank_result.tokens if rerank_result else {}).get(s.qa_id)
+        if tokens is not None:
+            row["tokens"] = tokens
+            max_length = rerank_result.max_length if rerank_result else 0
+            if max_length and tokens > max_length:
+                row["truncated_to"] = max_length
         return row
 
     # What the filter DECIDED, for the observation: which backend scored, on
