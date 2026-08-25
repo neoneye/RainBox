@@ -135,17 +135,31 @@ _KPI_FIELDS: list[tuple[str, str, Any, str]] = [
      "the whole observation; narrow the query or fetch a fact by its uuid"),
     ("chars", "chars", lambda v: f"{v} chars",
      "Characters sent to the embedder"),
+    # The in-flight row's two. A bar that grows says the call is still going;
+    # these say whether anything is still coming back, and how long it has
+    # before the loop gives up on it.
+    ("streamed", "streamed", lambda v: f"{v} chars back",
+     "How much the model has sent back so far. A count that keeps climbing "
+     "while the text says nothing new is the model repeating itself; a count "
+     "that has stopped moving is a stall, not a slow answer"),
+    ("timeout", "timeout", lambda v: f"of {v}",
+     "How long this call may take before the loop abandons it and records a "
+     "failed step"),
+    ("attempt", "attempt", lambda v: f"attempt {v}",
+     "Which try this is — the ones before it were answered and refused"),
     ("texts", "texts", lambda v: f"{v} texts",
      "How many texts were embedded"),
 ]
 
 
 def _kpi(label: str, text: str, title: str, *, href: str = "",
-         html: str = "") -> dict:
+         html: str = "", live: bool = False) -> dict:
     """One field of the meta line. `html` overrides the shown text where a
-    link reads better short — "model ↗" on the page, the name on hover."""
+    link reads better short — "model ↗" on the page, the name on hover.
+    `live` marks a value the page keeps advancing between refreshes; only the
+    in-flight call has one, and only its elapsed time."""
     return {"label": label, "text": text, "title": title,
-            "href": href, "html": html or text}
+            "href": href, "html": html or text, "live": live}
 
 
 def event_kpis(event: dict) -> list[dict]:
@@ -190,9 +204,12 @@ def event_kpis(event: dict) -> list[dict]:
             "tok/s", f"{tokens * 1000 / duration:.0f} tok/s",
             "Throughput: total tokens (input + output) per second"))
     if duration is not None:
+        running = event.get("variant") == "live"
         fields.append(_kpi(
             "took", f"took {duration / 1000:.1f}s",
-            "Duration: how long this took"))
+            "How long this has been running so far — still climbing"
+            if running else "Duration: how long this took",
+            live=running))
     start = event.get("start")
     if start is not None:
         fields.append(_kpi(
@@ -205,7 +222,8 @@ def _kpi_html(event: dict) -> Markup:
     if not fields:
         return Markup("")
     cells = Markup("").join(
-        Markup('<span class="ev-kpi" title="{}">{}</span>').format(
+        Markup('<span class="ev-kpi"{} title="{}">{}</span>').format(
+            Markup(' data-live-elapsed') if f.get("live") else Markup(""),
             f["title"],
             Markup('<a href="{}">{}</a>').format(f["href"], f["html"])
             if f["href"] else f["html"])

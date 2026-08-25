@@ -1046,9 +1046,12 @@ def test_only_rows_worth_attention_are_coloured_in_the_waterfall():
     """Colour is reserved for the rows a reader should stop on, so the chart
     shows where the time went instead of asking anyone to decode a legend.
 
-    Two kinds earn it, and both are a problem by definition: `rejected` is an
+    Three kinds earn it. Two are a problem by definition: `rejected` is an
     answer that was thrown away, and `unaccounted` is time nothing measured.
-    An `activity` bar is ordinary measured work and stays neutral like a call.
+    The third, `live`, is the row that has not finished — the one row on the
+    chart that is not a measurement of anything, and the one a reader watching
+    a run is there for. An `activity` bar is ordinary measured work and stays
+    neutral like a call.
     """
     import re
 
@@ -1057,8 +1060,8 @@ def test_only_rows_worth_attention_are_coloured_in_the_waterfall():
     named = set(re.findall(r"\.wf-name\.kind-([a-z-]+)", ASSISTANT_TEMPLATE))
     barred = set(re.findall(r"\.wf-bar\.kind-([a-z-]+)", ASSISTANT_TEMPLATE))
 
-    assert named == {"rejected", "unaccounted"}
-    assert barred == {"rejected", "unaccounted"}
+    assert named == {"rejected", "unaccounted", "live"}
+    assert barred == {"rejected", "unaccounted", "live"}
 
 
 def test_review_written_before_start_times_still_gets_a_bar(app_ctx, client):
@@ -1136,7 +1139,8 @@ def test_model_chosen_step_still_shows_its_decision(app_ctx, client):
 
 def test_page_live_refreshes_via_sse_not_polling(app_ctx, client):
     """The page rides the chat_events SSE stream and filters on
-    assistant_run_uuid; recurring timers are banned (chat-frontend-rules)."""
+    assistant_run_uuid. Nothing reaches the server on a schedule
+    (chat-frontend-rules), which is what keeps a tab left open all day free."""
     room = _room()
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
@@ -1145,7 +1149,42 @@ def test_page_live_refreshes_via_sse_not_polling(app_ctx, client):
         assert "new EventSource('/chat/stream')" in body
         assert "assistant_run_uuid" in body
         assert f"'{run.uuid}'" in body
-        assert "setInterval" not in body
+        # The page has exactly one recurring timer and it does no I/O: the
+        # clock on the in-flight row (rule 1's single carve-out). Anything on
+        # a schedule that could reach the server is what the rule bans.
+        assert body.count("setInterval") == 1
+        assert "setInterval(tick, 1000)" in body
+        assert "setInterval(refresh" not in body
+        assert "setInterval(schedule" not in body
+        # And it is not running at all unless something is: no in-flight row,
+        # no timer.
+        assert "if (live && ticker === null)" in body
+        assert "if (!live && ticker !== null) { clearInterval(ticker);" in body
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_the_in_flight_clock_touches_nothing_but_the_page(app_ctx, client):
+    """The carve-out is only a carve-out because it does no I/O. A fetch, a
+    send, or anything else reaching the server on this timer is the polling
+    the rule exists to keep out."""
+    import re
+
+    room = _room()
+    run = _in_flight_run(room)
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        tick = re.search(r"function tick\(\) \{.*?\n    \}", body, re.S)
+        assert tick, "the clock is gone"
+        for reaching_out in ("fetch(", "EventSource", "XMLHttpRequest",
+                             "navigator.send", "schedule("):
+            assert reaching_out not in tick.group(0), reaching_out
+        # What it does touch: the row's own seconds and the elapsed field on
+        # whichever pane is showing.
+        assert "data-since" in tick.group(0)
+        assert "data-live-elapsed" in tick.group(0)
+        # Both of which the page actually renders for a call in flight.
+        assert "data-since=" in body and "data-live-elapsed" in body
     finally:
         _cleanup(run.uuid, room.uuid)
 
@@ -1178,7 +1217,10 @@ def test_the_call_in_flight_is_a_row_on_the_stream(app_ctx, client):
     run = _in_flight_run(room)
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        assert 'kind-live' in body and "in flight" in body
+        # The ROW, not the stylesheet (which has a `kind-live` rule whether or
+        # not anything uses it) and not the refresh script (which names the
+        # variant in the selector it follows a landing with).
+        assert 'class="wf-name kind-live"' in body and "in flight" in body
         assert "pondering the request" in body
         assert "live-model" in body
         assert "This call is still running" in body
@@ -1188,7 +1230,27 @@ def test_the_call_in_flight_is_a_row_on_the_stream(app_ctx, client):
 
         db.finish_run(run, "finished")
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
-        assert 'kind-live' not in body
+        assert 'class="wf-name kind-live"' not in body
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_the_row_in_flight_shows_how_long_and_how_much(app_ctx, client):
+    """What the reader is looking for is whether it is stuck. That is two
+    numbers and a bar: how long the attempt has been running, how much has come
+    back, and what it is racing — a stalled call and a slow one look identical
+    without them."""
+    room = _room()
+    run = _in_flight_run(room)
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        # A bar, positioned and sized — not the "not timed" placeholder a row
+        # with no span gets.
+        row = body.split('class="wf-name kind-live"')[1].split("</button>")[0]
+        assert "wf-bar kind-live" in row and "not timed" not in row
+        # And the two numbers, on the meta line every other call uses.
+        assert "chars back" in body
+        assert "of 10s" in body      # the checkpoint's configured timeout
     finally:
         _cleanup(run.uuid, room.uuid)
 
@@ -1203,7 +1265,7 @@ def test_a_running_run_opens_on_the_call_in_flight(app_ctx, client):
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
         picked = re.findall(r'<button[^>]*class="wf-row ev-pick on"[^>]*>', body)
         assert len(picked) == 1, "exactly one row is selected"
-        assert 'data-key="llm:live:in-flight:"' in picked[0]
+        assert 'data-key="llm:live:in-flight:' in picked[0]
 
         # A run that is over opens on the request instead — nothing is moving,
         # and the question it was given is where reading starts.
@@ -1227,10 +1289,12 @@ def test_a_landed_call_keeps_the_reader_who_was_watching_it(app_ctx, client):
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
         # The live row is what the reader is on, and the refresh knows to
         # follow it rather than fall back to the server's choice.
-        assert 'data-key="llm:live:in-flight:"' in body
-        assert ("if (!pick && key.indexOf('llm:live:') === 0) "
-                "{ pick = landedCall(root); }") in body
-        # Which row it follows to: the newest call on the stream, found by the
+        assert 'data-key="llm:live:in-flight:' in body
+        assert "if (!pick && key.indexOf('llm:live:') === 0) {" in body
+        # A retry mints a new key, so it follows to the call in flight NOW
+        # before it gives up and follows to the row the old one became.
+        assert 'root.querySelector(\'.ev-pick[data-variant="live"]\')' in body
+        # Which row that is: the newest call on the stream, found by the
         # variant every row carries for exactly this.
         assert ('.ev-pick[data-variant="decide"], '
                 '.ev-pick[data-variant="code-driven"]') in body
@@ -1243,7 +1307,7 @@ def test_a_landed_call_keeps_the_reader_who_was_watching_it(app_ctx, client):
         db.finish_run(run, "finished")
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
         assert 'data-variant="decide"' in body
-        assert 'data-key="llm:live:in-flight:"' not in body
+        assert 'data-key="llm:live:in-flight:' not in body
     finally:
         _cleanup(run.uuid, room.uuid)
 

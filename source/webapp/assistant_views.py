@@ -260,6 +260,21 @@ ASSISTANT_TEMPLATE = """
                                              transparent 4px,transparent 8px);
         border:1px solid #f0c674; }
   .as-main .wf-name.kind-unaccounted { color:#b45309; font-style:italic; }
+  /* The call in flight. The one bar on the chart that is not a measurement of
+     something finished — it is redrawn a little longer on every refresh, and
+     the stripes crawling along it are what say so between two refreshes. A
+     still bar and a growing one look identical for the second you glance at
+     it, which is the second in which a stalled run looks like a working one. */
+  .as-main .wf-bar.kind-live {
+        background:repeating-linear-gradient(45deg,#93b4f5,#93b4f5 5px,
+                                             #c7d9fb 5px,#c7d9fb 10px);
+        background-size:14.2px 14.2px;
+        animation:as-crawl 0.9s linear infinite; }
+  @keyframes as-crawl { to { background-position:14.2px 0; } }
+  .as-main .wf-name.kind-live { color:#1d4ed8; font-weight:600; }
+  @media (prefers-reduced-motion: reduce) {
+    .as-main .wf-bar.kind-live { animation:none; }
+  }
   .as-main .wf-undated { position:absolute; left:4px; font-size:0.68rem; color:#98a2b3; }
   .as-main .wf-secs { font-size:0.76rem; color:#667085; text-align:right;
                       font-variant-numeric:tabular-nums; }
@@ -393,6 +408,7 @@ ASSISTANT_TEMPLATE = """
             <button type="button" class="wf-row ev-pick{% if e.selected %} on{% endif %}"
                     data-ev="{{ e.row_id }}" data-key="{{ e.key }}"
                     data-variant="{{ e.variant or e.kind }}"
+                    {% if e.since_ms %}data-since="{{ e.since_ms }}"{% endif %}
                     {% if e.primary_for %}data-primary="{{ e.primary_for }}"{% endif %}
                     title="{{ e.label }} — {{ e.seconds }} at {{ e.clock }}">
               <span class="wf-name kind-{{ e.variant or e.kind }}">{{ e.label }}</span>
@@ -709,7 +725,36 @@ var asSelectEvent = null;
   (function () {
     var runId = {% if selected %}'{{ selected.uuid }}'{% else %}null{% endif %};
     if (!runId) return;
-    var timer = null, dirty = false, connectedOnce = false;
+    var timer = null, dirty = false, connectedOnce = false, ticker = null;
+    // The clock on the row for the call in flight, advanced locally.
+    //
+    // NOT polling: it fetches nothing and talks to no one (see
+    // notes/chat-frontend-rules.md, which permits exactly this). It runs only
+    // while a model call is in the air and stops the instant the row goes.
+    //
+    // It exists because the events that refresh this page come from the
+    // streamed progress checkpoint, which is written only when the text
+    // CHANGED. A model that has genuinely locked up sends nothing, so no event
+    // fires and the page freezes with the elapsed time stopped mid-count —
+    // which is indistinguishable from a broken page, at the one moment the
+    // reader most needs to tell those apart. A clock that keeps moving while
+    // "chars back" does not IS the stall, shown.
+    function tick() {
+      var live = document.querySelector('.ev-pick[data-variant="live"]');
+      var since = live && Number(live.getAttribute('data-since'));
+      if (!since) { return; }
+      var secs = ((Date.now() - since) / 1000).toFixed(1) + 's';
+      var cell = live.querySelector('.wf-secs');
+      if (cell) { cell.textContent = secs; }
+      Array.prototype.forEach.call(
+        document.querySelectorAll('[data-live-elapsed]'),
+        function (e) { e.textContent = 'took ' + secs; });
+    }
+    function retick(root) {
+      var live = root.querySelector('.ev-pick[data-variant="live"]');
+      if (live && ticker === null) { ticker = setInterval(tick, 1000); }
+      if (!live && ticker !== null) { clearInterval(ticker); ticker = null; }
+    }
     // Which collapsed block is which, across a swap. By its `data-k` — the row
     // it belongs to plus its role — and NOT by position: a live run grows rows
     // while it is being read, so an index would slide under the reader and
@@ -738,10 +783,14 @@ var asSelectEvent = null;
       // The in-flight row is the one row that is GUARANTEED to go: it exists
       // only between the request going out and the row landing. Dropping the
       // reader back to the top at that moment is the worst possible time to
-      // do it — they were watching that exact call. Follow it to the row it
-      // became instead. (A run still going keeps its live row, and the key
-      // above matches it, so this only fires once the call has landed.)
-      if (!pick && key.indexOf('llm:live:') === 0) { pick = landedCall(root); }
+      // do it — they were watching that exact call. Follow it instead: to the
+      // call in flight now if there still is one (its key carries the
+      // attempt's start, so a retry mints a new one), and otherwise to the row
+      // the call it was watching became.
+      if (!pick && key.indexOf('llm:live:') === 0) {
+        pick = root.querySelector('.ev-pick[data-variant="live"]')
+               || landedCall(root);
+      }
       // Otherwise: gone means the row it named is no longer on the stream (an
       // unaccounted gap that has since been filled). Leave the server's choice
       // standing rather than selecting something the reader did not ask for.
@@ -778,6 +827,7 @@ var asSelectEvent = null;
             function (d) { if (open[detailsKey(d)]) d.open = true; });
           reselect(cur, key);
           cur.scrollTop = scrollTop;
+          retick(cur);
         })
         .catch(function () { dirty = true; });
     }
@@ -806,6 +856,7 @@ var asSelectEvent = null;
       if (!document.hidden && dirty) { dirty = false; schedule(); }
     });
     startRunStream();
+    retick(document);
   })();
 </script>
 """
@@ -999,7 +1050,18 @@ def _active_model_call(run) -> dict | None:
     """The in-flight model call checkpoint for the live view: present only
     while the loop is inside a model call (the checkpoint is cleared as soon
     as the step row lands, so this never duplicates a timeline step). Returns
-    the newest attempt's streamed partials, or None when idle/settled."""
+    the newest attempt's streamed partials, or None when idle/settled.
+
+    `started_at` is the newest ATTEMPT's, not the call's: on a retried call the
+    call began when the first, refused attempt went out, and timing the row
+    from there would show the current attempt as older than it is. Falls back
+    to the call's own request time for a checkpoint written before an attempt
+    was recorded.
+
+    `timeout_seconds` rides along because it is what makes "stuck" a judgement
+    rather than a feeling: thirty seconds into a call is nothing at a
+    three-minute timeout and nearly over at a forty-second one.
+    """
     if run.status not in ("running", "stopping"):
         return None
     active = (run.metadata_ or {}).get("active_call")
@@ -1010,6 +1072,9 @@ def _active_model_call(run) -> dict | None:
     return {
         "step_index": active.get("step_index"),
         "model_name": newest.get("model_name"),
+        "started_at": newest.get("started_at") or active.get("requested_at"),
+        "timeout_seconds": newest.get("timeout_seconds"),
+        "attempt": len(attempts),
         "partial_reasoning": newest.get("partial_reasoning"),
         "partial_response": newest.get("partial_response"),
         "error": newest.get("error"),

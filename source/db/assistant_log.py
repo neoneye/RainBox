@@ -613,26 +613,56 @@ def _attach_intents(events: list[dict], intents: list) -> None:
             event["payload"]["intents"] = run_level
 
 
-def _live_event(active: dict | None) -> list[dict]:
+def _live_event(active: dict | None, now: datetime | None = None) -> list[dict]:
     """The model call happening right now, if one is.
 
     The only thing on the page with no record behind it: the row lands when
     the call returns, so until then the sole evidence is the streamed
     checkpoint. Watching a run means watching this.
 
-    No duration and no start of its own — it has not finished, so a span would
-    claim time still being spent, and it sorts last because it is the newest
-    thing that has happened. Held out of the run's totals for the same reason:
-    its tokens are not known, and it may yet be retried or fail.
+    It carries a span — from when the attempt went out to NOW — and that is
+    the whole point of it. A row with no bar reads as a row where nothing is
+    happening, which is the opposite of what this one means; a bar that is
+    longer on every refresh is the only thing on the page that says the call
+    is still going, and how long it has been going for. The seconds are what
+    turn "it feels stuck" into a number to compare against the timeout.
+
+    `chars` is the same signal one level finer. A call that is repeating
+    itself is still producing, so its bar grows either way — but the character
+    count moving while the text says nothing new is exactly what repetition
+    looks like from the outside, and a count that has stopped moving is a
+    stall rather than a slow answer.
+
+    Held out of the run's totals: its tokens are not known, and it may yet be
+    retried or fail (`assistant_llm_calls` filters the variant out).
     """
     if not active:
         return []
+    start = _parse_ts(active.get("started_at"))
+    elapsed = (int(((now or datetime.now().astimezone()) - start)
+                   .total_seconds() * 1000)
+               if start else None)
+    response, reasoning = (active.get("partial_response") or "",
+                           active.get("partial_reasoning") or "")
+    timeout = active.get("timeout_seconds")
     return [_event(
-        "llm", "in flight", variant="live", start=None, duration_ms=None,
+        "llm", "in flight", variant="live",
+        start=start, duration_ms=max(elapsed, 0) if elapsed is not None else None,
         uuid="live",
-        kpis={"model": active.get("model_name"), "status": "running"},
-        payload={"model_response": active.get("partial_response"),
-                 "reasoning": active.get("partial_reasoning"),
+        kpis={"model": active.get("model_name"),
+              "status": "running",
+              "streamed": (len(response) + len(reasoning)) or None,
+              # What it is racing. The loop abandons the call at this point,
+              # so it is the difference between a slow answer and one that is
+              # about to become a failed step.
+              "timeout": f"{timeout:.0f}s" if timeout else None,
+              # Named only once there has been more than one. On the common
+              # single attempt the field would say nothing and take a place on
+              # the line from the numbers that do.
+              "attempt": (active.get("attempt")
+                          if (active.get("attempt") or 0) > 1 else None)},
+        payload={"model_response": response or None,
+                 "reasoning": reasoning or None,
                  "error": active.get("error"),
                  "step_index": active.get("step_index")})]
 
@@ -724,9 +754,9 @@ def run_events(run, steps: list, reviews: list | None = None,
     _attach_model_names(out)
     _attach_step_refs(out, steps)
     _attach_intents(out, intents or [])
-    # Appended after the sort, not through it: it has no start, and an undated
-    # row sorts last anyway — but saying so here is what guarantees the row
-    # the reader is watching is the one at the bottom.
+    # Appended after the sort rather than through it: it is the newest thing
+    # that has happened by construction — it has not finished — so the row the
+    # reader is watching is guaranteed to be the one at the bottom.
     out.extend(_live_event(active))
     return out
 

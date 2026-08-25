@@ -121,8 +121,9 @@ def log_view(run, steps: list, reviews: list | None = None,
     Each event gains what the two surfaces need to draw it: `offset_pct` and
     `width_pct` (None when it has no span), `seconds`, `glyph`, `row_id`,
     `key` (its identity across a live refresh, see `_row_key`), `selected`
-    (which row the page opens on, see `_mark_selected_row`), and the rendered
-    `detail_html` its component produced. The detail is built here, once per
+    (which row the page opens on, see `_mark_selected_row`), `since_ms` (set on
+    the in-flight row alone, so its clock keeps moving between refreshes), and
+    the rendered `detail_html` its component produced. The detail is built here, once per
     event, so selecting a row is a client-side swap rather than a round trip.
 
     `trigger` is the chat message that began the run; given one, the stream
@@ -176,6 +177,13 @@ def log_view(run, steps: list, reviews: list | None = None,
             row["width_pct"] = None
         row["seconds"] = (f"{event['duration_ms'] / 1000:.1f}s"
                           if event["duration_ms"] is not None else "—")
+        # When the call in flight began, in epoch milliseconds, so the page can
+        # keep its clock moving between refreshes. Only this row has one: it is
+        # the only row whose duration is still growing, and the only one whose
+        # elapsed time the reader is reading as it happens.
+        row["since_ms"] = (int(event["start"].timestamp() * 1000)
+                           if event["variant"] == "live" and event["start"]
+                           else None)
         row["clock"] = (event["start"].strftime("%H:%M:%S")
                         if event["start"] else "—")
         # The header names what is being inspected, so the row carries the

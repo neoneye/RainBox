@@ -26,6 +26,25 @@ at all.
    SSE reconnect timeout when `EventSource` reports `CLOSED`. None of them
    may reschedule themselves while the page is idle.
 
+   **The one recurring timer, and what makes it not polling:** a clock that
+   advances a duration already on screen, while an operation the page is
+   watching is still running. It performs **no network I/O of any kind** — no
+   fetch, no message, nothing reaches the server — it starts only when such an
+   operation is on the page and clears the moment it is gone. Today that is
+   `/assistant`'s in-flight row: the events that refresh that page come from
+   the model's streamed progress checkpoint, which is written only when the
+   text CHANGED, so a model that has genuinely locked up sends nothing and the
+   page freezes with the elapsed time stopped mid-count — indistinguishable
+   from a broken page, at the one moment the reader needs to tell those apart.
+   A clock that keeps moving while the streamed character count does not IS
+   the stall, shown.
+
+   The bar this clears is the one the rule is actually about: **idle cost**.
+   An idle tab has no such operation, so it has no such timer, and the page
+   runs zero JS on a recurring schedule exactly as before. Anything that wants
+   to reach the server on a schedule is still banned, no matter how it is
+   dressed up.
+
 2. **One stream covers all rooms.** Do not open per-room connections, and do
    not background-fetch rooms the user is not viewing. Other-room activity
    shows up as an unread badge from the same SSE event — no fetch against

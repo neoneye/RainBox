@@ -261,3 +261,61 @@ def test_a_row_with_no_clock_falls_back_to_the_order_it_was_written():
 
     assert by_label["response_language_classifier"].endswith("· warm-up")
     assert by_label["reply_audit"].endswith("· follow-up")
+
+
+def _active(started, *, response="", reasoning="", timeout=120.0, attempt=1):
+    return {"step_index": 1, "model_name": "gemma4:e4b",
+            "started_at": started.isoformat(), "timeout_seconds": timeout,
+            "attempt": attempt, "partial_response": response,
+            "partial_reasoning": reasoning, "error": None}
+
+
+def test_the_call_in_flight_has_a_bar_that_grows():
+    """A row with no bar reads as a row where nothing is happening, which is
+    the opposite of what this one means. It spans from when the attempt went
+    out to now, so every refresh draws it a little longer — the only thing on
+    the page that says the call is still going, and for how long."""
+    started = datetime.now(UTC) - timedelta(seconds=30)
+    events = db.run_events(_run(), [], active=_active(started))
+    live = [e for e in events if e["variant"] == "live"]
+
+    assert len(live) == 1
+    assert live[0]["start"] is not None, "a bar needs somewhere to start"
+    # Elapsed, not zero and not the whole run: at least the 30s it has been
+    # waiting, and not wildly more.
+    assert 30_000 <= live[0]["duration_ms"] < 40_000
+    # It is the newest thing that has happened, so it reads last.
+    assert events[-1]["variant"] == "live"
+
+
+def test_the_call_in_flight_says_whether_anything_is_still_coming_back():
+    """The bar grows whether the model is answering or repeating itself, so
+    the bar alone cannot tell a stall from a slow answer. How much has come
+    back can: a count that has stopped moving is a stall."""
+    started = datetime.now(UTC) - timedelta(seconds=5)
+    events = db.run_events(_run(), [], active=_active(
+        started, response='{"reason": "still thin', reasoning="weighing it up",
+        timeout=90.0))
+    kpis = [e for e in events if e["variant"] == "live"][0]["kpis"]
+
+    assert kpis["streamed"] == len('{"reason": "still thin') + len("weighing it up")
+    # And what it is racing, so "30 seconds in" can be judged at all.
+    assert kpis["timeout"] == "90s"
+    # One attempt is the common case and says nothing; it is named only once
+    # there has been more than one.
+    assert kpis["attempt"] is None
+    assert db.run_events(_run(), [], active=_active(
+        started, attempt=2))[-1]["kpis"]["attempt"] == 2
+
+
+def test_a_call_in_flight_is_not_counted_as_a_call_the_run_has_made():
+    """Its tokens are not known and it may yet be retried or fail, so counting
+    it would put a number in the dashboard that the next refresh takes back."""
+    started = datetime.now(UTC) - timedelta(seconds=5)
+    steps = [_step("reply", at=0, ms=2000)]
+    stats = db.assistant_run_stats(steps, run=_run(finished=3))
+
+    assert stats["calls"] == 1
+    events = db.run_events(_run(finished=3), steps, active=_active(started))
+    assert any(e["variant"] == "live" for e in events)
+    assert db.assistant_run_stats(steps, run=_run(finished=3))["calls"] == 1
