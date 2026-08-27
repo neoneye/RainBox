@@ -101,6 +101,14 @@ sits in that gap. The two cases the design turns on both land correctly —
 Danish with English nouns in a Danish window scores 0.38 and skips;
 `translate to english: <Danish>` in an English window scores 0.05 and asks.
 
+In the assembled gate that translate request is in fact caught one step
+earlier, by the name check below: the text contains the token `english`. Both
+routes ask, so the outcome is the same, and the shift test remains the signal
+that catches the same request with its target language unnamed. The tests pin
+the outcome for the literal case and the shift route for an unnamed variant,
+because what must never regress is that such a request asks at all — not which
+of the two signals gets there first.
+
 Comparison is on the base language subtag. `en-US` and `en-GB` are one language
 for the purpose of "has the conversation switched"; choosing between them is the
 classifier's job and reaching it requires an explicit request, which trigger 2
@@ -347,7 +355,8 @@ language.
   alone is removed: `Ewe` for the length minimum, `second` for the round-trip.
 - The four cases the design turns on, as named scenarios: Danish technical
   writing in a Danish window skips; `translate to english: <Danish>` in an
-  English window shifts and asks; `Please answer in Danish from now on.` in an
+  English window asks (by the name check, since it names English; the same
+  request with its target unnamed asks by the shift); `Please answer in Danish from now on.` in an
   English window asks on trigger 2; `ok` in an English window reuses.
 - `_previous_room_classification` round-trips a recorded classification back
   into `_reply_language_markdown`, and returns `None` for a room with no
