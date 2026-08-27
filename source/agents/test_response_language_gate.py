@@ -186,11 +186,11 @@ def test_ordinary_prose_names_no_language():
 
 
 def test_each_filter_rejects_its_own_kind_of_false_match():
-    """One assertion per filter, so a regression says which one broke."""
+    """One assertion per filter, so a regression says which one broke. The two-letter-code filter is load-bearing: EN_PROSE begins "The margin rule is dropped…" and is tested directly in test_ordinary_prose_names_no_language."""
     # Too short: resolves to `thx`, `auq`, `toz`.
     assert names_a_language("the a to") is None
-    # Long enough and resolves, but to an obscure three-letter code.
-    assert names_a_language("Please respond in soc") is None
+    # Long enough and resolves, but to an obscure three-letter code (`mrt`).
+    assert names_a_language("the margin rule is dropped") is None
     # Long enough and a two-letter code (`cs`), but `second` is not among
     # Czech's recorded names -- only the round-trip catches this one.
     assert names_a_language("the second run failed") is None
