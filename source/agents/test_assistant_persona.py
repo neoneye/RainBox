@@ -78,7 +78,7 @@ def test_turn_log_records_the_persona_and_its_revision(ctx):
         resolution = db.resolve_member_persona(room.uuid, ASSISTANT_UUID)
         entries = AssistantAgent._build_turn_log(
             db.user_profile_context_stub() if hasattr(db, "user_profile_context_stub")
-            else _profile_context(), False, False, resolution)
+            else _profile_context(), False, False, resolution, False)
         persona_entry = next(e for e in entries if e["label"] == "persona")
         assert persona_entry["text"] == p["name"]
         assert persona_entry["href"] == f"/persona?id={p['uuid']}"

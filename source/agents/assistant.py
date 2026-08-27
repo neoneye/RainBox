@@ -3725,7 +3725,8 @@ class AssistantAgent(ModelGroupAgent):
                 self._persona = None
             self._persona_block = self._persona.text if self._persona else ""
             self._turn_log = self._build_turn_log(
-                context, formatting_on, calibration_on, self._persona)
+                context, formatting_on, calibration_on, self._persona,
+                self._response_language_gate_enabled())
             # A request too long to travel whole reaches every prompt with its
             # middle dropped, so the description of what was dropped has to
             # exist before the first of them is built — including the
@@ -4382,11 +4383,26 @@ class AssistantAgent(ModelGroupAgent):
             calibration = False
         return formatting, calibration
 
+    def _response_language_gate_enabled(self) -> bool:
+        """Whether the response-language classifier may be skipped this turn.
+
+        Best-effort, and an unreadable switch reads as off — off means the
+        classifier runs, which is the behaviour that was already correct. A
+        settings failure must never start skipping model calls on its own."""
+        try:
+            return bool(db.get_setting("assistant.response_language_gate"))
+        except Exception:
+            logger.warning(
+                "assistant: response-language gate switch read failed",
+                exc_info=True)
+            return False
+
     @staticmethod
     def _build_turn_log(
         context: "user_profile.ProfileContext",
         formatting_enabled: bool, calibration_enabled: bool,
         persona: "db.PersonaResolution | None",
+        response_language_gate_enabled: bool,
     ) -> list[dict[str, Any]]:
         """The operator-facing debug entries recorded on every step row this
         turn: which profile drove the declared blocks (uuid + name + a link
@@ -4418,6 +4434,8 @@ class AssistantAgent(ModelGroupAgent):
                         "text": "on" if formatting_enabled else "off"})
         entries.append({"label": "knowledge_calibration",
                         "text": "on" if calibration_enabled else "off"})
+        entries.append({"label": "response_language_gate",
+                        "text": "on" if response_language_gate_enabled else "off"})
         return entries
 
     def _capture_profile_context(self) -> "user_profile.ProfileContext":
@@ -6027,7 +6045,8 @@ class AssistantAgent(ModelGroupAgent):
         context = self._capture_profile_context()
         formatting_on, calibration_on = self._declared_block_switches()
         self._turn_log = self._build_turn_log(
-            context, formatting_on, calibration_on, self._persona)
+            context, formatting_on, calibration_on, self._persona,
+            self._response_language_gate_enabled())
         self._identity_block, self._formatting_block, self._calibration_block = (
             self._build_declared_profile_blocks(
                 context.profile, formatting_enabled=formatting_on,

@@ -229,6 +229,16 @@ SETTINGS: dict[str, Setting] = {
                     "(evals/profile_gate.py). Independent of the formatting "
                     "switch — the blocks gate separately.",
     ),
+    "assistant.response_language_gate": Setting(
+        "assistant.response_language_gate", None, "bool", False,
+        description="Skip the response-language classifier on a turn whose "
+                    "language has not changed, reusing the room's last "
+                    "classification instead. Default off: on, the classifier's "
+                    "trace row goes from a model call to a sub-second gate "
+                    "decision, so turning it off and on again compares the two "
+                    "directly. A turn that names a language, changes language, "
+                    "or has nothing to reuse still asks.",
+    ),
     "profile.current_changed_at": Setting(
         "profile.current_changed_at", None, "string", None, internal=True,
         description="Event stamp of the last actual profile.current change, "
