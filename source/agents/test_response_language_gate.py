@@ -13,6 +13,7 @@ from agents.response_language_gate import (
     TRIGGER_EMPTY_WINDOW,
     TRIGGER_NAMED_LANGUAGE,
     TRIGGER_NO_PREVIOUS,
+    TRIGGER_PROFILE_CHANGED,
     TRIGGER_REUSE,
     TRIGGER_SHIFT,
     WINDOW_MESSAGES,
@@ -223,9 +224,12 @@ EN_WINDOW = [EN_PROSE, EN_DEBUGGING]
 DA_WINDOW = [DA_PROSE, DA_WITH_ENGLISH_NOUNS]
 
 
-def _decide(window, request, has_previous=True) -> GateDecision:
+def _decide(
+    window, request, has_previous=True, profile_languages_changed=False,
+) -> GateDecision:
     return decide(
-        window_texts=window, request_text=request, has_previous=has_previous)
+        window_texts=window, request_text=request, has_previous=has_previous,
+        profile_languages_changed=profile_languages_changed)
 
 
 def test_an_unchanged_conversation_reuses():
@@ -306,6 +310,23 @@ def test_no_previous_classification_asks():
     d = _decide(EN_WINDOW, EN_PROSE, has_previous=False)
     assert d.should_ask is True
     assert d.trigger == TRIGGER_NO_PREVIOUS
+
+
+def test_a_changed_profile_asks_even_without_a_shift():
+    """The operator changed their declared reply languages on `/profile` and
+    kept writing in the same language: no shift, nothing named -- the caller's
+    profile comparison is the only thing that can see this."""
+    d = _decide(EN_WINDOW, EN_DEBUGGING, profile_languages_changed=True)
+    assert d.should_ask is True
+    assert d.trigger == TRIGGER_PROFILE_CHANGED
+
+
+def test_an_unchanged_profile_still_reuses():
+    """The default: the caller's comparison found nothing new, so the request
+    is judged on the messages exactly as before."""
+    d = _decide(EN_WINDOW, EN_DEBUGGING, profile_languages_changed=False)
+    assert d.should_ask is False
+    assert d.trigger == TRIGGER_REUSE
 
 
 def test_an_empty_window_asks():

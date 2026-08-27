@@ -5372,8 +5372,43 @@ class AssistantAgent(ModelGroupAgent):
                 exc_info=True)
             return None
 
+    @staticmethod
+    def _profile_languages_changed(
+        profile: dict[str, Any] | None,
+        previous: ResponseLanguageClassification | None,
+    ) -> bool:
+        """Has the operator declared a profile language the reused
+        classification does not carry?
+
+        The classifier is instructed to copy every declared profile-language
+        code exactly into its result (see
+        `_build_response_language_classifier_prompt`), so on an unchanged
+        profile every declared code is already among the reused
+        classification's codes. A declared code that is missing means the
+        profile changed since that classification was resolved — the gate has
+        no other way to see a `/profile` edit, since it is not a function of
+        the messages at all.
+
+        The comparison runs one way only: declared minus reused. The other
+        direction — a code in the classification that is not declared — is
+        normal and must not trigger, because the classifier also adds
+        languages the request itself required (a translation target, a
+        comparison of dialects) that were never declared on the profile.
+        """
+        if previous is None:
+            return False
+        declared_codes = {
+            str(candidate["code"])
+            for candidate in user_profile.declared_language_candidates(profile)
+        }
+        reused_codes = {item.code for item in previous.languages}
+        return bool(declared_codes - reused_codes)
+
     def _response_language_gate_decision(
-        self, messages: list[dict[str, Any]], room_uuid: "UUID"
+        self,
+        messages: list[dict[str, Any]],
+        room_uuid: "UUID",
+        profile: dict[str, Any] | None,
     ) -> tuple[
         response_language_gate.GateDecision,
         ResponseLanguageClassification | None,
@@ -5395,6 +5430,10 @@ class AssistantAgent(ModelGroupAgent):
         it is compared against; assistant replies are excluded because they are
         written in whatever language a previous resolution chose, and letting
         them vote would let one wrong resolution justify itself forever.
+
+        `profile` is consulted only here, never inside the gate module: the
+        gate stays a pure function of message text, and the profile
+        comparison is done in this method and passed in as a bool.
         """
         if not self._response_language_gate_enabled():
             return None
@@ -5410,6 +5449,8 @@ class AssistantAgent(ModelGroupAgent):
             window_texts=human_texts[:-1],
             request_text=human_texts[-1],
             has_previous=previous is not None,
+            profile_languages_changed=self._profile_languages_changed(
+                profile, previous),
         )
         return decision, previous
 
@@ -5433,7 +5474,7 @@ class AssistantAgent(ModelGroupAgent):
             gate_started_at = datetime.now(UTC)
             gate_started = time.perf_counter()
             verdict = self._response_language_gate_decision(
-                messages, self._run.room_uuid)
+                messages, self._run.room_uuid, profile)
             gate_ms = int((time.perf_counter() - gate_started) * 1000)
         if verdict is not None:
             decision, previous = verdict

@@ -226,6 +226,7 @@ def names_a_language(text: str) -> tuple[str, str] | None:
 
 TRIGGER_NO_PREVIOUS = "no_previous"
 TRIGGER_NAMED_LANGUAGE = "named_language"
+TRIGGER_PROFILE_CHANGED = "profile_changed"
 TRIGGER_SHIFT = "shift"
 TRIGGER_EMPTY_WINDOW = "empty_window"
 TRIGGER_DETECTOR_ERROR = "detector_error"
@@ -276,6 +277,7 @@ def decide(
     window_texts: Sequence[str],
     request_text: str,
     has_previous: bool,
+    profile_languages_changed: bool,
 ) -> GateDecision:
     """Should the response-language classifier run this turn?
 
@@ -285,6 +287,14 @@ def decide(
     than a hard error, and repairs itself on the next turn: the operator either
     writes in the other language, which is a shift, or names it, which is the
     name check.
+
+    `profile_languages_changed` is the one signal this module cannot compute
+    itself, because it is not a function of the messages: the caller compares
+    the operator's currently declared profile languages against the codes
+    carried by the classification a skip would reuse, and passes only the
+    verdict of that comparison. This keeps the module a pure function of
+    `window_texts` and `request_text` -- it does not need to know what a
+    profile is.
 
     The whole body runs under one broad `except Exception`. This is not
     sloppiness to be narrowed later -- it is the fail-open guarantee itself:
@@ -317,6 +327,18 @@ def decide(
             return GateDecision(
                 should_ask=True,
                 trigger=TRIGGER_NO_PREVIOUS,
+                detector_ms=elapsed(),
+            )
+        if profile_languages_changed:
+            # The one ask-trigger that is not a function of the messages at
+            # all: the operator changed their declared reply languages on
+            # `/profile` without writing anything that looks like a shift or
+            # naming a language, so neither of the checks above can see it.
+            # Checked before the shift test so a profile change is never
+            # masked by a window that still reads as unchanged.
+            return GateDecision(
+                should_ask=True,
+                trigger=TRIGGER_PROFILE_CHANGED,
                 detector_ms=elapsed(),
             )
         request = detect(request_text)
