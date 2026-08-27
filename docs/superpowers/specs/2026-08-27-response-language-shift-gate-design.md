@@ -1,6 +1,7 @@
 # Gating the response-language classifier on a language shift
 
-**Status:** Design approved. Nothing implemented.
+**Status:** Implemented. Ships behind `assistant.response_language_gate`,
+default off.
 **Date:** 2026-08-27
 **Extends:** `source/notes/proposals/2026-08-17-gating-the-response-language-classifier.md`,
 which established that a cheap detector may decide *whether to ask* the
@@ -143,9 +144,10 @@ an instruction naming a language rather than by the language the message was
 written in, and 5 of those 8 were written in English.
 
 So the gate also asks when **the request names a language**. The names and
-endonyms come from CLDR (`langcodes` / `language_data`), matched against the
-request text — never a hand-written table, which would be both a second source
-of truth for the language list and an anglocentric one.
+endonyms come from CLDR, via `language_data.names` (`name_to_code` and
+`code_to_names`), matched against the request text — never a hand-written
+table, which would be both a second source of truth for the language list and
+an anglocentric one.
 
 Matching needs a precision filter, because `name_to_code` over CLDR's full name
 set is far too permissive to point at raw text: measured, `the` resolves to
@@ -180,23 +182,75 @@ same corpus. The cost is that language names of three letters or fewer — Ewe,
 Lao, Twi, Ido — are not recognised by this trigger. A request naming one of them
 is caught only if it also reads as a language shift.
 
+A code longer than two letters needs six letters, not `NAME_MIN_LETTERS`'s four
+(`NAME_LONG_CODE_MIN_LETTERS = 6`). Measured against 875 real operator messages
+above `LETTER_FLOOR`, the four-letter floor alone fired on 104 of them (11.9%),
+and 57 of those (6.5% of all traffic) were false: ordinary English words that
+round-trip into an obscure language's name in some locale rather than being a
+mention of that language — `more` into Mossi (`mos`, 37 occurrences by itself),
+`even` into Even (`eve`), `meta` into `mgo`, `logo` into `log`, `male` into
+`ms`. These are genuine CLDR names, so the round-trip is working as designed;
+the false fires are homographs, not lookup errors. Restoring a flat two-letter
+requirement — the filter an earlier draft removed — would fix them, but at the
+cost of losing `Cherokee`, `Cebuano` and `Hawaiian` again. Raising the floor
+only for codes longer than two letters keeps both: `Cherokee`, `Cebuano` and
+`Hawaiian` are each at least six letters long and still resolve, while `more`,
+`even`, `meta` and `logo` fall under the higher floor and are rejected. On the
+same 875 messages this takes the false-fire rate from 6.5% to 0.8% of traffic;
+the residual false tokens (`lets`, `male`, `persia`, `angle`, `island` — 7
+messages) all resolve to two-letter codes, which the higher floor does not
+touch, and a false fire costs one classifier call, never correctness.
+
+## The trigger neither the shift test nor the name check can see
+
+The classifier's prompt carries the operator's declared `/profile` languages
+(`user_settings_languages_json`), and its result is reconciled against the
+profile's declared variants (`_reconcile_response_language_profile_variants`),
+so a classification is a function of the profile as well as of the messages.
+An operator who edits their declared reply languages on `/profile` and keeps
+writing in the language they always have produces no shift and names nothing —
+both signals the gate already has read the turn as unchanged, yet the
+classification a skip would reuse was resolved against the profile as it stood
+before the edit.
+
+The classifier is instructed to copy every declared profile-language code
+exactly into its result. The gate uses that contract: it compares the
+operator's currently declared codes against the codes the reused
+classification carries, and a declared code missing from that set is the
+signal that the profile moved since the classification was resolved. The
+comparison runs one way only, declared minus reused — a code present in the
+classification that the profile does not declare is normal, since the
+classifier also adds whatever language or dialect the request itself required
+(a translation target, a dialect comparison) that was never declared, and
+extra codes like that must not trigger.
+
+This comparison is not a function of `window_texts` or `request_text`, so it
+stays out of `agents/response_language_gate.py` entirely: the assistant
+computes the boolean (`AssistantAgent._profile_languages_changed`) and passes
+it into `decide()` as `profile_languages_changed`. The gate module never reads
+a profile and is still testable without one; only the assistant's own tests
+exercise the comparison.
+
 ## The rule
 
 Run `response_language_classifier` when **any** of:
 
 1. the room has no previous recorded classification;
 2. the request names a language (CLDR names and endonyms);
-3. the request's confidence in the window's dominant language is below
+3. the operator's declared profile languages include a code the reused
+   classification does not carry;
+4. the request's confidence in the window's dominant language is below
    `SHIFT_FLOOR`;
-4. the window contains no qualifying messages;
-5. the detector raised, or was asked and found no language.
+5. the window contains no qualifying messages;
+6. the detector raised, or was asked and found no language.
 
 Otherwise reuse the previous classification.
 
 A request below `LETTER_FLOOR` is never put to the detector, so it satisfies
-neither 3 nor 5 — being too short to classify is not the same as being
-unclassifiable, and only the second is worth a model call. Triggers 1 and 2
-still apply to it, so `in Danish please` — short and explicit — still asks.
+neither 4 nor 6 — being too short to classify is not the same as being
+unclassifiable, and only the second is worth a model call. Triggers 1, 2 and 3
+still apply to it, so `in Danish please` — short and explicit — still asks,
+and so does a profile-language edit on a turn whose request is just `ok`.
 
 Every uncertainty resolves toward asking. A false ask costs one classifier call:
 latency, never correctness. A false skip reuses the conversation's established
@@ -238,18 +292,22 @@ the assistant:
   `LETTER_FLOOR`, the top language, its base subtag and the full confidence
   distribution. A `Detection` distinguishes its two empty cases: *below floor*
   (nothing was asked of the detector) and *undetected* (the detector was asked
-  and found nothing). Only the second is trigger 5.
+  and found nothing). Only the second is trigger 6.
 - `window_dominant(messages) -> str | None` — the weighted argmax above.
 - `names_a_language(text) -> tuple[str, str] | None` — the CLDR check with its
   two filters; returns the matched name and the code it resolved to, for the
   trace. The code may be two or three letters.
-- `decide(messages, request) -> GateDecision` — a frozen dataclass carrying
-  `should_ask: bool`, `trigger: str` (which of the five fired, or `"reuse"`),
+- `decide(*, window_texts, request_text, has_previous,
+  profile_languages_changed) -> GateDecision` — a frozen dataclass carrying
+  `should_ask: bool`, `trigger: str` (which of the six fired, or `"reuse"`),
   the window dominant and size, `window_share` (the request's confidence in
   that dominant language — the number the shift test compares), the request's
   own top language, its letter count, the matched language name when trigger 2
   fired, and the detector's elapsed milliseconds. It serialises to the `args`
-  block below.
+  block below. `profile_languages_changed` is the one argument that is not
+  derived from `window_texts` or `request_text`; the caller computes it (see
+  "The trigger neither the shift test nor the name check can see" above) so
+  the module stays a pure function of message text.
 
 The module reads no settings: the switch is the assistant's to read, so the gate
 stays a pure function of the messages and is testable without a database.
@@ -263,11 +321,17 @@ the window re-reads the same history every turn: without it a turn spends
 `assistant.response_language_gate` and, when it is on, calls `decide(...)`
 before building the prompt — a skip costs neither the call nor the prompt
 assembly. `_previous_room_classification()` reads the last observed result.
+`_response_language_gate_decision` also calls
+`_profile_languages_changed(profile, previous)`, the comparison described
+above, to build the `profile_languages_changed` argument `decide()` needs;
+the gate module itself never receives or reads `profile`.
 
-`source/requirements.txt`: `lingua-language-detector==2.2.0`, `langcodes`,
-`language_data`. Lingua is already vetted in this repo at that version in
-`source/voice_tts_dotstts/requirements.txt`. `langcodes` pulls `language_data`,
-which carries the CLDR name tables trigger 2 reads.
+`source/requirements.txt`: `lingua-language-detector==2.2.0`, `language_data`.
+Lingua is already vetted in this repo at that version in
+`source/voice_tts_dotstts/requirements.txt`. `language_data` carries the CLDR
+name tables trigger 2 reads directly — nothing here imports `langcodes`, and
+`language_data` does not depend on it, so it is not a requirement of this
+gate.
 
 ## The switch
 
@@ -307,8 +371,20 @@ by its reason. The row carries:
 - no `system_prompt` or `user_prompt`. Nothing was built and nothing was sent;
   recording a prompt that was never used would misreport the turn.
 
-`args` needs no rendering work: the classifier has no bespoke pane, so
-`_generic_action` in `webapp/assistant_components.py` renders it as `arguments`.
+Rendering is dedicated, not generic. The classifier's row is `code_driven`
+and its phase is `observed`, `failed` or `skipped`, so `_step_events` in
+`source/db/assistant_log.py` never emits an `action` event for it — the
+`_generic_action` renderer in `webapp/assistant_components.py` never sees
+this row on either path. On the ask path (`observed` or `failed`) the row is
+a `kind: "llm"` event, and `_llm` renders a "gate decision" block from
+`payload["gate"]` above the prompts, so the trigger that sent an 11s call out
+is visible without opening them. On the skip path the row is a
+`kind: "skipped"` event; `_skipped` tells the two rows that share that phase
+apart by the `gate_replaced_call` marker — without it, nothing ran and
+nothing failed, so it renders only the reason and any error; with it, the
+gate ran in place of the call, and the pane renders the reason, the same
+"gate decision" block, and the reused classification instead of a
+"never made" note.
 
 ### What the switch measures that shadow mode could not
 
@@ -323,11 +399,22 @@ figure, including the shifted cost.
 ### Recovering from a wrong skip
 
 A skip that should have asked replies in the conversation's established
-language. The correction needs no new machinery: the operator's next message
-either is written in the other language, which is a shift, or names the language
-it wants, which is trigger 2. Either way the following turn asks. This is why
-the gate is acceptable without a disagreement corpus — a wrong skip costs one
-turn and repairs itself on the next.
+language. Most of the time the correction needs no new machinery: the
+operator's next message either is written in the other language, which is a
+shift, or names the language it wants, which is trigger 2 — either way the
+following turn asks, which is why the gate is acceptable without a
+disagreement corpus for those paths.
+
+A profile-language edit is different, and is the one wrong-skip path that does
+not repair itself on its own. If the operator changes their declared reply
+languages on `/profile` and then keeps writing in the language they already
+were, there is nothing for the shift test to see and nothing for the name
+check to match — without trigger 3 that skip would recur on every later turn,
+because a stale classification does not become fresher by being reused again.
+Trigger 3 exists specifically to close this path: the moment the reused
+classification's codes stop matching the profile's declared codes, the next
+turn asks, and the recovery claim above holds for every trigger rather than
+for five of six.
 
 `LETTER_FLOOR = 16`, `WINDOW_MESSAGES = 8`, `WEIGHT_CAP = 200` and
 `SHIFT_FLOOR = 0.15` are starting values. `SHIFT_FLOOR` and `WEIGHT_CAP` are
@@ -348,11 +435,20 @@ language.
   Danish with English technical nouns, `ok`, `tak`, a stack trace, a bare URL.
 - `window_dominant` on: a uniform window; a mixed window where weighting decides;
   a window whose only messages are below the floor (empty → trigger 4).
-- `decide` on each of the five triggers, and on the reuse path.
+- `decide` on each of the six triggers, and on the reuse path. The
+  profile-changed trigger is exercised at the gate level by passing
+  `profile_languages_changed=True` directly (the module takes it as a plain
+  bool and does not compute it), and at the assistant level by
+  `_response_language_gate_decision` with a profile whose declared codes the
+  reused classification does not fully carry — plus the same case with an
+  unchanged profile, and one where the classification carries an extra,
+  non-declared language and still reuses.
 - `names_a_language` matches `Danish`, `dansk`, `italiano` and `Deutsch`, and
   languages with no two-letter code (`Cherokee`, `Cebuano`, `Hawaiian`). Each
   filter gets an assertion that isolates it — one that fails if that filter
-  alone is removed: `Ewe` for the length minimum, `second` for the round-trip.
+  alone is removed: `Ewe` for the length minimum, `second` for the round-trip,
+  `more` for `NAME_LONG_CODE_MIN_LETTERS` (it round-trips into Mossi, `mos`,
+  and is the single largest false fire measured on real traffic).
 - The four cases the design turns on, as named scenarios: Danish technical
   writing in a Danish window skips; `translate to english: <Danish>` in an
   English window asks (by the name check, since it names English; the same
