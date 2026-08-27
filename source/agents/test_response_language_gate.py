@@ -193,7 +193,8 @@ def test_each_filter_rejects_its_own_kind_of_false_match():
     minimum rejects it. `second` is 6 letters and resolves to `cs`, but is not
     among Czech's recorded names -- only the round-trip rejects it."""
     # Too short, and would otherwise match: resolves to `ee` and round-trips.
-    assert names_a_language("I want to learn Ewe") is None
+    # No other token here matches, so `Ewe` is the one the length minimum stops.
+    assert names_a_language("Please write your reply using Ewe") is None
     # Long enough and resolves to `cs`, but `second` is not among Czech's
     # recorded names -- only the round-trip catches this one.
     assert names_a_language("the second run failed") is None

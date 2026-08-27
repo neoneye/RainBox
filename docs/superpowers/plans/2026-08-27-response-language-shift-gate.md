@@ -527,8 +527,8 @@ def test_each_filter_rejects_its_own_kind_of_false_match():
     """One assertion per filter, so a regression says which one broke."""
     # Too short: resolves to `thx`, `auq`, `toz`.
     assert names_a_language("the a to") is None
-    # Long enough and resolves, but to an obscure three-letter code.
-    assert names_a_language("Please respond in soc") is None
+    # Long enough and resolves, but to an obscure three-letter code (`mrt`).
+    assert names_a_language("the margin rule is dropped") is None
     # Long enough and a two-letter code (`cs`), but `second` is not among
     # Czech's recorded names -- only the round-trip catches this one.
     assert names_a_language("the second run failed") is None
@@ -556,12 +556,19 @@ def _recorded_names(code: str) -> frozenset[str]:
 def _token_language(token: str) -> str | None:
     """The language `token` names, or None.
 
-    Three filters, because the raw lookup is far too permissive to point at
+    Two filters, because the raw lookup is far too permissive to point at
     prose: measured, `the` resolves to `thx`, `a` to `auq`, `to` to `toz` and
-    `second` to `cs`. Length removes the function words; a two-letter result
-    removes the obscure codes; and the round-trip -- requiring the token to be
-    among that code's own recorded names -- removes `second`, which resolves to
-    Czech but is not one of Czech's names.
+    `second` to `cs`. Length removes the function words; the round-trip --
+    requiring the token to be among that code's own recorded names -- removes
+    the rest, including `second`, which resolves to Czech but is not one of
+    Czech's names, and `margin`, which resolves to `mrt`.
+
+    The code is not restricted to ISO 639-1, so it may be two or three letters:
+    a two-letter requirement adds no precision the round-trip does not already
+    give, and confines the check to the ~180 languages holding such a tag.
+    Names of three letters or fewer fall below the minimum and are not
+    recognised -- at a minimum of three, `the` resolves to `thx` and
+    round-trips.
 
     The round-trip reads the same CLDR data in both directions, so no table of
     ours can drift from it and no language is privileged over another.
@@ -574,7 +581,7 @@ def _token_language(token: str) -> str | None:
         code = name_to_code("language", token, "und")
     except Exception:
         return None
-    if not code or len(code) != 2:
+    if not code:
         return None
     if token.casefold() not in _recorded_names(code):
         return None
