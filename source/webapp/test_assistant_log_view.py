@@ -185,3 +185,65 @@ def test_a_run_whose_rows_carry_no_time_still_renders():
         "decide → response_language_classifier", "response_language_classifier"]
     assert all(e["offset_pct"] is None for e in view["events"])
     assert all(e["clock"] == "—" for e in view["events"])
+
+
+# --- the response-language classifier's two skipped shapes -------------------
+#
+# One `phase == "skipped"` row is a call the loop genuinely could not make (no
+# model group bound) — nothing ran, and it carries no duration. The other is
+# the response-language gate: it ran in place of the model call, cost real
+# time, and reached a verdict — a row with a gate decision in `args`. The two
+# must keep reading as different runs.
+
+
+def test_a_gate_skip_carries_its_decision_and_duration():
+    """The gate's row is the point of the whole feature: the operator has to
+    be able to read what it decided, what it reused, and how long it took —
+    in place of the classifier's model call."""
+    step = _step("response_language_classifier", at=0, ms=420, code_driven=True)
+    step.phase = "skipped"
+    step.reason = ("the conversation's language has not changed; reusing "
+                   "this room's last classification")
+    step.args = {"gate": {"should_ask": False, "trigger": "reuse",
+                          "window_dominant": "da", "window_size": 3,
+                          "window_share": 0.62, "detector_ms": 4}}
+    step.observation_preview = (
+        '{\n "reason": "Danish conversation.",\n "languages": [\n  {\n'
+        '   "code": "da",\n   "score": 5\n  }\n ]\n}')
+    step.system_prompt = None
+    step.user_prompt = None
+
+    view = log_view(_run(1), [step])
+    event = [e for e in view["events"] if e["kind"] == "skipped"][0]
+
+    # The gate's own elapsed time, not a null "nothing ran" duration.
+    assert event["duration_ms"] == 420
+    assert event["seconds"] == "0.4s"
+    # What it decided.
+    assert "reuse" in event["detail_html"]
+    assert "da" in event["detail_html"]
+    assert "0.62" in event["detail_html"]
+    # The language the turn proceeded in.
+    assert "Danish conversation." in event["detail_html"]
+    # The reason it reused rather than asked.
+    assert "has not changed" in event["detail_html"]
+    # This is not the "never made" pane — that note would say the opposite of
+    # what actually happened here.
+    assert "never made" not in event["detail_html"]
+
+
+def test_a_never_made_skip_still_carries_no_duration():
+    """The other shape must not gain a duration or a decision merely because
+    it shares a phase with the gate's row."""
+    step = _step("response_language_classifier", at=0, ms=0, code_driven=True)
+    step.phase = "skipped"
+    step.reason = "no model group is bound"
+    step.duration_ms = None
+
+    view = log_view(_run(1), [step])
+    event = [e for e in view["events"] if e["kind"] == "skipped"][0]
+
+    assert event["duration_ms"] is None
+    assert event["seconds"] == "—"
+    assert "never made" in event["detail_html"]
+    assert "no model group is bound" in event["detail_html"]

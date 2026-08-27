@@ -31,6 +31,16 @@ EN_LONG = (
     "acknowledgements out of the comparison entirely."
 )
 
+# A short window message and a much longer, confidently-Danish request: long
+# enough that its own letter weight would win the window vote outright if it
+# were wrongly counted as part of its own window (see
+# test_the_current_request_is_not_part_of_its_own_window below).
+EN_SHORT = "The migration finished early this morning."
+DA_LONG = (
+    "Kan du lige tjekke om den her classifier stadig kalder LLM en paa "
+    "hver eneste turn, og om svaret bliver gemt korrekt bagefter?"
+)
+
 
 @pytest.fixture
 def app_ctx():
@@ -274,18 +284,24 @@ def test_the_assistant_replies_are_not_in_the_window(room):
 
 def test_the_current_request_is_not_part_of_its_own_window(room):
     """The last human message is the request being judged. Counting it in the
-    window it is compared against makes every turn look unchanged."""
+    window it is compared against makes every turn look unchanged.
+
+    `EN_SHORT` is short but well above the letter floor, and `DA_LONG` is long
+    enough and confidently Danish enough that its own letter weight outvotes
+    `EN_SHORT` outright. So if the request were wrongly folded into its own
+    window — the regression this test exists to catch — the window would
+    resolve to "da" with a high share of itself and the gate would reuse
+    instead of asking: exactly the false-skip the docstring above warns about.
+    Excluding it correctly, the window is `EN_SHORT` alone, dominant "en",
+    against which the Danish request scores near zero and the gate asks.
+    """
     db.set_setting("assistant.response_language_gate", True)
     _record_classification(room.uuid, ResponseLanguageClassification(
         reason="English conversation.",
         languages=[ResponseLanguageItem(code="en-GB", score=5)]))
     messages = [
-        {"sender_type": "human", "text": EN_LONG},
-        # DA_MESSAGES[0] names "dansk" outright, which the gate's cheaper
-        # named-language check would catch on its own — this message instead
-        # relies purely on the detector disagreeing with the window, so the
-        # test isolates the window-exclusion behaviour it is about.
-        {"sender_type": "human", "text": DA_MESSAGES[2]["text"]},
+        {"sender_type": "human", "text": EN_SHORT},
+        {"sender_type": "human", "text": DA_LONG},
     ]
     decision, _ = _agent()._response_language_gate_decision(
         messages, room.uuid)

@@ -3539,10 +3539,10 @@ class AssistantAgent(ModelGroupAgent):
         ) = None
         self._reply_language_markdown: str = ""
         self._response_language_classifier_meta: dict[str, Any] = {}
-        # This turn's gate decision (Task 7), recorded on the classifier's
-        # step row on both the skip and the ask path so a run always says why
-        # the classifier ran or did not. None before the gate has run this
-        # turn, or when the gate does not apply (switch off, no room).
+        # This turn's gate decision, recorded on the classifier's step row on
+        # both the skip and the ask path so a run always says why the
+        # classifier ran or did not. None before the gate has run this turn,
+        # or when the gate does not apply (switch off, no room).
         self._response_language_gate_args: dict[str, Any] | None = None
         # The description of an over-long request: the parsed object and the
         # Markdown projection the prompts carry ("" = no section, which is also
@@ -5421,9 +5421,12 @@ class AssistantAgent(ModelGroupAgent):
         # previous resolution from.
         self._response_language_gate_args = None
         verdict = None
+        gate_ms = None
         if self._run is not None:
+            gate_started = time.perf_counter()
             verdict = self._response_language_gate_decision(
                 messages, self._run.room_uuid)
+            gate_ms = int((time.perf_counter() - gate_started) * 1000)
         if verdict is not None:
             decision, previous = verdict
             self._response_language_gate_args = {"gate": decision.as_args()}
@@ -5435,8 +5438,13 @@ class AssistantAgent(ModelGroupAgent):
                 self._response_language_classification = previous
                 self._reply_language_markdown = (
                     self._format_reply_language_markdown(previous))
+                # The row's duration is the whole helper — the settings read
+                # and the previous-classification query alongside `decide()`
+                # itself — so it honestly represents what replaced the model
+                # call. `decision.detector_ms`, `decide()`'s own share, stays
+                # on the row inside `as_args()` above.
                 self._response_language_classifier_meta = {
-                    "duration_ms": decision.detector_ms,
+                    "duration_ms": gate_ms,
                 }
                 self._record_response_language_classifier_step(
                     step_index=step_index,

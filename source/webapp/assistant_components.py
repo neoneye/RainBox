@@ -665,15 +665,34 @@ def _activity(event: dict) -> list[dict]:
 
 
 def _skipped(event: dict) -> list[dict]:
-    """A call that was never made.
+    """A call that was never made, or the response-language gate that ran in
+    its place.
 
-    Not a failure and not a success: nothing ran. A pane that looked like
-    either would say something untrue about the run.
+    Two different rows share this pane. Most carry neither `gate` nor a
+    duration: a call the loop genuinely could not make, because no model
+    group was bound — nothing ran, and nothing failed. A row that carries a
+    `gate` decision is the other kind: the gate DID run, spent real time, and
+    reached a verdict — reusing the room's last classification rather than
+    asking the model again. That row gets the decision and the language it
+    reused instead of the "never made" note, because saying nothing ran would
+    be untrue.
     """
     payload = event.get("payload") or {}
-    return [_note("This call was never made — nothing ran, and nothing "
-                  "failed.")] + _blocks(
+    gate = payload.get("gate")
+    if gate is None:
+        return [_note("This call was never made — nothing ran, and nothing "
+                      "failed.")] + _blocks(
+            _block("reason", payload.get("reason")),
+            _block("error", payload.get("error")),
+        )
+    return [_note(
+        "The gate ran in place of this call and decided the conversation's "
+        "language had not changed — the classification below is reused, not "
+        "freshly answered."
+    )] + _blocks(
         _block("reason", payload.get("reason")),
+        _block("gate decision", gate),
+        _block("reused classification", payload.get("observation_preview")),
         _block("error", payload.get("error")),
     )
 

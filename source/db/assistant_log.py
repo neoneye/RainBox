@@ -535,16 +535,35 @@ def _step_events(step) -> list[dict]:
                      "args": getattr(step, "args", None) or {}}))
         return events
     if step.phase == "skipped":
-        # A call the loop could not make. It cost nothing, so it carries no
-        # duration and draws no bar — but a run where a call was skipped and
-        # one where it was never scheduled are different runs, and without a
-        # row the stream cannot tell them apart.
+        # Two different rows share this phase. A row with a gate decision in
+        # `args` is the response-language gate: it ran in place of the
+        # classifier's model call, reached a verdict, and cost real time — so
+        # it carries that duration and the decision alongside what it reused.
+        # A row with none is a call the loop genuinely could not make (no
+        # model group bound); it cost nothing, so it carries no duration and
+        # draws no bar — but a run where a call was skipped and one where it
+        # was never scheduled are different runs, and without a row the
+        # stream cannot tell them apart.
+        args = getattr(step, "args", None) or {}
+        gate = args.get("gate") if isinstance(args, dict) else None
+        if gate is None:
+            events.append(_event(
+                "skipped", step.action or "skipped",
+                start=step_started_at(step) or getattr(step, "created_at", None),
+                duration_ms=None, anchor=str(step.uuid), uuid=str(step.uuid),
+                payload={"reason": getattr(step, "reason", None),
+                         "error": getattr(step, "error", None)}))
+            return events
         events.append(_event(
             "skipped", step.action or "skipped",
             start=step_started_at(step) or getattr(step, "created_at", None),
-            duration_ms=None, anchor=str(step.uuid), uuid=str(step.uuid),
+            duration_ms=step.duration_ms, anchor=str(step.uuid),
+            uuid=str(step.uuid),
             payload={"reason": getattr(step, "reason", None),
-                     "error": getattr(step, "error", None)}))
+                     "error": getattr(step, "error", None),
+                     "gate": gate,
+                     "observation_preview": getattr(
+                         step, "observation_preview", None)}))
         return events
 
     # The attempts thrown away came first, so they enumerate first.
