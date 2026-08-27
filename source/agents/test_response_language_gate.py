@@ -342,3 +342,37 @@ def test_the_decision_serialises_the_number_it_was_tuned_on():
     assert args["request_top"] == "en"
     assert args["named_language"] is None
     assert isinstance(args["detector_ms"], int)
+
+
+def test_detector_asked_and_found_nothing():
+    """When the detector is asked (text meets LETTER_FLOOR) but returns no
+    language, the gate asks the classifier with a shift trigger and zero share.
+
+    Uses Old Italic script (𐌀𐌁𐌂𐌃𐌄𐌅𐌆𐌇𐌈𐌉𐌊𐌋𐌌𐌍𐌎𐌏) which the lingua
+    detector cannot classify, producing Detection.undetected=True.
+    """
+    # This text has 16 letters but lingua cannot classify it as any language.
+    undetectable = "𐌀𐌁𐌂𐌃𐌄𐌅𐌆𐌇𐌈𐌉𐌊𐌋𐌌𐌍𐌎𐌏"
+    d = _decide(EN_WINDOW, undetectable)
+    assert d.should_ask is True
+    assert d.trigger == TRIGGER_SHIFT
+    assert d.window_dominant == "en"
+    assert d.window_share == 0.0
+    assert d.request_letters == 16
+
+
+def test_the_canonical_translate_request_asks():
+    """The case cited in the module docstring: 'translate to english: <text>'
+    with non-English source text. The request must always ask the classifier,
+    whether through the name check (if `english` is found) or the shift test
+    (if the source language is detected).
+
+    This test is pinned on the outcome (should_ask=True), not the route: the
+    name check currently catches this text first (token `english`), triggering
+    via TRIGGER_NAMED_LANGUAGE rather than TRIGGER_SHIFT, but both are correct.
+    A future simplification might remove the name check or change this request
+    to avoid naming the target language -- the invariant that matters is that
+    asking never regresses.
+    """
+    d = _decide(EN_WINDOW, DA_TRANSLATE_REQUEST, has_previous=True)
+    assert d.should_ask is True
