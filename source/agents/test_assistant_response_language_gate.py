@@ -152,11 +152,55 @@ def test_the_most_recent_observed_classification_wins(room):
 
 def test_a_skipped_or_failed_row_is_not_a_previous_classification(room):
     """A row with no result is not a resolution. Reusing one would reply in
-    whatever language a failed call happened to leave behind."""
+    whatever language a failed call happened to leave behind.
+
+    This test covers both `failed` and `skipped` phases: a later task will make
+    the gate write real `skipped` rows that carry a valid, parseable classification
+    in `observation_preview`. The `phase == "observed"` filter is what rejects them,
+    not unparseable content."""
+    # Test the `failed` phase
     _record_classification(
         room.uuid,
         ResponseLanguageClassification(
-            reason="never ran",
+            reason="failed call",
             languages=[ResponseLanguageItem(code="en-GB", score=5)]),
         phase="failed")
+    assert _agent()._previous_room_classification(room.uuid) is None
+
+    # Clear the row for the next phase test
+    db.db.session.query(db.AssistantStep).delete()
+    db.db.session.query(db.AssistantRun).delete()
+    db.db.session.commit()
+
+    # Test the `skipped` phase with valid, parseable classification:
+    # This proves the row is rejected on its phase, not on unparseable content.
+    _record_classification(
+        room.uuid,
+        ResponseLanguageClassification(
+            reason="skipped, reusing previous",
+            languages=[ResponseLanguageItem(code="da", score=5)]),
+        phase="skipped")
+    assert _agent()._previous_room_classification(room.uuid) is None
+
+
+def test_an_unparseable_row_is_treated_as_absent(room):
+    """A row with invalid JSON in observation_preview is treated as absent.
+
+    The `_previous_room_classification` method catches parse failures and returns
+    None. This test exercises that path by writing an `observed` row whose
+    `observation_preview` is not valid JSON — the only thing under test is the
+    unparseable payload."""
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=ASSISTANT_UUID)
+    db.append_assistant_step(
+        run_uuid=run.uuid,
+        step_index=0,
+        phase="observed",
+        action="response_language_classifier",
+        reason="not JSON",
+        observation_preview="this is not valid JSON",
+        code_driven=True,
+    )
+    db.db.session.commit()
+
     assert _agent()._previous_room_classification(room.uuid) is None
