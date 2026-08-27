@@ -30,7 +30,7 @@ Read it before Task 1 — it carries the measurements the thresholds come from.
 - Run everything from `source/` with that directory's venv:
   `cd source && ./venv/bin/python -m pytest ...`.
 - Thresholds are module constants, never inline literals:
-  `LETTER_FLOOR = 16`, `WINDOW_MESSAGES = 8`, `WEIGHT_CAP = 400`,
+  `LETTER_FLOOR = 16`, `WINDOW_MESSAGES = 8`, `WEIGHT_CAP = 200`,
   `SHIFT_FLOOR = 0.15`, `NAME_MIN_LETTERS = 4`.
 - Language codes compare on the base subtag only (`en`, not `en-US`).
 - No hardcoded language tables anywhere. Language names come from CLDR through
@@ -237,8 +237,10 @@ logger = logging.getLogger(__name__)
 LETTER_FLOOR = 16
 #: How many qualifying operator messages define "the conversation's language".
 WINDOW_MESSAGES = 8
-#: Per-message weight ceiling, so one long paste cannot define the window.
-WEIGHT_CAP = 400
+#: Per-message weight ceiling. It bounds a long message's influence rather
+#: than neutralising it: measured, a saturated window outvotes a single
+#: 3560-letter paste at 200 but not at 400.
+WEIGHT_CAP = 200
 #: The request must carry at least this share of the window's language.
 #: Measured, same-language requests score 0.23-1.00 and different-language
 #: requests 0.00-0.05; this sits in that gap.
@@ -394,11 +396,14 @@ def test_the_window_keeps_only_the_most_recent_messages():
 
 
 def test_a_long_message_cannot_single_handedly_define_the_window():
-    """Weight is capped, so one long paste counts as a long message rather
-    than as the whole conversation."""
+    """Weight is capped, so one long paste counts as several messages rather
+    than as the whole conversation: a full window outvotes it."""
     long_english = EN_PROSE * 40
-    dominant, _ = window_dominant([long_english, DA_PROSE, DA_PROSE, DA_PROSE])
+    danish = ([DA_PROSE, DA_WITH_ENGLISH_NOUNS] * WINDOW_MESSAGES)[
+        :WINDOW_MESSAGES - 1]
+    dominant, size = window_dominant([long_english, *danish])
     assert dominant == "da"
+    assert size == WINDOW_MESSAGES
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**

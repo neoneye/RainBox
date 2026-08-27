@@ -57,7 +57,14 @@ The floor keeps them out of the window and, as the current request, out of the
 shift test entirely.
 
 Each qualifying message contributes `min(letter_count, WEIGHT_CAP)` weight, so
-one long paste cannot define the window on its own.
+one long paste cannot define the window on its own. The cap bounds a long
+message's influence rather than neutralising it, and `WEIGHT_CAP = 200` is
+where that bound becomes real: measured against a 3560-letter English paste
+(p(en) 1.00, so 200 after capping), a saturated eight-message Danish window
+scores 243 and outvotes it, while three short Danish messages score 96 and do
+not — which is correct, because 3560 letters of English is more language
+evidence than three short sentences. Above ~280 the cap fails its own purpose:
+at 400 the single paste outvotes even a full window.
 
 ### The shift test
 
@@ -302,10 +309,10 @@ it wants, which is trigger 2. Either way the following turn asks. This is why
 the gate is acceptable without a disagreement corpus — a wrong skip costs one
 turn and repairs itself on the next.
 
-`LETTER_FLOOR = 16`, `WINDOW_MESSAGES = 8`, `WEIGHT_CAP = 400` and
-`SHIFT_FLOOR = 0.15` are starting values. `SHIFT_FLOOR` is placed in a measured
-gap; the other three are judgement, and all four are tuned against runs where
-the switch was on rather than fixed here.
+`LETTER_FLOOR = 16`, `WINDOW_MESSAGES = 8`, `WEIGHT_CAP = 200` and
+`SHIFT_FLOOR = 0.15` are starting values. `SHIFT_FLOOR` and `WEIGHT_CAP` are
+each placed against a measured crossover; the other two are judgement, and all
+four are tuned against runs where the switch was on rather than fixed here.
 
 ## Failure handling
 
