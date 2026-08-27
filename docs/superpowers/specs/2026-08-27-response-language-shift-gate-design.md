@@ -132,6 +132,27 @@ endonyms come from CLDR (`langcodes` / `language_data`), matched against the
 request text — never a hand-written table, which would be both a second source
 of truth for the language list and an anglocentric one.
 
+Matching needs a precision filter, because `name_to_code` over CLDR's full name
+set is far too permissive to point at raw text: measured, `the` resolves to
+`thx`, `a` to `auq`, `to` to `toz` and `second` to `cs`. Scanning every token
+unfiltered fires trigger 2 on nearly every English sentence, and a gate that
+always asks is the status quo with extra steps. Three filters, all data-driven:
+
+1. tokens shorter than `NAME_MIN_LETTERS = 4` are skipped, which removes the
+   function-word matches;
+2. the resolved code must be a two-letter ISO 639-1 tag, which removes the
+   obscure three-letter matches;
+3. **the token must round-trip** — it must appear in `code_to_names(code)`, the
+   set of that code's recorded names. `second` resolves to `cs` but is not among
+   Czech's names, so it is rejected.
+
+The round-trip runs the same CLDR data in both directions, so the filter adds no
+table of its own and stays language-agnostic. Measured over sixteen cases —
+English, Danish, Italian and German requests naming a language, against
+technical English and Danish prose, a stack trace and an acknowledgement — it
+separates them without error, matching `Danish`, `dansk`, `italiano` and
+`Deutsch` while rejecting every non-naming request.
+
 ## The rule
 
 Run `response_language_classifier` when **any** of:
@@ -190,8 +211,9 @@ the assistant:
   (nothing was asked of the detector) and *undetected* (the detector was asked
   and found nothing). Only the second is trigger 5.
 - `window_dominant(messages) -> str | None` — the weighted argmax above.
-- `names_a_language(text) -> str | None` — the CLDR check; returns the matched
-  name for the trace.
+- `names_a_language(text) -> tuple[str, str] | None` — the CLDR check with its
+  three filters; returns the matched name and the code it resolved to, for the
+  trace.
 - `decide(messages, request) -> GateDecision` — a frozen dataclass carrying
   `should_ask: bool`, `trigger: str` (which of the five fired, or `"reuse"`),
   the window dominant and size, `window_share` (the request's confidence in
@@ -213,10 +235,10 @@ the window re-reads the same history every turn: without it a turn spends
 before building the prompt — a skip costs neither the call nor the prompt
 assembly. `_previous_room_classification()` reads the last observed result.
 
-`source/requirements.txt`: `lingua-language-detector`, `langcodes`,
-`language_data`. Lingua is already vetted in this repo at 2.2.0 in
-`source/voice_tts_dotstts/requirements.txt`; the main venv pins the same
-version.
+`source/requirements.txt`: `lingua-language-detector==2.2.0`, `langcodes`,
+`language_data`. Lingua is already vetted in this repo at that version in
+`source/voice_tts_dotstts/requirements.txt`. `langcodes` pulls `language_data`,
+which carries the CLDR name tables trigger 2 reads.
 
 ## The switch
 
@@ -298,6 +320,9 @@ language.
 - `window_dominant` on: a uniform window; a mixed window where weighting decides;
   a window whose only messages are below the floor (empty → trigger 4).
 - `decide` on each of the five triggers, and on the reuse path.
+- `names_a_language` matches `Danish`, `dansk`, `italiano` and `Deutsch`, and
+  rejects `the`, `a`, `to` and `second` — one assertion per filter, so a
+  regression names which filter broke.
 - The four cases the design turns on, as named scenarios: Danish technical
   writing in a Danish window skips; `translate to english: <Danish>` in an
   English window shifts and asks; `Please answer in Danish from now on.` in an
