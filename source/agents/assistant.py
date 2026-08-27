@@ -5315,6 +5315,50 @@ class AssistantAgent(ModelGroupAgent):
         })
         return classification
 
+    def _previous_room_classification(
+        self, room_uuid: UUID
+    ) -> ResponseLanguageClassification | None:
+        """The last language this room resolved, read back from the trace.
+
+        This is what a skipped turn reuses. It is a read rather than stored
+        state on purpose: the resolved language is already recorded on the
+        classifier's step row, and a second copy would be a second source of
+        truth for the same fact.
+
+        Only an `observed` row counts. A skipped or failed classifier produced
+        no resolution, and reusing one would reply in whatever language a
+        broken call happened to leave behind. A row that cannot be parsed back
+        into the schema is treated as absent, which asks.
+        """
+        try:
+            row = (
+                db.db.session.query(db.AssistantStep)
+                .join(db.AssistantRun,
+                      db.AssistantStep.run_uuid == db.AssistantRun.uuid)
+                .filter(db.AssistantRun.room_uuid == room_uuid)
+                .filter(db.AssistantStep.action
+                        == self.RESPONSE_LANGUAGE_CLASSIFIER_ACTION)
+                .filter(db.AssistantStep.phase == "observed")
+                .filter(db.AssistantStep.observation_preview.isnot(None))
+                .order_by(db.AssistantStep.id.desc())
+                .first()
+            )
+        except Exception:
+            logger.warning(
+                "assistant: previous response-language read failed",
+                exc_info=True)
+            return None
+        if row is None:
+            return None
+        try:
+            return ResponseLanguageClassification.model_validate_json(
+                row.observation_preview)
+        except Exception:
+            logger.warning(
+                "assistant: previous response-language row did not parse",
+                exc_info=True)
+            return None
+
     def _run_response_language_classifier(
         self,
         *,
