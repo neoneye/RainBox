@@ -146,7 +146,8 @@ the letter floor supply the stability restriction was buying.
 The cost is memory: `from_all_languages()` loads models for ~75 languages.
 Lingua loads them lazily by default, so the working set is the languages
 actually seen. **Implementation must measure resident memory and first-call
-latency in shadow mode.** If the cost is unacceptable, the fallback is the
+latency before the switch is offered.** If the cost is unacceptable, the
+fallback is the
 parent's shape — restrict to `languages.rows` and reinstate the margin rule as
 the force-fit mitigation — not an unmitigated restricted detector.
 
@@ -165,52 +166,95 @@ the assistant:
   name for the trace.
 - `decide(messages, request) -> GateDecision` — a frozen dataclass carrying
   `should_ask: bool`, `trigger: str` (which of the five fired, or `"reuse"`),
-  the window dominant, the request's top language and confidence, the window
-  size, and the detector's elapsed milliseconds.
+  the window dominant and size, the request's top language, confidence and
+  letter count, the matched language name when trigger 2 fired, and the
+  detector's elapsed milliseconds. It serialises to the `args` block below.
+
+The module reads no settings: the switch is the assistant's to read, so the gate
+stays a pure function of the messages and is testable without a database.
 
 The detector instance is built once per process and reused; construction is not
 on the turn's path.
 
-`source/agents/assistant.py`: `_run_response_language_classifier` calls
-`decide(...)` before building the prompt, and `_previous_room_classification()`
-reads the last observed result.
+`source/agents/assistant.py`: `_run_response_language_classifier` reads
+`assistant.response_language_gate` and, when it is on, calls `decide(...)`
+before building the prompt — a skip costs neither the call nor the prompt
+assembly. `_previous_room_classification()` reads the last observed result.
 
 `source/requirements.txt`: `lingua-language-detector`, `langcodes`,
 `language_data`. Lingua is already vetted in this repo at 2.2.0 in
 `source/voice_tts_dotstts/requirements.txt`; the main venv pins the same
 version.
 
-## Shadow mode
+## The switch
 
-The gate ships computing its decision and acting on nothing. The classifier runs
-every turn as it does today. The decision is written to the classifier step
-row's `args` — a JSON column the trace already persists, and which
-`_generic_action` in `webapp/assistant_components.py` renders as `arguments`
-for any action without a bespoke pane, as this one is — as:
+The gate ships behind `assistant.response_language_gate` — a bool in the
+`db/settings.py` registry, **default off**, read per turn through the same
+best-effort path as `assistant.formatting_guide` and
+`assistant.knowledge_calibration`. An unreadable switch reads as off, which
+means the classifier runs: the fail-safe direction.
 
-    {"gate": {"should_ask": bool, "trigger": str, "window_dominant": str|null,
-              "window_size": int, "request_top": str|null,
-              "request_confidence": float|null, "named_language": str|null,
-              "detector_ms": int, "agreed": bool|null}}
+Off, the turn behaves exactly as it does today. On, the gate decides, and the
+difference is legible in the run trace the operator already reads.
 
-`agreed` compares a would-be skip against what the classifier actually resolved:
-`true` when the classifier's top base language matches the previous
-classification's, `false` when the gate would have skipped and the classifier
-resolved something else, `null` when the gate would have asked. The set of
-`false` rows is the evidence that decides whether to enable — each one is a turn
-that would have replied in the wrong language.
+The switch state joins the formatting and calibration switches in
+`_build_turn_log`, so it appears on every step row this turn. That log exists
+for "the first questions when troubleshooting a weird reply", and a reply in the
+wrong language is precisely that question.
 
-Enabling is a separate decision on separate evidence: a skip rate worth having,
-and a disagreement set that is empty or explained. Thresholds are chosen from
-shadow data. `LETTER_FLOOR = 16`, `WINDOW_MESSAGES = 8` and `WEIGHT_CAP = 400`
-are starting values for collecting that data, not an operating point.
+### What a skipped turn records
+
+A skip still writes a `response_language_classifier` step row — `phase`
+`"skipped"`, as the unbound-model path already does, and distinguished from it
+by its reason. The row carries:
+
+- `duration_ms`: the gate's own elapsed time, not a model call's. This is the
+  measurement. The action goes from 9–18s rows to sub-second rows, in place, in
+  every run, with the reason attached.
+- `args`: the gate decision, `{"gate": {"should_ask": false, "trigger":
+  "reuse", "window_dominant": str, "window_size": int, "request_top": str|null,
+  "request_confidence": float|null, "request_letters": int,
+  "named_language": str|null, "detector_ms": int}}`. The same block is recorded on
+  the ask path with the trigger that fired, so a run always says why the
+  classifier ran or did not.
+- `observation_preview`: the reused classification, serialised as the observed
+  path serialises a fresh one — the row states which language the turn actually
+  proceeded in, not merely that it declined to ask.
+- no `system_prompt` or `user_prompt`. Nothing was built and nothing was sent;
+  recording a prompt that was never used would misreport the turn.
+
+`args` needs no rendering work: the classifier has no bespoke pane, so
+`_generic_action` in `webapp/assistant_components.py` renders it as `arguments`.
+
+### What the switch measures that shadow mode could not
+
+The classifier is the turn's first model call, and its prompt warms the shared
+prefix the later calls reuse. Skipping it moves that warming onto whichever call
+now runs first, so the saving is the classifier's wall-clock **minus** the cost
+that shifts. Shadow mode cannot see this at all — with the classifier still
+running, the prefix is still warmed, and the projected saving would have been
+the full 11.4s. Toggling the switch across comparable runs measures the real
+figure, including the shifted cost.
+
+### Recovering from a wrong skip
+
+A skip that should have asked replies in the conversation's established
+language. The correction needs no new machinery: the operator's next message
+either is written in the other language, which is a shift, or names the language
+it wants, which is trigger 2. Either way the following turn asks. This is why
+the gate is acceptable without a disagreement corpus — a wrong skip costs one
+turn and repairs itself on the next.
+
+`LETTER_FLOOR = 16`, `WINDOW_MESSAGES = 8` and `WEIGHT_CAP = 400` are starting
+values, tuned against runs where the switch was on rather than fixed here.
 
 ## Failure handling
 
 The gate is wrapped so that any exception — import failure, detector error,
-malformed trace row — logs and falls through to running the classifier. A gate
-that cannot decide has decided to ask. In shadow mode a failure additionally
-records `{"gate": {"error": "..."}}` and changes nothing else about the turn.
+malformed trace row — logs, records `{"gate": {"error": "..."}}` in `args`, and
+falls through to running the classifier. A gate that cannot decide has decided
+to ask, so a broken gate degrades to today's behaviour rather than to a wrong
+language.
 
 ## Testing
 
@@ -226,7 +270,11 @@ records `{"gate": {"error": "..."}}` and changes nothing else about the turn.
 - `_previous_room_classification` round-trips a recorded classification back
   into `_reply_language_markdown`, and returns `None` for a room with no
   observed classifier row.
-- A raising detector runs the classifier and records the error.
+- A raising detector runs the classifier and records the error in `args`.
+- The switch off runs the classifier regardless of what the gate would decide;
+  an unreadable switch reads as off.
+- A skipped row carries the reused classification, the gate decision, a
+  gate-scale `duration_ms`, and no prompts.
 - Fixtures use whichever languages the case is about. Danish and English appear
   because they are the measured hard case, not because they are configured
   anywhere in shipped code.
@@ -239,9 +287,10 @@ The parent measured the same call at 3.9s on a small model. Binding it on
 `/agentmodel` is configuration with no code, it is worth more than this gate,
 and the two are independent — but a gate skipping an 11.4s call and a gate
 skipping a 3.9s call are different propositions, so the binding should land
-first and the shadow data should be read against the bound number.
+first and the switch should be judged against the bound number.
 
-**Enabling the gate.** Shadow data first.
+**Turning the switch on.** The switch ships default off. Enabling it is the
+operator's decision, taken from runs rather than from this document.
 
 **Durable per-conversation language state.** The parent required it. Reading the
 last classification from the trace removes the need, and adding state that
