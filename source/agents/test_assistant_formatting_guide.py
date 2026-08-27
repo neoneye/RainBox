@@ -265,11 +265,13 @@ def test_steps_record_the_debug_log(room):
         assert by_label["persona"]["text"] == "(none)"
         assert by_label["formatting_guide"]["text"] == "on"
         assert by_label["knowledge_calibration"]["text"] == "on"
+        # The gate switch is off in this room, so the classifier ran.
+        assert by_label["response_language_gate"]["text"] == "off"
         entry_labels = list(by_label)
     # No acceptance_criteria entry: the log reports the switches a turn read,
     # and the criteria no longer have one — they run on every turn.
     assert entry_labels == ["profile", "persona", "formatting_guide",
-                            "knowledge_calibration"]
+                            "knowledge_calibration", "response_language_gate"]
     # Debug context never leaks into the prompt.
     assert "formatting_guide\": " not in captured["user_prompt"]
     assert '"profile"' not in captured["user_prompt"]

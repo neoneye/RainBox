@@ -26,6 +26,26 @@ def app_ctx():
     ctx.pop()
 
 
+@pytest.fixture(autouse=True)
+def _restore_gate_setting(app_ctx):
+    """set_setting commits, so a test in this file that flips the gate
+    changes it for every later test in the session and for the next run of
+    the suite. Capture the row before each test and put it back after,
+    regardless of what the test sets it to or how it fails."""
+    row = db.db.session.query(db.AppSetting).filter_by(
+        key="assistant.response_language_gate").one_or_none()
+    saved = row.value if row is not None else None
+    try:
+        yield
+    finally:
+        db.db.session.rollback()
+        row = db.db.session.query(db.AppSetting).filter_by(
+            key="assistant.response_language_gate").one_or_none()
+        if row is not None:
+            row.value = saved
+        db.db.session.commit()
+
+
 def _agent() -> AssistantAgent:
     return AssistantAgent(
         agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
