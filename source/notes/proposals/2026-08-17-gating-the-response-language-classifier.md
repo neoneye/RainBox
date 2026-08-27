@@ -1,6 +1,8 @@
 # Gating the response-language classifier with cheap detection
 
-**Status:** Proposed. Nothing implemented.
+**Status:** Shipped behind a default-off switch
+(`assistant.response_language_gate`). The shape it took is documented in
+`docs/superpowers/specs/2026-08-27-response-language-shift-gate-design.md`.
 **Date:** 2026-08-17
 **Extends:** `2026-07-24-operator-locale-and-language.md` — that proposal decides
 *which* language the reply uses and is not reopened here. This one decides *when
