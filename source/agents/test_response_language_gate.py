@@ -109,3 +109,47 @@ def test_below_floor_and_undetected_are_different_answers():
     unclassifiable = detect("1234567890 !!!!!!!!!! ---------- @@@@@@@@@@")
     assert unclassifiable.below_floor is True
     assert unclassifiable.letters == 0
+
+
+from agents.response_language_gate import WINDOW_MESSAGES, window_dominant
+
+
+def test_window_dominant_reads_a_uniform_conversation():
+    dominant, size = window_dominant([EN_PROSE, EN_DEBUGGING])
+    assert dominant == "en"
+    assert size == 2
+
+
+def test_short_messages_do_not_enter_the_window():
+    """An acknowledgement between two real messages neither counts nor votes."""
+    dominant, size = window_dominant([DA_PROSE, "ok", DA_WITH_ENGLISH_NOUNS])
+    assert dominant == "da"
+    assert size == 2
+
+
+def test_a_window_of_only_short_messages_is_empty():
+    """Empty is a distinct answer, not a language. The caller asks the
+    classifier rather than guessing from nothing."""
+    dominant, size = window_dominant(["ok", "tak", "ja"])
+    assert dominant is None
+    assert size == 0
+
+
+def test_the_window_keeps_only_the_most_recent_messages():
+    """A language the operator left behind long ago must not outvote the one
+    they are using now."""
+    texts = [DA_PROSE] * 20 + [EN_PROSE] * WINDOW_MESSAGES
+    dominant, size = window_dominant(texts)
+    assert dominant == "en"
+    assert size == WINDOW_MESSAGES
+
+
+def test_a_long_message_cannot_single_handedly_define_the_window():
+    """Weight is capped, so one long paste counts as several messages rather
+    than as the whole conversation: a full window outvotes it."""
+    long_english = EN_PROSE * 40
+    danish = ([DA_PROSE, DA_WITH_ENGLISH_NOUNS] * WINDOW_MESSAGES)[
+        :WINDOW_MESSAGES - 1]
+    dominant, size = window_dominant([long_english, *danish])
+    assert dominant == "da"
+    assert size == WINDOW_MESSAGES

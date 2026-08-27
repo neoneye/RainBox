@@ -20,6 +20,7 @@ import logging
 import re
 import unicodedata
 from dataclasses import dataclass, field
+from typing import Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +30,11 @@ logger = logging.getLogger(__name__)
 LETTER_FLOOR = 16
 #: How many qualifying operator messages define "the conversation's language".
 WINDOW_MESSAGES = 8
-#: Per-message weight ceiling, so one long paste cannot define the window.
-WEIGHT_CAP = 400
+#: Per-message weight ceiling: a long message counts as several short ones,
+#: never as the whole conversation. At this value a saturated window of
+#: WINDOW_MESSAGES messages outweighs any single message, so one message is
+#: at most a WINDOW_MESSAGES'th of a saturated window.
+WEIGHT_CAP = 200
 #: The request must carry at least this share of the window's language.
 #: Measured, same-language requests score 0.23-1.00 and different-language
 #: requests 0.00-0.05; this sits in that gap.
@@ -118,3 +122,41 @@ def _detect_cached(text: str) -> Detection:
 def detect(text: str) -> Detection:
     """Language shares for one message, keyed by base subtag."""
     return _detect_cached(text or "")
+
+
+def window_dominant(texts: Sequence[str]) -> tuple[str | None, int]:
+    """The language the recent conversation has been running in.
+
+    `texts` are the operator's messages, oldest first; the most recent
+    WINDOW_MESSAGES qualifying ones are taken. Each contributes its whole
+    confidence distribution rather than only its winning label, so a message
+    split between two languages votes for both in proportion -- which is what
+    keeps a Danish conversation reading as Danish when individual messages
+    tip towards Norwegian.
+
+    Weight is the letter count capped at WEIGHT_CAP: a long message says more
+    about the conversation's language than a short one, but a pasted document
+    counts as several messages rather than as the whole conversation -- a
+    full window of ordinary messages still outweighs it.
+
+    Returns (dominant base subtag, qualifying message count). A count of zero
+    means the window said nothing -- distinct from a window that chose a
+    language.
+    """
+    window: list[Detection] = []
+    for text in reversed(list(texts)):
+        detection = detect(text)
+        if detection.below_floor or detection.undetected:
+            continue
+        window.append(detection)
+        if len(window) >= WINDOW_MESSAGES:
+            break
+    if not window:
+        return None, 0
+    totals: dict[str, float] = {}
+    for detection in window:
+        weight = min(detection.letters, WEIGHT_CAP)
+        for code, value in detection.confidence.items():
+            totals[code] = totals.get(code, 0.0) + value * weight
+    dominant = max(totals, key=lambda code: totals[code])
+    return dominant, len(window)
