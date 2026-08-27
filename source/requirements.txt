@@ -13,6 +13,9 @@ llama-index-tools-mcp==0.4.8               # MCP client + FunctionTool wrapper
 requests==2.34.2
 croniter==6.2.2                                # cron-expression parser for the scheduler
 python-dotenv==1.2.2                        # repo-root .env loading (env_file.py)
+lingua-language-detector==2.2.0
+langcodes
+language_data
 
 # Test dependencies
 pytest==9.0.3
