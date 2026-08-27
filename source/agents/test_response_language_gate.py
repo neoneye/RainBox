@@ -186,11 +186,25 @@ def test_ordinary_prose_names_no_language():
 
 
 def test_each_filter_rejects_its_own_kind_of_false_match():
-    """One assertion per filter, so a regression says which one broke. The two-letter-code filter is load-bearing: EN_PROSE begins "The margin rule is dropped…" and is tested directly in test_ordinary_prose_names_no_language."""
-    # Too short: resolves to `thx`, `auq`, `toz`.
-    assert names_a_language("the a to") is None
-    # Long enough and resolves, but to an obscure three-letter code (`mrt`).
-    assert names_a_language("the margin rule is dropped") is None
-    # Long enough and a two-letter code (`cs`), but `second` is not among
-    # Czech's recorded names -- only the round-trip catches this one.
+    """One assertion per filter, and each is chosen to isolate it: it fails if
+    that filter alone were removed, so a regression says which one broke.
+
+    `Ewe` is 3 letters, resolves to `ee`, and round-trips -- only the length
+    minimum rejects it. `second` is 6 letters and resolves to `cs`, but is not
+    among Czech's recorded names -- only the round-trip rejects it."""
+    # Too short, and would otherwise match: resolves to `ee` and round-trips.
+    assert names_a_language("I want to learn Ewe") is None
+    # Long enough and resolves to `cs`, but `second` is not among Czech's
+    # recorded names -- only the round-trip catches this one.
     assert names_a_language("the second run failed") is None
+
+
+def test_a_language_without_a_two_letter_code_is_still_found():
+    """The check is not restricted to ISO 639-1: a language whose only CLDR
+    code is three letters is recognised exactly like one with a two-letter
+    code, as long as it round-trips."""
+    assert names_a_language("translate this into Cherokee") == (
+        "Cherokee", "chr")
+    assert names_a_language("Please reply in Cebuano.") == ("Cebuano", "ceb")
+    assert names_a_language("Can you write this in Hawaiian?") == (
+        "Hawaiian", "haw")
