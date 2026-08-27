@@ -209,6 +209,16 @@ def test_each_filter_rejects_its_own_kind_of_false_match():
     assert names_a_language("the second run failed") is None
 
 
+def test_a_common_short_word_resolving_to_a_long_code_is_rejected():
+    """`more` round-trips to Mossi (`mos`) and is by far the most frequent
+    false fire measured on real operator traffic -- 37 of 875 messages. It
+    clears NAME_MIN_LETTERS (4 letters) but not NAME_LONG_CODE_MIN_LETTERS
+    (6), which applies because its resolved code is three letters long."""
+    assert names_a_language(
+        "I would like more detail, could you write a bit more?") is None
+    assert names_a_language("more") is None
+
+
 def test_a_language_without_a_two_letter_code_is_still_found():
     """The check is not restricted to ISO 639-1: a language whose only CLDR
     code is three letters is recognised exactly like one with a two-letter

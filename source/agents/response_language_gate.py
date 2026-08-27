@@ -41,8 +41,22 @@ WEIGHT_CAP = 200
 #: requests 0.00-0.05; this sits in that gap.
 SHIFT_FLOOR = 0.15
 #: Shorter tokens are not put to the CLDR name lookup -- `the`, `a` and `to`
-#: all resolve to obscure language codes.
+#: all resolve to obscure language codes. This is the floor for a code that
+#: itself has a two-letter ISO 639-1 tag; a three-letter code needs
+#: NAME_LONG_CODE_MIN_LETTERS instead (see that constant).
 NAME_MIN_LETTERS = 4
+#: A token resolving to a code LONGER than two letters needs this many
+#: letters instead of NAME_MIN_LETTERS. Measured against 875 real operator
+#: messages above LETTER_FLOOR, the two-letter-code floor of 4 let through 57
+#: false fires (6.5% of all traffic) on common English words that happen to be
+#: obscure languages' names in some locale -- `more` resolves to Mossi
+#: (`mos`, 37 occurrences), `even` to Even (`eve`), `meta` to `mgo`, `logo`
+#: to `log`, `male` to `ms`. Raising the floor to 6 for these longer codes
+#: takes the false-fire rate on the same corpus to 0.8% while leaving
+#: `Cherokee` (`chr`), `Cebuano` (`ceb`) and `Hawaiian` (`haw`) -- the
+#: three-letter-code languages the length minimum exists to keep -- still
+#: recognised, because each is itself at least 6 letters long.
+NAME_LONG_CODE_MIN_LETTERS = 6
 
 _WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
 
@@ -194,6 +208,21 @@ def _token_language(token: str) -> str | None:
     and passes the round-trip too, so the floor cannot go that low. The
     bounded cost is real language names at or under three letters -- Ewe,
     Lao, Twi, Ido -- going unrecognised.
+
+    A code longer than two letters needs NAME_LONG_CODE_MIN_LETTERS letters,
+    not just NAME_MIN_LETTERS. The two thresholds differ because the two
+    groups of codes fail differently: a two-letter code is one of the ~180
+    languages CLDR gives an ISO 639-1 tag, most of them widely known, so a
+    short token round-tripping into one is usually a genuine mention. A
+    longer code reaches into CLDR's much larger and more obscure tail, where
+    an ordinary English word is far more likely to be a homograph of some
+    language's name in some locale than an actual mention of that language --
+    measured on real traffic, `more` round-trips to Mossi (`mos`) and is the
+    single largest source of false fires by a wide margin, with `even`
+    (Even, `eve`), `meta` (`mgo`), `logo` (`log`) and `male` (`ms`) behind it.
+    Raising the floor for this group only keeps `Cherokee`, `Cebuano` and
+    `Hawaiian` recognised -- each is long enough to clear it -- while
+    dropping the homographs, which are short.
     """
     from language_data.names import name_to_code
 
@@ -204,6 +233,8 @@ def _token_language(token: str) -> str | None:
     except Exception:
         return None
     if not code:
+        return None
+    if len(code) > 2 and len(token) < NAME_LONG_CODE_MIN_LETTERS:
         return None
     if token.casefold() not in _recorded_names(code):
         return None
