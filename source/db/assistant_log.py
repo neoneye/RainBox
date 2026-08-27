@@ -599,10 +599,13 @@ def _step_events(step) -> list[dict]:
                 "log", "error")}
             | {"rejected_attempts": getattr(step, "rejected_attempts", None) or []}
             # The response-language gate's decision, when this call is the
-            # classifier's — present whether the call was answered, failed,
-            # or found no model group bound, so a reader of an 11s classifier
-            # row can see which trigger caused it to run at all. `args` holds
-            # an action's arguments on a decide-driven row, which never has a
+            # classifier's — present whether the call was answered or failed,
+            # so a reader of an 11s classifier row can see which trigger
+            # caused it to run at all. The no-model-group-bound case writes
+            # `phase="skipped"` and returns from the branch above instead, so
+            # it never reaches here and carries no `gate` key at all. `args`
+            # holds an action's arguments on a decide-driven row, which never
+            # has a
             # "gate" key, so this stays empty there.
             | {"gate": _step_args(step).get("gate")}))
     events.extend(_inline_review(step, data))
