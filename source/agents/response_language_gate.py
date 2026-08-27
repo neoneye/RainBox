@@ -18,6 +18,7 @@ from __future__ import annotations
 import functools
 import logging
 import re
+import time
 import unicodedata
 from dataclasses import dataclass, field
 from typing import Sequence
@@ -221,3 +222,154 @@ def names_a_language(text: str) -> tuple[str, str] | None:
         if code:
             return token, code
     return None
+
+
+TRIGGER_NO_PREVIOUS = "no_previous"
+TRIGGER_NAMED_LANGUAGE = "named_language"
+TRIGGER_SHIFT = "shift"
+TRIGGER_EMPTY_WINDOW = "empty_window"
+TRIGGER_DETECTOR_ERROR = "detector_error"
+TRIGGER_REUSE = "reuse"
+
+
+@dataclass(frozen=True)
+class GateDecision:
+    """Why the classifier is about to run, or not.
+
+    Recorded whole on the step row: a run that skipped its most expensive call
+    has to say what it read and what it concluded, or the operator is left
+    guessing at a reply in the wrong language.
+    """
+
+    should_ask: bool
+    trigger: str
+    window_dominant: str | None = None
+    window_size: int = 0
+    window_share: float | None = None
+    request_top: str | None = None
+    request_letters: int = 0
+    named_language: str | None = None
+    detector_ms: int = 0
+    #: Set only on the fail-open path, so a run says what broke rather than
+    #: silently looking like an ordinary ask.
+    error: str | None = None
+
+    def as_args(self) -> dict:
+        args = {
+            "should_ask": self.should_ask,
+            "trigger": self.trigger,
+            "window_dominant": self.window_dominant,
+            "window_size": self.window_size,
+            "window_share": self.window_share,
+            "request_top": self.request_top,
+            "request_letters": self.request_letters,
+            "named_language": self.named_language,
+            "detector_ms": self.detector_ms,
+        }
+        if self.error:
+            args["error"] = self.error
+        return args
+
+
+def decide(
+    *,
+    window_texts: Sequence[str],
+    request_text: str,
+    has_previous: bool,
+) -> GateDecision:
+    """Should the response-language classifier run this turn?
+
+    Every uncertainty resolves towards asking. A false ask costs one classifier
+    call -- latency, never correctness. A false skip replies in the
+    conversation's established language, which is degraded and visible rather
+    than a hard error, and repairs itself on the next turn: the operator either
+    writes in the other language, which is a shift, or names it, which is the
+    name check.
+
+    The whole body runs under one broad `except Exception`. This is not
+    sloppiness to be narrowed later -- it is the fail-open guarantee itself:
+    whatever goes wrong here, from a detector crash to a future bug in this
+    function, must resolve to "ask the classifier", never to a raised
+    exception that breaks the turn. Narrowing it would silently drop that
+    guarantee for every failure mode this function's author did not think of.
+    """
+    started = time.perf_counter()
+
+    def elapsed() -> int:
+        return int((time.perf_counter() - started) * 1000)
+
+    try:
+        # Cheapest first, and independent of everything else: an instruction
+        # naming a language is invisible to both the detector and the window,
+        # because it is written in the conversation's current language. The
+        # matched token is what goes on the trace -- `named_language` records
+        # a name, not a code, so a three-letter CLDR code (Cherokee's `chr`)
+        # is never mistaken for the two-letter codes lingua deals in.
+        named = names_a_language(request_text)
+        if named:
+            return GateDecision(
+                should_ask=True,
+                trigger=TRIGGER_NAMED_LANGUAGE,
+                named_language=named[0],
+                detector_ms=elapsed(),
+            )
+        if not has_previous:
+            return GateDecision(
+                should_ask=True,
+                trigger=TRIGGER_NO_PREVIOUS,
+                detector_ms=elapsed(),
+            )
+        request = detect(request_text)
+        dominant, size = window_dominant(window_texts)
+        if dominant is None:
+            return GateDecision(
+                should_ask=True,
+                trigger=TRIGGER_EMPTY_WINDOW,
+                window_size=size,
+                request_top=request.top,
+                request_letters=request.letters,
+                detector_ms=elapsed(),
+            )
+        if request.below_floor:
+            # Too short to classify is not the same as unclassifiable. There is
+            # nothing here to shift, and the previous resolution is the
+            # deterministic answer.
+            return GateDecision(
+                should_ask=False,
+                trigger=TRIGGER_REUSE,
+                window_dominant=dominant,
+                window_size=size,
+                request_letters=request.letters,
+                detector_ms=elapsed(),
+            )
+        if request.undetected:
+            return GateDecision(
+                should_ask=True,
+                trigger=TRIGGER_SHIFT,
+                window_dominant=dominant,
+                window_size=size,
+                window_share=0.0,
+                request_letters=request.letters,
+                detector_ms=elapsed(),
+            )
+        share = request.share(dominant)
+        shifted = share < SHIFT_FLOOR
+        return GateDecision(
+            should_ask=shifted,
+            trigger=TRIGGER_SHIFT if shifted else TRIGGER_REUSE,
+            window_dominant=dominant,
+            window_size=size,
+            window_share=share,
+            request_top=request.top,
+            request_letters=request.letters,
+            detector_ms=elapsed(),
+        )
+    except Exception as exc:
+        logger.warning(
+            "response-language gate failed open", exc_info=True)
+        return GateDecision(
+            should_ask=True,
+            trigger=TRIGGER_DETECTOR_ERROR,
+            detector_ms=elapsed(),
+            error=f"{type(exc).__name__}: {exc}",
+        )

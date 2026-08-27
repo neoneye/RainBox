@@ -6,9 +6,17 @@ alone. It reads no settings and no database, so these tests need neither.
 """
 
 from agents.response_language_gate import (
+    GateDecision,
     LETTER_FLOOR,
     SHIFT_FLOOR,
+    TRIGGER_DETECTOR_ERROR,
+    TRIGGER_EMPTY_WINDOW,
+    TRIGGER_NAMED_LANGUAGE,
+    TRIGGER_NO_PREVIOUS,
+    TRIGGER_REUSE,
+    TRIGGER_SHIFT,
     WINDOW_MESSAGES,
+    decide,
     detect,
     names_a_language,
     window_dominant,
@@ -209,3 +217,128 @@ def test_a_language_without_a_two_letter_code_is_still_found():
     assert names_a_language("Please reply in Cebuano.") == ("Cebuano", "ceb")
     assert names_a_language("Can you write this in Hawaiian?") == (
         "Hawaiian", "haw")
+
+
+EN_WINDOW = [EN_PROSE, EN_DEBUGGING]
+DA_WINDOW = [DA_PROSE, DA_WITH_ENGLISH_NOUNS]
+
+
+def _decide(window, request, has_previous=True) -> GateDecision:
+    return decide(
+        window_texts=window, request_text=request, has_previous=has_previous)
+
+
+def test_an_unchanged_conversation_reuses():
+    d = _decide(EN_WINDOW, EN_DEBUGGING)
+    assert d.should_ask is False
+    assert d.trigger == TRIGGER_REUSE
+    assert d.window_dominant == "en"
+    assert d.window_share is not None and d.window_share >= SHIFT_FLOOR
+
+
+def test_danish_technical_writing_in_a_danish_window_reuses():
+    """The case that decides whether the feature is worth having. The top label
+    is unstable across these messages; the Danish share is not."""
+    d = _decide(DA_WINDOW, DA_WITH_ENGLISH_NOUNS)
+    assert d.should_ask is False
+    assert d.trigger == TRIGGER_REUSE
+
+
+def test_a_change_of_language_asks():
+    """DA_PROSE itself names a language (`dansk` occurs mid-sentence), which
+    would trip the name check before the shift test ever ran -- not what this
+    case means to exercise. DA_WITH_ENGLISH_NOUNS carries the same Danish
+    share without naming anything, so this isolates the shift path."""
+    d = _decide(EN_WINDOW, DA_WITH_ENGLISH_NOUNS)
+    assert d.should_ask is True
+    assert d.trigger == TRIGGER_SHIFT
+    assert d.window_dominant == "en"
+    assert d.window_share is not None and d.window_share < SHIFT_FLOOR
+
+
+DA_TRANSLATE_REQUEST_UNNAMED = (
+    "kan du oversaette dette til mig: Jeg vil gerne vide hvor lang tid det "
+    "tager."
+)
+
+
+def test_a_translate_request_asks():
+    """Mostly Danish tokens asking (in Danish) to have the reply translated,
+    in an English conversation. Naming the target language, as a real
+    `translate to X` request would, is a separate signal the name check
+    already owns -- this text avoids naming one so the case in point stays
+    isolated: the detector reads Danish, which is a shift, so the classifier
+    gets the question it is actually equipped to answer."""
+    d = _decide(EN_WINDOW, DA_TRANSLATE_REQUEST_UNNAMED)
+    assert d.should_ask is True
+    assert d.trigger == TRIGGER_SHIFT
+
+
+def test_an_instruction_naming_a_language_asks():
+    """English, in an English window: no shift, and the whole gate would skip
+    it. This is the failure the gate is least allowed to make."""
+    d = _decide(EN_WINDOW, "Please answer in Danish from now on.")
+    assert d.should_ask is True
+    assert d.trigger == TRIGGER_NAMED_LANGUAGE
+    assert d.named_language == "Danish"
+
+
+def test_an_acknowledgement_reuses():
+    """`ok` has no language content. Asking a model what language it is in
+    spends the turn's most expensive call on nothing."""
+    d = _decide(EN_WINDOW, "ok")
+    assert d.should_ask is False
+    assert d.trigger == TRIGGER_REUSE
+    assert d.window_share is None
+    assert d.request_letters == 2
+
+
+def test_a_short_request_naming_a_language_still_asks():
+    """Below the letter floor, so the shift test never runs -- but the name
+    check does not care about length."""
+    d = _decide(EN_WINDOW, "in Danish please")
+    assert d.should_ask is True
+    assert d.trigger == TRIGGER_NAMED_LANGUAGE
+
+
+def test_no_previous_classification_asks():
+    """Nothing to reuse. This is the first turn in a room."""
+    d = _decide(EN_WINDOW, EN_PROSE, has_previous=False)
+    assert d.should_ask is True
+    assert d.trigger == TRIGGER_NO_PREVIOUS
+
+
+def test_an_empty_window_asks():
+    d = _decide(["ok", "tak"], EN_PROSE)
+    assert d.should_ask is True
+    assert d.trigger == TRIGGER_EMPTY_WINDOW
+    assert d.window_size == 0
+
+
+def test_a_raising_detector_asks(monkeypatch):
+    """A gate that cannot decide has decided to ask."""
+    import agents.response_language_gate as gate
+
+    def boom(_text):
+        raise RuntimeError("detector unavailable")
+
+    monkeypatch.setattr(gate, "detect", boom)
+    d = _decide(EN_WINDOW, EN_PROSE)
+    assert d.should_ask is True
+    assert d.trigger == TRIGGER_DETECTOR_ERROR
+    # The run says what broke rather than looking like an ordinary ask.
+    assert "detector unavailable" in d.as_args()["error"]
+
+
+def test_the_decision_serialises_the_number_it_was_tuned_on():
+    """`window_share` is what the threshold is compared against, so every
+    recorded row has to carry it or the operator cannot retune."""
+    args = _decide(EN_WINDOW, EN_DEBUGGING).as_args()
+    assert args["trigger"] == TRIGGER_REUSE
+    assert args["should_ask"] is False
+    assert args["window_dominant"] == "en"
+    assert args["window_size"] == 2
+    assert isinstance(args["window_share"], float)
+    assert args["request_top"] == "en"
+    assert args["named_language"] is None
+    assert isinstance(args["detector_ms"], int)
