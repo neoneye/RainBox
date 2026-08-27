@@ -424,3 +424,46 @@ def test_a_skip_needs_a_previous_classification_to_reuse(room, monkeypatch):
     agent._run_response_language_classifier(
         step_index=0, messages=DA_MESSAGES, profile=None)
     assert ran == [True]
+
+
+def test_an_asked_turn_with_no_model_group_bound_is_not_read_as_a_gate_skip(
+        room, monkeypatch):
+    """A room's first turn is the common case: the gate has nothing to reuse,
+    so it asks (`TRIGGER_NO_PREVIOUS`) — and the classifier then finds no
+    model group bound. That row shares `phase == "skipped"` with the gate's
+    own skip and, since the gate decision is now recorded on the ask path too,
+    also carries a `gate` key in `args`. Neither must make it read as the gate
+    having replaced the call: nothing ran, so it must render as "never made",
+    with no duration."""
+    db.set_setting("assistant.response_language_gate", True)
+    agent = _agent()
+    agent._run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=ASSISTANT_UUID)
+    monkeypatch.setattr(
+        agent, "_request_response_language_classification", lambda **kw: None)
+
+    agent._run_response_language_classifier(
+        step_index=0, messages=DA_MESSAGES, profile=None)
+    db.db.session.commit()
+
+    row = (
+        db.db.session.query(db.AssistantStep)
+        .filter(db.AssistantStep.run_uuid == agent._run.uuid)
+        .order_by(db.AssistantStep.id.desc())
+        .first()
+    )
+    assert row.phase == "skipped"
+    assert row.reason == "no model group is bound"
+    # The gate DID ask — a decision is on the row — but it never replaced
+    # this call, so the explicit marker must be absent.
+    assert row.args["gate"]["should_ask"] is True
+    assert "gate_replaced_call" not in row.args
+    assert row.duration_ms is None
+
+    from webapp.assistant_log_view import log_view
+
+    view = log_view(agent._run, [row])
+    event = next(e for e in view["events"] if e["kind"] == "skipped")
+    assert event["duration_ms"] is None
+    assert "never made" in event["detail_html"]
+    assert "no model group is bound" in event["detail_html"]

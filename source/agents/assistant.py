@@ -3541,8 +3541,14 @@ class AssistantAgent(ModelGroupAgent):
         self._response_language_classifier_meta: dict[str, Any] = {}
         # This turn's gate decision, recorded on the classifier's step row on
         # both the skip and the ask path so a run always says why the
-        # classifier ran or did not. None before the gate has run this turn,
-        # or when the gate does not apply (switch off, no room).
+        # classifier ran or did not. `gate_replaced_call` is added only when
+        # the gate's verdict was acted on — the classifier's model call never
+        # went out because the gate answered in its place — which is the one
+        # bit downstream renderers must not infer from `should_ask` alone: an
+        # ask that then finds no model group bound also carries a decision
+        # here, but the call there was attempted, not replaced. None before
+        # the gate has run this turn, or when the gate does not apply (switch
+        # off, no room).
         self._response_language_gate_args: dict[str, Any] | None = None
         # The description of an over-long request: the parsed object and the
         # Markdown projection the prompts carry ("" = no section, which is also
@@ -5422,7 +5428,9 @@ class AssistantAgent(ModelGroupAgent):
         self._response_language_gate_args = None
         verdict = None
         gate_ms = None
+        gate_started_at = None
         if self._run is not None:
+            gate_started_at = datetime.now(UTC)
             gate_started = time.perf_counter()
             verdict = self._response_language_gate_decision(
                 messages, self._run.room_uuid)
@@ -5435,6 +5443,10 @@ class AssistantAgent(ModelGroupAgent):
             # must never proceed with no language, so the guard is explicit
             # rather than inferred.
             if not decision.should_ask and previous is not None:
+                # The explicit marker the renderers branch on (see the
+                # attribute's docstring above): only this branch means the
+                # classifier's model call never went out.
+                self._response_language_gate_args["gate_replaced_call"] = True
                 self._response_language_classification = previous
                 self._reply_language_markdown = (
                     self._format_reply_language_markdown(previous))
@@ -5457,7 +5469,7 @@ class AssistantAgent(ModelGroupAgent):
                         previous.model_dump(), ensure_ascii=False, indent=1),
                     system_prompt=None,
                     user_prompt=None,
-                    requested_at=datetime.now(UTC),
+                    requested_at=gate_started_at,
                 )
                 return
         system_prompt = ASSISTANT_SHARED_SYSTEM_PROMPT

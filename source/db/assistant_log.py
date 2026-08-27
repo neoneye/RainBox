@@ -515,6 +515,14 @@ def _inline_review(step, data: dict) -> list[dict]:
                  "error": review.get("error")})]
 
 
+def _step_args(step) -> dict:
+    """A step row's `args` column, defensively: it holds an action's chosen
+    arguments on a decide-driven row and the response-language gate's
+    decision on a classifier row, and is `{}` on every other row."""
+    args = getattr(step, "args", None)
+    return args if isinstance(args, dict) else {}
+
+
 def _step_events(step) -> list[dict]:
     """The events one step row stands for.
 
@@ -535,35 +543,35 @@ def _step_events(step) -> list[dict]:
                      "args": getattr(step, "args", None) or {}}))
         return events
     if step.phase == "skipped":
-        # Two different rows share this phase. A row with a gate decision in
-        # `args` is the response-language gate: it ran in place of the
+        # Two different rows share this phase, told apart by the explicit
+        # `gate_replaced_call` marker in `args` — never by whether a `gate`
+        # decision happens to be present, because a decision can also be
+        # recorded on a call the gate said to ASK for (see
+        # `Assistant._response_language_gate_args`'s docstring). A row with
+        # the marker is the response-language gate: it ran in place of the
         # classifier's model call, reached a verdict, and cost real time — so
         # it carries that duration and the decision alongside what it reused.
-        # A row with none is a call the loop genuinely could not make (no
+        # A row without it is a call the loop genuinely could not make (no
         # model group bound); it cost nothing, so it carries no duration and
         # draws no bar — but a run where a call was skipped and one where it
         # was never scheduled are different runs, and without a row the
         # stream cannot tell them apart.
-        args = getattr(step, "args", None) or {}
-        gate = args.get("gate") if isinstance(args, dict) else None
-        if gate is None:
-            events.append(_event(
-                "skipped", step.action or "skipped",
-                start=step_started_at(step) or getattr(step, "created_at", None),
-                duration_ms=None, anchor=str(step.uuid), uuid=str(step.uuid),
-                payload={"reason": getattr(step, "reason", None),
-                         "error": getattr(step, "error", None)}))
-            return events
+        args = _step_args(step)
+        replaced = bool(args.get("gate_replaced_call"))
+        payload = {"reason": getattr(step, "reason", None),
+                   "error": getattr(step, "error", None)}
+        duration_ms = None
+        if replaced:
+            duration_ms = step.duration_ms
+            payload["gate_replaced_call"] = True
+            payload["gate"] = args.get("gate")
+            payload["observation_preview"] = getattr(
+                step, "observation_preview", None)
         events.append(_event(
             "skipped", step.action or "skipped",
             start=step_started_at(step) or getattr(step, "created_at", None),
-            duration_ms=step.duration_ms, anchor=str(step.uuid),
-            uuid=str(step.uuid),
-            payload={"reason": getattr(step, "reason", None),
-                     "error": getattr(step, "error", None),
-                     "gate": gate,
-                     "observation_preview": getattr(
-                         step, "observation_preview", None)}))
+            duration_ms=duration_ms, anchor=str(step.uuid), uuid=str(step.uuid),
+            payload=payload))
         return events
 
     # The attempts thrown away came first, so they enumerate first.
@@ -589,7 +597,14 @@ def _step_events(step) -> list[dict]:
             payload={k: getattr(step, k, None) for k in (
                 "system_prompt", "user_prompt", "model_response", "reasoning",
                 "log", "error")}
-            | {"rejected_attempts": getattr(step, "rejected_attempts", None) or []}))
+            | {"rejected_attempts": getattr(step, "rejected_attempts", None) or []}
+            # The response-language gate's decision, when this call is the
+            # classifier's — present whether the call was answered, failed,
+            # or found no model group bound, so a reader of an 11s classifier
+            # row can see which trigger caused it to run at all. `args` holds
+            # an action's arguments on a decide-driven row, which never has a
+            # "gate" key, so this stays empty there.
+            | {"gate": _step_args(step).get("gate")}))
     events.extend(_inline_review(step, data))
     events.extend(_as_event(c) for c in _inner_calls(step, data))
     events.extend(_as_event(c) for c in _embedding_calls(step, data))
