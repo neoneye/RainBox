@@ -8,7 +8,10 @@ alone. It reads no settings and no database, so these tests need neither.
 from agents.response_language_gate import (
     LETTER_FLOOR,
     SHIFT_FLOOR,
+    WINDOW_MESSAGES,
     detect,
+    names_a_language,
+    window_dominant,
 )
 
 # Measured cases from the design spec. The Danish ones avoid non-ASCII where
@@ -111,9 +114,6 @@ def test_below_floor_and_undetected_are_different_answers():
     assert unclassifiable.letters == 0
 
 
-from agents.response_language_gate import WINDOW_MESSAGES, window_dominant
-
-
 def test_window_dominant_reads_a_uniform_conversation():
     dominant, size = window_dominant([EN_PROSE, EN_DEBUGGING])
     assert dominant == "en"
@@ -153,3 +153,44 @@ def test_a_long_message_cannot_single_handedly_define_the_window():
     dominant, size = window_dominant([long_english, *danish])
     assert dominant == "da"
     assert size == WINDOW_MESSAGES
+
+
+def test_a_named_language_is_found_in_any_language():
+    """CLDR carries names and endonyms for every language in every language, so
+    the check works without a table of our own and without favouring English."""
+    assert names_a_language("Please answer in Danish from now on.") == (
+        "Danish", "da")
+    assert names_a_language("Svar pa dansk fra nu af.") == ("dansk", "da")
+    assert names_a_language("Voglio che tu risponda in italiano.") == (
+        "italiano", "it")
+    assert names_a_language("Bitte antworte auf Deutsch.") == ("Deutsch", "de")
+
+
+def test_a_request_comparing_languages_is_found():
+    """These are written in the conversation's own language, so nothing else in
+    the gate can see them."""
+    assert names_a_language(
+        "Compare American and British English spelling.") == ("English", "en")
+    assert names_a_language(
+        "make a table of words in English, French and Spanish") is not None
+
+
+def test_ordinary_prose_names_no_language():
+    """The lookup over CLDR's full name set is far too permissive to point at
+    raw text -- unfiltered, `the` resolves to `thx` and `a` to `auq`, and the
+    gate would ask on every English sentence it ever saw."""
+    for text in (EN_DEBUGGING, EN_PROSE, DA_WITH_ENGLISH_NOUNS,
+                 "Add a setting so I can turn the gate on and off.",
+                 "commit this to the branch and then write the plan"):
+        assert names_a_language(text) is None
+
+
+def test_each_filter_rejects_its_own_kind_of_false_match():
+    """One assertion per filter, so a regression says which one broke."""
+    # Too short: resolves to `thx`, `auq`, `toz`.
+    assert names_a_language("the a to") is None
+    # Long enough and resolves, but to an obscure three-letter code.
+    assert names_a_language("Please respond in soc") is None
+    # Long enough and a two-letter code (`cs`), but `second` is not among
+    # Czech's recorded names -- only the round-trip catches this one.
+    assert names_a_language("the second run failed") is None

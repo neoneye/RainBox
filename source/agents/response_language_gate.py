@@ -160,3 +160,54 @@ def window_dominant(texts: Sequence[str]) -> tuple[str | None, int]:
             totals[code] = totals.get(code, 0.0) + value * weight
     dominant = max(totals, key=lambda code: totals[code])
     return dominant, len(window)
+
+
+@functools.lru_cache(maxsize=None)
+def _recorded_names(code: str) -> frozenset[str]:
+    """Every recorded CLDR name for `code`, casefolded."""
+    from language_data.names import code_to_names
+
+    return frozenset(name.casefold() for name in code_to_names(code).values())
+
+
+@functools.lru_cache(maxsize=2048)
+def _token_language(token: str) -> str | None:
+    """The language `token` names, or None.
+
+    Three filters, because the raw lookup is far too permissive to point at
+    prose: measured, `the` resolves to `thx`, `a` to `auq`, `to` to `toz` and
+    `second` to `cs`. Length removes the function words; a two-letter result
+    removes the obscure codes; and the round-trip -- requiring the token to be
+    among that code's own recorded names -- removes `second`, which resolves to
+    Czech but is not one of Czech's names.
+
+    The round-trip reads the same CLDR data in both directions, so no table of
+    ours can drift from it and no language is privileged over another.
+    """
+    from language_data.names import name_to_code
+
+    if len(token) < NAME_MIN_LETTERS:
+        return None
+    try:
+        code = name_to_code("language", token, "und")
+    except Exception:
+        return None
+    if not code or len(code) != 2:
+        return None
+    if token.casefold() not in _recorded_names(code):
+        return None
+    return code
+
+
+def names_a_language(text: str) -> tuple[str, str] | None:
+    """The first language `text` names, as (matched token, code).
+
+    This is the one signal that sees an instruction like "answer in Danish
+    from now on" -- written in the conversation's current language, so the
+    detector reads no shift and the window reads no change.
+    """
+    for token in _WORD_RE.findall(text or ""):
+        code = _token_language(token)
+        if code:
+            return token, code
+    return None
