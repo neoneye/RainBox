@@ -196,9 +196,11 @@ Measured on this repo's Python with `lingua-language-detector==2.2.0`:
 `from_all_languages()` builds in under a millisecond because models load
 lazily, and resident memory settles at **141 MB** after detecting across eight
 languages — not the gigabytes an eagerly loaded build would cost. Importing
-lingua costs **2.35s once**, so the import is module-level and paid at process
-start rather than on a turn. Detection is **5-13ms per message warm**, 64ms on
-the first call.
+lingua costs **2.35s once**. Because the switch ships off, that import is made
+lazily inside the memoised detector builder rather than at module level: an
+operator who never enables the gate never pays it, and the one who does pays it
+on the first gated turn, where it is still a fifth of the call it replaces.
+Detection is **5-13ms per message warm**, 64ms on the first call.
 
 ## Components
 
