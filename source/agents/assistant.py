@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 import db
 import skills
 import user_profile
+from agents import response_language_gate
 from agents.base import (
     ModelGroupAgent, StatusSender, truncate_middle,
     truncate_middle_to_length,
@@ -3538,6 +3539,11 @@ class AssistantAgent(ModelGroupAgent):
         ) = None
         self._reply_language_markdown: str = ""
         self._response_language_classifier_meta: dict[str, Any] = {}
+        # This turn's gate decision (Task 7), recorded on the classifier's
+        # step row on both the skip and the ask path so a run always says why
+        # the classifier ran or did not. None before the gate has run this
+        # turn, or when the gate does not apply (switch off, no room).
+        self._response_language_gate_args: dict[str, Any] | None = None
         # The description of an over-long request: the parsed object and the
         # Markdown projection the prompts carry ("" = no section, which is also
         # the state for every request short enough to travel whole).
@@ -3748,6 +3754,7 @@ class AssistantAgent(ModelGroupAgent):
             self._response_language_classification = None
             self._reply_language_markdown = ""
             self._response_language_classifier_meta = {}
+            self._response_language_gate_args = None
             self._set_activity("classifying response language")
             self._run_response_language_classifier(
                 step_index=0, messages=messages, profile=context.profile)
@@ -5359,6 +5366,47 @@ class AssistantAgent(ModelGroupAgent):
                 exc_info=True)
             return None
 
+    def _response_language_gate_decision(
+        self, messages: list[dict[str, Any]], room_uuid: "UUID"
+    ) -> tuple[
+        response_language_gate.GateDecision,
+        ResponseLanguageClassification | None,
+    ] | None:
+        """The gate's verdict for this turn and what a skip would reuse, or
+        None when the gate does not apply.
+
+        The previous classification is returned alongside the verdict because
+        the verdict depends on whether one exists: reading it twice would put
+        two queries on the turn's critical path to answer one question.
+
+        None means "run the classifier as always": the switch is off, or the
+        turn has no room to read a previous resolution from. The gate itself
+        never returns None — it always has a verdict, and every uncertainty in
+        it resolves towards asking.
+
+        The window is the operator's earlier messages only. The final human
+        message is the request being judged, so it is excluded from the window
+        it is compared against; assistant replies are excluded because they are
+        written in whatever language a previous resolution chose, and letting
+        them vote would let one wrong resolution justify itself forever.
+        """
+        if not self._response_language_gate_enabled():
+            return None
+        human_texts = [
+            str(m.get("text") or "")
+            for m in messages
+            if self._message_role(m) == "user"
+        ]
+        if not human_texts:
+            return None
+        previous = self._previous_room_classification(room_uuid)
+        decision = response_language_gate.decide(
+            window_texts=human_texts[:-1],
+            request_text=human_texts[-1],
+            has_previous=previous is not None,
+        )
+        return decision, previous
+
     def _run_response_language_classifier(
         self,
         *,
@@ -5367,6 +5415,43 @@ class AssistantAgent(ModelGroupAgent):
         profile: dict[str, Any] | None,
     ) -> None:
         """Classify first, render downstream language context, and record it."""
+        # The gate decides before anything is built: a skip costs neither the
+        # model call nor the prompt assembly. It applies only to a real turn —
+        # the eval harness runs with `self._run` None and has no room to read a
+        # previous resolution from.
+        self._response_language_gate_args = None
+        verdict = None
+        if self._run is not None:
+            verdict = self._response_language_gate_decision(
+                messages, self._run.room_uuid)
+        if verdict is not None:
+            decision, previous = verdict
+            self._response_language_gate_args = {"gate": decision.as_args()}
+            # `previous is None` cannot reach here with should_ask False — the
+            # gate returns TRIGGER_NO_PREVIOUS in that case — but the reply
+            # must never proceed with no language, so the guard is explicit
+            # rather than inferred.
+            if not decision.should_ask and previous is not None:
+                self._response_language_classification = previous
+                self._reply_language_markdown = (
+                    self._format_reply_language_markdown(previous))
+                self._response_language_classifier_meta = {
+                    "duration_ms": decision.detector_ms,
+                }
+                self._record_response_language_classifier_step(
+                    step_index=step_index,
+                    phase="skipped",
+                    reason=(
+                        "the conversation's language has not changed; reusing "
+                        "this room's last classification"
+                    ),
+                    observation_preview=json.dumps(
+                        previous.model_dump(), ensure_ascii=False, indent=1),
+                    system_prompt=None,
+                    user_prompt=None,
+                    requested_at=datetime.now(UTC),
+                )
+                return
         system_prompt = ASSISTANT_SHARED_SYSTEM_PROMPT
         user_prompt = self._build_response_language_classifier_prompt(
             messages, profile)
@@ -5443,12 +5528,16 @@ class AssistantAgent(ModelGroupAgent):
         reason: str,
         observation_preview: str | None = None,
         error: str | None = None,
-        system_prompt: str,
-        user_prompt: str,
+        system_prompt: str | None,
+        user_prompt: str | None,
         requested_at: datetime,
         step_uuid: "UUID | None" = None,
     ) -> None:
-        """Persist the standalone classifier call without entering step budget."""
+        """Persist the standalone classifier call without entering step budget.
+
+        `system_prompt`/`user_prompt` are `None` on a skip: nothing was built
+        and nothing was sent, so recording a prompt that was never used would
+        misreport the turn."""
         action = self.RESPONSE_LANGUAGE_CLASSIFIER_ACTION
         self._steps.append({
             "step_index": step_index,
@@ -5468,6 +5557,7 @@ class AssistantAgent(ModelGroupAgent):
             phase=phase,  # type: ignore[arg-type]
             action=action,
             reason=reason,
+            args=self._response_language_gate_args,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             log=self._turn_log or None,
