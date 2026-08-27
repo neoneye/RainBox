@@ -49,9 +49,12 @@ rule; the gate must not reintroduce underneath it the problem that rule exists
 to prevent. Operator messages are the record of what the human actually wrote.
 
 **Qualifying** means the message's Unicode letter count is at or above
-`LETTER_FLOOR`. Acknowledgements carry no language content — measured, `ok`
-detects as `da` 0.41 and `tak` as `sv` 0.31 — so they neither enter the window
-nor, as the current request, trigger anything.
+`LETTER_FLOOR`. Acknowledgements carry no language content, and unrestricted the
+detector says so in the only way it can — measured, `ok` tops out at `zu` 0.06
+and `tak` at `mi` 0.08, noise at noise-level confidence. Against any window both
+score below `SHIFT_FLOOR`, so without a floor every acknowledgement would ask.
+The floor keeps them out of the window and, as the current request, out of the
+shift test entirely.
 
 Each qualifying message contributes `min(letter_count, WEIGHT_CAP)` weight, so
 one long paste cannot define the window on its own.
@@ -61,11 +64,35 @@ one long paste cannot define the window on its own.
     window_dominant = argmax over languages of
         sum(confidence(language, message) * weight(message) for message in window)
 
-    shift = detect_top(current_request) != window_dominant
+    shift = confidence(window_dominant, current_request) < SHIFT_FLOOR
 
 `confidence` is lingua's full distribution
-(`compute_language_confidence_values`), not just the winning label, so a message
-that is 0.50/0.38 between two languages contributes to both in proportion.
+(`compute_language_confidence_values`), not just the winning label.
+
+**The test asks how much of the window's language is in the request — not
+whether the request's top label changed.** Measured unrestricted, Danish
+confuses with Norwegian Bokmal (`da` 0.38 / `nb` 0.22 on ordinary Danish
+technical writing), so a top-label test flaps inside a conversation that never
+changed language, and every flap is a spurious call. The confidence in a
+*named* language does not flap:
+
+| request | p(en) | p(da) |
+|---|---|---|
+| English prose | 1.00 | 0.00 |
+| English debugging message | 0.43 | 0.04 |
+| Python stack trace | 0.67 | 0.01 |
+| `Please answer in Danish from now on.` | 0.65 | 0.01 |
+| Danish prose | 0.00 | 0.60 |
+| Danish with English technical nouns | 0.01 | 0.38 |
+| short Danish sentence | 0.02 | 0.23 |
+| `translate to english: <Danish>` | 0.05 | 0.35 |
+| Finnish prose | 0.00 | 0.00 |
+
+Reading the column for the window's own language: same-language requests score
+0.23-1.00, different-language requests score 0.00-0.05. `SHIFT_FLOOR = 0.15`
+sits in that gap. The two cases the design turns on both land correctly —
+Danish with English nouns in a Danish window scores 0.38 and skips;
+`translate to english: <Danish>` in an English window scores 0.05 and asks.
 
 Comparison is on the base language subtag. `en-US` and `en-GB` are one language
 for the purpose of "has the conversation switched"; choosing between them is the
@@ -111,8 +138,8 @@ Run `response_language_classifier` when **any** of:
 
 1. the room has no previous recorded classification;
 2. the request names a language (CLDR names and endonyms);
-3. the request's detected top language differs from the window's dominant
-   language;
+3. the request's confidence in the window's dominant language is below
+   `SHIFT_FLOOR`;
 4. the window contains no qualifying messages;
 5. the detector raised, or was asked and found no language.
 
@@ -139,17 +166,18 @@ it named as deciding whether the feature is worth having.
 **The detector is not restricted to the profile's languages.** The parent
 restricts lingua to the tags in `languages.rows` for accuracy on short text, and
 accepts that unknown languages force-fit to a declared tag; the margin rule was
-that force-fit's mitigation. Unrestricted, a Finnish message detects as `fi`,
-differs from the window, and asks — correct, with no threshold. The window and
-the letter floor supply the stability restriction was buying.
+that force-fit's mitigation. Unrestricted, a Finnish request scores `fi` 1.00
+and — measured — assigns 0.00 to both English and Danish, so it falls below
+`SHIFT_FLOOR` for any window and asks. The force-fit trap closes by
+construction rather than by a threshold.
 
-The cost is memory: `from_all_languages()` loads models for ~75 languages.
-Lingua loads them lazily by default, so the working set is the languages
-actually seen. **Implementation must measure resident memory and first-call
-latency before the switch is offered.** If the cost is unacceptable, the
-fallback is the
-parent's shape — restrict to `languages.rows` and reinstate the margin rule as
-the force-fit mitigation — not an unmitigated restricted detector.
+Measured on this repo's Python with `lingua-language-detector==2.2.0`:
+`from_all_languages()` builds in under a millisecond because models load
+lazily, and resident memory settles at **141 MB** after detecting across eight
+languages — not the gigabytes an eagerly loaded build would cost. Importing
+lingua costs **2.35s once**, so the import is module-level and paid at process
+start rather than on a turn. Detection is **5-13ms per message warm**, 64ms on
+the first call.
 
 ## Components
 
@@ -166,15 +194,19 @@ the assistant:
   name for the trace.
 - `decide(messages, request) -> GateDecision` — a frozen dataclass carrying
   `should_ask: bool`, `trigger: str` (which of the five fired, or `"reuse"`),
-  the window dominant and size, the request's top language, confidence and
-  letter count, the matched language name when trigger 2 fired, and the
-  detector's elapsed milliseconds. It serialises to the `args` block below.
+  the window dominant and size, `window_share` (the request's confidence in
+  that dominant language — the number the shift test compares), the request's
+  own top language, its letter count, the matched language name when trigger 2
+  fired, and the detector's elapsed milliseconds. It serialises to the `args`
+  block below.
 
 The module reads no settings: the switch is the assistant's to read, so the gate
 stays a pure function of the messages and is testable without a database.
 
-The detector instance is built once per process and reused; construction is not
-on the turn's path.
+The detector instance is built once per process and reused. Detection results
+are memoised on a bounded module-level cache keyed by the message text, because
+the window re-reads the same history every turn: without it a turn spends
+8 x ~10ms redetecting messages whose language cannot have changed.
 
 `source/agents/assistant.py`: `_run_response_language_classifier` reads
 `assistant.response_language_gate` and, when it is on, calls `decide(...)`
@@ -212,9 +244,10 @@ by its reason. The row carries:
   measurement. The action goes from 9–18s rows to sub-second rows, in place, in
   every run, with the reason attached.
 - `args`: the gate decision, `{"gate": {"should_ask": false, "trigger":
-  "reuse", "window_dominant": str, "window_size": int, "request_top": str|null,
-  "request_confidence": float|null, "request_letters": int,
-  "named_language": str|null, "detector_ms": int}}`. The same block is recorded on
+  "reuse", "window_dominant": str, "window_size": int,
+  "window_share": float|null, "request_top": str|null, "request_letters": int,
+  "named_language": str|null, "detector_ms": int}}`. `window_share` is the
+  number the threshold is tuned on, so every row carries it. The same block is recorded on
   the ask path with the trigger that fired, so a run always says why the
   classifier ran or did not.
 - `observation_preview`: the reused classification, serialised as the observed
@@ -245,8 +278,10 @@ it wants, which is trigger 2. Either way the following turn asks. This is why
 the gate is acceptable without a disagreement corpus — a wrong skip costs one
 turn and repairs itself on the next.
 
-`LETTER_FLOOR = 16`, `WINDOW_MESSAGES = 8` and `WEIGHT_CAP = 400` are starting
-values, tuned against runs where the switch was on rather than fixed here.
+`LETTER_FLOOR = 16`, `WINDOW_MESSAGES = 8`, `WEIGHT_CAP = 400` and
+`SHIFT_FLOOR = 0.15` are starting values. `SHIFT_FLOOR` is placed in a measured
+gap; the other three are judgement, and all four are tuned against runs where
+the switch was on rather than fixed here.
 
 ## Failure handling
 
