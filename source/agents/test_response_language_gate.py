@@ -6,6 +6,7 @@ alone. It reads no settings and no database, so these tests need neither.
 """
 
 from agents.response_language_gate import (
+    Detection,
     GateDecision,
     LETTER_FLOOR,
     SHIFT_FLOOR,
@@ -142,6 +143,24 @@ def test_a_window_of_only_short_messages_is_empty():
     dominant, size = window_dominant(["ok", "tak", "ja"])
     assert dominant is None
     assert size == 0
+
+
+def test_a_tie_breaks_on_the_language_code(monkeypatch):
+    """Two languages carrying identical weight is a real, if rare, state. The
+    winner is the lower code rather than whichever the window happened to
+    insert first, so the answer does not depend on message order."""
+    import agents.response_language_gate as gate
+
+    tied = Detection(letters=40, below_floor=False, undetected=False,
+                     top="da", confidence={"da": 0.5, "en": 0.5})
+    monkeypatch.setattr(gate, "detect", lambda _text: tied)
+
+    dominant, size = window_dominant(["one message", "another message"])
+    assert dominant == "da"
+    assert size == 2
+
+    # Reversing the window must not reverse the answer.
+    assert window_dominant(["another message", "one message"])[0] == "da"
 
 
 def test_the_window_keeps_only_the_most_recent_messages():
