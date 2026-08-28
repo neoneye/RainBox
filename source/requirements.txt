@@ -13,6 +13,8 @@ llama-index-tools-mcp==0.4.8               # MCP client + FunctionTool wrapper
 requests==2.34.2
 croniter==6.2.2                                # cron-expression parser for the scheduler
 python-dotenv==1.2.2                        # repo-root .env loading (env_file.py)
+lingua-language-detector==2.2.0
+language_data==1.4.0                        # CLDR language names + endonyms the gate reads
 
 # Test dependencies
 pytest==9.0.3
@@ -26,6 +28,7 @@ blinker==1.9.0
 click==8.3.3
 itsdangerous==2.2.0
 Jinja2==3.1.6
+marisa-trie==1.4.1
 MarkupSafe==3.0.3
 pgvector==0.4.2
 psycopg2-binary==2.9.12

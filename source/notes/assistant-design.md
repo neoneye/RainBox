@@ -381,6 +381,55 @@ to reinterpret Likert values. It currently has no inclusion threshold, so
 tests must establish whether its reason and ordering are sufficient for
 genuinely multilingual and low-confidence cases.
 
+### Gating the classifier
+
+The classifier sits behind a deterministic gate, switched by
+`assistant.response_language_gate` (default off), that decides whether the
+turn needs to ask it at all. Most turns just re-confirm the language the
+previous turn already established, and that question can be answered from the
+messages themselves, without a model.
+
+The gate runs each operator message through lingua's unrestricted detector to
+get its full confidence distribution over every language lingua knows, then
+compares the current request against a weighted window of the preceding
+qualifying operator messages (the last 8, each weighted by letter count up to
+a cap of 200, so one long paste cannot outvote a whole window of ordinary
+messages). Assistant replies never enter the window: a reply is written in
+whatever language a previous resolution chose, and letting replies vote would
+let one wrong resolution justify itself on every later turn.
+
+It asks the classifier when the request names a language — matched against
+CLDR's own name and endonym tables, filtered to tokens of four or more
+letters that round-trip back into that code's own recorded names, which
+rules out incidental matches (`the` → `thx`, `second` → `cs`) without a
+hand-written language table or a restriction to two-letter ISO codes
+(Cherokee's `chr` and Cebuano's `ceb` are recognised just as any language
+with a two-letter tag is) — or when the request's confidence in the
+window's dominant language falls short of a floor (a request the detector
+cannot read at all counts as zero confidence here), or when there is nothing
+in the room to reuse, or when the window has no qualifying message, or when
+the detector itself raises. Otherwise it reuses the room's last recorded
+classification, read back from the most recent `observed`
+`response_language_classifier` step row for that room.
+
+Detection only ever gates; it never decides. The detected language is
+compared against the window's, never installed as the reply's language — that
+stays the classifier's call, made fresh whenever the gate asks it to run.
+
+A skipped turn still writes a `response_language_classifier` step row,
+`phase="skipped"`, so the trace stays a complete account of the turn. It
+carries the gate's full decision as `args` (which condition fired, the
+window's dominant language and size, the request's share of it, the
+request's own top language, and the matched name when the request named
+one), the reused classification as its `observation_preview` — so the row
+states which language the turn actually proceeded in, not merely that it
+declined to ask — and a `duration_ms` that is the gate's own elapsed time
+rather than a model call's, so a row that used to read 9-18s reads
+sub-second in place. An explicit `gate_replaced_call` marker on the row's
+`args` is what tells this skip apart from the classifier's other skipped
+row, the pre-existing one recorded when no model group is bound for the
+slot — both carry `phase="skipped"`, but only the gate's carries the marker.
+
 ## Acceptance criteria
 
 On every turn a code-driven **step 0** establishes the reply's constraints

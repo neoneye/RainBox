@@ -444,6 +444,12 @@ def _llm(event: dict) -> list[dict]:
         # putting it after the prompts left it past tens of thousands of
         # characters.
         _block("log", payload.get("log"), collapsed=True, key=f"{key}-log"),
+        # Present only on the response-language classifier's own row: the
+        # gate's verdict that sent this call out (why it asked rather than
+        # skipping), so an operator looking at an 11s classifier call does
+        # not have to go hunting for the trigger. Empty, hence absent, on
+        # every other call.
+        _block("gate decision", payload.get("gate")),
         # The prompts shut by default: they are the largest thing here and the
         # least often the answer. The response is what the reader came for.
         _block("system prompt", payload.get("system_prompt"),
@@ -665,15 +671,36 @@ def _activity(event: dict) -> list[dict]:
 
 
 def _skipped(event: dict) -> list[dict]:
-    """A call that was never made.
+    """A call that was never made, or the response-language gate that ran in
+    its place.
 
-    Not a failure and not a success: nothing ran. A pane that looked like
-    either would say something untrue about the run.
+    Two different rows share this pane, told apart by the explicit
+    `gate_replaced_call` marker. `db/assistant_log.py` copies a `gate` block
+    into this payload only when that marker is set, so a not-replaced row's
+    payload never carries one either — the marker names what actually
+    happened (the call was replaced or it wasn't), rather than being inferred
+    from which of the payload's optional fields happen to be populated.
+    Without the marker: nothing ran, and nothing failed. With it: the gate DID
+    run, spent real time, and reached a verdict — reusing the room's last
+    classification rather than asking the model again. That row gets the
+    decision and the language it reused instead of the "never made" note,
+    because saying nothing ran would be untrue.
     """
     payload = event.get("payload") or {}
-    return [_note("This call was never made — nothing ran, and nothing "
-                  "failed.")] + _blocks(
+    if not payload.get("gate_replaced_call"):
+        return [_note("This call was never made — nothing ran, and nothing "
+                      "failed.")] + _blocks(
+            _block("reason", payload.get("reason")),
+            _block("error", payload.get("error")),
+        )
+    return [_note(
+        "The gate ran in place of this call and decided the conversation's "
+        "language had not changed — the classification below is reused, not "
+        "freshly answered."
+    )] + _blocks(
         _block("reason", payload.get("reason")),
+        _block("gate decision", payload.get("gate")),
+        _block("reused classification", payload.get("observation_preview")),
         _block("error", payload.get("error")),
     )
 

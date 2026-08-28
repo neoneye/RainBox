@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 import db
 import skills
 import user_profile
+from agents import response_language_gate
 from agents.base import (
     ModelGroupAgent, StatusSender, truncate_middle,
     truncate_middle_to_length,
@@ -3466,6 +3467,11 @@ class AssistantAgent(ModelGroupAgent):
     REPLY_AUDIT_ACTION: str = "reply_audit"
     RECALL_FILTER_ACTION: str = "recall_filter"
     RESPONSE_LANGUAGE_CLASSIFIER_ACTION: str = "response_language_classifier"
+    # The `args` key under which an observed classifier row snapshots the
+    # profile's declared language codes at the moment it was resolved (see
+    # `_profile_languages_changed`) -- a sibling of the `"gate"` key in the
+    # same dict, written only on the observed path.
+    PROFILE_DECLARED_LANGUAGE_CODES_ARG: str = "profile_declared_language_codes"
 
     # No /agentmodel row of its own: this agent's models come from the
     # `assistant.*` slots (agents/config.py), one per call it makes, each
@@ -3538,6 +3544,17 @@ class AssistantAgent(ModelGroupAgent):
         ) = None
         self._reply_language_markdown: str = ""
         self._response_language_classifier_meta: dict[str, Any] = {}
+        # This turn's gate decision, recorded on the classifier's step row on
+        # both the skip and the ask path so a run always says why the
+        # classifier ran or did not. `gate_replaced_call` is added only when
+        # the gate's verdict was acted on — the classifier's model call never
+        # went out because the gate answered in its place — which is the one
+        # bit downstream renderers must not infer from `should_ask` alone: an
+        # ask that then finds no model group bound also carries a decision
+        # here, but the call there was attempted, not replaced. None before
+        # the gate has run this turn, or when the gate does not apply (switch
+        # off, no room).
+        self._response_language_gate_args: dict[str, Any] | None = None
         # The description of an over-long request: the parsed object and the
         # Markdown projection the prompts carry ("" = no section, which is also
         # the state for every request short enough to travel whole).
@@ -3725,7 +3742,8 @@ class AssistantAgent(ModelGroupAgent):
                 self._persona = None
             self._persona_block = self._persona.text if self._persona else ""
             self._turn_log = self._build_turn_log(
-                context, formatting_on, calibration_on, self._persona)
+                context, formatting_on, calibration_on, self._persona,
+                self._response_language_gate_enabled())
             # A request too long to travel whole reaches every prompt with its
             # middle dropped, so the description of what was dropped has to
             # exist before the first of them is built — including the
@@ -3747,6 +3765,7 @@ class AssistantAgent(ModelGroupAgent):
             self._response_language_classification = None
             self._reply_language_markdown = ""
             self._response_language_classifier_meta = {}
+            self._response_language_gate_args = None
             self._set_activity("classifying response language")
             self._run_response_language_classifier(
                 step_index=0, messages=messages, profile=context.profile)
@@ -4382,11 +4401,26 @@ class AssistantAgent(ModelGroupAgent):
             calibration = False
         return formatting, calibration
 
+    def _response_language_gate_enabled(self) -> bool:
+        """Whether the response-language classifier may be skipped this turn.
+
+        Best-effort, and an unreadable switch reads as off — off means the
+        classifier runs, which is the behaviour that was already correct. A
+        settings failure must never start skipping model calls on its own."""
+        try:
+            return bool(db.get_setting("assistant.response_language_gate"))
+        except Exception:
+            logger.warning(
+                "assistant: response-language gate switch read failed",
+                exc_info=True)
+            return False
+
     @staticmethod
     def _build_turn_log(
         context: "user_profile.ProfileContext",
         formatting_enabled: bool, calibration_enabled: bool,
         persona: "db.PersonaResolution | None",
+        response_language_gate_enabled: bool,
     ) -> list[dict[str, Any]]:
         """The operator-facing debug entries recorded on every step row this
         turn: which profile drove the declared blocks (uuid + name + a link
@@ -4418,6 +4452,8 @@ class AssistantAgent(ModelGroupAgent):
                         "text": "on" if formatting_enabled else "off"})
         entries.append({"label": "knowledge_calibration",
                         "text": "on" if calibration_enabled else "off"})
+        entries.append({"label": "response_language_gate",
+                        "text": "on" if response_language_gate_enabled else "off"})
         return entries
 
     def _capture_profile_context(self) -> "user_profile.ProfileContext":
@@ -5297,6 +5333,154 @@ class AssistantAgent(ModelGroupAgent):
         })
         return classification
 
+    def _previous_room_classification(
+        self, room_uuid: UUID
+    ) -> tuple[ResponseLanguageClassification, frozenset[str] | None] | None:
+        """The last language this room resolved, read back from the trace,
+        paired with the profile's declared codes as they stood at that
+        moment.
+
+        This is what a skipped turn reuses. It is a read rather than stored
+        state on purpose: the resolved language is already recorded on the
+        classifier's step row, and a second copy would be a second source of
+        truth for the same fact. The declared-codes snapshot rides along on
+        the same row (see `_run_response_language_classifier`), so returning
+        both here costs the one query this method already makes rather than a
+        second one on the turn's critical path.
+
+        Only an `observed` row counts. A skipped or failed classifier produced
+        no resolution, and reusing one would reply in whatever language a
+        broken call happened to leave behind. A row that cannot be parsed back
+        into the schema is treated as absent, which asks.
+
+        The snapshot is `None` when the row predates this mechanism and never
+        recorded one. `_profile_languages_changed` reads that as "changed" --
+        the honest answer when there is nothing to compare against -- so the
+        room asks once and every row after that carries a snapshot to compare
+        exactly.
+        """
+        try:
+            row = (
+                db.db.session.query(db.AssistantStep)
+                .join(db.AssistantRun,
+                      db.AssistantStep.run_uuid == db.AssistantRun.uuid)
+                .filter(db.AssistantRun.room_uuid == room_uuid)
+                .filter(db.AssistantStep.action
+                        == self.RESPONSE_LANGUAGE_CLASSIFIER_ACTION)
+                .filter(db.AssistantStep.phase == "observed")
+                .filter(db.AssistantStep.observation_preview.isnot(None))
+                .order_by(db.AssistantStep.id.desc())
+                .first()
+            )
+        except Exception:
+            logger.warning(
+                "assistant: previous response-language read failed",
+                exc_info=True)
+            return None
+        if row is None:
+            return None
+        try:
+            classification = ResponseLanguageClassification.model_validate_json(
+                row.observation_preview)
+        except Exception:
+            logger.warning(
+                "assistant: previous response-language row did not parse",
+                exc_info=True)
+            return None
+        args = row.args if isinstance(row.args, dict) else {}
+        snapshot = args.get(self.PROFILE_DECLARED_LANGUAGE_CODES_ARG)
+        declared_snapshot = (
+            frozenset(str(code) for code in snapshot)
+            if isinstance(snapshot, list) else None)
+        return classification, declared_snapshot
+
+    @staticmethod
+    def _profile_languages_changed(
+        profile: dict[str, Any] | None,
+        declared_snapshot: frozenset[str] | None,
+    ) -> bool:
+        """Has the profile's declared reply languages changed since the
+        reused classification was resolved?
+
+        `declared_snapshot` is the profile's declared codes as they stood at
+        that moment, recorded onto the classifier's step row when it was
+        written (`_run_response_language_classifier`) rather than inferred
+        from the classification's own codes -- the classifier's result mixes
+        declared codes with whatever the request itself required, and cannot
+        be trusted to carry every declared code either: the round trip
+        through the model is not guaranteed, and
+        `_reconcile_response_language_profile_variants` already exists
+        because it sometimes fails. Comparing against a snapshot taken at
+        write time is exact regardless of what the model did with the prompt.
+
+        The comparison is symmetric: an added, removed or retagged declared
+        code all trigger, because all three mean the reused classification no
+        longer describes what the profile currently declares.
+
+        `None` means the row predates this snapshot and never recorded one --
+        read as changed, so the room asks once to establish a snapshot and
+        every comparison after that is exact.
+        """
+        if declared_snapshot is None:
+            return True
+        declared_codes = frozenset(
+            str(candidate["code"])
+            for candidate in user_profile.declared_language_candidates(profile)
+        )
+        return declared_codes != declared_snapshot
+
+    def _response_language_gate_decision(
+        self,
+        messages: list[dict[str, Any]],
+        room_uuid: "UUID",
+        profile: dict[str, Any] | None,
+    ) -> tuple[
+        response_language_gate.GateDecision,
+        ResponseLanguageClassification | None,
+    ] | None:
+        """The gate's verdict for this turn and what a skip would reuse, or
+        None when the gate does not apply.
+
+        The previous classification is returned alongside the verdict because
+        the verdict depends on whether one exists: reading it twice would put
+        two queries on the turn's critical path to answer one question.
+
+        None means "run the classifier as always": the switch is off, or the
+        turn has no room to read a previous resolution from. The gate itself
+        never returns None — it always has a verdict, and every uncertainty in
+        it resolves towards asking.
+
+        The window is the operator's earlier messages only. The final human
+        message is the request being judged, so it is excluded from the window
+        it is compared against; assistant replies are excluded because they are
+        written in whatever language a previous resolution chose, and letting
+        them vote would let one wrong resolution justify itself forever.
+
+        `profile` is consulted only here, never inside the gate module: the
+        gate stays a pure function of message text, and the profile
+        comparison is done in this method and passed in as a bool.
+        """
+        if not self._response_language_gate_enabled():
+            return None
+        human_texts = [
+            str(m.get("text") or "")
+            for m in messages
+            if self._message_role(m) == "user"
+        ]
+        if not human_texts:
+            return None
+        result = self._previous_room_classification(room_uuid)
+        previous, declared_snapshot = result if result is not None else (
+            None, None)
+        decision = response_language_gate.decide(
+            window_texts=human_texts[:-1],
+            request_text=human_texts[-1],
+            has_previous=previous is not None,
+            profile_languages_changed=self._profile_languages_changed(
+                profile, declared_snapshot),
+        )
+        return decision, previous
+
     def _run_response_language_classifier(
         self,
         *,
@@ -5305,6 +5489,57 @@ class AssistantAgent(ModelGroupAgent):
         profile: dict[str, Any] | None,
     ) -> None:
         """Classify first, render downstream language context, and record it."""
+        # The gate decides before anything is built: a skip costs neither the
+        # model call nor the prompt assembly. It applies only to a real turn —
+        # the eval harness runs with `self._run` None and has no room to read a
+        # previous resolution from.
+        self._response_language_gate_args = None
+        verdict = None
+        gate_ms = None
+        gate_started_at = None
+        if self._run is not None:
+            gate_started_at = datetime.now(UTC)
+            gate_started = time.perf_counter()
+            verdict = self._response_language_gate_decision(
+                messages, self._run.room_uuid, profile)
+            gate_ms = int((time.perf_counter() - gate_started) * 1000)
+        if verdict is not None:
+            decision, previous = verdict
+            self._response_language_gate_args = {"gate": decision.as_args()}
+            # `previous is None` cannot reach here with should_ask False — the
+            # gate returns TRIGGER_NO_PREVIOUS in that case — but the reply
+            # must never proceed with no language, so the guard is explicit
+            # rather than inferred.
+            if not decision.should_ask and previous is not None:
+                # The explicit marker the renderers branch on (see the
+                # attribute's docstring above): only this branch means the
+                # classifier's model call never went out.
+                self._response_language_gate_args["gate_replaced_call"] = True
+                self._response_language_classification = previous
+                self._reply_language_markdown = (
+                    self._format_reply_language_markdown(previous))
+                # The row's duration is the whole helper — the settings read
+                # and the previous-classification query alongside `decide()`
+                # itself — so it honestly represents what replaced the model
+                # call. `decision.detector_ms`, `decide()`'s own share, stays
+                # on the row inside `as_args()` above.
+                self._response_language_classifier_meta = {
+                    "duration_ms": gate_ms,
+                }
+                self._record_response_language_classifier_step(
+                    step_index=step_index,
+                    phase="skipped",
+                    reason=(
+                        "the conversation's language has not changed; reusing "
+                        "this room's last classification"
+                    ),
+                    observation_preview=json.dumps(
+                        previous.model_dump(), ensure_ascii=False, indent=1),
+                    system_prompt=None,
+                    user_prompt=None,
+                    requested_at=gate_started_at,
+                )
+                return
         system_prompt = ASSISTANT_SHARED_SYSTEM_PROMPT
         user_prompt = self._build_response_language_classifier_prompt(
             messages, profile)
@@ -5360,6 +5595,20 @@ class AssistantAgent(ModelGroupAgent):
         self._response_language_classification = classification
         self._reply_language_markdown = (
             self._format_reply_language_markdown(classification))
+        # Snapshot the profile's declared codes onto this observed row, so a
+        # later turn's `_profile_languages_changed` compares against what was
+        # actually declared here rather than inferring it from the
+        # classification's own codes (see that method's docstring). Only the
+        # observed path needs this -- `_previous_room_classification` reads
+        # only observed rows.
+        self._response_language_gate_args = {
+            **(self._response_language_gate_args or {}),
+            self.PROFILE_DECLARED_LANGUAGE_CODES_ARG: sorted({
+                str(candidate["code"])
+                for candidate in user_profile.declared_language_candidates(
+                    profile)
+            }),
+        }
         rendered = json.dumps(
             classification.model_dump(), ensure_ascii=False, indent=1)
         self._record_response_language_classifier_step(
@@ -5381,12 +5630,16 @@ class AssistantAgent(ModelGroupAgent):
         reason: str,
         observation_preview: str | None = None,
         error: str | None = None,
-        system_prompt: str,
-        user_prompt: str,
+        system_prompt: str | None,
+        user_prompt: str | None,
         requested_at: datetime,
         step_uuid: "UUID | None" = None,
     ) -> None:
-        """Persist the standalone classifier call without entering step budget."""
+        """Persist the standalone classifier call without entering step budget.
+
+        `system_prompt`/`user_prompt` are `None` on a skip: nothing was built
+        and nothing was sent, so recording a prompt that was never used would
+        misreport the turn."""
         action = self.RESPONSE_LANGUAGE_CLASSIFIER_ACTION
         self._steps.append({
             "step_index": step_index,
@@ -5406,6 +5659,7 @@ class AssistantAgent(ModelGroupAgent):
             phase=phase,  # type: ignore[arg-type]
             action=action,
             reason=reason,
+            args=self._response_language_gate_args,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             log=self._turn_log or None,
@@ -6027,7 +6281,8 @@ class AssistantAgent(ModelGroupAgent):
         context = self._capture_profile_context()
         formatting_on, calibration_on = self._declared_block_switches()
         self._turn_log = self._build_turn_log(
-            context, formatting_on, calibration_on, self._persona)
+            context, formatting_on, calibration_on, self._persona,
+            self._response_language_gate_enabled())
         self._identity_block, self._formatting_block, self._calibration_block = (
             self._build_declared_profile_blocks(
                 context.profile, formatting_enabled=formatting_on,

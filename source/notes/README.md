@@ -11,6 +11,8 @@ history); `proposals/` holds design-time intent and reviews.
   scheduling, git push, restore, threat model.
 - [testing.md](testing.md) — running the suite, the sandbox database, marker
   tests, known failures.
+- [cleanups.md](cleanups.md) — the deferred-work backlog: what is stale,
+  untidy or wrong, where it is, and why it was left.
 - [deep-research-tryout.md](deep-research-tryout.md) — operator walkthrough
   for `python -m research`: model group setup, search keys, example runs,
   troubleshooting.
