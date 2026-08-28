@@ -201,6 +201,14 @@ the residual false tokens (`lets`, `male`, `persia`, `angle`, `island` — 7
 messages) all resolve to two-letter codes, which the higher floor does not
 touch, and a false fire costs one classifier call, never correctness.
 
+The bounded cost of this floor is not only the homographs it was raised to
+drop — it is every genuine CLDR language whose name is four or five letters
+and whose code is three letters or more: `Bemba` (`bem`), `Sakha` (`sah`),
+`Dogri` (`doi`), `Erzya` (`myv`), `Khasi` (`kha`), `Mizo` (`lus`), `Zarma`
+(`dje`), `Tulu` (`tcy`), `Tigre` (`tig`), `Mende` (`men`) and `Karen` (`kbj`)
+among them go unrecognised by this trigger, same as the homographs. A request
+naming one of them is caught only if it also reads as a language shift.
+
 ## The trigger neither the shift test nor the name check can see
 
 The classifier's prompt carries the operator's declared `/profile` languages
@@ -213,16 +221,27 @@ both signals the gate already has read the turn as unchanged, yet the
 classification a skip would reuse was resolved against the profile as it stood
 before the edit.
 
-The classifier is instructed to copy every declared profile-language code
-exactly into its result. The gate uses that contract: it compares the
-operator's currently declared codes against the codes the reused
-classification carries, and a declared code missing from that set is the
-signal that the profile moved since the classification was resolved. The
-comparison runs one way only, declared minus reused — a code present in the
-classification that the profile does not declare is normal, since the
-classifier also adds whatever language or dialect the request itself required
-(a translation target, a dialect comparison) that was never declared, and
-extra codes like that must not trigger.
+The comparison does not read the profile off the reused classification at
+all. The classifier is instructed to copy every declared profile-language
+code exactly into its result, but that contract is not reliably honoured —
+`_reconcile_response_language_profile_variants` exists because the model
+sometimes collapses `en-GB` and `en-US` into the broader `en`, and it declines
+to repair that, reporting it as a contract failure instead. Inferring the
+profile from the classification's codes would either miss a removed code (a
+code present in the classification but no longer declared is indistinguishable
+from one the request itself required) or fire on every turn in a room where
+the model routinely omits a declared code.
+
+Instead, the observed classifier row snapshots the profile's declared codes
+as they stood at the moment it was resolved — a plain list written into the
+row's `args` alongside the `gate` block, independent of anything the model
+returned. The comparison is then symmetric: the profile's currently declared
+codes against that snapshot, as sets, with `!=`. An addition, a removal, or a
+retag (the same code count, different tags) all trigger, because all three
+mean the reused classification no longer describes what is currently
+declared. A row written before this snapshot existed carries none, which
+reads as changed — one extra ask for that room, and every row after it
+carries a snapshot to compare exactly.
 
 This comparison is not a function of `window_texts` or `request_text`, so it
 stays out of `agents/response_language_gate.py` entirely: the assistant
@@ -320,11 +339,19 @@ the window re-reads the same history every turn: without it a turn spends
 `source/agents/assistant.py`: `_run_response_language_classifier` reads
 `assistant.response_language_gate` and, when it is on, calls `decide(...)`
 before building the prompt — a skip costs neither the call nor the prompt
-assembly. `_previous_room_classification()` reads the last observed result.
-`_response_language_gate_decision` also calls
-`_profile_languages_changed(profile, previous)`, the comparison described
-above, to build the `profile_languages_changed` argument `decide()` needs;
-the gate module itself never receives or reads `profile`.
+assembly. On the observed path, before recording the row, it also snapshots
+the profile's declared codes into `args["profile_declared_language_codes"]`
+(`user_profile.declared_language_candidates(profile)`), a sibling of the
+`gate` block written only there — never on a skip, since only observed rows
+are ever read back.
+`_previous_room_classification()` reads the last observed row and returns the
+parsed classification together with that snapshot (`frozenset[str] | None`,
+`None` when the row predates the snapshot), both from the one query.
+`_response_language_gate_decision` calls
+`_profile_languages_changed(profile, declared_snapshot)` — comparing the
+profile's currently declared codes against the snapshot, as sets, with `!=`
+— to build the `profile_languages_changed` argument `decide()` needs; the
+gate module itself never receives or reads `profile`.
 
 `source/requirements.txt`: `lingua-language-detector==2.2.0`, `language_data`.
 Lingua is already vetted in this repo at that version in
@@ -411,10 +438,10 @@ languages on `/profile` and then keeps writing in the language they already
 were, there is nothing for the shift test to see and nothing for the name
 check to match — without trigger 3 that skip would recur on every later turn,
 because a stale classification does not become fresher by being reused again.
-Trigger 3 exists specifically to close this path: the moment the reused
-classification's codes stop matching the profile's declared codes, the next
-turn asks, and the recovery claim above holds for every trigger rather than
-for five of six.
+Trigger 3 exists specifically to close this path: the moment the profile's
+currently declared codes no longer match the snapshot taken when the reused
+classification was resolved, the next turn asks, and the recovery claim above
+holds for every trigger rather than for five of six.
 
 `LETTER_FLOOR = 16`, `WINDOW_MESSAGES = 8`, `WEIGHT_CAP = 200` and
 `SHIFT_FLOOR = 0.15` are starting values. `SHIFT_FLOOR` and `WEIGHT_CAP` are
@@ -439,10 +466,13 @@ language.
   profile-changed trigger is exercised at the gate level by passing
   `profile_languages_changed=True` directly (the module takes it as a plain
   bool and does not compute it), and at the assistant level by
-  `_response_language_gate_decision` with a profile whose declared codes the
-  reused classification does not fully carry — plus the same case with an
-  unchanged profile, and one where the classification carries an extra,
-  non-declared language and still reuses.
+  `_response_language_gate_decision` covering an addition, a removal, a
+  retag (same code count, different tags — a one-way comparison would miss
+  this and a removal alike), an unchanged profile, a row with no snapshot at
+  all (reads as changed), and a classification whose own codes omit a
+  declared code the profile still declares unchanged (the
+  `_reconcile_response_language_profile_variants` shape) still reusing,
+  because the comparison never reads the classification's codes.
 - `names_a_language` matches `Danish`, `dansk`, `italiano` and `Deutsch`, and
   languages with no two-letter code (`Cherokee`, `Cebuano`, `Hawaiian`). Each
   filter gets an assertion that isolates it — one that fails if that filter
@@ -454,9 +484,9 @@ language.
   English window asks (by the name check, since it names English; the same
   request with its target unnamed asks by the shift); `Please answer in Danish from now on.` in an
   English window asks on trigger 2; `ok` in an English window reuses.
-- `_previous_room_classification` round-trips a recorded classification back
-  into `_reply_language_markdown`, and returns `None` for a room with no
-  observed classifier row.
+- `_previous_room_classification` round-trips a recorded classification (and
+  its declared-codes snapshot) back into `_reply_language_markdown`, and
+  returns `None` for a room with no observed classifier row.
 - A raising detector runs the classifier and records the error in `args`.
 - The switch off runs the classifier regardless of what the gate would decide;
   an unreadable switch reads as off.

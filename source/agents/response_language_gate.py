@@ -55,7 +55,11 @@ NAME_MIN_LETTERS = 4
 #: takes the false-fire rate on the same corpus to 0.8% while leaving
 #: `Cherokee` (`chr`), `Cebuano` (`ceb`) and `Hawaiian` (`haw`) -- the
 #: three-letter-code languages the length minimum exists to keep -- still
-#: recognised, because each is itself at least 6 letters long.
+#: recognised, because each is itself at least 6 letters long. The bounded
+#: cost is every CLDR language whose name is 4-5 letters and whose code is
+#: three letters or more going unrecognised -- Bemba (`bem`), Sakha (`sah`),
+#: Dogri (`doi`), Erzya (`myv`), Khasi (`kha`), Mizo (`lus`), Zarma (`dje`),
+#: Tulu (`tcy`), Tigre (`tig`), Mende (`men`) and Karen (`kbj`) among them.
 NAME_LONG_CODE_MIN_LETTERS = 6
 
 _WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
@@ -221,8 +225,12 @@ def _token_language(token: str) -> str | None:
     single largest source of false fires by a wide margin, with `even`
     (Even, `eve`), `meta` (`mgo`), `logo` (`log`) and `male` (`ms`) behind it.
     Raising the floor for this group only keeps `Cherokee`, `Cebuano` and
-    `Hawaiian` recognised -- each is long enough to clear it -- while
-    dropping the homographs, which are short.
+    `Hawaiian` recognised -- each is long enough to clear it -- while dropping
+    the homographs, which are short. The same floor also drops every genuine
+    CLDR language whose name is 4-5 letters and whose code is three letters or
+    more -- Bemba (`bem`), Sakha (`sah`), Dogri (`doi`), Erzya (`myv`), Khasi
+    (`kha`), Mizo (`lus`), Zarma (`dje`), Tulu (`tcy`), Tigre (`tig`), Mende
+    (`men`) and Karen (`kbj`) among them -- not only the homographs.
     """
     from language_data.names import name_to_code
 
@@ -315,17 +323,21 @@ def decide(
     Every uncertainty resolves towards asking. A false ask costs one classifier
     call -- latency, never correctness. A false skip replies in the
     conversation's established language, which is degraded and visible rather
-    than a hard error, and repairs itself on the next turn: the operator either
-    writes in the other language, which is a shift, or names it, which is the
-    name check.
+    than a hard error. Most of the time it also repairs itself on the next
+    turn: the operator either writes in the other language, which is a shift,
+    or names it, which is the name check. A `/profile` language edit is the one
+    path that does not repair itself that way -- the operator can keep writing
+    in the language they always have, leaving nothing for the shift test or
+    the name check to see -- which is what `profile_languages_changed` exists
+    to catch.
 
     `profile_languages_changed` is the one signal this module cannot compute
-    itself, because it is not a function of the messages: the caller compares
-    the operator's currently declared profile languages against the codes
-    carried by the classification a skip would reuse, and passes only the
-    verdict of that comparison. This keeps the module a pure function of
-    `window_texts` and `request_text` -- it does not need to know what a
-    profile is.
+    itself, because it is not a function of the messages: the caller snapshots
+    the operator's declared profile languages onto the classification a skip
+    would reuse, and compares that snapshot against what is currently
+    declared, passing only the verdict of that comparison. This keeps the
+    module a pure function of `window_texts` and `request_text` -- it does not
+    need to know what a profile is.
 
     The whole body runs under one broad `except Exception`. This is not
     sloppiness to be narrowed later -- it is the fail-open guarantee itself:

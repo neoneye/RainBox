@@ -124,12 +124,23 @@ def room(app_ctx):
         db.db.session.commit()
 
 
-def _record_classification(room_uuid, classification, phase="observed"):
-    """Write a classifier step row the way a real turn writes one."""
+def _record_classification(
+        room_uuid, classification, phase="observed", declared_codes=None):
+    """Write a classifier step row the way a real turn writes one.
+
+    `declared_codes`, when given, is written as the row's snapshot of the
+    profile's declared language codes at classification time -- the same
+    `args` key an observed row carries in production (see
+    `AssistantAgent._profile_languages_changed`). Passing `None` (the
+    default) writes a row with no snapshot, which is how a row from before
+    this mechanism existed reads back."""
     import json
 
     run = db.start_assistant_run(
         journal_id=uuid4(), room_uuid=room_uuid, agent_uuid=ASSISTANT_UUID)
+    args = None
+    if declared_codes is not None:
+        args = {"profile_declared_language_codes": sorted(declared_codes)}
     db.append_assistant_step(
         run_uuid=run.uuid,
         step_index=0,
@@ -138,6 +149,7 @@ def _record_classification(room_uuid, classification, phase="observed"):
         reason=classification.reason,
         observation_preview=json.dumps(
             classification.model_dump(), ensure_ascii=False, indent=1),
+        args=args,
         code_driven=True,
     )
     db.db.session.commit()
@@ -158,10 +170,12 @@ def test_the_previous_classification_round_trips(room):
     )
     _record_classification(room.uuid, original)
 
-    recovered = _agent()._previous_room_classification(room.uuid)
-    assert recovered is not None
+    result = _agent()._previous_room_classification(room.uuid)
+    assert result is not None
+    recovered, declared_snapshot = result
     assert [item.code for item in recovered.languages] == ["da", "en-GB"]
     assert recovered.reason == original.reason
+    assert declared_snapshot is None
 
 
 def test_the_most_recent_observed_classification_wins(room):
@@ -172,8 +186,9 @@ def test_the_most_recent_observed_classification_wins(room):
         reason="Danish now.",
         languages=[ResponseLanguageItem(code="da", score=5)]))
 
-    recovered = _agent()._previous_room_classification(room.uuid)
-    assert recovered is not None
+    result = _agent()._previous_room_classification(room.uuid)
+    assert result is not None
+    recovered, _ = result
     assert recovered.languages[0].code == "da"
 
 
@@ -254,7 +269,8 @@ def test_an_unchanged_danish_conversation_skips(room):
     db.set_setting("assistant.response_language_gate", True)
     _record_classification(room.uuid, ResponseLanguageClassification(
         reason="Danish conversation.",
-        languages=[ResponseLanguageItem(code="da", score=5)]))
+        languages=[ResponseLanguageItem(code="da", score=5)]),
+        declared_codes=[])
 
     decision, previous = _agent()._response_language_gate_decision(
         DA_MESSAGES, room.uuid, None)
@@ -269,7 +285,8 @@ def test_the_assistant_replies_are_not_in_the_window(room):
     db.set_setting("assistant.response_language_gate", True)
     _record_classification(room.uuid, ResponseLanguageClassification(
         reason="English conversation.",
-        languages=[ResponseLanguageItem(code="en-GB", score=5)]))
+        languages=[ResponseLanguageItem(code="en-GB", score=5)]),
+        declared_codes=[])
     messages = [
         {"sender_type": "human", "text": DA_MESSAGES[0]["text"]},
         {"sender_type": "agent",
@@ -298,7 +315,8 @@ def test_the_current_request_is_not_part_of_its_own_window(room):
     db.set_setting("assistant.response_language_gate", True)
     _record_classification(room.uuid, ResponseLanguageClassification(
         reason="English conversation.",
-        languages=[ResponseLanguageItem(code="en-GB", score=5)]))
+        languages=[ResponseLanguageItem(code="en-GB", score=5)]),
+        declared_codes=[])
     messages = [
         {"sender_type": "human", "text": EN_SHORT},
         {"sender_type": "human", "text": DA_LONG},
@@ -326,15 +344,16 @@ def _profile(*codes: str) -> dict:
     ]}}}
 
 
-def test_a_profile_language_change_asks_even_without_a_shift(room):
+def test_a_profile_language_addition_asks_even_without_a_shift(room):
     """The operator adds a declared reply language on `/profile` and keeps
     writing in the same language the room already resolved to. Neither the
-    window nor the name check can see this -- the profile comparison is the
-    only signal that does."""
+    window nor the name check can see this -- the declared-codes snapshot on
+    the reused row is the only signal that does."""
     db.set_setting("assistant.response_language_gate", True)
     _record_classification(room.uuid, ResponseLanguageClassification(
         reason="Danish conversation.",
-        languages=[ResponseLanguageItem(code="da", score=5)]))
+        languages=[ResponseLanguageItem(code="da", score=5)]),
+        declared_codes=["da"])
 
     decision, previous = _agent()._response_language_gate_decision(
         DA_MESSAGES, room.uuid, _profile("da", "fr"))
@@ -343,10 +362,62 @@ def test_a_profile_language_change_asks_even_without_a_shift(room):
     assert previous is not None
 
 
+def test_a_profile_language_removal_asks(room):
+    """The operator drops a declared reply language on `/profile` and keeps
+    writing in the language they kept. A one-way "declared minus reused"
+    comparison cannot see a removal at all -- this is the defect the
+    declared-codes snapshot exists to fix, not merely a symmetric nicety."""
+    db.set_setting("assistant.response_language_gate", True)
+    _record_classification(room.uuid, ResponseLanguageClassification(
+        reason="English, with Danish still declared.",
+        languages=[ResponseLanguageItem(code="en-GB", score=5)]),
+        declared_codes=["en-GB", "da"])
+
+    decision, previous = _agent()._response_language_gate_decision(
+        DA_MESSAGES, room.uuid, _profile("en-GB"))
+    assert decision.should_ask is True
+    assert decision.trigger == "profile_changed"
+    assert previous is not None
+
+
+def test_a_profile_language_retag_asks(room):
+    """Swapping one declared tag for another -- same intent, different code --
+    must trigger too: the set of declared codes changed, even though its size
+    did not."""
+    db.set_setting("assistant.response_language_gate", True)
+    _record_classification(room.uuid, ResponseLanguageClassification(
+        reason="Danish conversation.",
+        languages=[ResponseLanguageItem(code="da", score=5)]),
+        declared_codes=["en"])
+
+    decision, previous = _agent()._response_language_gate_decision(
+        DA_MESSAGES, room.uuid, _profile("en-US"))
+    assert decision.should_ask is True
+    assert decision.trigger == "profile_changed"
+    assert previous is not None
+
+
 def test_an_unchanged_profile_still_reuses(room):
-    """The declared codes are exactly what the reused classification already
-    carries, so the profile comparison finds nothing new and the turn is
-    judged on the messages as before."""
+    """The declared codes are exactly what the reused row snapshotted, so the
+    profile comparison finds nothing new and the turn is judged on the
+    messages as before."""
+    db.set_setting("assistant.response_language_gate", True)
+    _record_classification(room.uuid, ResponseLanguageClassification(
+        reason="Danish conversation.",
+        languages=[ResponseLanguageItem(code="da", score=5)]),
+        declared_codes=["da"])
+
+    decision, _ = _agent()._response_language_gate_decision(
+        DA_MESSAGES, room.uuid, _profile("da"))
+    assert decision.should_ask is False
+    assert decision.trigger != "profile_changed"
+
+
+def test_a_row_with_no_snapshot_asks_once(room):
+    """A row written before this mechanism existed carries no snapshot at
+    all. That reads as changed -- one extra ask for this room -- rather than
+    as unchanged, which would let a genuine profile edit hide behind an old
+    row forever."""
     db.set_setting("assistant.response_language_gate", True)
     _record_classification(room.uuid, ResponseLanguageClassification(
         reason="Danish conversation.",
@@ -354,25 +425,28 @@ def test_an_unchanged_profile_still_reuses(room):
 
     decision, previous = _agent()._response_language_gate_decision(
         DA_MESSAGES, room.uuid, _profile("da"))
-    assert decision.should_ask is False
-    assert decision.trigger != "profile_changed"
+    assert decision.should_ask is True
+    assert decision.trigger == "profile_changed"
+    assert previous is not None
 
 
-def test_extra_classification_languages_do_not_trigger_a_profile_change(room):
-    """A classification carrying a language beyond what the profile declares
-    is normal -- the classifier adds whatever the request itself required --
-    so it must not be read as a profile change. Only a declared code that is
-    missing from the reused classification counts."""
+def test_an_omitted_declared_code_still_reads_as_unchanged(room):
+    """The classifier is instructed to copy every declared code into its
+    result, but this codebase already knows that contract is not reliably
+    honoured (`_reconcile_response_language_profile_variants` exists because
+    of it). A profile declaring `en-GB` and `en-US` whose classification
+    collapsed both into the broader `en` must still read as unchanged when
+    the profile itself has not changed -- comparing the snapshot, not the
+    classification's own codes, is what keeps this from asking on every turn
+    forever."""
     db.set_setting("assistant.response_language_gate", True)
     _record_classification(room.uuid, ResponseLanguageClassification(
-        reason="Danish conversation, plus a French phrase the request used.",
-        languages=[
-            ResponseLanguageItem(code="da", score=5),
-            ResponseLanguageItem(code="fr", score=1),
-        ]))
+        reason="English, broad.",
+        languages=[ResponseLanguageItem(code="en", score=5)]),
+        declared_codes=["en-GB", "en-US"])
 
-    decision, previous = _agent()._response_language_gate_decision(
-        DA_MESSAGES, room.uuid, _profile("da"))
+    decision, _ = _agent()._response_language_gate_decision(
+        DA_MESSAGES, room.uuid, _profile("en-GB", "en-US"))
     assert decision.should_ask is False
     assert decision.trigger != "profile_changed"
 
@@ -384,7 +458,8 @@ def test_a_skipped_turn_records_what_it_reused(room, monkeypatch):
     db.set_setting("assistant.response_language_gate", True)
     _record_classification(room.uuid, ResponseLanguageClassification(
         reason="Danish conversation.",
-        languages=[ResponseLanguageItem(code="da", score=5)]))
+        languages=[ResponseLanguageItem(code="da", score=5)]),
+        declared_codes=[])
 
     agent = _agent()
     agent._run = db.start_assistant_run(
@@ -432,7 +507,8 @@ def test_an_asking_turn_records_why_it_asked(room, monkeypatch):
     db.set_setting("assistant.response_language_gate", True)
     _record_classification(room.uuid, ResponseLanguageClassification(
         reason="English conversation.",
-        languages=[ResponseLanguageItem(code="en-GB", score=5)]))
+        languages=[ResponseLanguageItem(code="en-GB", score=5)]),
+        declared_codes=[])
 
     agent = _agent()
     agent._run = db.start_assistant_run(
