@@ -604,9 +604,8 @@ def _step_events(step) -> list[dict]:
             # caused it to run at all. The no-model-group-bound case writes
             # `phase="skipped"` and returns from the branch above instead, so
             # it never reaches here and carries no `gate` key at all. `args`
-            # holds an action's arguments on a decide-driven row, which never
-            # has a
-            # "gate" key, so this stays empty there.
+            # also holds an action's arguments on a decide-driven row, which
+            # never has a "gate" key, so this stays empty there too.
             | {"gate": _step_args(step).get("gate")}))
     events.extend(_inline_review(step, data))
     events.extend(_as_event(c) for c in _inner_calls(step, data))

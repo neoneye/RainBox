@@ -675,9 +675,11 @@ def _skipped(event: dict) -> list[dict]:
     its place.
 
     Two different rows share this pane, told apart by the explicit
-    `gate_replaced_call` marker — not by whether a `gate` decision happens to
-    be present, since a decision can also ride along on a row where the gate
-    said to ask and the call was simply never made (no model group bound).
+    `gate_replaced_call` marker. `db/assistant_log.py` copies a `gate` block
+    into this payload only when that marker is set, so a not-replaced row's
+    payload never carries one either — the marker names what actually
+    happened (the call was replaced or it wasn't), rather than being inferred
+    from which of the payload's optional fields happen to be populated.
     Without the marker: nothing ran, and nothing failed. With it: the gate DID
     run, spent real time, and reached a verdict — reusing the room's last
     classification rather than asking the model again. That row gets the
