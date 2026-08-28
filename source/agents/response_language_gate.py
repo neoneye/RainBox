@@ -73,6 +73,23 @@ NAME_LONG_CODE_MIN_LETTERS = 6
 #: Runs of letters -- `\w` minus digits and the underscore, which Python
 #: has no positive class for, hence the double negation. Unicode-aware, so
 #: an endonym in any script tokenises the way an ASCII name does.
+#: Scripts that write a morpheme per character, so a two-character token is an
+#: ordinary word rather than a fragment. The length minimums below are
+#: Latin-script heuristics -- they exist because short Latin function words
+#: collide with obscure language names -- and applying them here would reject
+#: 中文, 英语, 日本語 and 한국어, each of which names a language. Measured over 42
+#: common Chinese, Japanese and Korean words, the round-trip alone admits only
+#: the genuine language names and nothing else, so these scripts do not need a
+#: length rule to stay precise.
+_DENSE_SCRIPT_PREFIXES = ("CJK", "HIRAGANA", "KATAKANA", "HANGUL")
+#: These scripts also write without spaces, so a whole sentence arrives as one
+#: token and the language name has to be found inside it. Language names in
+#: them run two to four characters (中文, 英语, 日本語, 한국어), which bounds the
+#: scan. Measured over ordinary Chinese sentences it produces no spurious
+#: match: the names are compound morphemes that do not fall out of surrounding
+#: text by accident.
+_DENSE_NAME_SIZES = range(2, 5)
+
 _WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
 
 
@@ -213,6 +230,13 @@ def window_dominant(texts: Sequence[str]) -> tuple[str | None, int]:
     return dominant, len(window)
 
 
+def _writes_a_morpheme_per_character(token: str) -> bool:
+    """Whether `token` is in a script the length minimums do not apply to."""
+    return any(
+        unicodedata.name(char, "").startswith(_DENSE_SCRIPT_PREFIXES)
+        for char in token)
+
+
 @functools.lru_cache(maxsize=None)
 def _recorded_names(code: str) -> frozenset[str]:
     """Every recorded CLDR name for `code`, casefolded."""
@@ -266,7 +290,8 @@ def _token_language(token: str) -> str | None:
     """
     from language_data.names import name_to_code
 
-    if len(token) < NAME_MIN_LETTERS:
+    dense = _writes_a_morpheme_per_character(token)
+    if not dense and len(token) < NAME_MIN_LETTERS:
         return None
     try:
         code = name_to_code("language", token, "und")
@@ -274,11 +299,26 @@ def _token_language(token: str) -> str | None:
         return None
     if not code:
         return None
-    if len(code) > 2 and len(token) < NAME_LONG_CODE_MIN_LETTERS:
+    if not dense and len(code) > 2 and len(token) < NAME_LONG_CODE_MIN_LETTERS:
         return None
     if token.casefold() not in _recorded_names(code):
         return None
     return code
+
+
+def _name_candidates(token: str) -> tuple[str, ...]:
+    """The substrings of `token` that could be a language name.
+
+    A space-separated script gives one candidate: the token itself. A script
+    that writes without spaces gives every short substring, because the token
+    is a whole clause and the name sits inside it.
+    """
+    if not _writes_a_morpheme_per_character(token):
+        return (token,)
+    return tuple(
+        token[start:start + size]
+        for size in _DENSE_NAME_SIZES
+        for start in range(len(token) - size + 1))
 
 
 def names_a_language(text: str) -> tuple[str, str] | None:
@@ -289,9 +329,10 @@ def names_a_language(text: str) -> tuple[str, str] | None:
     detector reads no shift and the window reads no change.
     """
     for token in _WORD_RE.findall(text or ""):
-        code = _token_language(token)
-        if code:
-            return token, code
+        for candidate in _name_candidates(token):
+            code = _token_language(candidate)
+            if code:
+                return candidate, code
     return None
 
 

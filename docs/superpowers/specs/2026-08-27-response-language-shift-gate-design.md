@@ -188,6 +188,22 @@ always asks is the status quo with extra steps. Two filters, both data-driven:
    set of that code's recorded names. `second` resolves to `cs` but is not among
    Czech's names, so it is rejected; so is `margin`, which resolves to `mrt`.
 
+Both length rules are Latin-script heuristics: they exist because short Latin
+function words collide with obscure language names. In Chinese, Japanese and
+Korean one character is a morpheme, the names run two to three characters
+(`中文`, `英语`, `日本語`, `한국어`), and the collision does not arise — measured over
+42 common words in those scripts the round-trip admits the genuine language
+names and nothing else. Tokens in those scripts are therefore exempt from both
+minimums.
+
+Those scripts also write without spaces, so a whole clause arrives as one token
+and the name has to be found inside it. For such a token the check scans every
+two-to-four-character substring, which is bounded by the length of the names it
+is looking for and costs about a millisecond on a 640-character paste.
+Measured over ordinary Chinese sentences it yields no spurious match. Note that
+`我现在用的是什么语言？` — *what language am I writing in* — correctly matches no name:
+it asks about a language without naming one, and belongs to the shift test.
+
 The round-trip runs the same CLDR data in both directions, so the filter adds no
 table of its own and stays language-agnostic. Measured over a nineteen-case
 corpus — English, Danish, Italian and German requests naming a language, against

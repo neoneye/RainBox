@@ -226,6 +226,35 @@ def test_a_named_language_is_found_in_any_language():
     assert names_a_language("Bitte antworte auf Deutsch.") == ("Deutsch", "de")
 
 
+def test_a_language_named_in_a_spaceless_script_is_found():
+    """Chinese, Japanese and Korean write without spaces, so the whole clause
+    arrives as one token and the name has to be found inside it. Their language
+    names are also two or three characters, below the minimum that keeps short
+    Latin function words out -- a minimum that means nothing in a script where
+    one character is a morpheme."""
+    assert names_a_language("请用中文回答") == ("中文", "zh")
+    assert names_a_language("请说英语") == ("英语", "en")
+    assert names_a_language("日本語で答えて") == ("日本語", "ja")
+    assert names_a_language("한국어로 답해 주세요") == ("한국어", "ko")
+
+
+def test_ordinary_spaceless_text_names_no_language():
+    """Scanning inside a token could match by accident. It does not: these
+    names are compound morphemes rather than common words, so they do not fall
+    out of surrounding text."""
+    for text in ("你好，今天天气很好", "这个代码有问题需要修复",
+                 "我们明天开会讨论这个项目", "数据库连接失败了",
+                 "今天的会议取消了", "谢谢你的帮助"):
+        assert names_a_language(text) is None, text
+
+
+def test_asking_about_language_does_not_name_one():
+    """The request that exposed the script bug asks which language it is in
+    without naming any. The name check must stay out of it -- this one belongs
+    to the shift test."""
+    assert names_a_language("我现在用的是什么语言？") is None
+
+
 def test_a_request_comparing_languages_is_found():
     """These are written in the conversation's own language, so nothing else in
     the gate can see them."""
