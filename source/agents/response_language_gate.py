@@ -25,10 +25,18 @@ from typing import Sequence
 
 logger = logging.getLogger(__name__)
 
-#: Below this many letters a message carries no usable language signal.
-#: Measured, `ok` tops out at `zu` 0.06 and `tak` at `mi` 0.08 -- noise at
-#: noise-level confidence, which would read as a shift away from any window.
+#: Below this many letters a Latin-script message carries no usable language
+#: signal. Measured, `ok` tops out at `zu` 0.06 and `tak` at `mi` 0.08 -- noise
+#: at noise-level confidence, which would read as a shift away from any window.
 LETTER_FLOOR = 16
+#: The other way a message proves it carries language: the detector is sure of
+#: it. A character count is a proxy for information content, and the proxy only
+#: holds for scripts that spell words out. A complete Chinese sentence is ten
+#: characters and `你好` is two, both detected at 1.00 -- where the script alone
+#: nearly fixes the language, length stops meaning anything. Measured, the
+#: weakest short real non-Latin text scores 0.26 (Cyrillic, which like Latin is
+#: shared by several languages) while Latin noise tops out at 0.12.
+CONFIDENCE_FLOOR = 0.20
 #: How many qualifying operator messages define "the conversation's language".
 WINDOW_MESSAGES = 8
 #: Per-message weight ceiling: a long message counts as several short ones,
@@ -76,13 +84,14 @@ def _letter_count(text: str) -> int:
 class Detection:
     """What the detector made of one message.
 
-    `below_floor` and `undetected` are deliberately separate: the first means
-    nothing was asked of the detector, the second means it was asked and found
-    nothing. Only the second is worth a model call.
+    `language_poor` and `undetected` are deliberately separate: the first means
+    the message has too little language in it to be worth classifying, the
+    second means the detector was asked and found nothing. Only the second is
+    worth a model call.
     """
 
     letters: int
-    below_floor: bool
+    language_poor: bool
     undetected: bool
     top: str | None
     confidence: dict[str, float] = field(default_factory=dict)
@@ -128,9 +137,11 @@ def _detect_cached(text: str) -> Detection:
     messages ever written total 0.5 MB, against an average message of 377
     bytes."""
     letters = _letter_count(text)
-    if letters < LETTER_FLOOR:
+    if letters == 0:
+        # Nothing for the detector to read, and nothing a window could vote
+        # with. Digits and punctuation are not language.
         return Detection(
-            letters=letters, below_floor=True, undetected=False, top=None)
+            letters=0, language_poor=True, undetected=False, top=None)
     values = _detector().compute_language_confidence_values(text)
     confidence: dict[str, float] = {}
     for value in values:
@@ -140,10 +151,19 @@ def _detect_cached(text: str) -> Detection:
         confidence[code] = value.value
     if not confidence:
         return Detection(
-            letters=letters, below_floor=False, undetected=True, top=None)
+            letters=letters, language_poor=False, undetected=True, top=None)
     top = max(confidence, key=lambda code: confidence[code])
+    # Two ways to carry language, and either is enough: enough letters to read,
+    # or a detector certain enough that length stops mattering. Requiring both
+    # would discard a ten-character Chinese sentence; requiring neither would
+    # admit `ok`.
+    if letters < LETTER_FLOOR and confidence[top] < CONFIDENCE_FLOOR:
+        # The shares are dropped rather than reported: nothing downstream may
+        # vote with noise, and an empty distribution cannot be misread as one.
+        return Detection(
+            letters=letters, language_poor=True, undetected=False, top=None)
     return Detection(
-        letters=letters, below_floor=False, undetected=False, top=top,
+        letters=letters, language_poor=False, undetected=False, top=top,
         confidence=confidence)
 
 
@@ -174,7 +194,7 @@ def window_dominant(texts: Sequence[str]) -> tuple[str | None, int]:
     window: list[Detection] = []
     for text in reversed(list(texts)):
         detection = detect(text)
-        if detection.below_floor or detection.undetected:
+        if detection.language_poor or detection.undetected:
             continue
         window.append(detection)
         if len(window) >= WINDOW_MESSAGES:
@@ -407,7 +427,7 @@ def decide(
                 request_letters=request.letters,
                 detector_ms=elapsed(),
             )
-        if request.below_floor:
+        if request.language_poor:
             # Too short to classify is not the same as unclassifiable. There is
             # nothing here to shift, and the previous resolution is the
             # deterministic answer.

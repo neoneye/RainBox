@@ -106,21 +106,53 @@ def test_short_text_is_not_put_to_the_detector():
     any window, so they never reach it."""
     for text in ("ok", "tak", "ja"):
         d = detect(text)
-        assert d.below_floor is True
+        assert d.language_poor is True
         assert d.undetected is False
         assert d.top is None
         assert d.confidence == {}
         assert d.letters < LETTER_FLOOR
 
 
-def test_below_floor_and_undetected_are_different_answers():
+def test_a_short_message_in_a_dense_script_carries_language():
+    """A complete Chinese sentence is ten characters. Counting characters alone
+    calls that language-poor and reuses whatever came before -- which is how a
+    Chinese request in a Spanish conversation was answered as Spanish. The
+    detector is certain about it, and that certainty is what admits it."""
+    d = detect("我现在用的是什么语言？")
+    assert d.language_poor is False
+    assert d.top == "zh"
+    assert d.letters < LETTER_FLOOR
+
+    # Two characters, still unambiguous.
+    assert detect("你好").language_poor is False
+
+
+def test_a_chinese_request_in_an_english_conversation_asks():
+    """The reported bug, end to end: the operator switches to Chinese and the
+    gate must not reuse the previous language."""
+    d = decide(window_texts=[EN_PROSE, EN_DEBUGGING],
+               request_text="我现在用的是什么语言？",
+               has_previous=True, profile_languages_changed=False)
+    assert d.should_ask is True
+    assert d.trigger == TRIGGER_SHIFT
+
+
+def test_noise_stays_language_poor_in_any_script():
+    """The floor still has to reject acknowledgements, or every `ok` spends a
+    model call. Measured, Latin noise tops out at 0.12 confidence while the
+    weakest real non-Latin text scores 0.26."""
+    for text in ("ok", "tak", "ja", "y", "hmm", "1234", "..."):
+        assert detect(text).language_poor is True, text
+
+
+def test_language_poor_and_undetected_are_different_answers():
     """Being too short to classify is not the same as being unclassifiable.
     Only the second is worth a model call, so the two must not collapse."""
     short = detect("ok")
-    assert short.below_floor is True and short.undetected is False
+    assert short.language_poor is True and short.undetected is False
 
     unclassifiable = detect("1234567890 !!!!!!!!!! ---------- @@@@@@@@@@")
-    assert unclassifiable.below_floor is True
+    assert unclassifiable.language_poor is True
     assert unclassifiable.letters == 0
 
 
@@ -151,7 +183,7 @@ def test_a_tie_breaks_on_the_language_code(monkeypatch):
     insert first, so the answer does not depend on message order."""
     import agents.response_language_gate as gate
 
-    tied = Detection(letters=40, below_floor=False, undetected=False,
+    tied = Detection(letters=40, language_poor=False, undetected=False,
                      top="da", confidence={"da": 0.5, "en": 0.5})
     monkeypatch.setattr(gate, "detect", lambda _text: tied)
 

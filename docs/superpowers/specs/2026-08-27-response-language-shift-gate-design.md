@@ -49,13 +49,40 @@ on every later turn. The classifier prompt already carries an anti-perpetuation
 rule; the gate must not reintroduce underneath it the problem that rule exists
 to prevent. Operator messages are the record of what the human actually wrote.
 
-**Qualifying** means the message's Unicode letter count is at or above
-`LETTER_FLOOR`. Acknowledgements carry no language content, and unrestricted the
-detector says so in the only way it can — measured, `ok` tops out at `zu` 0.06
-and `tak` at `mi` 0.08, noise at noise-level confidence. Against any window both
-score below `SHIFT_FLOOR`, so without a floor every acknowledgement would ask.
-The floor keeps them out of the window and, as the current request, out of the
-shift test entirely.
+**Qualifying** means the message carries language, which it can prove two
+ways: a Unicode letter count at or above `LETTER_FLOOR`, **or** a detector
+confidence at or above `CONFIDENCE_FLOOR`. Either is enough.
+
+The letter count alone would be a script test wearing the costume of a length
+test. It is a proxy for information content, and the proxy only holds for
+scripts that spell words out: a complete Chinese sentence is ten characters and
+`你好` is two, both detected at 1.00. Where the script alone nearly fixes the
+language, length stops meaning anything, and requiring it discards fluent
+requests as though they were acknowledgements.
+
+Confidence alone does not work either. Measured, the weakest short real
+non-Latin text scores 0.26 (Cyrillic — like Latin, shared by several languages,
+so the confidence spreads thin), while `hej med dig` scores 0.10 and an
+ordinary English debugging line 0.19. There is no threshold separating those
+from noise. Taking the two together does separate them, because they fail on
+different inputs:
+
+| message | letters | confidence | qualifies |
+|---|---|---|---|
+| `我现在用的是什么语言？` | 10 | 1.00 | yes, on confidence |
+| `你好` | 2 | 1.00 | yes, on confidence |
+| `как дела` | 7 | 0.26 | yes, on confidence |
+| an English debugging line | 47 | 0.19 | yes, on length |
+| `hej med dig` | 11 | 0.10 | no |
+| `ok` | 2 | 0.06 | no |
+| `tak` | 3 | 0.08 | no |
+| `y` | 1 | 0.12 | no |
+
+Latin noise tops out at 0.12 and the weakest real non-Latin text scores 0.26,
+so `CONFIDENCE_FLOOR = 0.20` sits in that gap. A message that qualifies on
+neither is language-poor: it stays out of the window and, as the current
+request, out of the shift test entirely, so an acknowledgement never spends a
+model call.
 
 Each qualifying message contributes `min(letter_count, WEIGHT_CAP)` weight, so
 one long paste cannot define the window on its own. The cap bounds a long
@@ -265,9 +292,9 @@ Run `response_language_classifier` when **any** of:
 
 Otherwise reuse the previous classification.
 
-A request below `LETTER_FLOOR` is never put to the detector, so it satisfies
-neither 4 nor 6 — being too short to classify is not the same as being
-unclassifiable, and only the second is worth a model call. Triggers 1, 2 and 3
+A language-poor request satisfies neither 4 nor 6 — carrying too little
+language to classify is not the same as being unclassifiable, and only the
+second is worth a model call. Triggers 1, 2 and 3
 still apply to it, so `in Danish please` — short and explicit — still asks,
 and so does a profile-language edit on a turn whose request is just `ok`.
 
@@ -307,11 +334,13 @@ Detection is **5-13ms per message warm**, 64ms on the first call.
 `source/agents/response_language_gate.py`, a new module with no dependency on
 the assistant:
 
-- `detect(text) -> Detection` — letter count, and when the text is at or above
-  `LETTER_FLOOR`, the top language, its base subtag and the full confidence
-  distribution. A `Detection` distinguishes its two empty cases: *below floor*
-  (nothing was asked of the detector) and *undetected* (the detector was asked
-  and found nothing). Only the second is trigger 6.
+- `detect(text) -> Detection` — letter count, and for a message that carries
+  language, the top language, its base subtag and the full confidence
+  distribution. A `Detection` distinguishes its two empty cases:
+  *language-poor* (too little language to be worth classifying, so its shares
+  are dropped rather than reported — nothing downstream may vote with noise)
+  and *undetected* (the detector was asked and found nothing). Only the second
+  is trigger 6.
 - `window_dominant(texts: Sequence[str]) -> tuple[str | None, int]` — the
   weighted argmax above, with the number of messages that qualified. `(None,
   0)` when none did, which is trigger 5.
@@ -445,7 +474,8 @@ currently declared codes no longer match the snapshot taken when the reused
 classification was resolved, the next turn asks, and the recovery claim above
 holds for every trigger rather than for five of six.
 
-`LETTER_FLOOR = 16`, `WINDOW_MESSAGES = 8`, `WEIGHT_CAP = 200` and
+`LETTER_FLOOR = 16`, `CONFIDENCE_FLOOR = 0.20`, `WINDOW_MESSAGES = 8`,
+`WEIGHT_CAP = 200` and
 `SHIFT_FLOOR = 0.15` are starting values. `SHIFT_FLOOR` and `WEIGHT_CAP` are
 each placed against a measured crossover; the other two are judgement, and all
 four are tuned against runs where the switch was on rather than fixed here.
