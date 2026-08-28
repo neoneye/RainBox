@@ -62,6 +62,9 @@ NAME_MIN_LETTERS = 4
 #: Tulu (`tcy`), Tigre (`tig`), Mende (`men`) and Karen (`kbj`) among them.
 NAME_LONG_CODE_MIN_LETTERS = 6
 
+#: Runs of letters -- `\w` minus digits and the underscore, which Python
+#: has no positive class for, hence the double negation. Unicode-aware, so
+#: an endonym in any script tokenises the way an ASCII name does.
 _WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
 
 
