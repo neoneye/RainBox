@@ -49,7 +49,7 @@ def app_ctx():
     ctx = app.app_context()
     ctx.push()
     yield app
-    db.db.session.rollback()
+    db.session.rollback()
     ctx.pop()
 
 
@@ -59,18 +59,18 @@ def _restore_gate_setting(app_ctx):
     changes it for every later test in the session and for the next run of
     the suite. Capture the row before each test and put it back after,
     regardless of what the test sets it to or how it fails."""
-    row = db.db.session.query(db.AppSetting).filter_by(
+    row = db.session.query(db.AppSetting).filter_by(
         key="assistant.response_language_gate").one_or_none()
     saved = row.value if row is not None else None
     try:
         yield
     finally:
-        db.db.session.rollback()
-        row = db.db.session.query(db.AppSetting).filter_by(
+        db.session.rollback()
+        row = db.session.query(db.AppSetting).filter_by(
             key="assistant.response_language_gate").one_or_none()
         if row is not None:
             row.value = saved
-        db.db.session.commit()
+        db.session.commit()
 
 
 def _agent() -> AssistantAgent:
@@ -116,12 +116,12 @@ def room(app_ctx):
     try:
         yield chatroom
     finally:
-        db.db.session.rollback()
-        db.db.session.query(db.AssistantRun).filter(
+        db.session.rollback()
+        db.session.query(db.AssistantRun).filter(
             db.AssistantRun.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(db.Chatroom).filter(
+        db.session.query(db.Chatroom).filter(
             db.Chatroom.uuid == chatroom.uuid).delete()
-        db.db.session.commit()
+        db.session.commit()
 
 
 def _record_classification(
@@ -152,7 +152,7 @@ def _record_classification(
         args=args,
         code_driven=True,
     )
-    db.db.session.commit()
+    db.session.commit()
     return run
 
 
@@ -210,9 +210,9 @@ def test_a_skipped_or_failed_row_is_not_a_previous_classification(room):
     assert _agent()._previous_room_classification(room.uuid) is None
 
     # Clear the row for the next phase test
-    db.db.session.query(db.AssistantStep).delete()
-    db.db.session.query(db.AssistantRun).delete()
-    db.db.session.commit()
+    db.session.query(db.AssistantStep).delete()
+    db.session.query(db.AssistantRun).delete()
+    db.session.commit()
 
     # Test the `skipped` phase with valid, parseable classification:
     # This proves the row is rejected on its phase, not on unparseable content.
@@ -243,7 +243,7 @@ def test_an_unparseable_row_is_treated_as_absent(room):
         observation_preview="this is not valid JSON",
         code_driven=True,
     )
-    db.db.session.commit()
+    db.session.commit()
 
     assert _agent()._previous_room_classification(room.uuid) is None
 
@@ -473,10 +473,10 @@ def test_a_skipped_turn_records_what_it_reused(room, monkeypatch):
 
     agent._run_response_language_classifier(
         step_index=0, messages=DA_MESSAGES, profile=None)
-    db.db.session.commit()
+    db.session.commit()
 
     row = (
-        db.db.session.query(db.AssistantStep)
+        db.session.query(db.AssistantStep)
         .filter(db.AssistantStep.run_uuid == agent._run.uuid)
         .order_by(db.AssistantStep.id.desc())
         .first()
@@ -529,10 +529,10 @@ def test_an_asking_turn_records_why_it_asked(room, monkeypatch):
     ]
     agent._run_response_language_classifier(
         step_index=0, messages=messages, profile=None)
-    db.db.session.commit()
+    db.session.commit()
 
     row = (
-        db.db.session.query(db.AssistantStep)
+        db.session.query(db.AssistantStep)
         .filter(db.AssistantStep.run_uuid == agent._run.uuid)
         .order_by(db.AssistantStep.id.desc())
         .first()
@@ -579,10 +579,10 @@ def test_an_asked_turn_with_no_model_group_bound_is_not_read_as_a_gate_skip(
 
     agent._run_response_language_classifier(
         step_index=0, messages=DA_MESSAGES, profile=None)
-    db.db.session.commit()
+    db.session.commit()
 
     row = (
-        db.db.session.query(db.AssistantStep)
+        db.session.query(db.AssistantStep)
         .filter(db.AssistantStep.run_uuid == agent._run.uuid)
         .order_by(db.AssistantStep.id.desc())
         .first()
