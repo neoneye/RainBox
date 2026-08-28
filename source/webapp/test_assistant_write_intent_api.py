@@ -41,7 +41,7 @@ def _propose_activation(app):
         result = agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
         from db import AssistantWriteIntent
         intent = (
-            db.db.session.query(AssistantWriteIntent)
+            db.session.query(AssistantWriteIntent)
             .filter(AssistantWriteIntent.run_uuid == result["assistant_run_uuid"]).one()
         )
         return intent.uuid, cand.uuid, room.uuid
@@ -49,10 +49,10 @@ def _propose_activation(app):
 
 def _cleanup(app, room_uuid):
     with app.app_context():
-        db.db.session.query(AssistantRun).filter(AssistantRun.room_uuid == room_uuid).delete()
-        db.db.session.query(MemoryClaim).filter(MemoryClaim.subject == "wi-api").delete()
-        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room_uuid).delete()
-        db.db.session.commit()
+        db.session.query(AssistantRun).filter(AssistantRun.room_uuid == room_uuid).delete()
+        db.session.query(MemoryClaim).filter(MemoryClaim.subject == "wi-api").delete()
+        db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room_uuid).delete()
+        db.session.commit()
 
 
 def test_confirm_endpoint_executes_the_write(client):

@@ -19,10 +19,10 @@ def client():
 
 
 def _cleanup_room(room_uuid):
-    db.db.session.query(db.Chatroom).filter(
+    db.session.query(db.Chatroom).filter(
         db.Chatroom.uuid == room_uuid
     ).delete()
-    db.db.session.commit()
+    db.session.commit()
 
 
 @pytest.fixture
@@ -126,8 +126,8 @@ def test_export_model_info_redacts_credentials(client, direct_room):
             arguments={"api_base": "http://x/v1", "api_key": "sekret",
                        "temperature": 0.2},
         )
-        db.db.session.add(cfg)
-        db.db.session.commit()
+        db.session.add(cfg)
+        db.session.commit()
         cfg_uuid = cfg.uuid
         db.set_chatroom_settings(room_uuid, model_uuid=cfg_uuid)
     try:
@@ -142,7 +142,7 @@ def test_export_model_info_redacts_credentials(client, direct_room):
         assert model["parameters"]["temperature"] == 0.2
     finally:
         with app.app_context():
-            db.db.session.query(db.ModelConfig).filter(
+            db.session.query(db.ModelConfig).filter(
                 db.ModelConfig.uuid == cfg_uuid
             ).delete()
-            db.db.session.commit()
+            db.session.commit()

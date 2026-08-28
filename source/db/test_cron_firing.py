@@ -45,7 +45,7 @@ def app_ctx():
 @pytest.fixture
 def firing(app_ctx):
     """Yields a helper to register a CronJob; tears down all created rows."""
-    s = db.db.session
+    s = db.session
 
     def _max(model, **filt):
         q = s.query(sa.func.max(model.id))
@@ -105,7 +105,7 @@ def test_fire_message_job_posts_to_cron_room(firing):
     assert run.cron_uuid == job.uuid and run.trigger == "manual"
     assert job.last_fired_at is not None
     # The message text landed in the cron room, authored by the cron sender.
-    texts = [m.text for m in db.db.session.query(ChatMessage)
+    texts = [m.text for m in db.session.query(ChatMessage)
              .filter_by(room_uuid=CRON_ROOM_UUID, sender_uuid=CRON_SYSTEM_UUID).all()]
     assert "hello from cron" in texts
     assert any('▶ sent "Greeter"' in t for t in texts)
@@ -116,7 +116,7 @@ def test_fire_message_job_resolves_target_by_uuid(firing):
     job = firing(action_type="message", target=str(CRON_ROOM_UUID),
                  message="hello via uuid", name="ByUuid")
     db.fire_cron_job(job, trigger="manual")
-    texts = [m.text for m in db.db.session.query(ChatMessage)
+    texts = [m.text for m in db.session.query(ChatMessage)
              .filter_by(room_uuid=CRON_ROOM_UUID, sender_uuid=CRON_SYSTEM_UUID).all()]
     assert "hello via uuid" in texts
     # The resolved-room event line names the room (vs the bare fallback line).
@@ -130,7 +130,7 @@ def test_fire_command_job_enqueues_workspace_shell(firing):
     db.fire_cron_job(job, trigger="manual")
     # An inbox item for the workspace-shell agent carries the command directly.
     import json
-    rows = db.db.session.query(Inbox).filter_by(agent_uuid=ws_uuid).all()
+    rows = db.session.query(Inbox).filter_by(agent_uuid=ws_uuid).all()
     payloads = [json.loads(r.payload) for r in rows]
     assert any(p.get("command_text") == "echo hi" and p.get("room_uuid") == str(CRON_ROOM_UUID)
                for p in payloads)
@@ -141,24 +141,24 @@ def test_cron_tick_fires_due_and_advances(firing):
     job = firing(action_type="message", message="tick fired", next_run_at=past, name="Ticker")
     fired = db.cron_tick()
     assert fired >= 1
-    db.db.session.refresh(job)
+    db.session.refresh(job)
     assert job.next_run_at is not None and job.next_run_at > datetime.now(UTC)  # advanced
-    assert db.db.session.query(CronRun).filter_by(cron_uuid=job.uuid).count() == 1
+    assert db.session.query(CronRun).filter_by(cron_uuid=job.uuid).count() == 1
 
 
 def test_cron_tick_backfills_then_does_not_fire(firing):
     job = firing(action_type="message", message="x", next_run_at=None, name="New")
     db.cron_tick()
-    db.db.session.refresh(job)
+    db.session.refresh(job)
     assert job.next_run_at is not None  # scheduled
-    assert db.db.session.query(CronRun).filter_by(cron_uuid=job.uuid).count() == 0  # not fired yet
+    assert db.session.query(CronRun).filter_by(cron_uuid=job.uuid).count() == 0  # not fired yet
 
 
 def test_cron_tick_skips_disabled_and_folder_disabled(firing):
     past = datetime.now(UTC) - timedelta(minutes=1)
     job = firing(enabled=False, next_run_at=past, name="Off")
     db.cron_tick()
-    assert db.db.session.query(CronRun).filter_by(cron_uuid=job.uuid).count() == 0
+    assert db.session.query(CronRun).filter_by(cron_uuid=job.uuid).count() == 0
 
 
 def test_fire_message_job_records_ok_outcome(firing):
@@ -185,7 +185,7 @@ def test_fire_command_job_pending_until_outcome_recorded(firing):
     # The workspace-shell agent reports back via the run uuid it received.
     jid = uuid4()
     db.cron_record_run_outcome(run.uuid, status="ok", journal_id=jid)
-    db.db.session.refresh(run)
+    db.session.refresh(run)
     assert run.status == "ok" and run.journal_id == jid
     assert run.finished_at is not None
     # An unknown run uuid is a no-op, not an error.
@@ -194,7 +194,7 @@ def test_fire_command_job_pending_until_outcome_recorded(firing):
 
 def test_cron_tick_sweeps_stale_pending_runs(firing):
     job = firing(action_type="message", message="x", name="Stale", next_run_at=None)
-    s = db.db.session
+    s = db.session
     stale = CronRun(cron_uuid=job.uuid, trigger="manual",
                     fired_at=datetime.now(UTC) - db.CRON_RUN_PENDING_TIMEOUT - timedelta(minutes=1))
     fresh = CronRun(cron_uuid=job.uuid, trigger="manual", fired_at=datetime.now(UTC))
@@ -220,16 +220,16 @@ def test_cron_job_is_draft(firing):
 
 
 def test_cron_tick_skips_drafts_without_firing(firing):
-    base_msg = db.db.session.query(sa.func.max(ChatMessage.id)).filter(
+    base_msg = db.session.query(sa.func.max(ChatMessage.id)).filter(
         ChatMessage.room_uuid == CRON_ROOM_UUID).scalar() or 0
     past = datetime.now(UTC) - timedelta(minutes=1)
     job = firing(action_type="command", command="", next_run_at=past, name="DraftCmd")
     db.cron_tick()
-    db.db.session.refresh(job)
+    db.session.refresh(job)
     # No run row, no event spam — but the schedule rolled forward, so the job
     # doesn't fire a stale slot the moment its command is filled in.
-    assert db.db.session.query(CronRun).filter_by(cron_uuid=job.uuid).count() == 0
-    new_msgs = db.db.session.query(ChatMessage).filter(
+    assert db.session.query(CronRun).filter_by(cron_uuid=job.uuid).count() == 0
+    new_msgs = db.session.query(ChatMessage).filter(
         ChatMessage.room_uuid == CRON_ROOM_UUID, ChatMessage.id > base_msg).count()
     assert new_msgs == 0
     assert job.next_run_at is not None and job.next_run_at > datetime.now(UTC)
@@ -243,12 +243,12 @@ def test_cron_tick_global_pause(firing):
     try:
         set_setting("cron.paused", True)
         assert db.cron_tick() == 0
-        assert db.db.session.query(CronRun).filter_by(cron_uuid=job.uuid).count() == 0
-        db.db.session.refresh(job)
+        assert db.session.query(CronRun).filter_by(cron_uuid=job.uuid).count() == 0
+        db.session.refresh(job)
         assert job.next_run_at == past  # schedule untouched → resume catches up once
         set_setting("cron.paused", False)
         assert db.cron_tick() >= 1
-        assert db.db.session.query(CronRun).filter_by(cron_uuid=job.uuid).count() == 1
+        assert db.session.query(CronRun).filter_by(cron_uuid=job.uuid).count() == 1
     finally:
         set_setting("cron.paused", None)  # clear back to unset
 
@@ -297,8 +297,8 @@ def _add_run(job_uuid, *, trigger, status, finished_ago=timedelta(0)):
     now = datetime.now(UTC)
     run = CronRun(cron_uuid=job_uuid, trigger=trigger, status=status,
                   fired_at=now - finished_ago, finished_at=now - finished_ago)
-    db.db.session.add(run)
-    db.db.session.commit()
+    db.session.add(run)
+    db.session.commit()
     return run
 
 
@@ -310,12 +310,12 @@ def test_cron_tick_retries_failed_run(firing):
                  max_retries=2, next_run_at=future)
     _add_run(job.uuid, trigger="scheduled", status="error")
     assert db.cron_tick() >= 1
-    runs = db.db.session.query(CronRun).filter_by(cron_uuid=job.uuid)\
+    runs = db.session.query(CronRun).filter_by(cron_uuid=job.uuid)\
         .order_by(CronRun.id.desc()).all()
     assert runs[0].trigger == "retry" and runs[0].status == "ok"  # message fire succeeds
     # The retry succeeded → the chain is over; nothing more fires.
     db.cron_tick()
-    assert db.db.session.query(CronRun).filter_by(cron_uuid=job.uuid).count() == 2
+    assert db.session.query(CronRun).filter_by(cron_uuid=job.uuid).count() == 2
 
 
 def test_cron_tick_retry_budget_exhausts(firing):
@@ -326,7 +326,7 @@ def test_cron_tick_retry_budget_exhausts(firing):
     _add_run(job.uuid, trigger="retry", status="error")
     _add_run(job.uuid, trigger="retry", status="error")  # budget of 2 spent
     db.cron_tick()
-    assert db.db.session.query(CronRun).filter_by(cron_uuid=job.uuid).count() == 3
+    assert db.session.query(CronRun).filter_by(cron_uuid=job.uuid).count() == 3
 
 
 def test_cron_tick_does_not_retry_old_errors(firing):
@@ -338,7 +338,7 @@ def test_cron_tick_does_not_retry_old_errors(firing):
     _add_run(job.uuid, trigger="scheduled", status="error",
              finished_ago=db.CRON_RETRY_WINDOW + timedelta(minutes=1))
     db.cron_tick()
-    assert db.db.session.query(CronRun).filter_by(cron_uuid=job.uuid).count() == 1
+    assert db.session.query(CronRun).filter_by(cron_uuid=job.uuid).count() == 1
 
 
 def test_max_retries_round_trips_through_tree(app_ctx):
@@ -359,8 +359,8 @@ def test_max_retries_round_trips_through_tree(app_ctx):
                     "maxRetries": bad,
                 }])
     finally:
-        db.db.session.execute(sa.delete(CronJob).where(CronJob.uuid == UUID(ju)))
-        db.db.session.commit()
+        db.session.execute(sa.delete(CronJob).where(CronJob.uuid == UUID(ju)))
+        db.session.commit()
 
 
 def test_cron_tick_skips_while_previous_run_in_flight(firing):
@@ -374,10 +374,10 @@ def test_cron_tick_skips_while_previous_run_in_flight(firing):
 
     assert db.cron_job_run_in_flight(job.uuid) is True
     db.cron_tick()
-    assert db.db.session.query(CronRun).filter_by(cron_uuid=job.uuid).count() == 1  # no pile-up
-    db.db.session.refresh(job)
+    assert db.session.query(CronRun).filter_by(cron_uuid=job.uuid).count() == 1  # no pile-up
+    db.session.refresh(job)
     assert job.next_run_at is not None and job.next_run_at > datetime.now(UTC)  # slot skipped
-    texts = [m.text for m in db.db.session.query(ChatMessage)
+    texts = [m.text for m in db.session.query(ChatMessage)
              .filter_by(room_uuid=CRON_ROOM_UUID, sender_uuid=CRON_SYSTEM_UUID).all()]
     assert any('⏭ "Busy" skipped' in t for t in texts)
 
@@ -385,9 +385,9 @@ def test_cron_tick_skips_while_previous_run_in_flight(firing):
     db.cron_record_run_outcome(run.uuid, status="ok")
     assert db.cron_job_run_in_flight(job.uuid) is False
     job.next_run_at = past
-    db.db.session.commit()
+    db.session.commit()
     db.cron_tick()
-    assert db.db.session.query(CronRun).filter_by(cron_uuid=job.uuid).count() == 2
+    assert db.session.query(CronRun).filter_by(cron_uuid=job.uuid).count() == 2
 
 
 def test_record_outcome_posts_completion_line(firing):
@@ -398,7 +398,7 @@ def test_record_outcome_posts_completion_line(firing):
     db.cron_record_run_outcome(run.uuid, status="ok")
     run2 = db.fire_cron_job(job, trigger="manual")
     db.cron_record_run_outcome(run2.uuid, status="error", error="exit code 2")
-    texts = [m.text for m in db.db.session.query(ChatMessage)
+    texts = [m.text for m in db.session.query(ChatMessage)
              .filter_by(room_uuid=CRON_ROOM_UUID, sender_uuid=CRON_SYSTEM_UUID).all()]
     assert any('✔ "Verdict" completed (manual)' in t for t in texts)
     assert any('✖ "Verdict" failed (manual): exit code 2' in t for t in texts)
@@ -426,7 +426,7 @@ def test_fire_debug_message_is_dry_run(firing):
     job = firing(action_type="message", target="", message="dry hello", name="Dry")
     run = db.fire_cron_job(job, trigger="manual", debug=True)
     assert run.debug is True and run.status == "ok" and run.finished_at is not None
-    texts = [m.text for m in db.db.session.query(ChatMessage)
+    texts = [m.text for m in db.session.query(ChatMessage)
              .filter_by(room_uuid=CRON_ROOM_UUID, sender_uuid=CRON_SYSTEM_UUID).all()]
     assert any('dry-run "Dry"' in t and "would send" in t for t in texts)
     assert "dry hello" not in texts  # the message itself was NOT sent
@@ -453,8 +453,8 @@ def test_fire_memory_sync_embeds_active_claim(firing, monkeypatch):
         assert run.status == "ok"
         assert db.get_memory_embedding(claim.uuid, EMBED_MODEL_NAME) is not None
     finally:
-        db.db.session.query(db.MemoryClaim).filter(db.MemoryClaim.subject == tag).delete()
-        db.db.session.commit()
+        db.session.query(db.MemoryClaim).filter(db.MemoryClaim.subject == tag).delete()
+        db.session.commit()
 
 
 def test_fire_memory_sync_dry_run_mutates_nothing(firing, monkeypatch):
@@ -473,19 +473,19 @@ def test_fire_memory_sync_dry_run_mutates_nothing(firing, monkeypatch):
         assert run.status == "ok"
         assert db.get_memory_embedding(claim.uuid, EMBED_MODEL_NAME) is None
     finally:
-        db.db.session.query(db.MemoryClaim).filter(db.MemoryClaim.subject == tag).delete()
-        db.db.session.commit()
+        db.session.query(db.MemoryClaim).filter(db.MemoryClaim.subject == tag).delete()
+        db.session.commit()
 
 
 def test_seed_creates_enabled_memory_sync_job(app_ctx):
     db.seed_cron_defaults()  # idempotent; also runs in init_db
-    job = db.db.session.query(db.CronJob).filter_by(
+    job = db.session.query(db.CronJob).filter_by(
         uuid=db.MEMORY_SYNC_CRON_JOB_UUID).first()
     assert job is not None
     assert job.action_type == "memory_sync"
     assert job.enabled is True
     db.seed_cron_defaults()
-    assert db.db.session.query(db.CronJob).filter_by(
+    assert db.session.query(db.CronJob).filter_by(
         uuid=db.MEMORY_SYNC_CRON_JOB_UUID).count() == 1
 
 
@@ -507,10 +507,10 @@ def test_fire_debug_command_enqueues_with_flag(firing):
     run = db.fire_cron_job(job, trigger="manual", debug=True)
     assert run.status == "pending" and run.debug is True
     payloads = [json.loads(r.payload) for r in
-                db.db.session.query(Inbox).filter_by(agent_uuid=ws_uuid).all()]
+                db.session.query(Inbox).filter_by(agent_uuid=ws_uuid).all()]
     assert any(p.get("debug") is True and p.get("cron_run_uuid") == str(run.uuid)
                for p in payloads)
-    texts = [m.text for m in db.db.session.query(ChatMessage)
+    texts = [m.text for m in db.session.query(ChatMessage)
              .filter_by(room_uuid=CRON_ROOM_UUID, sender_uuid=CRON_SYSTEM_UUID).all()]
     assert any('▶ dry-run "DryCmd"' in t for t in texts)
 
@@ -520,7 +520,7 @@ def test_run_now_endpoint_debug(firing):
     client = flask_app.test_client()
     resp = client.post(f"/cron/api/jobs/{job.uuid}/run?debug=1")
     assert resp.status_code == 200 and resp.get_json()["debug"] is True
-    run = db.db.session.query(CronRun).filter_by(cron_uuid=job.uuid).one()
+    run = db.session.query(CronRun).filter_by(cron_uuid=job.uuid).one()
     assert run.debug is True and run.trigger == "manual" and run.status == "ok"
 
 
@@ -531,7 +531,7 @@ def test_run_now_endpoint(firing):
     client = flask_app.test_client()
     resp = client.post(f"/cron/api/jobs/{job.uuid}/run")
     assert resp.status_code == 200 and resp.get_json()["ok"] is True
-    assert db.db.session.query(CronRun).filter_by(cron_uuid=job.uuid, trigger="manual").count() == 1
+    assert db.session.query(CronRun).filter_by(cron_uuid=job.uuid, trigger="manual").count() == 1
     # Unknown job → 404; bad uuid → 400.
     assert client.post(f"/cron/api/jobs/{uuid4()}/run").status_code == 404
     assert client.post("/cron/api/jobs/not-a-uuid/run").status_code == 400
@@ -552,7 +552,7 @@ def _wait_run(job_uuid, timeout: float = 10.0):
     """Poll until the job's run leaves 'pending' (the script thread commits
     from its own session, so expire before each re-read)."""
     import time
-    s = db.db.session
+    s = db.session
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         s.expire_all()
@@ -570,7 +570,7 @@ def test_fire_script_job_ok_posts_output_and_verdict(firing, tmp_path):
     assert run.status == "pending"        # resolves async, like 'command'
     run = _wait_run(job.uuid)
     assert run.status == "ok" and run.error == ""
-    texts = [m.text for m in db.db.session.query(ChatMessage)
+    texts = [m.text for m in db.session.query(ChatMessage)
              .filter_by(room_uuid=CRON_ROOM_UUID, sender_uuid=CRON_SYSTEM_UUID).all()]
     assert any('▶ started "Pollen"' in t for t in texts)
     assert any("pollen ok" in t for t in texts)          # captured output
@@ -609,7 +609,7 @@ def test_fire_script_job_debug_is_dry_run(firing, tmp_path):
     run = db.fire_cron_job(job, trigger="manual", debug=True)
     assert run.status == "ok" and run.debug is True
     assert not sentinel.exists()          # nothing executed
-    texts = [m.text for m in db.db.session.query(ChatMessage)
+    texts = [m.text for m in db.session.query(ChatMessage)
              .filter_by(room_uuid=CRON_ROOM_UUID, sender_uuid=CRON_SYSTEM_UUID).all()]
     assert any("would run" in t for t in texts)
 
@@ -630,7 +630,7 @@ def test_script_job_with_args_passes_argv(firing, tmp_path):
     db.fire_cron_job(job, trigger="manual")
     run = _wait_run(job.uuid)
     assert run.status == "ok"
-    texts = [m.text for m in db.db.session.query(ChatMessage)
+    texts = [m.text for m in db.session.query(ChatMessage)
              .filter_by(room_uuid=CRON_ROOM_UUID, sender_uuid=CRON_SYSTEM_UUID).all()]
     assert any("arg1=--verbose" in t for t in texts)
 

@@ -42,17 +42,17 @@ def app_ctx():
     ctx.push()
     saved = {}
     for key in KEYS:
-        row = db.db.session.query(db.AppSetting).filter_by(key=key).one_or_none()
+        row = db.session.query(db.AppSetting).filter_by(key=key).one_or_none()
         saved[key] = row.value if row is not None else None
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         for key, value in saved.items():
-            row = db.db.session.query(db.AppSetting).filter_by(key=key).one_or_none()
+            row = db.session.query(db.AppSetting).filter_by(key=key).one_or_none()
             if row is not None:
                 row.value = value
-        db.db.session.commit()
+        db.session.commit()
         ctx.pop()
 
 
@@ -67,14 +67,14 @@ def room(app_ctx):
     try:
         yield chatroom
     finally:
-        db.db.session.rollback()
-        db.db.session.query(db.AssistantRun).filter(
+        db.session.rollback()
+        db.session.query(db.AssistantRun).filter(
             db.AssistantRun.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(db.ChatMessage).filter(
+        db.session.query(db.ChatMessage).filter(
             db.ChatMessage.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(db.Chatroom).filter(
+        db.session.query(db.Chatroom).filter(
             db.Chatroom.uuid == chatroom.uuid).delete()
-        db.db.session.commit()
+        db.session.commit()
 
 
 def _agent() -> AssistantAgent:
@@ -145,7 +145,7 @@ def _capture_decides(agent, decisions):
 
 def _steps(run_uuid):
     return (
-        db.db.session.query(db.AssistantStep)
+        db.session.query(db.AssistantStep)
         .filter(db.AssistantStep.run_uuid == run_uuid)
         .order_by(db.AssistantStep.id)
         .all()
@@ -182,13 +182,13 @@ def test_criteria_run_on_every_turn_with_no_switch_to_turn_them_off(app_ctx):
         assert "- acceptance_criteria:" in agent._action_catalog()
         assert AssistantActionName.ACCEPTANCE_CRITERIA in agent._caps
     finally:
-        db.db.session.query(db.AssistantRun).filter(
+        db.session.query(db.AssistantRun).filter(
             db.AssistantRun.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(db.ChatMessage).filter(
+        db.session.query(db.ChatMessage).filter(
             db.ChatMessage.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(db.Chatroom).filter(
+        db.session.query(db.Chatroom).filter(
             db.Chatroom.uuid == chatroom.uuid).delete()
-        db.db.session.commit()
+        db.session.commit()
 
 
 def test_no_setting_exists_for_the_criteria(app_ctx):
@@ -833,13 +833,13 @@ def test_a_call_the_loop_could_not_make_is_recorded_as_skipped(app_ctx):
         # you cannot troubleshoot is the one that needed it.
         assert row.log
     finally:
-        db.db.session.query(db.AssistantRun).filter(
+        db.session.query(db.AssistantRun).filter(
             db.AssistantRun.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(db.ChatMessage).filter(
+        db.session.query(db.ChatMessage).filter(
             db.ChatMessage.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(db.Chatroom).filter(
+        db.session.query(db.Chatroom).filter(
             db.Chatroom.uuid == chatroom.uuid).delete()
-        db.db.session.commit()
+        db.session.commit()
 
 
 def test_the_prompts_carry_markdown_while_the_trace_keeps_the_structured_result():

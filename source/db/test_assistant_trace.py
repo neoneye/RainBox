@@ -30,8 +30,8 @@ def app_ctx():
 
 def _cleanup_run(run_uuid) -> None:
     # assistant_step has an ON DELETE CASCADE FK to assistant_run.
-    db.db.session.query(AssistantRun).filter(AssistantRun.uuid == run_uuid).delete()
-    db.db.session.commit()
+    db.session.query(AssistantRun).filter(AssistantRun.uuid == run_uuid).delete()
+    db.session.commit()
 
 
 def test_start_assistant_run_creates_running_row(app_ctx):
@@ -61,9 +61,9 @@ def test_append_step_is_committed_before_the_next_append(app_ctx):
         )
         # Simulate another reader (fresh state) mid-action: the running row is
         # already durable, before any "observed" row exists.
-        db.db.session.expire_all()
+        db.session.expire_all()
         running = (
-            db.db.session.query(AssistantStep)
+            db.session.query(AssistantStep)
             .filter(AssistantStep.run_uuid == run.uuid, AssistantStep.phase == "running")
             .all()
         )
@@ -89,7 +89,7 @@ def test_failed_step_records_error_and_is_queryable_by_phase(app_ctx):
         )
         # Queryable by phase/action without scanning chat history.
         failed = (
-            db.db.session.query(AssistantStep)
+            db.session.query(AssistantStep)
             .filter(AssistantStep.run_uuid == run.uuid, AssistantStep.phase == "failed")
             .all()
         )
@@ -127,10 +127,10 @@ def test_step_rows_post_nothing_into_the_room(app_ctx):
         assert rows[0].args == {"query": "the-query"}
     finally:
         _cleanup_run(run.uuid)
-        db.db.session.query(db.Chatroom).filter(
+        db.session.query(db.Chatroom).filter(
             db.Chatroom.uuid == chatroom.uuid
         ).delete()
-        db.db.session.commit()
+        db.session.commit()
 
 
 def test_open_and_append_persist_token_counts(app_ctx):
@@ -182,10 +182,10 @@ def test_open_then_settle_is_one_mutable_row(app_ctx):
         assert rows[0].action == "memory_query"
     finally:
         _cleanup_run(run.uuid)
-        db.db.session.query(db.Chatroom).filter(
+        db.session.query(db.Chatroom).filter(
             db.Chatroom.uuid == chatroom.uuid
         ).delete()
-        db.db.session.commit()
+        db.session.commit()
 
 
 def test_unsettled_open_step_remains_a_durable_running_row(app_ctx):
@@ -200,7 +200,7 @@ def test_unsettled_open_step_remains_a_durable_running_row(app_ctx):
             run_uuid=run.uuid, step_index=0, action="memory_query",
             reason="look it up", args={"query": "git status"},
         )
-        db.db.session.expire_all()  # simulate a fresh reader after a crash
+        db.session.expire_all()  # simulate a fresh reader after a crash
         rows = db.list_assistant_steps(run.uuid)
         assert len(rows) == 1
         assert rows[0].phase == "running"
@@ -316,7 +316,7 @@ def test_get_run_final_reply_returns_the_full_agent_reply(app_ctx):
     finally:
         _cleanup_run(run.uuid)
         _cleanup_run(running.uuid)
-        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room.uuid).delete()
+        db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room.uuid).delete()
 
 
 def test_get_run_final_reply_does_not_borrow_a_sibling_runs_reply(app_ctx):
@@ -341,8 +341,8 @@ def test_get_run_final_reply_does_not_borrow_a_sibling_runs_reply(app_ctx):
     finally:
         _cleanup_run(first.uuid)
         _cleanup_run(second.uuid)
-        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room.uuid).delete()
-        db.db.session.commit()
+        db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room.uuid).delete()
+        db.session.commit()
 
 
 def test_get_run_trigger_message_returns_latest_human_message(app_ctx):
@@ -369,8 +369,8 @@ def test_get_run_trigger_message_returns_latest_human_message(app_ctx):
             _cleanup_run(empty.uuid)
     finally:
         _cleanup_run(run.uuid)
-        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room.uuid).delete()
-        db.db.session.commit()
+        db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room.uuid).delete()
+        db.session.commit()
 
 
 def test_finish_run_sets_terminal_status_and_summary(app_ctx):
@@ -379,8 +379,8 @@ def test_finish_run_sets_terminal_status_and_summary(app_ctx):
     )
     try:
         db.finish_run(run, "finished", final_summary="all done")
-        db.db.session.expire_all()
-        reloaded = db.db.session.get(AssistantRun, run.uuid)
+        db.session.expire_all()
+        reloaded = db.session.get(AssistantRun, run.uuid)
         assert reloaded.status == "finished"
         assert reloaded.final_summary == "all done"
         assert reloaded.finished_at is not None
@@ -455,7 +455,7 @@ def test_recover_interrupted_model_call_preserves_diagnostics(app_ctx):
         assert "heartbeat timeout" in step.error
         assert "Configured model timeout: 45s" in step.error
 
-        journal = db.db.session.get(db.Journal, journal_id)
+        journal = db.session.get(db.Journal, journal_id)
         assert journal.state == "failed"
         result = json.loads(journal.result)
         assert result["assistant_run_uuid"] == str(run.uuid)
@@ -469,9 +469,9 @@ def test_recover_interrupted_model_call_preserves_diagnostics(app_ctx):
         assert f"/assistant?id={run.uuid}" in notices[0]["text"]
     finally:
         _cleanup_run(run.uuid)
-        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room.uuid).delete()
-        db.db.session.query(db.Journal).filter(db.Journal.id == journal_id).delete()
-        db.db.session.commit()
+        db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room.uuid).delete()
+        db.session.query(db.Journal).filter(db.Journal.id == journal_id).delete()
+        db.session.commit()
 
 
 def test_get_assistant_run_returns_row_or_none(app_ctx):
@@ -494,8 +494,8 @@ def test_init_db_twice_preserves_sentinel_assistant_run(app_ctx):
     try:
         db.init_db(app_ctx)
         db.init_db(app_ctx)  # second call must also succeed
-        db.db.session.expire_all()
-        reloaded = db.db.session.get(AssistantRun, sentinel.uuid)
+        db.session.expire_all()
+        reloaded = db.session.get(AssistantRun, sentinel.uuid)
         assert reloaded is not None, "init_db erased existing assistant_run rows"
         assert reloaded.journal_id == sentinel_jid
     finally:
@@ -519,7 +519,7 @@ def test_step_persists_model_reasoning(app_ctx):
             run_uuid=run.uuid, step_index=1, phase="control",
             action="redirect", reasoning=None,
         )
-        db.db.session.expire_all()
+        db.session.expire_all()
         steps = db.list_assistant_steps(run.uuid)
         assert steps[0].uuid == opened.uuid
         assert steps[0].reasoning == (
@@ -559,20 +559,20 @@ def test_backfill_flags_legacy_code_driven_rows_only(app_ctx):
                 run_uuid=run.uuid, step_index=i, phase="observed",
                 action=action, reason=reason)
         db._backfill_code_driven_steps()
-        db.db.session.expire_all()
+        db.session.expire_all()
         flags = [(s.action, s.reason, s.code_driven)
                  for s in db.list_assistant_steps(run.uuid)]
         assert [f[2] for f in flags] == [True, True, False, True, True, False]
         # Idempotent: a second pass changes nothing (and never un-flags a row a
         # recorder marked).
         db._backfill_code_driven_steps()
-        db.db.session.expire_all()
+        db.session.expire_all()
         assert [(s.action, s.reason, s.code_driven)
                 for s in db.list_assistant_steps(run.uuid)] == flags
     finally:
         _cleanup_run(run.uuid)
-        db.db.session.query(db.ChatMessage).filter(
+        db.session.query(db.ChatMessage).filter(
             db.ChatMessage.room_uuid == room.uuid).delete()
-        db.db.session.query(db.Chatroom).filter(
+        db.session.query(db.Chatroom).filter(
             db.Chatroom.uuid == room.uuid).delete()
-        db.db.session.commit()
+        db.session.commit()

@@ -55,12 +55,12 @@ def _assistant_events(conn, count: int = 1, timeout: float = 2.0):
 
 
 def _cleanup_run(run_uuid, room_uuid=None) -> None:
-    db.db.session.query(AssistantRun).filter(AssistantRun.uuid == run_uuid).delete()
+    db.session.query(AssistantRun).filter(AssistantRun.uuid == run_uuid).delete()
     if room_uuid is not None:
-        db.db.session.query(db.ChatMessage).filter(
+        db.session.query(db.ChatMessage).filter(
             db.ChatMessage.room_uuid == room_uuid).delete()
-        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room_uuid).delete()
-    db.db.session.commit()
+        db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room_uuid).delete()
+    db.session.commit()
 
 
 def _room():

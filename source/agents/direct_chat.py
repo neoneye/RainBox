@@ -156,7 +156,7 @@ class DirectChatAgent(Agent):
             # error mid-flush leaves the transaction aborted — roll it back
             # first so these closing writes can land, and keep them
             # best-effort so the original error is what propagates.
-            db.db.session.rollback()
+            db.session.rollback()
             if writer.reasoning_id is not None or writer.answer_id is not None:
                 try:
                     writer.finish()

@@ -20,7 +20,7 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -30,12 +30,12 @@ def tag() -> str:
 
 
 def _cleanup(tag):
-    rows = db.db.session.query(MemoryClaim).filter(MemoryClaim.subject == tag).all()
+    rows = db.session.query(MemoryClaim).filter(MemoryClaim.subject == tag).all()
     for r in rows:
-        db.db.session.query(RetrievalEvent).filter(
+        db.session.query(RetrievalEvent).filter(
             RetrievalEvent.target_id == str(r.uuid)).delete()
-    db.db.session.query(MemoryClaim).filter(MemoryClaim.subject == tag).delete()
-    db.db.session.commit()
+    db.session.query(MemoryClaim).filter(MemoryClaim.subject == tag).delete()
+    db.session.commit()
 
 
 def _msgs(text):

@@ -32,25 +32,31 @@ def settings_unset(app_ctx):
     """Force the backup.* settings to unset for a deterministic baseline, then
     restore the operator's real values. Needed because these tests run against
     the shared live DB where the operator may have configured backup.repo etc.;
-    a test must never depend on (or destroy) that config."""
+    a test must never depend on (or destroy) that config.
+
+    Every test in this file wants it, including the ones that configure a
+    recipient through the environment: settings resolve DB -> env -> default,
+    so a stored row silently outranks the env var such a test just set, and
+    the test then passes while exercising the wrong source. Deleting the env
+    var is likewise not enough on its own -- a stored row survives it."""
     keys = ("backup.repo", "backup.age_recipient", "backup.git_push")
-    sel = db.db.session.query(db.AppSetting).filter(db.AppSetting.key.in_(keys))
+    sel = db.session.query(db.AppSetting).filter(db.AppSetting.key.in_(keys))
     before = {r.key: r.value for r in sel.all()}
     for row in sel.all():
         row.value = None
-    db.db.session.commit()
+    db.session.commit()
     try:
         yield
     finally:
-        for row in db.db.session.query(db.AppSetting).filter(db.AppSetting.key.in_(keys)).all():
+        for row in db.session.query(db.AppSetting).filter(db.AppSetting.key.in_(keys)).all():
             row.value = before.get(row.key)
-        db.db.session.commit()
+        db.session.commit()
 
 
 @pytest.fixture
 def firing(app_ctx):
     """Register a backup CronJob and tear down everything it creates."""
-    s = db.db.session
+    s = db.session
     base_msg = s.query(sa.func.max(ChatMessage.id)).filter(
         ChatMessage.room_uuid == CRON_ROOM_UUID).scalar() or 0
     job_uuids: list = []
@@ -80,7 +86,7 @@ def firing(app_ctx):
 
 
 def _cron_texts():
-    return [m.text for m in db.db.session.query(ChatMessage)
+    return [m.text for m in db.session.query(ChatMessage)
             .filter_by(room_uuid=CRON_ROOM_UUID).all()]
 
 
@@ -100,7 +106,8 @@ def age_recipient(tmp_path_factory, monkeypatch):
     return recipient
 
 
-def test_fire_backup_job_writes_file_to_command_path(firing, tmp_path, age_recipient):
+def test_fire_backup_job_writes_file_to_command_path(
+        firing, tmp_path, age_recipient, settings_unset):
     job = firing(command=str(tmp_path), name="Nightly")
     run = db.fire_cron_job(job, trigger="manual")
 
@@ -125,12 +132,13 @@ def test_fire_backup_job_without_destination_posts_error(firing, monkeypatch, se
     job = firing(command="", name="NoDest")
     db.fire_cron_job(job, trigger="manual")
     # The job still records a run, but the failure is reported as an event line.
-    assert db.db.session.query(CronRun).filter_by(cron_uuid=job.uuid).count() == 1
+    assert db.session.query(CronRun).filter_by(cron_uuid=job.uuid).count() == 1
     assert any('✖ "NoDest" failed to fire' in t and "no backup destination" in t
                for t in _cron_texts())
 
 
-def test_fire_backup_job_without_recipient_posts_error(firing, tmp_path, monkeypatch):
+def test_fire_backup_job_without_recipient_posts_error(
+        firing, tmp_path, monkeypatch, settings_unset):
     """Fail-closed via the cron path: a destination but no public key -> error
     event, no file written (never a plaintext fallback)."""
     monkeypatch.delenv("RAINBOX_BACKUP_AGE_RECIPIENT", raising=False)
@@ -158,7 +166,7 @@ def test_cron_backup_uses_db_settings_not_just_env(firing, tmp_path, tmp_path_fa
     # Snapshot the live operator values so we restore them exactly — never
     # clobber the shared DB's real backup config to NULL on teardown.
     keys = ("backup.age_recipient", "backup.repo")
-    before = {r.key: r.value for r in db.db.session.query(db.AppSetting).filter(
+    before = {r.key: r.value for r in db.session.query(db.AppSetting).filter(
         db.AppSetting.key.in_(keys)).all()}
 
     db.set_setting("backup.age_recipient", recipient)   # DB, not env
@@ -170,13 +178,14 @@ def test_cron_backup_uses_db_settings_not_just_env(firing, tmp_path, tmp_path_fa
         assert len(backups) == 1
         assert backups[0].read_bytes().startswith(b"age-encryption.org/")
     finally:
-        for row in db.db.session.query(db.AppSetting).filter(
+        for row in db.session.query(db.AppSetting).filter(
                 db.AppSetting.key.in_(keys)).all():
             row.value = before.get(row.key)
-        db.db.session.commit()
+        db.session.commit()
 
 
-def test_cron_tick_fires_due_backup(firing, tmp_path, age_recipient):
+def test_cron_tick_fires_due_backup(
+        firing, tmp_path, age_recipient, settings_unset):
     from datetime import timedelta
 
     past = datetime.now(UTC) - timedelta(minutes=1)
@@ -223,12 +232,12 @@ def test_seed_cron_defaults_idempotent(app_ctx):
     has been enabled in the UI, seed must leave that alone)."""
     from db.cron import BACKUP_CRON_JOB_UUID, SYSTEM_CRON_FOLDER_UUID
 
-    job_before = db.db.session.query(db.CronJob).filter_by(uuid=BACKUP_CRON_JOB_UUID).one()
+    job_before = db.session.query(db.CronJob).filter_by(uuid=BACKUP_CRON_JOB_UUID).one()
     enabled_before = job_before.enabled
 
     db.seed_cron_defaults()  # second call
-    folders = db.db.session.query(db.CronFolder).filter_by(uuid=SYSTEM_CRON_FOLDER_UUID).all()
-    jobs = db.db.session.query(db.CronJob).filter_by(uuid=BACKUP_CRON_JOB_UUID).all()
+    folders = db.session.query(db.CronFolder).filter_by(uuid=SYSTEM_CRON_FOLDER_UUID).all()
+    jobs = db.session.query(db.CronJob).filter_by(uuid=BACKUP_CRON_JOB_UUID).all()
     assert len(folders) == 1 and len(jobs) == 1            # no duplicates
     assert jobs[0].action_type == "backup"
     assert jobs[0].enabled is enabled_before               # operator state preserved

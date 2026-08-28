@@ -27,7 +27,7 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -150,10 +150,10 @@ def test_undo_moves_task_back_and_marks_undone(board):
         # Second undo is refused (already undone, not completed).
         assert undo_write_intent(intent.uuid).ok is False
     finally:
-        db.db.session.query(AssistantWriteIntent).filter(
+        db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.run_uuid == run.uuid).delete()
-        db.db.session.query(AssistantRun).filter(AssistantRun.uuid == run.uuid).delete()
-        db.db.session.commit()
+        db.session.query(AssistantRun).filter(AssistantRun.uuid == run.uuid).delete()
+        db.session.commit()
 
 
 def test_undo_refuses_unknown_intent(app_ctx):
@@ -185,10 +185,10 @@ def test_undo_resolves_legacy_capability_name(board):
         assert db.kanban_get_task(UUID(task["uuid"]))["columnUuid"] == todo
         assert db.get_write_intent(intent.uuid).state == "undone"
     finally:
-        db.db.session.query(AssistantWriteIntent).filter(
+        db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.run_uuid == run.uuid).delete()
-        db.db.session.query(AssistantRun).filter(AssistantRun.uuid == run.uuid).delete()
-        db.db.session.commit()
+        db.session.query(AssistantRun).filter(AssistantRun.uuid == run.uuid).delete()
+        db.session.commit()
 
 
 def test_move_via_loop_lands_completed_undo_ledger(board):
@@ -210,19 +210,19 @@ def test_move_via_loop_lands_completed_undo_ledger(board):
         # Task moved.
         assert db.kanban_get_task(UUID(task["uuid"]))["columnUuid"] == done
         # Exactly one ledger row, completed, never proposed, with a working inverse.
-        intents = db.db.session.query(AssistantWriteIntent).filter(
+        intents = db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.room_uuid == chatroom.uuid
         ).all()
         assert len(intents) == 1
         assert intents[0].state == "completed"
         assert intents[0].result["undo"]["payload"]["column_uuid"] == board["columns"][0]["uuid"]
     finally:
-        db.db.session.query(AssistantWriteIntent).filter(
+        db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(AssistantRun).filter(
+        db.session.query(AssistantRun).filter(
             AssistantRun.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
-        db.db.session.commit()
+        db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+        db.session.commit()
 
 
 def test_undo_refused_if_task_moved_since(board):
@@ -248,7 +248,7 @@ def test_undo_refused_if_task_moved_since(board):
         assert out.ok is False
         assert db.kanban_get_task(UUID(task["uuid"]))["columnUuid"] == todo  # left put
     finally:
-        db.db.session.query(AssistantWriteIntent).filter(
+        db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.run_uuid == run.uuid).delete()
-        db.db.session.query(AssistantRun).filter(AssistantRun.uuid == run.uuid).delete()
-        db.db.session.commit()
+        db.session.query(AssistantRun).filter(AssistantRun.uuid == run.uuid).delete()
+        db.session.commit()

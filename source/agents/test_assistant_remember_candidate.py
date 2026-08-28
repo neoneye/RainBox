@@ -18,18 +18,18 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
 def _cleanup(room):
-    db.db.session.query(MemoryEvidence).filter(
+    db.session.query(MemoryEvidence).filter(
         MemoryEvidence.memory_uuid.in_(
-            db.db.session.query(MemoryClaim.uuid).filter_by(room_uuid=room)
+            db.session.query(MemoryClaim.uuid).filter_by(room_uuid=room)
         )
     ).delete(synchronize_session=False)
-    db.db.session.query(MemoryClaim).filter_by(room_uuid=room).delete()
-    db.db.session.commit()
+    db.session.query(MemoryClaim).filter_by(room_uuid=room).delete()
+    db.session.commit()
 
 
 def test_action_remember_creates_candidate_with_evidence(app_ctx):
@@ -51,14 +51,14 @@ def test_action_remember_creates_candidate_with_evidence(app_ctx):
         obs = _action_remember(ctx, {"text": "frank uses vim"})
         assert obs.ok is True
 
-        claim = db.db.session.query(MemoryClaim).filter_by(room_uuid=room).first()
+        claim = db.session.query(MemoryClaim).filter_by(room_uuid=room).first()
         assert claim is not None, "no MemoryClaim was created"
         assert claim.status == "candidate", (
             f"expected 'candidate', got {claim.status!r} — "
             "assistant_interpreted actor must not write active"
         )
 
-        ev = (db.db.session.query(MemoryEvidence)
+        ev = (db.session.query(MemoryEvidence)
               .filter_by(memory_uuid=claim.uuid).first())
         assert ev is not None, "no MemoryEvidence was created"
         assert ev.source_id is not None and ev.source_id != "", (
@@ -100,13 +100,13 @@ def test_handle_wires_message_uuid_into_evidence_source_id(app_ctx):
         )
         agent.handle(uuid4(), {"room_uuid": str(room.uuid), "message_uuid": str(message)})
 
-        claim = db.db.session.query(MemoryClaim).filter(
+        claim = db.session.query(MemoryClaim).filter(
             MemoryClaim.room_uuid == room.uuid,
             MemoryClaim.text == text,
         ).first()
         assert claim is not None, "no MemoryClaim was created"
 
-        ev = db.db.session.query(MemoryEvidence).filter_by(memory_uuid=claim.uuid).first()
+        ev = db.session.query(MemoryEvidence).filter_by(memory_uuid=claim.uuid).first()
         assert ev is not None, "no MemoryEvidence was created"
         assert ev.source_id == str(message), (
             f"expected source_id={message!s}, got {ev.source_id!r} — "
@@ -115,8 +115,8 @@ def test_handle_wires_message_uuid_into_evidence_source_id(app_ctx):
         assert ev.source_type == "chat_message"
     finally:
         _cleanup(room.uuid)
-        db.db.session.query(AssistantRun).filter(
+        db.session.query(AssistantRun).filter(
             AssistantRun.room_uuid == room.uuid
         ).delete()
-        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room.uuid).delete()
-        db.db.session.commit()
+        db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room.uuid).delete()
+        db.session.commit()

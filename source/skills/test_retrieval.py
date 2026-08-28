@@ -26,7 +26,7 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -94,7 +94,7 @@ def test_build_skill_block_records_considered_and_injected(app_ctx, tmp_path):
         assert "Widget help" in block
         assert [s.id for s in injected] == ["tele-skill"]
         events = (
-            db.db.session.query(RetrievalEvent)
+            db.session.query(RetrievalEvent)
             .filter(RetrievalEvent.target_type == "skill",
                     RetrievalEvent.target_id == "tele-skill")
             .all()
@@ -103,10 +103,10 @@ def test_build_skill_block_records_considered_and_injected(app_ctx, tmp_path):
         assert "considered" in stages
         assert "injected" in stages
     finally:
-        db.db.session.query(RetrievalEvent).filter(
+        db.session.query(RetrievalEvent).filter(
             RetrievalEvent.target_id == "tele-skill"
         ).delete()
-        db.db.session.commit()
+        db.session.commit()
 
 
 def test_build_skill_block_excludes_candidates(app_ctx, tmp_path):

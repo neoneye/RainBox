@@ -48,9 +48,9 @@ def caller(app_ctx) -> str:
     written: list = []
     yield written
     if written:
-        db.db.session.query(LlmCall).filter(LlmCall.uuid.in_(written)).delete(
+        db.session.query(LlmCall).filter(LlmCall.uuid.in_(written)).delete(
             synchronize_session=False)
-        db.db.session.commit()
+        db.session.commit()
 
 
 def _summarizer_row(written, *, at, ms=1770, run_uuid=None, group_uuid=None,
@@ -66,8 +66,8 @@ def _summarizer_row(written, *, at, ms=1770, run_uuid=None, group_uuid=None,
         messages=[{"role": "system", "content": system},
                   {"role": "user", "content": user}],
         response_text=response)
-    db.db.session.add(row)
-    db.db.session.commit()
+    db.session.add(row)
+    db.session.commit()
     written.append(row.uuid)
     return row
 
@@ -96,30 +96,30 @@ def _bind_summarizer(group_uuid, *, at):
     `at`. The original binding is restored by `_restore_summarizer_binding`."""
     from agents.config import ASSISTANT_RUN_SUMMARIZER_UUID as SLOT
 
-    row = db.db.session.query(AgentModelBinding).filter(
+    row = db.session.query(AgentModelBinding).filter(
         AgentModelBinding.agent_uuid == SLOT).one_or_none()
     if row is None:
         row = AgentModelBinding(agent_uuid=SLOT)
-        db.db.session.add(row)
+        db.session.add(row)
         _BINDING_BACKUP["absent"] = True
     else:
         _BINDING_BACKUP["group"] = row.model_group_uuid
         _BINDING_BACKUP["updated_at"] = row.updated_at
     row.model_group_uuid = group_uuid
-    db.db.session.commit()
+    db.session.commit()
     # After the commit: `updated_at` carries an onupdate that would overwrite
     # a value set in the same flush.
-    db.db.session.query(AgentModelBinding).filter(
+    db.session.query(AgentModelBinding).filter(
         AgentModelBinding.agent_uuid == SLOT).update(
             {"updated_at": at}, synchronize_session=False)
-    db.db.session.commit()
+    db.session.commit()
     return group_uuid
 
 
 def _restore_summarizer_binding() -> None:
     from agents.config import ASSISTANT_RUN_SUMMARIZER_UUID as SLOT
 
-    q = db.db.session.query(AgentModelBinding).filter(
+    q = db.session.query(AgentModelBinding).filter(
         AgentModelBinding.agent_uuid == SLOT)
     if _BINDING_BACKUP.pop("absent", None):
         q.delete(synchronize_session=False)
@@ -128,13 +128,13 @@ def _restore_summarizer_binding() -> None:
                   "updated_at": _BINDING_BACKUP.pop("updated_at")},
                  synchronize_session=False)
     _BINDING_BACKUP.clear()
-    db.db.session.commit()
+    db.session.commit()
     while _GROUPS:
         group_uuid, config_uuid = _GROUPS.pop()
         db.delete_model_group(group_uuid)
-        db.db.session.query(ModelConfig).filter(
+        db.session.query(ModelConfig).filter(
             ModelConfig.uuid == config_uuid).delete(synchronize_session=False)
-        db.db.session.commit()
+        db.session.commit()
 
 
 def _step(action, *, at, ms):

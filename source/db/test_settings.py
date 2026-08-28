@@ -35,10 +35,10 @@ def temp_setting(app_ctx, monkeypatch):
     yield _register
     # Remove any rows the test created for keys no longer in the registry after
     # monkeypatch undoes the SETTINGS edits.
-    db.db.session.execute(
+    db.session.execute(
         sa.delete(db.AppSetting).where(db.AppSetting.key.like("test.%"))
     )
-    db.db.session.commit()
+    db.session.commit()
 
 
 # ---- precedence: DB -> env -> default -------------------------------------
@@ -136,7 +136,7 @@ def test_chat_default_model_dynamic_default_uses_preferred_override(
     import db.model_config as model_config
     from uuid import uuid4
 
-    row = db.db.session.query(db.AppSetting).filter_by(key="chat.default_model").one()
+    row = db.session.query(db.AppSetting).filter_by(key="chat.default_model").one()
     assert row.value in (None, ""), "operator has chat.default_model set; test needs it unset"
 
     preferred = uuid4()
@@ -160,8 +160,8 @@ def test_chat_default_model_validation(app_ctx):
         assert db.get_setting("chat.default_model") == str(cfg.uuid)
     finally:
         db.set_setting("chat.default_model", None)
-        db.db.session.delete(cfg)
-        db.db.session.commit()
+        db.session.delete(cfg)
+        db.session.commit()
 
 
 # ---- secrets are env-only --------------------------------------------------
@@ -194,18 +194,18 @@ def test_secret_value_redacted_in_all_settings(temp_setting, monkeypatch):
 def test_reconcile_seeds_rows_and_heals_metadata(app_ctx):
     # init_db already reconciled; every registry key has a row. (Don't assume the
     # operator's value is unset — this runs against the shared live DB.)
-    rows = {r.key: r for r in db.db.session.query(db.AppSetting).all()}
+    rows = {r.key: r for r in db.session.query(db.AppSetting).all()}
     assert "backup.repo" in rows
     assert rows["backup.git_push"].value_type == "bool"
 
     # Corrupt the cached metadata, then reconcile heals it without touching value.
     value_before = rows["backup.git_push"].value
-    db.db.session.query(db.AppSetting).filter_by(key="backup.git_push").update(
+    db.session.query(db.AppSetting).filter_by(key="backup.git_push").update(
         {"value_type": "string", "description": "stale"}
     )
-    db.db.session.commit()
+    db.session.commit()
     db.reconcile_app_settings()
-    healed = db.db.session.query(db.AppSetting).filter_by(key="backup.git_push").one()
+    healed = db.session.query(db.AppSetting).filter_by(key="backup.git_push").one()
     assert healed.value_type == "bool"
     assert healed.description == db_settings.SETTINGS["backup.git_push"].description
     assert healed.value == value_before  # value untouched by reconcile
@@ -217,17 +217,17 @@ def test_reconcile_drops_a_row_whose_setting_was_retired(app_ctx):
     still lists in the admin's AppSetting table, describing behavior the code
     no longer has — which is exactly the confusion retiring a switch is meant
     to end."""
-    db.db.session.add(db.AppSetting(
+    db.session.add(db.AppSetting(
         key="retired.example", value="true", value_type="bool",
         description="a switch that no longer exists"))
-    db.db.session.commit()
+    db.session.commit()
 
     db.reconcile_app_settings()
 
-    assert db.db.session.query(db.AppSetting).filter_by(
+    assert db.session.query(db.AppSetting).filter_by(
         key="retired.example").one_or_none() is None
     # The registry's own rows are untouched.
-    assert db.db.session.query(db.AppSetting).filter_by(
+    assert db.session.query(db.AppSetting).filter_by(
         key="backup.git_push").one_or_none() is not None
 
 
@@ -261,7 +261,7 @@ def test_mark_facts_invalidated_sets_iso_timestamp(app_ctx):
         assert db.get_setting("qa.facts_invalidated_at") == ts
     finally:
         db.set_setting("qa.facts_invalidated_at", None)
-        db.db.session.commit()
+        db.session.commit()
 
 
 def test_set_setting_commits_so_value_survives_rollback(app_ctx):
@@ -271,11 +271,11 @@ def test_set_setting_commits_so_value_survives_rollback(app_ctx):
     uncommitted, so they were silently forgotten on reload."""
     try:
         db.set_setting("cron.paused", True)
-        db.db.session.rollback()  # would undo an uncommitted write
+        db.session.rollback()  # would undo an uncommitted write
         assert db.get_setting("cron.paused") is True
     finally:
         db.set_setting("cron.paused", False)
-        db.db.session.commit()
+        db.session.commit()
 
 
 def test_a_choice_setting_accepts_only_its_choices(temp_setting):
@@ -287,7 +287,7 @@ def test_a_choice_setting_accepts_only_its_choices(temp_setting):
     assert db.get_setting("test.choice") == "b"
     with pytest.raises(ValueError, match="not one of a, b"):
         db.set_setting("test.choice", "c")
-    db.db.session.rollback()
+    db.session.rollback()
     # Unset still means unset: clearing falls back to the default.
     db.set_setting("test.choice", None)
     assert db.get_setting("test.choice") == "a"

@@ -28,7 +28,7 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -47,13 +47,13 @@ def case(app_ctx):
     try:
         yield c
     finally:
-        db.db.session.rollback()
-        for run in db.db.session.query(db.EvalRun).all():
+        db.session.rollback()
+        for run in db.session.query(db.EvalRun).all():
             if str(c.uuid) in (run.config or {}).get("case_uuids", []):
-                db.db.session.delete(run)
-        db.db.session.query(db.EvalCase).filter(
+                db.session.delete(run)
+        db.session.query(db.EvalCase).filter(
             db.EvalCase.uuid == c.uuid).delete()
-        db.db.session.commit()
+        db.session.commit()
 
 
 def _stub(reply_text, action=AssistantActionName.REPLY):
@@ -203,18 +203,18 @@ def test_runner_touches_no_settings_and_leaves_no_chat_rows(case, monkeypatch):
 
     monkeypatch.setattr(db, "set_setting", forbidden)
     monkeypatch.setattr(db, "set_current_profile", forbidden)
-    before_msgs = db.db.session.query(db.ChatMessage).count()
-    before_rooms = db.db.session.query(db.Chatroom).count()
-    current_before = db.db.session.query(db.AppSetting).filter_by(
+    before_msgs = db.session.query(db.ChatMessage).count()
+    before_rooms = db.session.query(db.Chatroom).count()
+    current_before = db.session.query(db.AppSetting).filter_by(
         key="profile.current").one_or_none()
     value_before = current_before.value if current_before else None
 
     pg.run_profile_guidance_suite([case.uuid], variant="combined",
                                   repetitions=2)
 
-    assert db.db.session.query(db.ChatMessage).count() == before_msgs
-    assert db.db.session.query(db.Chatroom).count() == before_rooms
-    current_after = db.db.session.query(db.AppSetting).filter_by(
+    assert db.session.query(db.ChatMessage).count() == before_msgs
+    assert db.session.query(db.Chatroom).count() == before_rooms
+    current_after = db.session.query(db.AppSetting).filter_by(
         key="profile.current").one_or_none()
     assert (current_after.value if current_after else None) == value_before
 
@@ -236,13 +236,13 @@ def test_inline_profile_override(app_ctx, monkeypatch):
         assert db.list_eval_results_for_run(run.uuid)[0].score == 1.0
         assert "Prefer mi and lb" in captured["prompts"][0][1]
     finally:
-        db.db.session.rollback()
-        for run in db.db.session.query(db.EvalRun).all():
+        db.session.rollback()
+        for run in db.session.query(db.EvalRun).all():
             if str(c.uuid) in (run.config or {}).get("case_uuids", []):
-                db.db.session.delete(run)
-        db.db.session.query(db.EvalCase).filter(
+                db.session.delete(run)
+        db.session.query(db.EvalCase).filter(
             db.EvalCase.uuid == c.uuid).delete()
-        db.db.session.commit()
+        db.session.commit()
 
 
 def test_unresolvable_profile_scores_zero(app_ctx, monkeypatch):
@@ -260,13 +260,13 @@ def test_unresolvable_profile_scores_zero(app_ctx, monkeypatch):
         assert result.score == 0.0
         assert "did not resolve" in result.details["repetitions"][0]["error"]
     finally:
-        db.db.session.rollback()
-        for run in db.db.session.query(db.EvalRun).all():
+        db.session.rollback()
+        for run in db.session.query(db.EvalRun).all():
             if str(c.uuid) in (run.config or {}).get("case_uuids", []):
-                db.db.session.delete(run)
-        db.db.session.query(db.EvalCase).filter(
+                db.session.delete(run)
+        db.session.query(db.EvalCase).filter(
             db.EvalCase.uuid == c.uuid).delete()
-        db.db.session.commit()
+        db.session.commit()
 
 
 def test_seed_cases_create_update_and_respect_ownership(app_ctx):
@@ -318,7 +318,7 @@ def test_seed_cases_create_update_and_respect_ownership(app_ctx):
         stale.rubric = {**stale.rubric, "seed_rev": 1}
         stale.expected = {"must_include": ["62", "22"]}   # the old weak form
         stale.status = "active"
-        db.db.session.commit()
+        db.session.commit()
         touched = pg.seed_profile_guidance_cases()
         assert [c.name for c in touched] == [stale.name]
         refreshed = db.get_eval_case(stale.uuid)
@@ -334,7 +334,7 @@ def test_seed_cases_create_update_and_respect_ownership(app_ctx):
                      if "German date order" in c.name)
         owned.rubric = {"family": "locale"}               # marker stripped
         owned.expected = {"must_include": ["operator edit"]}
-        db.db.session.commit()
+        db.session.commit()
         recreated = pg.seed_profile_guidance_cases()
         assert [c.rubric["seed_id"] for c in recreated] == ["locale.date_order.de"]
         assert recreated[0].uuid != owned.uuid
@@ -342,11 +342,11 @@ def test_seed_cases_create_update_and_respect_ownership(app_ctx):
         assert db.get_eval_case(owned.uuid).expected == {
             "must_include": ["operator edit"]}            # untouched
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         for c in db.list_eval_cases(case_type="chat_reply"):
             if c.name.startswith("pg "):
-                db.db.session.delete(c)
-        db.db.session.commit()
+                db.session.delete(c)
+        db.session.commit()
 
 
 def test_seed_migrates_markerless_legacy_cases(app_ctx):
@@ -416,8 +416,8 @@ def test_seed_migrates_markerless_legacy_cases(app_ctx):
         assert kept is not None and kept.name == legacy_name
         assert kept.status == "active"
         assert kept.expected == {"must_include": ["my own criteria"]}
-        db.db.session.delete(kept)
-        db.db.session.commit()
+        db.session.delete(kept)
+        db.session.commit()
 
         # Scenario 4: a markerless case with an edited RUBRIC (family swap,
         # custom threshold) is operator-owned too — the fingerprint covers
@@ -429,14 +429,14 @@ def test_seed_migrates_markerless_legacy_cases(app_ctx):
         assert kept is not None and kept.name == legacy_name
         assert kept.rubric == {"family": "calibration", "threshold": 0.95}
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         for c in db.list_eval_cases(case_type="chat_reply"):
             if c.name.startswith("pg "):
-                db.db.session.delete(c)
-        for r in db.db.session.query(db.EvalRun).filter(
+                db.session.delete(c)
+        for r in db.session.query(db.EvalRun).filter(
                 db.EvalRun.name.in_(["history", "history2"])).all():
-            db.db.session.delete(r)      # the runs do not cascade with cases
-        db.db.session.commit()
+            db.session.delete(r)      # the runs do not cascade with cases
+        db.session.commit()
 
 
 @pytest.fixture
@@ -449,15 +449,15 @@ def divergence_pair(app_ctx):
     try:
         yield cases
     finally:
-        db.db.session.rollback()
-        for run in db.db.session.query(db.EvalRun).all():
+        db.session.rollback()
+        for run in db.session.query(db.EvalRun).all():
             if any(str(c.uuid) in (run.config or {}).get("case_uuids", [])
                    for c in cases):
-                db.db.session.delete(run)
+                db.session.delete(run)
         for c in db.list_eval_cases(case_type="chat_reply"):
             if c.name.startswith("pg "):
-                db.db.session.delete(c)
-        db.db.session.commit()
+                db.session.delete(c)
+        db.session.commit()
 
 
 def test_pair_baseline_prompts_are_identical(divergence_pair):
@@ -558,7 +558,7 @@ def test_pair_invariants_fail_closed(divergence_pair, monkeypatch):
                    "profile": {**teach.input["profile"],
                                "data": {**teach.input["profile"]["data"],
                                         "units": "imperial"}}}
-    db.db.session.commit()
+    db.session.commit()
     run = pg.run_profile_guidance_suite([concise.uuid, teach.uuid],
                                         variant="baseline", repetitions=2)
     results = db.list_eval_results_for_run(run.uuid)
@@ -588,7 +588,7 @@ def test_malformed_pair_metadata_fails_closed(divergence_pair, monkeypatch):
     # Unknown / misspelled pair_block.
     teach.rubric = {**teach.rubric, "pair_block": "calibraton"}
     concise.rubric = {**concise.rubric, "pair_block": "calibraton"}
-    db.db.session.commit()
+    db.session.commit()
     run = pg.run_profile_guidance_suite([concise.uuid, teach.uuid],
                                         variant="calibration_only",
                                         repetitions=1)
@@ -601,7 +601,7 @@ def test_malformed_pair_metadata_fails_closed(divergence_pair, monkeypatch):
 
     # Members disagreeing about the block.
     teach.rubric = {**teach.rubric, "pair_block": "calibration"}
-    db.db.session.commit()
+    db.session.commit()
     run = pg.run_profile_guidance_suite([concise.uuid, teach.uuid],
                                         variant="baseline", repetitions=1)
     for result in db.list_eval_results_for_run(run.uuid):
@@ -645,15 +645,15 @@ def test_date_format_pair_is_single_field_and_runs_independently(app_ctx, monkey
             assert results[a.uuid].score == 1.0    # expects 31.12.2026
             assert results[b.uuid].score < 0.7     # expects 12/31/2026
     finally:
-        db.db.session.rollback()
-        for run in db.db.session.query(db.EvalRun).all():
+        db.session.rollback()
+        for run in db.session.query(db.EvalRun).all():
             if any(str(c.uuid) in (run.config or {}).get("case_uuids", [])
                    for c in cases):
-                db.db.session.delete(run)
+                db.session.delete(run)
         for c in db.list_eval_cases(case_type="chat_reply"):
             if c.name.startswith("pg "):
-                db.db.session.delete(c)
-        db.db.session.commit()
+                db.session.delete(c)
+        db.session.commit()
 
 
 def test_duplicate_arbitration_never_prefers_archived(app_ctx):
@@ -677,11 +677,11 @@ def test_duplicate_arbitration_never_prefers_archived(app_ctx):
         assert db.get_eval_case(live.uuid).rubric["seed_rev"] == pg.SEED_REV
         assert db.get_eval_case(archived.uuid).status == "archived"
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         for c in db.list_eval_cases(case_type="chat_reply"):
             if c.name.startswith("pg "):
-                db.db.session.delete(c)
-        db.db.session.commit()
+                db.session.delete(c)
+        db.session.commit()
 
 
 def test_unknown_variant_rejected(app_ctx):

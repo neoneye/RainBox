@@ -24,12 +24,12 @@ def app_ctx():
 
 
 def _cleanup(room):
-    db.db.session.query(MemoryEvidence).filter(MemoryEvidence.memory_uuid.in_(
-        db.db.session.query(MemoryClaim.uuid).filter_by(room_uuid=room))).delete(
+    db.session.query(MemoryEvidence).filter(MemoryEvidence.memory_uuid.in_(
+        db.session.query(MemoryClaim.uuid).filter_by(room_uuid=room))).delete(
         synchronize_session=False)
-    db.db.session.query(MemoryClaim).filter_by(room_uuid=room).delete()
-    db.db.session.query(MemoryRejectedValue).filter_by(room_uuid=room).delete()
-    db.db.session.commit()
+    db.session.query(MemoryClaim).filter_by(room_uuid=room).delete()
+    db.session.query(MemoryRejectedValue).filter_by(room_uuid=room).delete()
+    db.session.commit()
 
 
 def test_human_same_scope_conflict_supersedes(app_ctx):
@@ -137,16 +137,16 @@ def test_supersede_memory_writes_tombstone_for_old_value(app_ctx):
 
 def _cleanup_correct(uuids):
     """Delete all claims+evidence by uuid, then tombstones by created_from_uuid."""
-    db.db.session.query(MemoryEvidence).filter(
+    db.session.query(MemoryEvidence).filter(
         MemoryEvidence.memory_uuid.in_(uuids)
     ).delete(synchronize_session=False)
-    db.db.session.query(MemoryClaim).filter(
+    db.session.query(MemoryClaim).filter(
         MemoryClaim.uuid.in_(uuids)
     ).delete(synchronize_session=False)
-    db.db.session.query(MemoryRejectedValue).filter(
+    db.session.query(MemoryRejectedValue).filter(
         MemoryRejectedValue.created_from_uuid.in_(uuids)
     ).delete(synchronize_session=False)
-    db.db.session.commit()
+    db.session.commit()
 
 
 def test_correct_belief_keys_derived_from_new_text(app_ctx):
@@ -171,7 +171,7 @@ def test_correct_belief_keys_derived_from_new_text(app_ctx):
             actor="explicit_human_command",
             evidence=evidence,
         )
-        db.db.session.expire_all()
+        db.session.expire_all()
 
         # New claim must be active with correct lineage
         assert new.status == "active", f"Expected active, got {new.status!r}"
@@ -223,11 +223,11 @@ def test_correct_belief_atomicity_one_active_claim(app_ctx):
             actor="explicit_human_command",
             evidence=evidence,
         )
-        db.db.session.expire_all()
+        db.session.expire_all()
 
         # Exactly one active claim with new_text
         active_new = (
-            db.db.session.query(MemoryClaim)
+            db.session.query(MemoryClaim)
             .filter(MemoryClaim.text == text_new, MemoryClaim.status == "active")
             .all()
         )
@@ -264,9 +264,9 @@ def test_correct_belief_bad_actor_raises(app_ctx):
                           "excerpt": "test"},
             )
     finally:
-        db.db.session.query(MemoryEvidence).filter_by(memory_uuid=old.uuid).delete()
-        db.db.session.query(MemoryClaim).filter_by(uuid=old.uuid).delete()
-        db.db.session.commit()
+        db.session.query(MemoryEvidence).filter_by(memory_uuid=old.uuid).delete()
+        db.session.query(MemoryClaim).filter_by(uuid=old.uuid).delete()
+        db.session.commit()
 
 
 def test_correct_belief_stale_guard_raises(app_ctx):
@@ -290,9 +290,9 @@ def test_correct_belief_stale_guard_raises(app_ctx):
                 expected_updated_at=stale_time,
             )
     finally:
-        db.db.session.query(MemoryEvidence).filter_by(memory_uuid=old.uuid).delete()
-        db.db.session.query(MemoryClaim).filter_by(uuid=old.uuid).delete()
-        db.db.session.commit()
+        db.session.query(MemoryEvidence).filter_by(memory_uuid=old.uuid).delete()
+        db.session.query(MemoryClaim).filter_by(uuid=old.uuid).delete()
+        db.session.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -345,7 +345,7 @@ def test_correct_belief_dedupes_against_existing_active_claim(app_ctx):
 
         # Exactly ONE active claim with text_y (B must NOT have been duplicated)
         active_y = (
-            db.db.session.query(MemoryClaim)
+            db.session.query(MemoryClaim)
             .filter(MemoryClaim.text == text_y, MemoryClaim.status == "active")
             .all()
         )
@@ -443,7 +443,7 @@ def test_correct_belief_global_tombstone_scoped_exception(app_ctx):
 
         # (d) evidence on the new claim must contain the scoped-exception annotation
         ev_rows = (
-            db.db.session.query(MemoryEvidence)
+            db.session.query(MemoryEvidence)
             .filter_by(memory_uuid=new_uuid)
             .all()
         )
@@ -456,10 +456,10 @@ def test_correct_belief_global_tombstone_scoped_exception(app_ctx):
     finally:
         _cleanup_correct(all_created_uuids)
         # Also clean up the global tombstone created from g
-        db.db.session.query(MemoryRejectedValue).filter_by(
+        db.session.query(MemoryRejectedValue).filter_by(
             created_from_uuid=g_uuid
         ).delete()
-        db.db.session.commit()
+        db.session.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -514,7 +514,7 @@ def test_correct_belief_broader_rival_scoped_exception(app_ctx):
         if new_uuid is not None:
             all_uuids.append(new_uuid)
 
-        db.db.session.expire_all()
+        db.session.expire_all()
 
         # The returned claim must be active (human correction always yields active)
         assert new_claim is not None, "correct_belief must return a claim"
@@ -542,7 +542,7 @@ def test_correct_belief_broader_rival_scoped_exception(app_ctx):
 
         # Evidence on new claim must contain "scoped exception" note
         ev_rows = (
-            db.db.session.query(MemoryEvidence)
+            db.session.query(MemoryEvidence)
             .filter_by(memory_uuid=new_uuid)
             .all()
         )
@@ -584,7 +584,7 @@ def test_correct_belief_normal_same_scope_no_scoped_exception_note(app_ctx):
         if new_uuid is not None:
             all_uuids.append(new_uuid)
 
-        db.db.session.expire_all()
+        db.session.expire_all()
 
         assert new_claim is not None
         assert new_claim.status == "active"
@@ -592,7 +592,7 @@ def test_correct_belief_normal_same_scope_no_scoped_exception_note(app_ctx):
 
         # Evidence must NOT contain the scoped-exception note
         ev_rows = (
-            db.db.session.query(MemoryEvidence)
+            db.session.query(MemoryEvidence)
             .filter_by(memory_uuid=new_uuid)
             .all()
         )
@@ -689,8 +689,8 @@ def test_correct_belief_refuse_same_scope_conflicting_corroboration(app_ctx):
                           "excerpt": "correcting note to coffee"},
             )
         # Roll back uncommitted changes left by the failed correct_belief
-        db.db.session.rollback()
-        db.db.session.expire_all()
+        db.session.rollback()
+        db.session.expire_all()
 
         # note must still be active (not superseded — whole op rolled back)
         note_reloaded = db.get_memory_claim(note_uuid)
@@ -714,7 +714,7 @@ def test_correct_belief_refuse_same_scope_conflicting_corroboration(app_ctx):
 
         # There must NOT be two active claims for the tea/coffee predicate
         active_pref = (
-            db.db.session.query(db.MemoryClaim)
+            db.session.query(db.MemoryClaim)
             .filter(
                 db.MemoryClaim.room_uuid == room,
                 db.MemoryClaim.status == "active",
@@ -760,7 +760,7 @@ def test_correct_belief_safe_conflict_with_old(app_ctx):
             evidence={"provenance": "confirmed_by_user", "source_type": "manual",
                       "excerpt": "correct tea to coffee"},
         )
-        db.db.session.expire_all()
+        db.session.expire_all()
 
         assert new is not None
         assert new.uuid == coffee_uuid, "should corroborate the pre-existing coffee candidate"
@@ -801,7 +801,7 @@ def test_correct_belief_plain_candidate_corroboration(app_ctx):
             evidence={"provenance": "confirmed_by_user", "source_type": "manual",
                       "excerpt": "correct note to plain candidate"},
         )
-        db.db.session.expire_all()
+        db.session.expire_all()
 
         assert new is not None
         assert new.uuid == plain_uuid, "should corroborate the pre-existing plain candidate"
@@ -828,10 +828,10 @@ def test_correct_belief_refuses_unrelated_correction_hitting_active_rival(app_ct
                           actor="explicit_human_command",
                           evidence={"provenance": "confirmed_by_user",
                                     "source_type": "manual", "excerpt": "c"})
-    db.db.session.rollback()
+    db.session.rollback()
     assert db.get_memory_claim(note.claim.uuid).status == "active"   # not superseded
     assert db.get_memory_claim(tea.claim.uuid).status == "active"    # rival untouched
-    active_coffee = (db.db.session.query(MemoryClaim)
+    active_coffee = (db.session.query(MemoryClaim)
                      .filter_by(room_uuid=room, status="active")
                      .filter(MemoryClaim.text.like("%coffee%")).count())
     assert active_coffee == 0
@@ -851,7 +851,7 @@ def test_activate_memory_claim_refuses_conflict_candidate(app_ctx):
     assert cand.outcome == "conflict_candidate"
     with pytest.raises(ValueError):
         db.activate_memory_claim(cand.claim.uuid)
-    db.db.session.rollback()
+    db.session.rollback()
     assert db.get_memory_claim(cand.claim.uuid).status == "candidate"
     _cleanup(room)
 

@@ -73,9 +73,9 @@ def chat_room():
                 ("workspace_shell_state", "room_uuid"),
                 ("chatroom", "uuid"),
             ):
-                db.db.session.execute(
+                db.session.execute(
                     sa.text(f"DELETE FROM {table} WHERE {col} = :u"), {"u": room.uuid}
                 )
-            db.db.session.commit()
+            db.session.commit()
     finally:
         ctx.pop()

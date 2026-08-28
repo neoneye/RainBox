@@ -37,10 +37,10 @@ def fresh_subject() -> str:
 
 
 def _cleanup_by_subject(subject: str) -> None:
-    db.db.session.query(MemoryClaim).filter(
+    db.session.query(MemoryClaim).filter(
         MemoryClaim.subject == subject
     ).delete()
-    db.db.session.commit()
+    db.session.commit()
 
 
 # --- parser ------------------------------------------------------------------
@@ -180,7 +180,7 @@ def _ctx(query: str, message_uuid: str | None = None, room_uuid=None, agent_uuid
 
 def _claims_for_subject(subject: str) -> list[MemoryClaim]:
     return (
-        db.db.session.query(MemoryClaim)
+        db.session.query(MemoryClaim)
         .filter(MemoryClaim.subject == subject)
         .order_by(MemoryClaim.id.asc())
         .all()
@@ -189,7 +189,7 @@ def _claims_for_subject(subject: str) -> list[MemoryClaim]:
 
 def _evidence_for(memory_uuid) -> list[MemoryEvidence]:
     return (
-        db.db.session.query(MemoryEvidence)
+        db.session.query(MemoryEvidence)
         .filter(MemoryEvidence.memory_uuid == memory_uuid)
         .order_by(MemoryEvidence.id.asc())
         .all()
@@ -207,7 +207,7 @@ def test_remember_creates_active_private_claim_and_confirmed_evidence(app_ctx, f
         reply = handle_memory_command(ctx, cmd)
         # Tag the claim we just created so cleanup can find it.
         claims = (
-            db.db.session.query(MemoryClaim)
+            db.session.query(MemoryClaim)
             .filter(MemoryClaim.text == "the sky is blue")
             .order_by(MemoryClaim.id.desc())
             .limit(1)
@@ -217,7 +217,7 @@ def test_remember_creates_active_private_claim_and_confirmed_evidence(app_ctx, f
         claim = claims[0]
         # Tag for teardown.
         claim.subject = fresh_subject
-        db.db.session.commit()
+        db.session.commit()
 
         assert claim.status == "active"
         assert claim.sensitivity == "private"
@@ -246,7 +246,7 @@ def test_forget_marks_matching_claim_rejected(app_ctx, fresh_subject):
         cmd = parse_memory_command("forget that x is true")
         ctx = _ctx(query="forget that x is true", message_uuid=str(uuid4()))
         reply = handle_memory_command(ctx, cmd)
-        db.db.session.expire_all()
+        db.session.expire_all()
         reloaded = db.get_memory_claim(claim.uuid)
         assert reloaded is not None and reloaded.status == "rejected"
         # Evidence row added; the original (none) didn't have any to preserve.
@@ -294,7 +294,7 @@ def test_confirm_activates_existing_candidate(app_ctx, fresh_subject):
         cmd = parse_memory_command("confirm that x is true")
         ctx = _ctx(query="confirm that x is true", message_uuid=str(uuid4()))
         handle_memory_command(ctx, cmd)
-        db.db.session.expire_all()
+        db.session.expire_all()
         reloaded = db.get_memory_claim(claim.uuid)
         assert reloaded.status == "active"
         assert abs(reloaded.confidence - 1.0) < 1e-9
@@ -314,7 +314,7 @@ def test_confirm_creates_memory_when_no_candidate_exists(app_ctx, fresh_subject)
     try:
         handle_memory_command(ctx, cmd)
         rows = (
-            db.db.session.query(MemoryClaim)
+            db.session.query(MemoryClaim)
             .filter(MemoryClaim.text == "brand new fact")
             .order_by(MemoryClaim.id.desc())
             .limit(1)
@@ -323,7 +323,7 @@ def test_confirm_creates_memory_when_no_candidate_exists(app_ctx, fresh_subject)
         assert rows, "confirm should have fallen through to create"
         claim = rows[0]
         claim.subject = fresh_subject
-        db.db.session.commit()
+        db.session.commit()
         assert claim.status == "active"
         ev = _evidence_for(claim.uuid)
         assert ev and ev[0].provenance == "confirmed_by_user"
@@ -344,11 +344,11 @@ def test_correct_supersedes_old_and_creates_new(app_ctx, fresh_subject):
             message_uuid=str(uuid4()),
         )
         handle_memory_command(ctx, cmd)
-        db.db.session.expire_all()
+        db.session.expire_all()
         old_reloaded = db.get_memory_claim(old.uuid)
         assert old_reloaded.status == "superseded"
         new_rows = (
-            db.db.session.query(MemoryClaim)
+            db.session.query(MemoryClaim)
             .filter(MemoryClaim.text == "the sky is blue")
             .order_by(MemoryClaim.id.desc())
             .limit(1)
@@ -357,7 +357,7 @@ def test_correct_supersedes_old_and_creates_new(app_ctx, fresh_subject):
         assert new_rows
         new = new_rows[0]
         new.subject = fresh_subject  # tag for cleanup
-        db.db.session.commit()
+        db.session.commit()
         assert new.status == "active"
         assert new.supersedes_uuid == old.uuid
     finally:
@@ -429,8 +429,8 @@ def test_handle_used_reports_memories_from_most_recent_debug_memory(
     agent_user = db.ChatUser(
         uuid=agent_uuid, name=f"chat-used-{uuid4().hex[:6]}", user_type="agent",
     )
-    db.db.session.add(agent_user)
-    db.db.session.flush()
+    db.session.add(agent_user)
+    db.session.flush()
     room = db.create_chatroom(
         f"used-{uuid4().hex[:6]}", human.uuid, [agent_uuid],
     )
@@ -474,13 +474,13 @@ def test_handle_used_reports_memories_from_most_recent_debug_memory(
         assert "Username prefers concise technical answers." in reply
         assert "confirmed_by_user" in reply
     finally:
-        db.db.session.query(db.Chatroom).filter(
+        db.session.query(db.Chatroom).filter(
             db.Chatroom.uuid == room.uuid
         ).delete()
-        db.db.session.query(db.ChatUser).filter(
+        db.session.query(db.ChatUser).filter(
             db.ChatUser.uuid == agent_uuid
         ).delete()
-        db.db.session.commit()
+        db.session.commit()
         _cleanup_by_subject(fresh_subject)
 
 
@@ -513,13 +513,13 @@ def test_correct_clears_exact_tombstone_and_succeeds(app_ctx, fresh_subject):
         subject=fresh_subject,
     )
     write_tombstone(placeholder, reason="rejected", commit=True)
-    db.db.session.expire_all()
+    db.session.expire_all()
 
     cmd = parse_memory_command(f"correct that {old_text} -> {new_text}")
     ctx = _ctx(query=f"correct that {old_text} -> {new_text}")
     reply = handle_memory_command(ctx, cmd)
 
-    db.db.session.expire_all()
+    db.session.expire_all()
     # Original claim must be superseded.
     old_reloaded = db.get_memory_claim(old.uuid)
     assert old_reloaded is not None
@@ -533,22 +533,22 @@ def test_correct_clears_exact_tombstone_and_succeeds(app_ctx, fresh_subject):
     placeholder_uuid = placeholder.uuid
 
     # Clean up: tombstones by created_from_uuid first, then evidence, then claims
-    db.db.session.query(MemoryRejectedValue).filter(
+    db.session.query(MemoryRejectedValue).filter(
         MemoryRejectedValue.created_from_uuid.in_([old_uuid, placeholder_uuid])
     ).delete(synchronize_session=False)
     # Collect all claim uuids with these texts (all statuses)
     all_uuids = [
-        r.uuid for r in db.db.session.query(MemoryClaim).filter(
+        r.uuid for r in db.session.query(MemoryClaim).filter(
             MemoryClaim.text.in_([old_text, new_text])
         ).all()
     ]
-    db.db.session.query(MemoryEvidence).filter(
+    db.session.query(MemoryEvidence).filter(
         MemoryEvidence.memory_uuid.in_(all_uuids)
     ).delete(synchronize_session=False)
-    db.db.session.query(MemoryClaim).filter(
+    db.session.query(MemoryClaim).filter(
         MemoryClaim.uuid.in_(all_uuids)
     ).delete(synchronize_session=False)
-    db.db.session.commit()
+    db.session.commit()
 
 
 def test_handle_used_reports_no_history_when_no_debug_row(app_ctx):
@@ -569,7 +569,7 @@ def test_handle_used_reports_no_history_when_no_debug_row(app_ctx):
         )
         assert "no" in reply.lower() or "haven't" in reply.lower() or "none" in reply.lower()
     finally:
-        db.db.session.query(db.Chatroom).filter(
+        db.session.query(db.Chatroom).filter(
             db.Chatroom.uuid == room.uuid
         ).delete()
-        db.db.session.commit()
+        db.session.commit()

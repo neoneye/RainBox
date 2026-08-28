@@ -19,24 +19,24 @@ def client():
 
 
 def _cleanup_room(room_uuid):
-    db.db.session.query(db.Chatroom).filter(
+    db.session.query(db.Chatroom).filter(
         db.Chatroom.uuid == room_uuid
     ).delete()
-    db.db.session.commit()
+    db.session.commit()
 
 
 def _drain_direct_inbox():
     """Remove (and return) pending inbox rows for the direct-chat agent so
     tests don't leave work behind for a running supervisor."""
     rows = (
-        db.db.session.query(db.Inbox)
+        db.session.query(db.Inbox)
         .filter(db.Inbox.agent_uuid == DIRECT_CHAT_UUID)
         .all()
     )
     payloads = [r.payload for r in rows]
     for r in rows:
-        db.db.session.delete(r)
-    db.db.session.commit()
+        db.session.delete(r)
+    db.session.commit()
     return payloads
 
 
@@ -310,10 +310,10 @@ def test_settings_get_and_put(client, direct_room):
         assert resp.get_json()["system_prompt"] == "Be brief."
     finally:
         with app.app_context():
-            db.db.session.query(db.ModelConfig).filter(
+            db.session.query(db.ModelConfig).filter(
                 db.ModelConfig.uuid == cfg_uuid
             ).delete()
-            db.db.session.commit()
+            db.session.commit()
 
 
 def test_settings_request_timeout(client, direct_room):
@@ -343,8 +343,8 @@ def test_settings_prompt_link_flow(client, direct_room):
     with app.app_context():
         from db.models import Prompt
         row = Prompt(uuid=uuid4(), name="Pirate", content="Arr.")
-        db.db.session.add(row)
-        db.db.session.commit()
+        db.session.add(row)
+        db.session.commit()
         prompt_uuid = row.uuid
     try:
         # Link the stored prompt; the GET shape carries name + existence so
@@ -361,9 +361,9 @@ def test_settings_prompt_link_flow(client, direct_room):
         # Deleting the linked version: reported, not an error.
         with app.app_context():
             from db.models import Prompt
-            db.db.session.query(Prompt).filter(
+            db.session.query(Prompt).filter(
                 Prompt.uuid == prompt_uuid).delete()
-            db.db.session.commit()
+            db.session.commit()
         body = test_client.get(f"/chat/api/rooms/{room_uuid}/settings").get_json()
         assert body["prompt_uuid"] == str(prompt_uuid)
         assert body["prompt_exists"] is False
@@ -376,9 +376,9 @@ def test_settings_prompt_link_flow(client, direct_room):
     finally:
         with app.app_context():
             from db.models import Prompt
-            db.db.session.query(Prompt).filter(
+            db.session.query(Prompt).filter(
                 Prompt.uuid == prompt_uuid).delete()
-            db.db.session.commit()
+            db.session.commit()
 
 
 def test_settings_put_rejects_unknown_prompt(client, direct_room):
@@ -423,10 +423,10 @@ def test_models_listing(client):
         assert "label" in entry and "available" in entry
     finally:
         with app.app_context():
-            db.db.session.query(db.ModelConfig).filter(
+            db.session.query(db.ModelConfig).filter(
                 db.ModelConfig.uuid == cfg_uuid
             ).delete()
-            db.db.session.commit()
+            db.session.commit()
 
 
 def _post_rows(app, room_uuid, human_uuid):

@@ -41,8 +41,8 @@ def test_create_folder_then_appears_in_tree(app_ctx):
         tree = client.get("/chat/api/tree").get_json()
         assert any(f["id"] == fid for f in tree["folders"])
     finally:
-        db.db.session.execute(sa.delete(ChatroomFolder).where(ChatroomFolder.uuid == fid))
-        db.db.session.commit()
+        db.session.execute(sa.delete(ChatroomFolder).where(ChatroomFolder.uuid == fid))
+        db.session.commit()
 
 
 def test_put_tree_stale_version_is_409(app_ctx):
@@ -136,9 +136,9 @@ def test_folder_delete_preview_and_delete(app_ctx):
     human = db.get_human_user()
     folder = db.create_chatroom_folder("apitest-del")
     room = db.create_chatroom(f"apidel-{uuid4().hex[:6]}", human.uuid, [])
-    db.db.session.execute(sa.update(Chatroom).where(Chatroom.uuid == room.uuid)
+    db.session.execute(sa.update(Chatroom).where(Chatroom.uuid == room.uuid)
                           .values(folder_uuid=folder.uuid))
-    db.db.session.commit()
+    db.session.commit()
     room_uuid = room.uuid      # capture before ORM session is invalidated by HTTP call
     folder_uuid = folder.uuid  # capture before ORM session is invalidated by HTTP call
     try:
@@ -147,14 +147,14 @@ def test_folder_delete_preview_and_delete(app_ctx):
         assert preview["room_count"] == 1 and preview["message_count"] == 1
         resp = client.delete(f"/chat/api/folders/{folder_uuid}")
         assert resp.status_code == 200
-        db.db.session.expire_all()  # flush ORM identity-map cache after HTTP-layer delete
-        assert db.db.session.execute(
+        db.session.expire_all()  # flush ORM identity-map cache after HTTP-layer delete
+        assert db.session.execute(
             sa.select(Chatroom).where(Chatroom.uuid == room_uuid)).scalar_one_or_none() is None
     finally:
-        db.db.session.expire_all()
-        db.db.session.execute(sa.delete(Chatroom).where(Chatroom.uuid == room_uuid))
-        db.db.session.execute(sa.delete(ChatroomFolder).where(ChatroomFolder.uuid == folder_uuid))
-        db.db.session.commit()
+        db.session.expire_all()
+        db.session.execute(sa.delete(Chatroom).where(Chatroom.uuid == room_uuid))
+        db.session.execute(sa.delete(ChatroomFolder).where(ChatroomFolder.uuid == folder_uuid))
+        db.session.commit()
 
 
 def test_folder_delete_unknown_is_404(app_ctx):

@@ -19,7 +19,7 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -36,8 +36,8 @@ def _claim(subject: str) -> MemoryClaim:
 
 
 def _cleanup(subject: str) -> None:
-    db.db.session.query(MemoryClaim).filter(MemoryClaim.subject == subject).delete()
-    db.db.session.commit()
+    db.session.query(MemoryClaim).filter(MemoryClaim.subject == subject).delete()
+    db.session.commit()
 
 
 def test_upsert_and_get_memory_embedding(app_ctx, fresh_subject):
@@ -69,7 +69,7 @@ def test_upsert_same_key_updates_in_place(app_ctx, fresh_subject):
             text_hash="h", embedding=[0.2] * 768,
         )
         rows = (
-            db.db.session.query(MemoryEmbedding)
+            db.session.query(MemoryEmbedding)
             .filter(MemoryEmbedding.memory_uuid == claim.uuid)
             .all()
         )
@@ -87,7 +87,7 @@ def test_deleting_claim_cascades_embeddings(app_ctx, fresh_subject):
     claim_uuid = claim.uuid
     _cleanup(fresh_subject)  # deletes the claim
     remaining = (
-        db.db.session.query(MemoryEmbedding)
+        db.session.query(MemoryEmbedding)
         .filter(MemoryEmbedding.memory_uuid == claim_uuid)
         .count()
     )
@@ -98,7 +98,7 @@ def test_init_db_twice_keeps_vector_extension_and_table(app_ctx):
     # The vector extension + memory_embedding table survive a re-init.
     db.init_db(app_ctx)
     import sqlalchemy as sa
-    ext = db.db.session.execute(
+    ext = db.session.execute(
         sa.text("select 1 from pg_extension where extname='vector'")
     ).first()
     assert ext is not None

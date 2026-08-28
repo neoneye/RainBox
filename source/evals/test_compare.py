@@ -38,20 +38,20 @@ def fresh_tag() -> str:
 
 def _cleanup(prefix: str) -> None:
     run_uuids = [
-        r.uuid for r in db.db.session.query(EvalRun)
+        r.uuid for r in db.session.query(EvalRun)
         .filter(EvalRun.name.like(f"{prefix}%")).all()
     ]
     if run_uuids:
-        db.db.session.query(EvalResult).filter(
+        db.session.query(EvalResult).filter(
             EvalResult.eval_run_uuid.in_(run_uuids)
         ).delete(synchronize_session=False)
-        db.db.session.query(EvalRun).filter(
+        db.session.query(EvalRun).filter(
             EvalRun.uuid.in_(run_uuids)
         ).delete(synchronize_session=False)
-    db.db.session.query(EvalCase).filter(
+    db.session.query(EvalCase).filter(
         EvalCase.name.like(f"{prefix}%")
     ).delete(synchronize_session=False)
-    db.db.session.commit()
+    db.session.commit()
 
 
 def _make_case(prefix: str, label: str, split: str = "train") -> EvalCase:
@@ -244,7 +244,7 @@ def test_cli_exits_0_on_pass(app_ctx, fresh_tag):
         _result(candidate, case, score=0.9, passed=True)
         _stamp(candidate, mean=0.9, passed=1, total=1)
 
-        db.db.session.commit()
+        db.session.commit()
         result = subprocess.run(
             [
                 "venv/bin/python", "-m", "evals.compare",
@@ -270,7 +270,7 @@ def test_cli_exits_1_on_fail(app_ctx, fresh_tag):
         _result(candidate, case, score=0.5, passed=False)
         _stamp(candidate, mean=0.5, passed=0, total=1)
 
-        db.db.session.commit()
+        db.session.commit()
         result = subprocess.run(
             [
                 "venv/bin/python", "-m", "evals.compare",

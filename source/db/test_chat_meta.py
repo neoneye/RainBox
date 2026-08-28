@@ -16,7 +16,7 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -30,7 +30,7 @@ def test_post_chat_message_persists_meta(app_ctx):
     sender = db.get_human_user()
     meta = {"write_intent": str(uuid4()), "capability": "set_reminder"}
     msg = db.post_chat_message(room.uuid, sender.uuid, "hi", meta=meta)
-    fetched = db.db.session.get(db.ChatMessage, msg.id)
+    fetched = db.session.get(db.ChatMessage, msg.id)
     assert fetched.meta == meta
 
 
@@ -38,7 +38,7 @@ def test_post_chat_message_meta_defaults_empty(app_ctx):
     room = _room()
     sender = db.get_human_user()
     msg = db.post_chat_message(room.uuid, sender.uuid, "hi")
-    fetched = db.db.session.get(db.ChatMessage, msg.id)
+    fetched = db.session.get(db.ChatMessage, msg.id)
     assert fetched.meta == {}
 
 

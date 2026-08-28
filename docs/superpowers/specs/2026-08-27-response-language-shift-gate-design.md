@@ -256,8 +256,8 @@ Run `response_language_classifier` when **any** of:
 
 1. the room has no previous recorded classification;
 2. the request names a language (CLDR names and endonyms);
-3. the operator's declared profile languages include a code the reused
-   classification does not carry;
+3. the profile's currently declared languages differ from the snapshot taken
+   when the reused classification was recorded;
 4. the request's confidence in the window's dominant language is below
    `SHIFT_FLOOR`;
 5. the window contains no qualifying messages;
@@ -312,7 +312,9 @@ the assistant:
   distribution. A `Detection` distinguishes its two empty cases: *below floor*
   (nothing was asked of the detector) and *undetected* (the detector was asked
   and found nothing). Only the second is trigger 6.
-- `window_dominant(messages) -> str | None` — the weighted argmax above.
+- `window_dominant(texts: Sequence[str]) -> tuple[str | None, int]` — the
+  weighted argmax above, with the number of messages that qualified. `(None,
+  0)` when none did, which is trigger 5.
 - `names_a_language(text) -> tuple[str, str] | None` — the CLDR check with its
   two filters; returns the matched name and the code it resolved to, for the
   trace. The code may be two or three letters.

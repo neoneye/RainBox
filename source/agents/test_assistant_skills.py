@@ -26,7 +26,7 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -74,13 +74,13 @@ def test_active_skill_injected_candidate_inert(app_ctx, tmp_path, monkeypatch):
         assert "Widget candidate" not in prompt    # candidate is inert
         assert "must not be used" not in prompt
     finally:
-        db.db.session.query(AssistantRun).filter(
+        db.session.query(AssistantRun).filter(
             AssistantRun.room_uuid == chatroom.uuid
         ).delete()
-        db.db.session.query(RetrievalEvent).filter(
+        db.session.query(RetrievalEvent).filter(
             RetrievalEvent.target_id.in_(["widget-active", "widget-candidate"])
         ).delete()
-        db.db.session.query(db.Chatroom).filter(
+        db.session.query(db.Chatroom).filter(
             db.Chatroom.uuid == chatroom.uuid
         ).delete()
-        db.db.session.commit()
+        db.session.commit()

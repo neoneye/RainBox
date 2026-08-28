@@ -119,7 +119,7 @@ def main() -> int:
             print()
             print(json.dumps({"model": kb.EMBED_MODEL_NAME, "results": rows}, indent=2))
         finally:
-            db.db.session.rollback()
+            db.session.rollback()
             with psycopg.connect(db.psycopg_dsn(), autocommit=True) as c, c.cursor() as cur:
                 cur.execute(f'DROP TABLE IF EXISTS "data_{table}"')
     return 0

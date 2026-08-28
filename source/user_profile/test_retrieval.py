@@ -29,7 +29,7 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -50,13 +50,13 @@ def _claim(tag, text, *, kind="preference", status="active", sensitivity="public
 
 
 def _cleanup(tag):
-    rows = db.db.session.query(MemoryClaim).filter(MemoryClaim.subject == tag).all()
+    rows = db.session.query(MemoryClaim).filter(MemoryClaim.subject == tag).all()
     for r in rows:
-        db.db.session.query(RetrievalEvent).filter(
+        db.session.query(RetrievalEvent).filter(
             RetrievalEvent.target_id == str(r.uuid)
         ).delete()
-    db.db.session.query(MemoryClaim).filter(MemoryClaim.subject == tag).delete()
-    db.db.session.commit()
+    db.session.query(MemoryClaim).filter(MemoryClaim.subject == tag).delete()
+    db.session.commit()
 
 
 def _uuids(facts):
@@ -133,13 +133,13 @@ def test_fact_requires_subject(app_ctx, tag):
         assert with_subject.uuid in ids
         assert no_subject.uuid not in ids
     finally:
-        db.db.session.query(RetrievalEvent).filter(
+        db.session.query(RetrievalEvent).filter(
             RetrievalEvent.target_id == str(no_subject.uuid)
         ).delete()
-        db.db.session.query(MemoryClaim).filter(
+        db.session.query(MemoryClaim).filter(
             MemoryClaim.uuid == no_subject.uuid
         ).delete()
-        db.db.session.commit()
+        db.session.commit()
         _cleanup(tag)
 
 
@@ -184,7 +184,7 @@ def test_records_considered_and_injected_telemetry(app_ctx, tag):
     try:
         build_profile_block(agent_uuid=None, room_uuid=None, journal_id=uuid4())
         events = (
-            db.db.session.query(RetrievalEvent)
+            db.session.query(RetrievalEvent)
             .filter(
                 RetrievalEvent.target_type == "memory_claim",
                 RetrievalEvent.target_id == str(claim.uuid),

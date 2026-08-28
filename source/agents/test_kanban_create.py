@@ -29,7 +29,7 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -136,7 +136,7 @@ def test_create_via_loop_then_undo_deletes(board):
     )
     try:
         agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
-        intents = db.db.session.query(AssistantWriteIntent).filter(
+        intents = db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.room_uuid == chatroom.uuid).all()
         assert len(intents) == 1 and intents[0].state == "completed"
         tu = UUID(intents[0].result["undo"]["payload"]["task_uuid"])
@@ -146,12 +146,12 @@ def test_create_via_loop_then_undo_deletes(board):
         assert db.kanban_get_task(tu) is None          # undo deleted it
         assert db.get_write_intent(intents[0].uuid).state == "undone"
     finally:
-        db.db.session.query(AssistantWriteIntent).filter(
+        db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(AssistantRun).filter(
+        db.session.query(AssistantRun).filter(
             AssistantRun.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
-        db.db.session.commit()
+        db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+        db.session.commit()
 
 
 def test_duplicate_create_in_same_run_is_blocked(board):
@@ -175,16 +175,16 @@ def test_duplicate_create_in_same_run_is_blocked(board):
         tasks = [t for t in db.kanban_load_board(UUID(bu))["tasks"]
                  if t["title"] == "Dentist checkup"]
         assert len(tasks) == 1                       # duplicate blocked
-        intents = db.db.session.query(AssistantWriteIntent).filter(
+        intents = db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.room_uuid == chatroom.uuid).all()
         assert len(intents) == 1                     # only one write recorded
     finally:
-        db.db.session.query(AssistantWriteIntent).filter(
+        db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(AssistantRun).filter(
+        db.session.query(AssistantRun).filter(
             AssistantRun.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
-        db.db.session.commit()
+        db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+        db.session.commit()
 
 
 def test_reply_includes_clickable_task_link_after_create(board):
@@ -205,16 +205,16 @@ def test_reply_includes_clickable_task_link_after_create(board):
         agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
         task_uuid = next(t["uuid"] for t in db.kanban_load_board(UUID(bu))["tasks"]
                          if t["title"] == "Bike checkup")
-        reply = db.db.session.query(db.ChatMessage).filter_by(
+        reply = db.session.query(db.ChatMessage).filter_by(
             room_uuid=chatroom.uuid, sender_uuid=ASSISTANT_UUID, kind="message").one()
         link = f"/kanban?id={task_uuid}"
         assert f"[{link}]({link})" in reply.text        # clickable link to the task
         assert reply.text.startswith("The task has been added.")  # model's prose kept
     finally:
-        db.db.session.query(AssistantRun).filter(
+        db.session.query(AssistantRun).filter(
             AssistantRun.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
-        db.db.session.commit()
+        db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+        db.session.commit()
 
 
 def test_model_cannot_invoke_delete_task(board):
@@ -237,12 +237,12 @@ def test_model_cannot_invoke_delete_task(board):
         agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
         assert db.kanban_get_task(tu) is not None       # guard blocked the delete
         # No write-intent ledger row was created for the rejected internal action.
-        assert db.db.session.query(AssistantWriteIntent).filter(
+        assert db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.room_uuid == chatroom.uuid).count() == 0
     finally:
-        db.db.session.query(AssistantWriteIntent).filter(
+        db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(AssistantRun).filter(
+        db.session.query(AssistantRun).filter(
             AssistantRun.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
-        db.db.session.commit()
+        db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+        db.session.commit()

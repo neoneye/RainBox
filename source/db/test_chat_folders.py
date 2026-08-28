@@ -25,7 +25,7 @@ def app_ctx():
 
 
 def test_backfill_orders_top_level_rooms_by_created_at(app_ctx):
-    s = db.db.session
+    s = db.session
     human = db.get_human_user()
     # Three rooms all at position 0 (the freshly-migrated state).
     r1 = db.create_chatroom(f"bf-1-{uuid4().hex[:6]}", human.uuid, [])
@@ -46,7 +46,7 @@ def test_backfill_orders_top_level_rooms_by_created_at(app_ctx):
 
 
 def test_backfill_is_noop_when_positions_already_distinct(app_ctx):
-    s = db.db.session
+    s = db.session
     human = db.get_human_user()
     r1 = db.create_chatroom(f"nb-1-{uuid4().hex[:6]}", human.uuid, [])
     r2 = db.create_chatroom(f"nb-2-{uuid4().hex[:6]}", human.uuid, [])
@@ -64,7 +64,7 @@ def test_backfill_is_noop_when_positions_already_distinct(app_ctx):
 
 
 def test_create_and_list_folders(app_ctx):
-    s = db.db.session
+    s = db.session
     f = db.create_chatroom_folder("Work")
     sub = db.create_chatroom_folder("Sub", parent_uuid=f.uuid)
     try:
@@ -80,7 +80,7 @@ def test_create_and_list_folders(app_ctx):
 
 
 def test_load_tree_shape_and_version_ignores_messages(app_ctx):
-    s = db.db.session
+    s = db.session
     human = db.get_human_user()
     f = db.create_chatroom_folder("TreeFolder")
     room = db.create_chatroom(f"tree-{uuid4().hex[:6]}", human.uuid, [])
@@ -145,7 +145,7 @@ def test_validate_accepts_a_well_formed_tree(app_ctx):
 @pytest.fixture
 def two_rooms(app_ctx):
     """Two fresh top-level rooms. Yields (room_a_uuid, room_b_uuid)."""
-    s = db.db.session
+    s = db.session
     human = db.get_human_user()
     a = db.create_chatroom(f"sv-a-{uuid4().hex[:6]}", human.uuid, [])
     b = db.create_chatroom(f"sv-b-{uuid4().hex[:6]}", human.uuid, [])
@@ -219,7 +219,7 @@ def test_save_tree_409_on_stale_version(two_rooms):
 
 
 def test_recursive_delete_preview_and_delete(app_ctx):
-    s = db.db.session
+    s = db.session
     human = db.get_human_user()
     # parent -> child folder; one room in each; an unrelated top-level room.
     parent = db.create_chatroom_folder("delf-parent")

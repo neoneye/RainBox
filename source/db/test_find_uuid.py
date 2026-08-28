@@ -18,7 +18,7 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -129,8 +129,8 @@ def test_mention_in_chat_message_text(app_ctx):
     its room — even when the query fragment spans a dash boundary."""
     ghost = "3adf3498-fa22-4bbb-8bbb-123456789abc"
     user = db.ChatUser(name="find-test human", user_type="human")
-    db.db.session.add(user)
-    db.db.session.commit()
+    db.session.add(user)
+    db.session.commit()
     room = db.create_chatroom("Q&A find test", user.uuid, [])
     try:
         db.post_chat_message(room.uuid, user.uuid,
@@ -144,8 +144,8 @@ def test_mention_in_chat_message_text(app_ctx):
                    for p in m["parents"])
     finally:
         db.delete_chatroom(room.uuid)
-        db.db.session.delete(user)
-        db.db.session.commit()
+        db.session.delete(user)
+        db.session.commit()
 
 
 def test_mention_in_task_event_reports_the_task(world):

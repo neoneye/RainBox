@@ -87,7 +87,7 @@ def _tokenize(text: str) -> set[str]:
 def _evidence_summary(memory_uuid: UUID) -> list[str]:
     """Distinct provenance labels for a claim, ordered by first appearance."""
     rows = (
-        db.db.session.query(MemoryEvidence.provenance)
+        db.session.query(MemoryEvidence.provenance)
         .filter(MemoryEvidence.memory_uuid == memory_uuid)
         .order_by(MemoryEvidence.id.asc())
         .all()
@@ -214,7 +214,7 @@ def hard_filtered_claims(
     become candidates. Never set it on a live prompt path — it exists so the
     operator can audit recall across rooms, not so agents can read across
     them."""
-    q = db.db.session.query(MemoryClaim).filter(MemoryClaim.status == "active")
+    q = db.session.query(MemoryClaim).filter(MemoryClaim.status == "active")
     if not include_secret:
         q = q.filter(MemoryClaim.sensitivity != "secret")
     now = datetime.now(UTC)
@@ -271,7 +271,7 @@ def _fulltext_scores(query: str, ids: list[UUID]) -> dict[UUID, float]:
         "      coalesce(subject,'') || ' ' || coalesce(object,'')) "
         "      @@ to_tsquery('english', :tsq)"
     ).bindparams(sa.bindparam("ids", expanding=True))
-    rows = db.db.session.execute(stmt, {"tsq": tsq, "ids": ids}).all()
+    rows = db.session.execute(stmt, {"tsq": tsq, "ids": ids}).all()
     return {row[0]: float(row[1]) for row in rows}
 
 
@@ -300,7 +300,7 @@ def _vector_sims(
     from memory.embeddings import EMBED_MODEL_NAME
 
     rows = (
-        db.db.session.query(
+        db.session.query(
             MemoryEmbedding.memory_uuid,
             MemoryEmbedding.embedding.cosine_distance(qvec),
         )
@@ -515,7 +515,7 @@ def _record_memory_telemetry(
     memory-filter stage between retrieval and injection can split these.
 
     Batches inserts with `commit=False` per row and a single
-    `db.db.session.commit()` at the end to avoid N fsyncs per chat turn."""
+    `db.session.commit()` at the end to avoid N fsyncs per chat turn."""
     if not memories:
         return
     metadata = {
@@ -554,7 +554,7 @@ def _record_memory_telemetry(
             metadata=metadata,
             commit=False,
         )
-    db.db.session.commit()
+    db.session.commit()
 
 
 def build_chat_memory_block(
@@ -610,7 +610,7 @@ def build_chat_memory_block(
             "telemetry: failed to record memory retrieval; "
             "swallowing so the chat turn is not blocked"
         )
-        db.db.session.rollback()
+        db.session.rollback()
     return format_memory_context(memories), query, memories
 
 

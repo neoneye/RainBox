@@ -19,7 +19,7 @@ def app_ctx():
     try:
         yield
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -43,8 +43,8 @@ def test_enqueue_posts_working_notice_for_assistant(app_ctx):
         # existence already said, with no idea how long it had been saying it.
         assert rows[0]["text"] == ASSISTANT_WORKING_NOTICE == ""
     finally:
-        db.db.session.query(db.ChatMessage).filter(
+        db.session.query(db.ChatMessage).filter(
             db.ChatMessage.room_uuid == room.uuid).delete()
-        db.db.session.query(db.Chatroom).filter(
+        db.session.query(db.Chatroom).filter(
             db.Chatroom.uuid == room.uuid).delete()
-        db.db.session.commit()
+        db.session.commit()

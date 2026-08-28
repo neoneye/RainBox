@@ -39,19 +39,19 @@ def _mk_run(created, *, summary_trigger=None, outcome=None, status="finished",
     )
     if summary_trigger is not None or outcome is not None:
         run.summary = {"trigger": summary_trigger, "outcome": outcome}
-    db.db.session.add(run)
+    db.session.add(run)
     for i in range(n_steps):
-        db.db.session.add(AssistantStep(
+        db.session.add(AssistantStep(
             uuid=uuid4(), run_uuid=run.uuid, step_index=i, phase="observed"))
-    db.db.session.commit()
+    db.session.commit()
     created.append(run.uuid)
     return run.uuid
 
 
 def _cleanup(created):
     for ru in created:
-        db.db.session.query(AssistantRun).filter(AssistantRun.uuid == ru).delete()
-    db.db.session.commit()
+        db.session.query(AssistantRun).filter(AssistantRun.uuid == ru).delete()
+    db.session.commit()
 
 
 def test_page_filters_by_summary_substring(app_ctx):

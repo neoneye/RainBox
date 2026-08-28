@@ -30,7 +30,7 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -44,9 +44,9 @@ def _claim(text="ui helper claim", status="active", sensitivity="private",
 
 def _cleanup(*uuids):
     for u in uuids:
-        db.db.session.query(MemoryEvidence).filter_by(memory_uuid=u).delete()
-        db.db.session.query(MemoryClaim).filter_by(uuid=u).delete()
-    db.db.session.commit()
+        db.session.query(MemoryEvidence).filter_by(memory_uuid=u).delete()
+        db.session.query(MemoryClaim).filter_by(uuid=u).delete()
+    db.session.commit()
 
 
 def test_set_scope_widens_room_claim_to_global(app_ctx):
@@ -135,7 +135,7 @@ def test_reactivate_from_rejected(app_ctx):
         reactivate_memory_claim(c.uuid, confirmed_by_uuid=None)
         assert db.get_memory_claim(c.uuid).status == "active"
         # a confirmation evidence row was recorded
-        evs = db.db.session.query(MemoryEvidence).filter_by(memory_uuid=c.uuid).all()
+        evs = db.session.query(MemoryEvidence).filter_by(memory_uuid=c.uuid).all()
         assert any(e.provenance == "confirmed_by_user" for e in evs)
     finally:
         _cleanup(c.uuid)

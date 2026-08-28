@@ -53,18 +53,18 @@ def app_ctx(monkeypatch):
     try:
         yield app, tracking_create, created_runs
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         for run_uuid in created_runs:
             run = db.get_eval_run(run_uuid)
             if run is not None:
-                db.db.session.delete(run)
-        for run in db.db.session.query(db.EvalRun).filter(
+                db.session.delete(run)
+        for run in db.session.query(db.EvalRun).filter(
                 db.EvalRun.name == "profile-gate").all():
-            db.db.session.delete(run)
-        for case in db.db.session.query(db.EvalCase).filter(
+            db.session.delete(run)
+        for case in db.session.query(db.EvalCase).filter(
                 db.EvalCase.name.like("pg-gate-test-%")).all():
-            db.db.session.delete(case)
-        db.db.session.commit()
+            db.session.delete(case)
+        db.session.commit()
         ctx.pop()
 
 

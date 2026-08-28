@@ -52,7 +52,7 @@ def _fetch_recent_chat_messages(limit: int) -> list[ChatMessage]:
     production-quality signal. We join ChatUser to filter out human
     inputs — both have `kind='message'` by default in `post_chat_message`."""
     return (
-        db.db.session.query(ChatMessage)
+        db.session.query(ChatMessage)
         .join(db.ChatUser, db.ChatUser.uuid == ChatMessage.sender_uuid)
         .filter(ChatMessage.kind == "message")
         .filter(db.ChatUser.user_type == "agent")

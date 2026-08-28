@@ -25,17 +25,17 @@ def app_ctx():
     ctx.push()
     saved = {}
     for key in KEYS:
-        row = db.db.session.query(db.AppSetting).filter_by(key=key).one_or_none()
+        row = db.session.query(db.AppSetting).filter_by(key=key).one_or_none()
         saved[key] = row.value if row is not None else None
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         for key, value in saved.items():
-            row = db.db.session.query(db.AppSetting).filter_by(key=key).one_or_none()
+            row = db.session.query(db.AppSetting).filter_by(key=key).one_or_none()
             if row is not None:
                 row.value = value
-        db.db.session.commit()
+        db.session.commit()
         ctx.pop()
 
 
@@ -51,14 +51,14 @@ def room(app_ctx):
     try:
         yield room
     finally:
-        db.db.session.rollback()
-        db.db.session.query(db.AssistantRun).filter(
+        db.session.rollback()
+        db.session.query(db.AssistantRun).filter(
             db.AssistantRun.room_uuid == room.uuid).delete()
-        db.db.session.query(db.ChatMessage).filter(
+        db.session.query(db.ChatMessage).filter(
             db.ChatMessage.room_uuid == room.uuid).delete()
-        db.db.session.query(db.Chatroom).filter(
+        db.session.query(db.Chatroom).filter(
             db.Chatroom.uuid == room.uuid).delete()
-        db.db.session.commit()
+        db.session.commit()
 
 
 def _germany_uuid():
@@ -167,9 +167,9 @@ def test_system_prompt_names_the_new_blocks(room):
 def calibrated_profile(app_ctx):
     """A throwaway user profile with calibration rows, selected as current."""
     pu = uuid4()
-    db.db.session.add(db.Profile(uuid=pu, name="CalUser", folder_uuid=None,
+    db.session.add(db.Profile(uuid=pu, name="CalUser", folder_uuid=None,
                                  position=999))
-    db.db.session.commit()
+    db.session.commit()
     db.profile_update_data(pu, {"units": "metric"})
     db.calibration_put(pu, [
         {"topic": "Mathematics", "level": "expert", "stance": "prefer",
@@ -181,10 +181,10 @@ def calibrated_profile(app_ctx):
     try:
         yield pu
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         db.set_current_profile(None)
-        db.db.session.query(db.Profile).filter(db.Profile.uuid == pu).delete()
-        db.db.session.commit()
+        db.session.query(db.Profile).filter(db.Profile.uuid == pu).delete()
+        db.session.commit()
 
 
 def test_calibration_block_injected_as_context_after_formatting(room, calibrated_profile):
@@ -249,7 +249,7 @@ def test_steps_record_the_debug_log(room):
     switch states — and none of it enters the model prompt."""
     db.set_current_profile(_germany_uuid())
     captured = _run_capture(room)
-    steps = (db.db.session.query(db.AssistantStep)
+    steps = (db.session.query(db.AssistantStep)
              .join(db.AssistantRun,
                    db.AssistantStep.run_uuid == db.AssistantRun.uuid)
              .filter(db.AssistantRun.room_uuid == room.uuid).all())

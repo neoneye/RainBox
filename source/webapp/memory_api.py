@@ -40,7 +40,7 @@ def _used_recently_ids() -> set[str]:
     """target_ids of memory claims that have any `used` retrieval event — one
     query, so the list endpoint stays O(1) per claim."""
     rows = (
-        db.db.session.query(db.RetrievalEvent.target_id)
+        db.session.query(db.RetrievalEvent.target_id)
         .filter(db.RetrievalEvent.target_type == "memory_claim",
                 db.RetrievalEvent.stage == "used")
         .distinct()
@@ -79,7 +79,7 @@ def _claim_row(claim: db.MemoryClaim, used_ids: set[str]) -> dict:
         "updated_at": _iso(claim.updated_at),
         "expires_at": _iso(claim.expires_at),
         "stale": db.claim_stale(claim),
-        "evidence_count": db.db.session.query(db.MemoryEvidence)
+        "evidence_count": db.session.query(db.MemoryEvidence)
         .filter_by(memory_uuid=claim.uuid).count(),
         "embedding_state": _embedding_state(claim),
         "supersedes_uuid": str(claim.supersedes_uuid) if claim.supersedes_uuid else None,
@@ -133,7 +133,7 @@ def _recall_kpis(cu: UUID) -> dict:
 
     def fetch(stage: str) -> list[dict]:
         rows = (
-            db.db.session.query(db.RetrievalEvent)
+            db.session.query(db.RetrievalEvent)
             .filter(db.RetrievalEvent.target_type == "memory_claim",
                     db.RetrievalEvent.target_id == str(cu),
                     db.RetrievalEvent.source == RECALL_VERDICT_SOURCE,
@@ -177,7 +177,7 @@ def memory_claim_detail(claim_uuid: str) -> tuple[Response, int] | Response:
     if detail is None:
         return jsonify({"ok": False, "error": "memory claim not found"}), 404
     claim = detail["claim"]
-    superseded_by = db.db.session.query(db.MemoryClaim).filter_by(
+    superseded_by = db.session.query(db.MemoryClaim).filter_by(
         supersedes_uuid=cu).first()
     return jsonify({
         "uuid": str(claim.uuid),
@@ -213,7 +213,7 @@ def memory_claim_detail(claim_uuid: str) -> tuple[Response, int] | Response:
         "retrieval": [
             {"stage": r.stage, "source": r.source, "query": r.query,
              "created_at": _iso(r.created_at)}
-            for r in db.db.session.query(db.RetrievalEvent)
+            for r in db.session.query(db.RetrievalEvent)
             .filter(db.RetrievalEvent.target_type == "memory_claim",
                     db.RetrievalEvent.target_id == str(cu))
             .order_by(db.RetrievalEvent.id.desc()).limit(10).all()

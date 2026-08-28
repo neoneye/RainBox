@@ -22,29 +22,29 @@ def app_ctx():
 
 def test_prompt_models_round_trip(app_ctx):
     fu, pu = uuid4(), uuid4()
-    db.db.session.add(PromptFolder(uuid=fu, name="T-folder", parent_uuid=None, position=0))
-    db.db.session.add(Prompt(
+    db.session.add(PromptFolder(uuid=fu, name="T-folder", parent_uuid=None, position=0))
+    db.session.add(Prompt(
         uuid=pu, name="T-prompt", content="You are helpful.",
         parent_uuid=None, folder_uuid=fu, position=0,
     ))
-    db.db.session.commit()
+    db.session.commit()
     try:
-        f = db.db.session.execute(sa.select(PromptFolder).where(PromptFolder.uuid == fu)).scalar_one()
-        p = db.db.session.execute(sa.select(Prompt).where(Prompt.uuid == pu)).scalar_one()
+        f = db.session.execute(sa.select(PromptFolder).where(PromptFolder.uuid == fu)).scalar_one()
+        p = db.session.execute(sa.select(Prompt).where(Prompt.uuid == pu)).scalar_one()
         assert f.name == "T-folder" and f.parent_uuid is None
         assert p.content == "You are helpful." and p.folder_uuid == fu
         assert f.created_at and p.updated_at  # timestamp defaults fire
     finally:
-        db.db.session.execute(sa.delete(Prompt).where(Prompt.uuid == pu))
-        db.db.session.execute(sa.delete(PromptFolder).where(PromptFolder.uuid == fu))
-        db.db.session.commit()
+        db.session.execute(sa.delete(Prompt).where(Prompt.uuid == pu))
+        db.session.execute(sa.delete(PromptFolder).where(PromptFolder.uuid == fu))
+        db.session.commit()
 
 
 @pytest.fixture
 def prompt_tree_snapshot(app_ctx):
     """Snapshot the prompt tables, yield, then restore — non-destructive."""
     def grab(model):
-        rows = db.db.session.execute(sa.select(model)).scalars().all()
+        rows = db.session.execute(sa.select(model)).scalars().all()
         return [
             {c.name: getattr(r, c.name) for c in model.__table__.columns if c.name != "id"}
             for r in rows
@@ -53,20 +53,20 @@ def prompt_tree_snapshot(app_ctx):
     try:
         yield
     finally:
-        db.db.session.execute(sa.delete(Prompt))
-        db.db.session.execute(sa.delete(PromptFolder))
+        db.session.execute(sa.delete(Prompt))
+        db.session.execute(sa.delete(PromptFolder))
         for row in fsnap:
-            db.db.session.add(PromptFolder(**row))
+            db.session.add(PromptFolder(**row))
         for row in psnap:
-            db.db.session.add(Prompt(**row))
-        db.db.session.commit()
+            db.session.add(Prompt(**row))
+        db.session.commit()
 
 
 @pytest.fixture
 def empty_tree(prompt_tree_snapshot):
-    db.db.session.execute(sa.delete(Prompt))
-    db.db.session.execute(sa.delete(PromptFolder))
-    db.db.session.commit()
+    db.session.execute(sa.delete(Prompt))
+    db.session.execute(sa.delete(PromptFolder))
+    db.session.commit()
 
 
 def _lineage_row(name: str, parent_uuid: UUID | None) -> str:
@@ -75,8 +75,8 @@ def _lineage_row(name: str, parent_uuid: UUID | None) -> str:
     lineage cases have to be planted directly."""
     row = Prompt(uuid=uuid4(), name=name, content="", folder_uuid=None,
                  parent_uuid=parent_uuid, position=0)
-    db.db.session.add(row)
-    db.db.session.commit()
+    db.session.add(row)
+    db.session.commit()
     return str(row.uuid)
 
 
@@ -292,8 +292,8 @@ def test_ancestors_stop_at_dangling_and_cycles(app_ctx, empty_tree):
     # Cycle: two versions pointing at each other must not spin.
     a = _lineage_row("A", None)
     b = _lineage_row("B", UUID(a))
-    db.db.session.execute(sa.update(Prompt).where(Prompt.uuid == UUID(a))
+    db.session.execute(sa.update(Prompt).where(Prompt.uuid == UUID(a))
                           .values(parent_uuid=UUID(b)))
-    db.db.session.commit()
+    db.session.commit()
     chain = db.prompt_ancestors(UUID(a))
     assert [c.uuid for c in chain] == [UUID(b)]

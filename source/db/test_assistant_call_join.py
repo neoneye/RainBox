@@ -51,9 +51,9 @@ def _call_row(*, run_uuid, step_uuid, at, prefill_ms, model="m"):
 
 
 def _cleanup(run_uuid) -> None:
-    db.db.session.query(AssistantRun).filter(
+    db.session.query(AssistantRun).filter(
         AssistantRun.uuid == run_uuid).delete()
-    db.db.session.commit()
+    db.session.commit()
 
 
 def _events(run):

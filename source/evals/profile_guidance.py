@@ -856,7 +856,7 @@ def seed_profile_guidance_cases(split: str = "train") -> list[db.EvalCase]:
                       else (other, case))
         if lose.status != "archived":
             lose.status = "archived"
-            db.db.session.commit()
+            db.session.commit()
         by_seed_id[sid] = keep
 
     touched: list[db.EvalCase] = []
@@ -875,7 +875,7 @@ def seed_profile_guidance_cases(split: str = "train") -> list[db.EvalCase]:
         case.input = spec["input"]
         case.expected = spec["expected"]
         case.rubric = rubric          # status and split stay as the operator set them
-        db.db.session.commit()
+        db.session.commit()
         touched.append(case)
     return touched
 

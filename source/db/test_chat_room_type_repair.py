@@ -44,10 +44,10 @@ def make_room(app_ctx):
     try:
         yield _make
     finally:
-        db.db.session.query(Chatroom).filter(
+        db.session.query(Chatroom).filter(
             Chatroom.uuid.in_(created)
         ).delete(synchronize_session=False)
-        db.db.session.commit()
+        db.session.commit()
 
 
 def test_retypes_room_whose_only_agent_is_the_direct_chat_responder(make_room):

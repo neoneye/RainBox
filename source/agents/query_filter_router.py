@@ -488,7 +488,7 @@ def _record_filter_events(
     misleading event sequence.
 
     All event rows for one call are batched into a single transaction
-    (`commit=False` per row, then one final `db.db.session.commit()`)
+    (`commit=False` per row, then one final `db.session.commit()`)
     to avoid 5-10 fsyncs per user query.
 
     Note: `used` events from this helper are an approximation — they
@@ -560,7 +560,7 @@ def _record_filter_events(
             metadata={"used_signal": "accepted_candidate_approximation"},
             commit=False,
         )
-    db.db.session.commit()
+    db.session.commit()
 
 
 class QueryFilterRouterAgent(ModelGroupAgent):
@@ -669,7 +669,7 @@ class QueryFilterRouterAgent(ModelGroupAgent):
                     "telemetry: failed to record filter events; "
                     "swallowing so the user query is not blocked"
                 )
-                db.db.session.rollback()
+                db.session.rollback()
             db.post_chat_message(
                 room_uuid, self.agent_uuid,
                 json.dumps({
@@ -818,7 +818,7 @@ class QueryFilterRouterAgent(ModelGroupAgent):
                 "telemetry: failed to record filter events; "
                 "swallowing so the user query is not blocked"
             )
-            db.db.session.rollback()
+            db.session.rollback()
 
         db.post_chat_message(
             room_uuid, self.agent_uuid,

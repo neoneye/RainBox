@@ -30,7 +30,7 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -110,7 +110,7 @@ def test_complete_via_loop_then_undo_reopens(board):
     try:
         agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
         assert db.kanban_get_task(UUID(task["uuid"]))["columnUuid"] == done
-        intents = db.db.session.query(AssistantWriteIntent).filter(
+        intents = db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.room_uuid == chatroom.uuid).all()
         assert len(intents) == 1 and intents[0].state == "completed"
         # Undo re-opens the task to its prior column and marks the intent undone.
@@ -119,12 +119,12 @@ def test_complete_via_loop_then_undo_reopens(board):
         assert db.kanban_get_task(UUID(task["uuid"]))["columnUuid"] == todo
         assert db.get_write_intent(intents[0].uuid).state == "undone"
     finally:
-        db.db.session.query(AssistantWriteIntent).filter(
+        db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(AssistantRun).filter(
+        db.session.query(AssistantRun).filter(
             AssistantRun.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
-        db.db.session.commit()
+        db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+        db.session.commit()
 
 
 # --- comment ------------------------------------------------------------------
@@ -153,7 +153,7 @@ def test_comment_undo_posts_retraction_keeps_original(board):
     )
     try:
         agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
-        intents = db.db.session.query(AssistantWriteIntent).filter(
+        intents = db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.room_uuid == chatroom.uuid).all()
         assert len(intents) == 1 and intents[0].state == "completed"
         undo_write_intent(intents[0].uuid)
@@ -162,12 +162,12 @@ def test_comment_undo_posts_retraction_keeps_original(board):
         assert "↩ retracted: looks good" in details         # retraction posted
         assert db.get_write_intent(intents[0].uuid).state == "undone"
     finally:
-        db.db.session.query(AssistantWriteIntent).filter(
+        db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(AssistantRun).filter(
+        db.session.query(AssistantRun).filter(
             AssistantRun.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
-        db.db.session.commit()
+        db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+        db.session.commit()
 
 
 def test_comment_rejects_missing_task(app_ctx):

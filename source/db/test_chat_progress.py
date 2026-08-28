@@ -36,8 +36,8 @@ def room_with_two_agents(app_ctx):
     assert human is not None, "seed_chat_defaults should have run"
     agent_a = ChatUser(uuid=uuid4(), name=f"prog-test-a-{uuid4().hex[:6]}", user_type="agent")
     agent_b = ChatUser(uuid=uuid4(), name=f"prog-test-b-{uuid4().hex[:6]}", user_type="agent")
-    db.db.session.add_all([agent_a, agent_b])
-    db.db.session.flush()
+    db.session.add_all([agent_a, agent_b])
+    db.session.flush()
     room = db.create_chatroom(
         f"prog-test-{uuid4().hex[:6]}", human.uuid, [agent_a.uuid, agent_b.uuid]
     )
@@ -46,16 +46,16 @@ def room_with_two_agents(app_ctx):
     finally:
         # ChatroomMember + ChatMessage rows cascade via FK ondelete=CASCADE on
         # chatroom.uuid; ChatUser rows we added need explicit cleanup.
-        db.db.session.query(Chatroom).filter(Chatroom.uuid == room.uuid).delete()
-        db.db.session.query(ChatUser).filter(
+        db.session.query(Chatroom).filter(Chatroom.uuid == room.uuid).delete()
+        db.session.query(ChatUser).filter(
             ChatUser.uuid.in_([agent_a.uuid, agent_b.uuid])
         ).delete()
-        db.db.session.commit()
+        db.session.commit()
 
 
 def _progress_rows_for(room_uuid: UUID, sender_uuid: UUID) -> list[ChatMessage]:
     return (
-        db.db.session.query(ChatMessage)
+        db.session.query(ChatMessage)
         .filter(
             ChatMessage.room_uuid == room_uuid,
             ChatMessage.sender_uuid == sender_uuid,
@@ -225,7 +225,7 @@ def test_upsert_progress_restart_resets_the_clock(room_with_two_agents):
     room_uuid, _human, agent_a, _agent_b = room_with_two_agents
     stale = db.post_progress(room_uuid, agent_a, "left behind")
     stale.created_at = datetime.now(timezone.utc) - timedelta(hours=3)
-    db.db.session.commit()
+    db.session.commit()
     db.upsert_progress(room_uuid, agent_a, "working on it", restart=True)
     rows = _progress_rows_for(room_uuid, agent_a)
     assert len(rows) == 1

@@ -34,7 +34,7 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -52,10 +52,10 @@ def _room():
 
 
 def _cleanup(run_id: int, room_uuid=None) -> None:
-    db.db.session.query(AssistantRun).filter(AssistantRun.uuid == run_id).delete()
+    db.session.query(AssistantRun).filter(AssistantRun.uuid == run_id).delete()
     if room_uuid is not None:
-        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room_uuid).delete()
-    db.db.session.commit()
+        db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room_uuid).delete()
+    db.session.commit()
 
 
 def test_requires_structured_output():

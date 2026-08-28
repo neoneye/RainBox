@@ -13,7 +13,7 @@ The `--ignore` flags are required: a bare `pytest` **fails at collection**
 because `voice_stt_whisper/test_server.py` and `voice_tts_kokoro/test_server.py`
 share a basename (both directories are standalone services without
 `__init__.py`, meant to be tested inside their own venvs — see below). The
-full main suite runs in ~1.5 minutes.
+full main suite runs in ~5 minutes.
 
 Targeted runs need no flags: `venv/bin/python -m pytest db/ memory/ -q`.
 
@@ -35,8 +35,23 @@ network layer; rerun with the normal approval path so the process can reach
 
 ## Environment sensitivity
 
-There are no known failures: the suite is green (2384 passed, 10 skipped as
+There are no known failures: the suite is green (3771 passed, 10 skipped as
 of this writing) both with the Ollama embedder live and with it unreachable.
+
+**A test that changes an `app_setting` must restore it.** `set_setting`
+commits, so the new value outlives the test, the module and the run. Settings
+resolve **DB → env → default**, which makes the leak sharper than it looks: a
+stored row outranks an environment variable, so a later test that configures
+itself through the environment — or deletes one to assert a fail-closed path —
+is silently overridden by the residue. `db/test_cron_backup.py` shows both the
+hazard and the shape of the cure: its `settings_unset` fixture snapshots the
+keys, blanks them, and restores them in a `finally`, so it neither depends on
+the operator's configuration nor destroys it.
+
+The failure this produces is not local to the test that leaked. It surfaces in
+whichever later test reads the same key, often in another file, and it
+survives across runs — so it reads as a pre-existing environmental failure
+rather than as residue from an interrupted run.
 
 **A test that creates a `memory_claim` must delete it.** Retrieval tests
 assert on what recall returns, and recall returns the top-K of whatever is

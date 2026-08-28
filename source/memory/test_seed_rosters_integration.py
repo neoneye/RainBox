@@ -95,7 +95,7 @@ def env(tmp_path, monkeypatch):
         yield SimpleNamespace(write=write, vs=vs, table=f"data_{table}",
                               customize=customize)
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         db.set_setting("qa.facts_invalidated_at", prior_stamp)
         with psycopg.connect(db.psycopg_dsn(), autocommit=True) as c, c.cursor() as cur:
             cur.execute(f'DROP TABLE IF EXISTS "data_{table}"')

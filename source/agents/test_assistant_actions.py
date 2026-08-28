@@ -339,7 +339,7 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -349,8 +349,8 @@ def fresh_subject() -> str:
 
 
 def _cleanup_subject(subject: str) -> None:
-    db.db.session.query(MemoryClaim).filter(MemoryClaim.subject == subject).delete()
-    db.db.session.commit()
+    db.session.query(MemoryClaim).filter(MemoryClaim.subject == subject).delete()
+    db.session.commit()
 
 
 def _ctx() -> AssistantActionContext:
@@ -788,7 +788,7 @@ def test_query_memory_records_recall_verdicts_with_fifo(app_ctx, monkeypatch):
     try:
         for _ in range(5):
             _action_query_memory(_ctx(), {"query": "fifo probe"})
-        rows = (db.db.session.query(RetrievalEvent)
+        rows = (db.session.query(RetrievalEvent)
                 .filter_by(target_id=str(claim_id),
                            source="memory_query.filter")
                 .order_by(RetrievalEvent.id.asc()).all())
@@ -799,9 +799,9 @@ def test_query_memory_records_recall_verdicts_with_fifo(app_ctx, monkeypatch):
         assert rows[-1].metadata_["signals"] == "fulltext"
         assert rows[-1].filter_label == "relevant"
     finally:
-        db.db.session.query(RetrievalEvent).filter_by(
+        db.session.query(RetrievalEvent).filter_by(
             target_id=str(claim_id)).delete(synchronize_session=False)
-        db.db.session.commit()
+        db.session.commit()
 
 
 def test_query_memory_dropped_claim_leaves_the_observation(app_ctx, monkeypatch):
@@ -1239,13 +1239,13 @@ def room(app_ctx):
         yield chatroom.uuid, msg.uuid
     finally:
         from db import AssistantRun
-        db.db.session.query(AssistantRun).filter(
+        db.session.query(AssistantRun).filter(
             AssistantRun.room_uuid == chatroom.uuid
         ).delete()
-        db.db.session.query(db.Chatroom).filter(
+        db.session.query(db.Chatroom).filter(
             db.Chatroom.uuid == chatroom.uuid
         ).delete()
-        db.db.session.commit()
+        db.session.commit()
 
 
 def _agent() -> AssistantAgent:
@@ -1260,7 +1260,7 @@ def _decision(action: AssistantActionName, **args) -> AssistantStepDecision:
 
 def _steps_for(run_id):
     return (
-        db.db.session.query(AssistantStep)
+        db.session.query(AssistantStep)
         .filter(AssistantStep.run_uuid == run_id)
         .order_by(AssistantStep.id)
         .all()

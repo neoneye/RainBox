@@ -47,9 +47,9 @@ def test_text_formatter_expands_debug_assistant_pointer(app_ctx):
         assert "task A" in out                # the observation/result
         assert "run_uuid" not in out            # not the raw pointer
     finally:
-        db.db.session.query(db.ChatMessage).filter_by(room_uuid=room.uuid).delete()
-        db.db.session.query(db.Chatroom).filter_by(uuid=room.uuid).delete()
-        db.db.session.commit()
+        db.session.query(db.ChatMessage).filter_by(room_uuid=room.uuid).delete()
+        db.session.query(db.Chatroom).filter_by(uuid=room.uuid).delete()
+        db.session.commit()
 
 
 @pytest.fixture
@@ -61,7 +61,7 @@ def app_ctx():
     try:
         yield application
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -118,14 +118,14 @@ def test_formatter_and_resolver_show_full_untruncated_observation(app_ctx):
     long_obs = "FACT-" + ("A" * 3000)  # well beyond the old 600/1200 caps
     room, msg = _make_debug_assistant_row(long_obs)
     try:
-        model = db.db.session.query(db.ChatMessage).filter_by(uuid=UUID(msg["uuid"])).one()
+        model = db.session.query(db.ChatMessage).filter_by(uuid=UUID(msg["uuid"])).one()
         out = str(_format_chatmessage_text(None, None, model, "text"))
         assert long_obs in out                       # full observation, not truncated
         assert long_obs in model.text                # the text column itself holds it
     finally:
-        db.db.session.query(db.ChatMessage).filter_by(room_uuid=room.uuid).delete()
-        db.db.session.query(db.Chatroom).filter_by(uuid=room.uuid).delete()
-        db.db.session.commit()
+        db.session.query(db.ChatMessage).filter_by(room_uuid=room.uuid).delete()
+        db.session.query(db.Chatroom).filter_by(uuid=room.uuid).delete()
+        db.session.commit()
 
 
 def test_edit_page_shows_resolved_trace_field(app_ctx):
@@ -141,6 +141,6 @@ def test_edit_page_shows_resolved_trace_field(app_ctx):
         assert long_obs in body                  # with the full observation
         assert "memory_query" in body
     finally:
-        db.db.session.query(db.ChatMessage).filter_by(room_uuid=room.uuid).delete()
-        db.db.session.query(db.Chatroom).filter_by(uuid=room.uuid).delete()
-        db.db.session.commit()
+        db.session.query(db.ChatMessage).filter_by(room_uuid=room.uuid).delete()
+        db.session.query(db.Chatroom).filter_by(uuid=room.uuid).delete()
+        db.session.commit()

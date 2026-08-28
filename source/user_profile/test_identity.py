@@ -28,7 +28,7 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -41,14 +41,14 @@ def profile_row(app_ctx):
         "about": "mathematician, first programmer",
         "units": "metric",
     })
-    db.db.session.add(row)
-    db.db.session.commit()
+    db.session.add(row)
+    db.session.commit()
     try:
         yield row
     finally:
         db.set_setting("profile.current", None)
-        db.db.session.delete(row)
-        db.db.session.commit()
+        db.session.delete(row)
+        db.session.commit()
 
 
 def _parse_block(block: str) -> dict:
@@ -134,12 +134,12 @@ def test_setting_selects_profile_and_builds_block(profile_row):
 def test_deleted_profile_degrades_to_empty_block(app_ctx):
     """A selected-then-deleted profile must not break prompt assembly."""
     row = Profile(uuid=uuid4(), name="Doomed", position=0, data={})
-    db.db.session.add(row)
-    db.db.session.commit()
+    db.session.add(row)
+    db.session.commit()
     db.set_setting("profile.current", str(row.uuid))
     try:
-        db.db.session.delete(row)
-        db.db.session.commit()
+        db.session.delete(row)
+        db.session.commit()
         assert current_profile() is None
         assert build_identity_block() == ""
     finally:

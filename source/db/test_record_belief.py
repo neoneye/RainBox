@@ -20,12 +20,12 @@ def app_ctx():
 
 
 def _cleanup(room):
-    db.db.session.query(MemoryEvidence).filter(MemoryEvidence.memory_uuid.in_(
-        db.db.session.query(MemoryClaim.uuid).filter_by(room_uuid=room))).delete(
+    db.session.query(MemoryEvidence).filter(MemoryEvidence.memory_uuid.in_(
+        db.session.query(MemoryClaim.uuid).filter_by(room_uuid=room))).delete(
         synchronize_session=False)
-    db.db.session.query(MemoryClaim).filter_by(room_uuid=room).delete()
-    db.db.session.query(MemoryRejectedValue).filter_by(room_uuid=room).delete()
-    db.db.session.commit()
+    db.session.query(MemoryClaim).filter_by(room_uuid=room).delete()
+    db.session.query(MemoryRejectedValue).filter_by(room_uuid=room).delete()
+    db.session.commit()
 
 
 def test_create_human_goes_active(app_ctx):

@@ -82,7 +82,7 @@ def _forbidden_memory_failure_uuids(run_uuid: UUID) -> list[str]:
     leaked forbidden memory is rejected even if the baseline had the
     same leak."""
     rows = (
-        db.db.session.query(EvalResult)
+        db.session.query(EvalResult)
         .filter(EvalResult.eval_run_uuid == run_uuid)
         .all()
     )

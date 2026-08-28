@@ -17,10 +17,10 @@ import db
 
 def _expire_lease(task_uuid):
     """Backdate a lease so takeover/cleanup paths can be tested."""
-    db.db.session.execute(
+    db.session.execute(
         sa.update(db.KanbanTask).where(db.KanbanTask.uuid == task_uuid)
         .values(claim_expires_at=datetime.now(UTC) - timedelta(minutes=1)))
-    db.db.session.commit()
+    db.session.commit()
 
 
 @pytest.fixture
@@ -36,7 +36,7 @@ def app_ctx():
         # ACCESS SHARE locks would block the NEXT test's init_db ALTERs on
         # the same tables forever (the lock self-deadlock class — single
         # process, two engines).
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -591,7 +591,7 @@ def test_enqueue_task(board):
 
     from agents.config import agent_config
 
-    s = db.db.session
+    s = db.session
     base_inbox = s.query(sa.func.max(db.Inbox.id)).scalar() or 0
     ws_uuid = str(agent_config["workspace_shell"]["uuid"])
     bu = _u(board["uuid"])

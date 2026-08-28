@@ -174,7 +174,7 @@ def cron_check_health(job_uuid: str) -> tuple[Response, int] | Response:
         ju = UUID(job_uuid)
     except (ValueError, TypeError):
         return jsonify({"ok": False, "error": "bad uuid"}), 400
-    job = db.db.session.query(db.CronJob).filter_by(uuid=ju).one_or_none()
+    job = db.session.query(db.CronJob).filter_by(uuid=ju).one_or_none()
     if job is None:
         return jsonify({"ok": False, "error": "job not found"}), 404
     if job.action_type != "script":

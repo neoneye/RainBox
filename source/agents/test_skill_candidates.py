@@ -32,7 +32,7 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -95,7 +95,7 @@ def test_propose_via_loop_then_undo_deletes(overlay):
     try:
         agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
         assert (overlay / "loop-skill.md").exists()
-        intent = db.db.session.query(AssistantWriteIntent).filter(
+        intent = db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.room_uuid == chatroom.uuid).one()
         assert intent.state == "completed"
         assert undo_write_intent(intent.uuid).ok is True
@@ -115,7 +115,7 @@ def test_activate_is_confirm_tier(overlay):
                               args={"message": "proposed"})))
     try:
         agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
-        intent = db.db.session.query(AssistantWriteIntent).filter(
+        intent = db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.room_uuid == chatroom.uuid).one()
         assert intent.state == "proposed"
         assert "status: candidate" in (overlay / "conf-skill.md").read_text()  # not active inline
@@ -139,7 +139,7 @@ def test_undo_proposal_after_activation_does_not_delete_active_skill(overlay):
                               args={"message": "ok"})))
     try:
         agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
-        propose_intent = db.db.session.query(AssistantWriteIntent).filter(
+        propose_intent = db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.room_uuid == chatroom.uuid).one()
         # The operator activates the candidate.
         assert skills.set_skill_status("act-undo", "active", if_current="candidate")
@@ -188,9 +188,9 @@ def _room():
 
 
 def _cleanup_room(chatroom):
-    db.db.session.query(AssistantWriteIntent).filter(
+    db.session.query(AssistantWriteIntent).filter(
         AssistantWriteIntent.room_uuid == chatroom.uuid).delete()
-    db.db.session.query(AssistantRun).filter(
+    db.session.query(AssistantRun).filter(
         AssistantRun.room_uuid == chatroom.uuid).delete()
-    db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
-    db.db.session.commit()
+    db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+    db.session.commit()

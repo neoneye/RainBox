@@ -19,7 +19,7 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -31,8 +31,8 @@ def run(app_ctx):
     try:
         yield r
     finally:
-        db.db.session.query(AssistantRun).filter(AssistantRun.uuid == r.uuid).delete()
-        db.db.session.commit()
+        db.session.query(AssistantRun).filter(AssistantRun.uuid == r.uuid).delete()
+        db.session.commit()
 
 
 def test_create_control_is_pending(run):
@@ -60,7 +60,7 @@ def test_mark_control_applied_excludes_it_from_pending(run):
 def test_run_status_allows_stopping(run):
     # The widened CHECK admits the transient 'stopping' state.
     db.finish_run(run, "stopping")
-    db.db.session.refresh(run)
+    db.session.refresh(run)
     assert run.status == "stopping"
 
 
@@ -70,6 +70,6 @@ def test_control_cascades_when_run_deleted(app_ctx):
     )
     c = db.create_assistant_control(run_uuid=r.uuid, command="stop")
     cid = c.id
-    db.db.session.query(AssistantRun).filter(AssistantRun.uuid == r.uuid).delete()
-    db.db.session.commit()
-    assert db.db.session.get(AssistantControl, cid) is None
+    db.session.query(AssistantRun).filter(AssistantRun.uuid == r.uuid).delete()
+    db.session.commit()
+    assert db.session.get(AssistantControl, cid) is None

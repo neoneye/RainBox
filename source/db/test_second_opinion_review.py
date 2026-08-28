@@ -23,7 +23,7 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -35,9 +35,9 @@ def run(app_ctx):
     try:
         yield r
     finally:
-        db.db.session.rollback()
-        db.db.session.query(AssistantRun).filter(AssistantRun.uuid == r.uuid).delete()
-        db.db.session.commit()
+        db.session.rollback()
+        db.session.query(AssistantRun).filter(AssistantRun.uuid == r.uuid).delete()
+        db.session.commit()
 
 
 def _record(run, **over):
@@ -95,7 +95,7 @@ def test_fail_open_cases_are_their_own_verdicts_not_approvals(run):
 def test_unknown_verdict_is_rejected_by_the_database(run):
     with pytest.raises(sa.exc.IntegrityError):
         _record(run, verdict="probably_fine")
-    db.db.session.rollback()
+    db.session.rollback()
 
 
 def test_reviews_for_a_run_come_back_in_attempt_order(run):
@@ -222,4 +222,4 @@ def test_unknown_assessment_is_rejected_by_the_database(run):
     review = _record(run)
     with pytest.raises(sa.exc.IntegrityError):
         db.record_second_opinion_assessment(review.uuid, "meh")
-    db.db.session.rollback()
+    db.session.rollback()

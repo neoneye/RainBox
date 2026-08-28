@@ -26,7 +26,7 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -182,10 +182,10 @@ def test_undo_restores_board_and_column_and_marks_undone(boards):
         assert after["columnUuid"] == original_column
         assert db.get_write_intent(intent.uuid).state == "undone"
     finally:
-        db.db.session.query(AssistantWriteIntent).filter(
+        db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.run_uuid == run.uuid).delete()
-        db.db.session.query(AssistantRun).filter(AssistantRun.uuid == run.uuid).delete()
-        db.db.session.commit()
+        db.session.query(AssistantRun).filter(AssistantRun.uuid == run.uuid).delete()
+        db.session.commit()
 
 
 def test_undo_refused_when_task_changed_board_since(app_ctx):

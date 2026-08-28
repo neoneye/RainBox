@@ -19,7 +19,7 @@ def app_ctx():
     try:
         yield
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 

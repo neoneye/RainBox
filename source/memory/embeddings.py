@@ -130,16 +130,16 @@ def prune_stale_embeddings() -> int:
     prompts) and they must survive a sync cycle.
     """
     now = datetime.now(UTC)
-    retrievable = db.db.session.query(MemoryClaim.uuid).filter(
+    retrievable = db.session.query(MemoryClaim.uuid).filter(
         MemoryClaim.status.in_(("active", "candidate")),
         sa.or_(MemoryClaim.expires_at.is_(None), MemoryClaim.expires_at > now),
     )
     n = (
-        db.db.session.query(MemoryEmbedding)
+        db.session.query(MemoryEmbedding)
         .filter(MemoryEmbedding.memory_uuid.notin_(retrievable))
         .delete(synchronize_session=False)
     )
-    db.db.session.commit()
+    db.session.commit()
     return n
 
 
@@ -153,7 +153,7 @@ def backfill_memory_embeddings(
     expired claims are excluded so backfill matches prune (which drops them)."""
     now = datetime.now(UTC)
     claims = (
-        db.db.session.query(MemoryClaim)
+        db.session.query(MemoryClaim)
         .filter(
             MemoryClaim.status.in_(("active", "candidate")),
             sa.or_(MemoryClaim.expires_at.is_(None), MemoryClaim.expires_at > now),

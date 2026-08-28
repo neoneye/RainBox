@@ -28,8 +28,8 @@ def fresh_tag() -> str:
 
 def _make_room_with_human(prefix: str):
     user = ChatUser(uuid=uuid4(), name=f"{prefix}-human", user_type="human")
-    db.db.session.add(user)
-    db.db.session.flush()
+    db.session.add(user)
+    db.session.flush()
     room = db.create_chatroom(
         name=f"{prefix}-room", created_by=user.uuid,
         member_uuids=[user.uuid],
@@ -39,23 +39,23 @@ def _make_room_with_human(prefix: str):
 
 def _cleanup(prefix: str) -> None:
     room_uuids = [
-        r.uuid for r in db.db.session.query(Chatroom)
+        r.uuid for r in db.session.query(Chatroom)
         .filter(Chatroom.name.like(f"{prefix}%")).all()
     ]
     if room_uuids:
-        db.db.session.query(ChatMessage).filter(
+        db.session.query(ChatMessage).filter(
             ChatMessage.room_uuid.in_(room_uuids)
         ).delete(synchronize_session=False)
-        db.db.session.query(Chatroom).filter(
+        db.session.query(Chatroom).filter(
             Chatroom.uuid.in_(room_uuids)
         ).delete(synchronize_session=False)
-    db.db.session.query(ChatUser).filter(
+    db.session.query(ChatUser).filter(
         ChatUser.name.like(f"{prefix}%")
     ).delete(synchronize_session=False)
-    db.db.session.query(MemoryClaim).filter(
+    db.session.query(MemoryClaim).filter(
         MemoryClaim.text.like(f"%{prefix}%")
     ).delete(synchronize_session=False)
-    db.db.session.commit()
+    db.session.commit()
 
 
 def test_remember_command_via_filter_router_creates_memory(
@@ -94,7 +94,7 @@ def test_remember_command_via_filter_router_creates_memory(
         })
         assert result.get("ok") is True, result
         assert result.get("method") == "memory", result
-        claims = db.db.session.query(MemoryClaim).filter(
+        claims = db.session.query(MemoryClaim).filter(
             MemoryClaim.text.like(f"%{fresh_tag}%")
         ).all()
         assert len(claims) >= 1, claims

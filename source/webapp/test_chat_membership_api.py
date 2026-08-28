@@ -29,8 +29,8 @@ def room(client):
         agent_b = db.ChatUser(
             uuid=uuid4(), name=f"mem-api-b-{uuid4().hex[:6]}", user_type="agent"
         )
-        db.db.session.add_all([agent_a, agent_b])
-        db.db.session.flush()
+        db.session.add_all([agent_a, agent_b])
+        db.session.flush()
         room = db.create_chatroom(
             f"mem-api-{uuid4().hex[:6]}", human.uuid, [agent_a.uuid]
         )
@@ -38,13 +38,13 @@ def room(client):
         try:
             yield room.uuid, human.uuid, agent_a_uuid, agent_b_uuid
         finally:
-            db.db.session.query(db.Chatroom).filter(
+            db.session.query(db.Chatroom).filter(
                 db.Chatroom.uuid == room.uuid
             ).delete()
-            db.db.session.query(db.ChatUser).filter(
+            db.session.query(db.ChatUser).filter(
                 db.ChatUser.uuid.in_([agent_a_uuid, agent_b_uuid])
             ).delete()
-            db.db.session.commit()
+            db.session.commit()
 
 
 def _add(client, room_uuid, user_uuid):

@@ -22,12 +22,12 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
 def _progress_count(room_uuid):
-    return db.db.session.query(ChatMessage).filter_by(
+    return db.session.query(ChatMessage).filter_by(
         room_uuid=room_uuid, kind="progress").count()
 
 
@@ -55,10 +55,10 @@ def test_enqueue_time_progress_survives_the_run_and_is_reaped(app_ctx):
         assert seen["progress_during_first_call"] >= 1   # picked-up signal was already visible
         assert _progress_count(chatroom.uuid) == 0        # reaped by the real reply
     finally:
-        db.db.session.query(AssistantRun).filter(
+        db.session.query(AssistantRun).filter(
             AssistantRun.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
-        db.db.session.commit()
+        db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+        db.session.commit()
 
 
 def test_facts_marker_does_not_leave_the_operator_without_a_progress_signal(app_ctx):
@@ -97,10 +97,10 @@ def test_facts_marker_does_not_leave_the_operator_without_a_progress_signal(app_
         assert _progress_count(chatroom.uuid) == 0  # final reply reaps as usual
     finally:
         db.set_setting("qa.facts_invalidated_at", None)
-        db.db.session.query(AssistantRun).filter(
+        db.session.query(AssistantRun).filter(
             AssistantRun.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
-        db.db.session.commit()
+        db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+        db.session.commit()
 
 
 def test_each_step_boundary_emits_immediate_liveness(app_ctx):
@@ -143,11 +143,11 @@ def test_each_step_boundary_emits_immediate_liveness(app_ctx):
             "auditing the reply",
         ]
     finally:
-        db.db.session.query(AssistantRun).filter(
+        db.session.query(AssistantRun).filter(
             AssistantRun.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(db.Chatroom).filter(
+        db.session.query(db.Chatroom).filter(
             db.Chatroom.uuid == chatroom.uuid).delete()
-        db.db.session.commit()
+        db.session.commit()
 
 
 def test_one_progress_row_carries_the_run_state_and_links_to_the_trace(app_ctx):
@@ -192,10 +192,10 @@ def test_one_progress_row_carries_the_run_state_and_links_to_the_trace(app_ctx):
         # …and the reply reaps the progress row as any terminal post does.
         assert _progress_count(chatroom.uuid) == 0
     finally:
-        db.db.session.query(AssistantRun).filter(
+        db.session.query(AssistantRun).filter(
             AssistantRun.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
-        db.db.session.commit()
+        db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+        db.session.commit()
 
 
 def test_progress_row_reports_the_calls_made_before_the_first_decide(app_ctx):
@@ -227,10 +227,10 @@ def test_progress_row_reports_the_calls_made_before_the_first_decide(app_ctx):
         assert "1 LLM call ·" in seen["text"]    # the classifier, already counted
         assert "deciding step 0" in seen["text"]
     finally:
-        db.db.session.query(AssistantRun).filter(
+        db.session.query(AssistantRun).filter(
             AssistantRun.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
-        db.db.session.commit()
+        db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+        db.session.commit()
 
 
 def test_the_reply_keeps_a_pointer_to_the_run_that_produced_it(app_ctx):
@@ -257,7 +257,7 @@ def test_the_reply_keeps_a_pointer_to_the_run_that_produced_it(app_ctx):
         assert run_uuid not in reply["text"]
         assert _progress_count(chatroom.uuid) == 0            # bubble still reaped
     finally:
-        db.db.session.query(AssistantRun).filter(
+        db.session.query(AssistantRun).filter(
             AssistantRun.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
-        db.db.session.commit()
+        db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+        db.session.commit()

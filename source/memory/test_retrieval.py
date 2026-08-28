@@ -34,10 +34,10 @@ def fresh_subject() -> str:
 
 
 def _cleanup(subject: str) -> None:
-    db.db.session.query(MemoryClaim).filter(
+    db.session.query(MemoryClaim).filter(
         MemoryClaim.subject == subject
     ).delete()
-    db.db.session.commit()
+    db.session.commit()
 
 
 def _claim_uuids(memories: list[RetrievedMemory]) -> set[UUID]:
@@ -332,8 +332,8 @@ def test_record_memory_use_posts_debug_memory_row(app_ctx, fresh_subject):
                 uuid=agent_uuid, name=f"test-agent-{uuid4().hex[:6]}",
                 user_type="agent",
             )
-            db.db.session.add(agent_user)
-            db.db.session.commit()
+            db.session.add(agent_user)
+            db.session.commit()
 
             memories = [
                 _retrieved(
@@ -359,13 +359,13 @@ def test_record_memory_use_posts_debug_memory_row(app_ctx, fresh_subject):
             assert entry["provenance"] == ["confirmed_by_user"]
             assert entry["reason"] == "token_overlap"
         finally:
-            db.db.session.query(db.Chatroom).filter(
+            db.session.query(db.Chatroom).filter(
                 db.Chatroom.uuid == room.uuid
             ).delete()
-            db.db.session.query(db.ChatUser).filter(
+            db.session.query(db.ChatUser).filter(
                 db.ChatUser.uuid == agent_uuid
             ).delete()
-            db.db.session.commit()
+            db.session.commit()
     finally:
         _cleanup(fresh_subject)
 

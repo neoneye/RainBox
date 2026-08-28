@@ -40,21 +40,21 @@ def test_registry_shape():
 
 def test_profile_models_round_trip(app_ctx):
     fu, pu = uuid4(), uuid4()
-    db.db.session.add(ProfileFolder(uuid=fu, name="T-folder", parent_uuid=None, position=0))
-    db.db.session.add(Profile(uuid=pu, name="T-profile", folder_uuid=fu, position=0,
+    db.session.add(ProfileFolder(uuid=fu, name="T-folder", parent_uuid=None, position=0))
+    db.session.add(Profile(uuid=pu, name="T-profile", folder_uuid=fu, position=0,
                               data={"full_name": "Ada Test", "units": "metric"}))
-    db.db.session.commit()
+    db.session.commit()
     try:
-        f = db.db.session.execute(sa.select(ProfileFolder).where(ProfileFolder.uuid == fu)).scalar_one()
-        p = db.db.session.execute(sa.select(Profile).where(Profile.uuid == pu)).scalar_one()
+        f = db.session.execute(sa.select(ProfileFolder).where(ProfileFolder.uuid == fu)).scalar_one()
+        p = db.session.execute(sa.select(Profile).where(Profile.uuid == pu)).scalar_one()
         assert f.name == "T-folder" and f.parent_uuid is None
         assert p.data == {"full_name": "Ada Test", "units": "metric"}
         assert p.folder_uuid == fu
         assert f.created_at and p.updated_at  # timestamp defaults fire
     finally:
-        db.db.session.execute(sa.delete(Profile).where(Profile.uuid == pu))
-        db.db.session.execute(sa.delete(ProfileFolder).where(ProfileFolder.uuid == fu))
-        db.db.session.commit()
+        db.session.execute(sa.delete(Profile).where(Profile.uuid == pu))
+        db.session.execute(sa.delete(ProfileFolder).where(ProfileFolder.uuid == fu))
+        db.session.commit()
 
 
 def test_validate_data_canonical_and_errors():
@@ -96,7 +96,7 @@ def test_validate_data_canonical_and_errors():
 def profile_tree_snapshot(app_ctx):
     """Snapshot the profile tables, yield, then restore — non-destructive."""
     def grab(model):
-        rows = db.db.session.execute(sa.select(model)).scalars().all()
+        rows = db.session.execute(sa.select(model)).scalars().all()
         return [
             {c.name: getattr(r, c.name) for c in model.__table__.columns if c.name != "id"}
             for r in rows
@@ -105,20 +105,20 @@ def profile_tree_snapshot(app_ctx):
     try:
         yield
     finally:
-        db.db.session.execute(sa.delete(Profile))
-        db.db.session.execute(sa.delete(ProfileFolder))
+        db.session.execute(sa.delete(Profile))
+        db.session.execute(sa.delete(ProfileFolder))
         for row in fsnap:
-            db.db.session.add(ProfileFolder(**row))
+            db.session.add(ProfileFolder(**row))
         for row in psnap:
-            db.db.session.add(Profile(**row))
-        db.db.session.commit()
+            db.session.add(Profile(**row))
+        db.session.commit()
 
 
 @pytest.fixture
 def empty_tree(profile_tree_snapshot):
-    db.db.session.execute(sa.delete(Profile))
-    db.db.session.execute(sa.delete(ProfileFolder))
-    db.db.session.commit()
+    db.session.execute(sa.delete(Profile))
+    db.session.execute(sa.delete(ProfileFolder))
+    db.session.commit()
 
 
 def test_save_and_load_roundtrip(app_ctx, empty_tree):
@@ -142,14 +142,14 @@ def test_save_and_load_roundtrip(app_ctx, empty_tree):
 
 def test_tree_save_preserves_data(app_ctx, empty_tree):
     pr = db.profile_create("P", None)
-    row = db.db.session.execute(
+    row = db.session.execute(
         sa.select(Profile).where(Profile.uuid == UUID(pr["uuid"]))).scalar_one()
     row.data = {"full_name": "Keep Me"}
-    db.db.session.commit()
+    db.session.commit()
     # A structural save (rename) must not touch data.
     db.profile_save_tree([], [{"uuid": pr["uuid"], "name": "P renamed",
                                "folderId": None}])
-    row = db.db.session.execute(
+    row = db.session.execute(
         sa.select(Profile).where(Profile.uuid == UUID(pr["uuid"]))).scalar_one()
     assert row.name == "P renamed" and row.data == {"full_name": "Keep Me"}
 
@@ -361,9 +361,9 @@ def test_update_data_merges_and_deletes(app_ctx, empty_tree):
     pr = db.profile_create("P", None)["uuid"]
     v = db.profile_tree_version()
     dynamic = {"location": {"value": "Copenhagen", "seen_at": "2026-07-14T10:00:00+00:00"}}
-    row = db.db.session.execute(sa.select(Profile).where(Profile.uuid == UUID(pr))).scalar_one()
+    row = db.session.execute(sa.select(Profile).where(Profile.uuid == UUID(pr))).scalar_one()
     row.data = {"full_name": "Old Name", "city": "Aarhus", "dynamic": dynamic}
-    db.db.session.commit()
+    db.session.commit()
     summary = db.profile_update_data(UUID(pr), {"full_name": "New Name", "units": "metric"})
     assert summary["full_name"] == "New Name"
     stored = db.profile_get(UUID(pr))["data"]
@@ -382,9 +382,9 @@ def test_duplicate_user_owned(app_ctx, empty_tree):
     other = db.profile_create("After", UUID(f))["uuid"]
     blob = {"full_name": "Simon S", "dynamic": {"screen": {"value": "3440x1440",
                                                            "seen_at": "2026-07-01T00:00:00+00:00"}}}
-    row = db.db.session.execute(sa.select(Profile).where(Profile.uuid == UUID(src))).scalar_one()
+    row = db.session.execute(sa.select(Profile).where(Profile.uuid == UUID(src))).scalar_one()
     row.data = blob
-    db.db.session.commit()
+    db.session.commit()
     dup = db.profile_duplicate(UUID(src))
     assert dup["name"] == "Simon copy" and dup["folderId"] == f
     got = db.profile_get(UUID(dup["uuid"]))

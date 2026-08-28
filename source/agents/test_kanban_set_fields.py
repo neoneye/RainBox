@@ -31,7 +31,7 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -113,10 +113,10 @@ def test_set_task_description_and_undo_restores_old_text(board):
         assert db.kanban_get_task(UUID(task["uuid"]))["description"] == "old text"
         assert db.get_write_intent(intent.uuid).state == "undone"
     finally:
-        db.db.session.query(AssistantWriteIntent).filter(
+        db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.run_uuid == run.uuid).delete()
-        db.db.session.query(AssistantRun).filter(AssistantRun.uuid == run.uuid).delete()
-        db.db.session.commit()
+        db.session.query(AssistantRun).filter(AssistantRun.uuid == run.uuid).delete()
+        db.session.commit()
 
 
 def test_undo_can_restore_an_empty_description(board):

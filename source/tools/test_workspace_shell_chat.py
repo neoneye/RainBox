@@ -56,7 +56,7 @@ def kanban_board(workspace):
         try:
             db.kanban_delete_board(UUID(b["uuid"]))
         finally:
-            db.db.session.rollback()  # release read locks before the next init_db ALTERs
+            db.session.rollback()  # release read locks before the next init_db ALTERs
             ctx.pop()
 
 
@@ -139,7 +139,7 @@ def test_handle_records_cron_run_outcome(chat_room, workspace):
     room, _human = chat_room
     _, make_file, _ = workspace
     make_file("data.txt", "payload")
-    s = db.db.session
+    s = db.session
     # Recording an outcome posts a ✔/✖ line to the cron room — track the
     # watermark so those event messages are torn down too.
     base_msg = s.query(sa.func.max(db.ChatMessage.id)).filter(
@@ -181,7 +181,7 @@ def test_handle_debug_dry_runs_without_executing(chat_room, workspace):
     room, _human = chat_room
     _, make_file, _ = workspace
     make_file("dry.txt", "secret-content")
-    s = db.db.session
+    s = db.session
     base_msg = s.query(sa.func.max(db.ChatMessage.id)).filter(
         db.ChatMessage.room_uuid == db.CRON_ROOM_UUID).scalar() or 0
     run = db.CronRun(cron_uuid=uuid4(), trigger="manual", debug=True)
@@ -211,7 +211,7 @@ def test_handle_without_cron_run_uuid_touches_no_runs(chat_room, workspace):
     """A chat-triggered run (no cron_run_uuid) records nothing."""
     import sqlalchemy as sa
     room, human = chat_room
-    s = db.db.session
+    s = db.session
     before = s.query(sa.func.max(db.CronRun.id)).scalar() or 0
     db.post_chat_message(room.uuid, human.uuid, "pwd")
     _agent().handle(uuid4(), {"room_uuid": str(room.uuid)})

@@ -26,10 +26,10 @@ def fresh_tag() -> str:
 
 
 def _cleanup(prefix: str) -> None:
-    db.db.session.query(EvalRun).filter(
+    db.session.query(EvalRun).filter(
         EvalRun.name.like(f"{prefix}%")
     ).delete(synchronize_session=False)
-    db.db.session.commit()
+    db.session.commit()
 
 
 def test_new_eval_run_is_not_baseline_by_default(app_ctx, fresh_tag):
@@ -37,7 +37,7 @@ def test_new_eval_run_is_not_baseline_by_default(app_ctx, fresh_tag):
         run = db.create_eval_run(
             name=f"{fresh_tag}: default", agent_role="chat",
         )
-        db.db.session.expire_all()
+        db.session.expire_all()
         reloaded = db.get_eval_run(run.uuid)
         assert reloaded.is_baseline is False
     finally:
@@ -50,7 +50,7 @@ def test_set_baseline_eval_run_flips_the_flag(app_ctx, fresh_tag):
             name=f"{fresh_tag}: to-be-baseline", agent_role="chat",
         )
         db.set_baseline_eval_run(run.uuid, is_baseline=True)
-        db.db.session.expire_all()
+        db.session.expire_all()
         reloaded = db.get_eval_run(run.uuid)
         assert reloaded.is_baseline is True
     finally:
@@ -64,7 +64,7 @@ def test_set_baseline_eval_run_can_unset(app_ctx, fresh_tag):
         )
         db.set_baseline_eval_run(run.uuid, is_baseline=True)
         db.set_baseline_eval_run(run.uuid, is_baseline=False)
-        db.db.session.expire_all()
+        db.session.expire_all()
         reloaded = db.get_eval_run(run.uuid)
         assert reloaded.is_baseline is False
     finally:

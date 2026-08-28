@@ -30,22 +30,22 @@ def fresh_tag() -> str:
 
 def _cleanup(run_name_prefix: str) -> None:
     run_uuids = [
-        r.uuid for r in db.db.session.query(EvalRun)
+        r.uuid for r in db.session.query(EvalRun)
         .filter(EvalRun.name.like(f"{run_name_prefix}%"))
         .all()
     ]
     if run_uuids:
-        db.db.session.query(EvalResult).filter(
+        db.session.query(EvalResult).filter(
             EvalResult.eval_run_uuid.in_(run_uuids)
         ).delete(synchronize_session=False)
-        db.db.session.query(EvalRun).filter(
+        db.session.query(EvalRun).filter(
             EvalRun.uuid.in_(run_uuids)
         ).delete(synchronize_session=False)
     # Also tear down any EvalCase rows tagged with this prefix.
-    db.db.session.query(EvalCase).filter(
+    db.session.query(EvalCase).filter(
         EvalCase.name.like(f"{run_name_prefix}%")
     ).delete(synchronize_session=False)
-    db.db.session.commit()
+    db.session.commit()
 
 
 def test_create_eval_run_persists_required_fields(app_ctx, fresh_tag):
@@ -55,7 +55,7 @@ def test_create_eval_run_persists_required_fields(app_ctx, fresh_tag):
             agent_role="chat",
             config={"split": "regression"},
         )
-        db.db.session.expire_all()
+        db.session.expire_all()
         reloaded = db.get_eval_run(run.uuid)
         assert reloaded is not None
         assert reloaded.name.startswith(fresh_tag)
@@ -78,7 +78,7 @@ def test_finish_eval_run_stamps_finished_and_summary(app_ctx, fresh_tag):
             run.uuid,
             summary={"cases": 3, "passed": 2, "mean_score": 0.78},
         )
-        db.db.session.expire_all()
+        db.session.expire_all()
         reloaded = db.get_eval_run(run.uuid)
         assert reloaded.finished_at is not None
         assert reloaded.summary == {"cases": 3, "passed": 2, "mean_score": 0.78}
@@ -100,7 +100,7 @@ def test_create_eval_result_persists_score_and_details(app_ctx, fresh_tag):
             passed=False,
             details={"must_include": {"matched": 1, "total": 2}},
         )
-        db.db.session.expire_all()
+        db.session.expire_all()
         rows = db.list_eval_results_for_run(run.uuid)
         assert len(rows) == 1
         r = rows[0]
@@ -140,8 +140,8 @@ def test_eval_result_cascades_when_run_is_deleted(app_ctx, fresh_tag):
             score=1.0, passed=True, details={},
         )
         # Deleting the run cascades to its results.
-        db.db.session.query(EvalRun).filter(EvalRun.uuid == run.uuid).delete()
-        db.db.session.commit()
+        db.session.query(EvalRun).filter(EvalRun.uuid == run.uuid).delete()
+        db.session.commit()
         assert db.list_eval_results_for_run(run.uuid) == []
     finally:
         _cleanup(fresh_tag)
