@@ -30,18 +30,18 @@ def app_ctx():
 
 def _room_with_agent(human_uuid):
     agent_uuid = uuid4()
-    db.db.session.add(
+    db.session.add(
         db.ChatUser(uuid=agent_uuid, name=f"stream-{uuid4().hex[:6]}", user_type="agent")
     )
-    db.db.session.flush()
+    db.session.flush()
     room = db.create_chatroom(f"stream-{uuid4().hex[:6]}", human_uuid, [agent_uuid])
     return room.uuid, agent_uuid
 
 
 def _cleanup(room_uuid, agent_uuid):
-    db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room_uuid).delete()
-    db.db.session.query(db.ChatUser).filter(db.ChatUser.uuid == agent_uuid).delete()
-    db.db.session.commit()
+    db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room_uuid).delete()
+    db.session.query(db.ChatUser).filter(db.ChatUser.uuid == agent_uuid).delete()
+    db.session.commit()
 
 
 def test_streaming_lifecycle_updates_in_place(app_ctx):

@@ -26,7 +26,7 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -34,15 +34,15 @@ def app_ctx():
 def profile(app_ctx):
     """One throwaway user profile row, removed afterwards."""
     pu = uuid4()
-    db.db.session.add(Profile(uuid=pu, name="CalTest", folder_uuid=None,
+    db.session.add(Profile(uuid=pu, name="CalTest", folder_uuid=None,
                               position=999))
-    db.db.session.commit()
+    db.session.commit()
     try:
         yield pu
     finally:
-        db.db.session.rollback()
-        db.db.session.query(Profile).filter(Profile.uuid == pu).delete()
-        db.db.session.commit()
+        db.session.rollback()
+        db.session.query(Profile).filter(Profile.uuid == pu).delete()
+        db.session.commit()
 
 
 @pytest.fixture
@@ -176,7 +176,7 @@ def test_enum_and_size_limits(profile):
 def test_empty_snapshot_removes_the_subtree(profile, fixed_stamp):
     db.calibration_put(profile, [_row()])
     assert db.calibration_put(profile, []) == []
-    stored = db.db.session.execute(
+    stored = db.session.execute(
         db.db.select(Profile).where(Profile.uuid == profile)).scalar_one()
     assert "calibration" not in (stored.data or {})    # absent reads as no topics
     assert db.calibration_get(profile) == {"builtin": False, "topics": []}
@@ -194,11 +194,11 @@ def test_flat_save_preserves_calibration_by_deep_equality(profile, fixed_stamp):
 
 
 def test_calibration_save_preserves_flat_fields_and_dynamic(profile, fixed_stamp):
-    row = db.db.session.execute(
+    row = db.session.execute(
         db.db.select(Profile).where(Profile.uuid == profile)).scalar_one()
     dynamic = {"screen": {"value": "3440x1440", "seen_at": "2026-07-01T00:00:00+00:00"}}
     row.data = {"full_name": "Keeper", "dynamic": dynamic}
-    db.db.session.commit()
+    db.session.commit()
     db.calibration_put(profile, [_row()])
     stored = db.profile_get(profile)["data"]
     assert stored["full_name"] == "Keeper"
@@ -242,7 +242,7 @@ def test_concurrent_flat_and_calibration_writes_preserve_both(app_ctx, profile):
     for t in threads:
         t.join(timeout=30)
     assert not errors
-    db.db.session.expire_all()
+    db.session.expire_all()
     stored = db.profile_get(profile)["data"]
     assert stored["full_name"] == "Racer"
     assert stored["calibration"]["topics"][0]["topic"] == "Python"
@@ -263,9 +263,9 @@ def test_duplicate_mints_fresh_calibration_identity(profile, fixed_stamp):
         assert {r["id"] for r in copied}.isdisjoint({r["id"] for r in src_rows})
         assert all(r["updated_at"] == LATER_STAMP for r in copied)
     finally:
-        db.db.session.query(Profile).filter(
+        db.session.query(Profile).filter(
             Profile.uuid == UUID(dup["uuid"])).delete()
-        db.db.session.commit()
+        db.session.commit()
 
 
 # ---- API --------------------------------------------------------------------

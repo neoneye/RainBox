@@ -519,7 +519,7 @@ def get_current_chatroom(ctx: QueryContext) -> str:
     uuid, and members (name + uuid). Falls back to the repo dir when there's no
     room context."""
     try:
-        room = db.db.session.query(db.Chatroom).filter_by(uuid=ctx.room_uuid).first()
+        room = db.session.query(db.Chatroom).filter_by(uuid=ctx.room_uuid).first()
     except Exception:
         room = None
     if room is None or not room.name:

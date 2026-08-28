@@ -74,7 +74,7 @@ def test_rejected_wrong_facts_never_reappear_via_model(app_ctx):
         )
 
     # Phase 3: no active claims should remain in the marker room.
-    active = db.db.session.query(MemoryClaim).filter_by(
+    active = db.session.query(MemoryClaim).filter_by(
         room_uuid=room, status="active"
     ).count()
     assert active == 0
@@ -82,11 +82,11 @@ def test_rejected_wrong_facts_never_reappear_via_model(app_ctx):
     # Teardown: remove every row this test created so the shared sandbox DB
     # stays clean. Order matters — evidence first (FK to claim), then claims,
     # then tombstones (keyed by room_uuid).
-    db.db.session.query(MemoryEvidence).filter(
+    db.session.query(MemoryEvidence).filter(
         MemoryEvidence.memory_uuid.in_(
-            db.db.session.query(MemoryClaim.uuid).filter_by(room_uuid=room)
+            db.session.query(MemoryClaim.uuid).filter_by(room_uuid=room)
         )
     ).delete(synchronize_session=False)
-    db.db.session.query(MemoryClaim).filter_by(room_uuid=room).delete()
-    db.db.session.query(MemoryRejectedValue).filter_by(room_uuid=room).delete()
-    db.db.session.commit()
+    db.session.query(MemoryClaim).filter_by(room_uuid=room).delete()
+    db.session.query(MemoryRejectedValue).filter_by(room_uuid=room).delete()
+    db.session.commit()

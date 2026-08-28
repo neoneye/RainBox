@@ -23,12 +23,12 @@ def app_ctx():
 
 
 def _cleanup(room):
-    db.db.session.query(MemoryEvidence).filter(MemoryEvidence.memory_uuid.in_(
-        db.db.session.query(MemoryClaim.uuid).filter_by(room_uuid=room))).delete(
+    db.session.query(MemoryEvidence).filter(MemoryEvidence.memory_uuid.in_(
+        db.session.query(MemoryClaim.uuid).filter_by(room_uuid=room))).delete(
         synchronize_session=False)
-    db.db.session.query(MemoryClaim).filter_by(room_uuid=room).delete()
-    db.db.session.query(MemoryRejectedValue).filter_by(room_uuid=room).delete()
-    db.db.session.commit()
+    db.session.query(MemoryClaim).filter_by(room_uuid=room).delete()
+    db.session.query(MemoryRejectedValue).filter_by(room_uuid=room).delete()
+    db.session.commit()
 
 
 def _candidate(room):
@@ -94,7 +94,7 @@ def test_supersede_sets_supersedes_uuid_on_candidate(app_ctx):
 
     out = resolve_conflict(cand.uuid, "supersede")
 
-    db.db.session.expire_all()
+    db.session.expire_all()
     refreshed = db.get_memory_claim(cand.uuid)
     assert refreshed is not None
     assert refreshed.status == "active", f"Expected active, got {refreshed.status!r}"

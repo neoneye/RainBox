@@ -25,8 +25,8 @@ def _run(app):
 
 def _cleanup(app, run_id):
     with app.app_context():
-        db.db.session.query(AssistantRun).filter(AssistantRun.uuid == run_id).delete()
-        db.db.session.commit()
+        db.session.query(AssistantRun).filter(AssistantRun.uuid == run_id).delete()
+        db.session.commit()
 
 
 def test_stop_endpoint_inserts_control_and_flags_stopping(client):

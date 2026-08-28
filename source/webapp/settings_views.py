@@ -468,7 +468,7 @@ def settings_set_api() -> tuple[Response, int] | Response:
         return jsonify({"ok": False, "error": f"unknown setting: {key}"}), 400
     except (ValueError, TypeError) as exc:
         # Validation failure, env-only secret, or bad coercion.
-        db.db.session.rollback()
+        db.session.rollback()
         return jsonify({"ok": False, "error": str(exc)}), 400
     if key == "qa.unlocked_shields" and db.get_setting(key) != old_shields:
         db.mark_facts_invalidated()
@@ -489,7 +489,7 @@ def settings_repopulate_memory() -> tuple[Response, int] | Response:
         counts = seed_memory.sync_kb()
     except Exception as exc:  # noqa: BLE001 — any backend failure → 502 + message
         # Not dead code: sync_kb reads the customize.dir setting via db.session (get_setting); a failure there leaves the session in a failed state that must be rolled back before responding.
-        db.db.session.rollback()
+        db.session.rollback()
         # Log it too (a JSONL parse error carries the file:line:column; an
         # embedding failure carries the Ollama error) so the operator can
         # troubleshoot from the log, not only the UI result.
@@ -508,7 +508,7 @@ def settings_rebuild_memory() -> tuple[Response, int] | Response:
     try:
         counts = seed_memory.rebuild_kb()
     except Exception as exc:  # noqa: BLE001 — any backend failure → 502 + message
-        db.db.session.rollback()
+        db.session.rollback()
         logger.warning("rebuild_memory failed: %s", exc)
         return jsonify({"ok": False, "error": str(exc)}), 502
     # A full rebuild always re-embeds, so prior conversation facts are always

@@ -263,7 +263,7 @@ class Agent:
                 # raise PendingRollbackError and kill the whole supervisor,
                 # stranding the item at 'processing' (and any streaming rows
                 # open). Clear it so the failure is always journaled.
-                db.db.session.rollback()
+                db.session.rollback()
                 failed_result: dict[str, Any] = {"error": msg}
                 # Preserve the dynamic return address on failure too, so a
                 # conversation turn that errors still routes back to its manager.

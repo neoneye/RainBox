@@ -32,10 +32,10 @@ def fresh_tag() -> str:
 
 
 def _cleanup_by_name_prefix(prefix: str) -> None:
-    db.db.session.query(EvalCase).filter(
+    db.session.query(EvalCase).filter(
         EvalCase.name.like(f"{prefix}%")
     ).delete(synchronize_session=False)
-    db.db.session.commit()
+    db.session.commit()
 
 
 def test_create_eval_case_persists_all_fields(app_ctx, fresh_tag):
@@ -49,7 +49,7 @@ def test_create_eval_case_persists_all_fields(app_ctx, fresh_tag):
             rubric={"threshold": 0.7},
             status="candidate",
         )
-        db.db.session.expire_all()
+        db.session.expire_all()
         reloaded = db.get_eval_case(ec.uuid)
         assert reloaded is not None
         assert reloaded.case_type == "chat_reply"
@@ -85,7 +85,7 @@ def test_invalid_enum_values_rejected_by_db(app_ctx, fresh_tag, field, bad_value
         with pytest.raises(sa.exc.IntegrityError):
             db.create_eval_case(**args)
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         _cleanup_by_name_prefix(fresh_tag)
 
 
@@ -127,30 +127,30 @@ def _new_chatroom_with_agent():
         uuid=agent_uuid, name=f"ec-test-{uuid4().hex[:6]}",
         user_type="agent",
     )
-    db.db.session.add(agent_user)
-    db.db.session.flush()
+    db.session.add(agent_user)
+    db.session.flush()
     room = db.create_chatroom(
         f"ec-{uuid4().hex[:6]}", human.uuid, [agent_uuid],
     )
 
     def _cleanup():
-        db.db.session.query(EvalCase).filter(
+        db.session.query(EvalCase).filter(
             EvalCase.source_feedback_uuid.in_(
-                db.db.session.query(FeedbackEvent.uuid)
+                db.session.query(FeedbackEvent.uuid)
                 .filter(FeedbackEvent.room_uuid == room.uuid)
                 .subquery().select()
             )
         ).delete(synchronize_session=False)
-        db.db.session.query(FeedbackEvent).filter(
+        db.session.query(FeedbackEvent).filter(
             FeedbackEvent.room_uuid == room.uuid
         ).delete()
-        db.db.session.query(db.Chatroom).filter(
+        db.session.query(db.Chatroom).filter(
             db.Chatroom.uuid == room.uuid
         ).delete()
-        db.db.session.query(db.ChatUser).filter(
+        db.session.query(db.ChatUser).filter(
             db.ChatUser.uuid == agent_uuid
         ).delete()
-        db.db.session.commit()
+        db.session.commit()
 
     return room.uuid, human.uuid, agent_uuid, _cleanup
 

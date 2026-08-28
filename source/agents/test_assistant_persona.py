@@ -113,14 +113,14 @@ def persona_room(ctx):
     try:
         yield room, persona_uuid, persona["name"]
     finally:
-        db.db.session.rollback()
-        db.db.session.query(db.AssistantRun).filter(
+        db.session.rollback()
+        db.session.query(db.AssistantRun).filter(
             db.AssistantRun.room_uuid == room.uuid).delete()
-        db.db.session.query(db.ChatMessage).filter(
+        db.session.query(db.ChatMessage).filter(
             db.ChatMessage.room_uuid == room.uuid).delete()
-        db.db.session.query(db.Chatroom).filter(
+        db.session.query(db.Chatroom).filter(
             db.Chatroom.uuid == room.uuid).delete()
-        db.db.session.commit()
+        db.session.commit()
         db.persona_delete(persona_uuid)
 
 
@@ -187,7 +187,7 @@ def test_persona_survives_a_mid_run_criteria_refresh(persona_room, monkeypatch):
     assert result["status"] == "finished"
 
     rows = (
-        db.db.session.query(db.AssistantStep)
+        db.session.query(db.AssistantStep)
         .filter(db.AssistantStep.run_uuid == result["assistant_run_uuid"])
         .order_by(db.AssistantStep.id)
         .all()

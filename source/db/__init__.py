@@ -40,7 +40,7 @@ from db.benchmark import *  # noqa: F401,F403  re-export benchmark_result record
 from db.assistant_log import *  # noqa: F401,F403  re-export the assistant run read model
 
 #: The SQLAlchemy session, re-exported so a caller who has `import db`
-#: writes `db.session` rather than `db.db.session` — the second `db` being
+#: writes `db.session` rather than `db.session` — the second `db` being
 #: the extension object this facade re-exports from db.models. Binding the
 #: scoped_session itself is safe: it is a registry proxy that resolves to
 #: the current app context on each attribute access, not a live session.

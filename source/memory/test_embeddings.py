@@ -26,7 +26,7 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -43,8 +43,8 @@ def _claim(subject, text="the deploy host is prod-web-01", status="active"):
 
 
 def _cleanup(subject):
-    db.db.session.query(MemoryClaim).filter(MemoryClaim.subject == subject).delete()
-    db.db.session.commit()
+    db.session.query(MemoryClaim).filter(MemoryClaim.subject == subject).delete()
+    db.session.commit()
 
 
 def _fake_embed(_text):
@@ -83,10 +83,10 @@ def test_ensure_reembeds_when_text_changes_keeping_one_row(app_ctx, fresh_subjec
     try:
         ensure_memory_embedding(claim, embed_fn=_fake_embed)
         claim.text = "completely different text now"
-        db.db.session.commit()
+        db.session.commit()
         ensure_memory_embedding(claim, embed_fn=_fake_embed)
         rows = (
-            db.db.session.query(MemoryEmbedding)
+            db.session.query(MemoryEmbedding)
             .filter(MemoryEmbedding.memory_uuid == claim.uuid)
             .all()
         )
@@ -117,7 +117,7 @@ def test_backfill_embeds_active_and_candidate_claims(app_ctx, fresh_subject):
         # Active and candidate claims are all embedded. Other claims may exist
         # in the shared DB so assert our three are covered rather than exact count.
         ours = (
-            db.db.session.query(MemoryClaim)
+            db.session.query(MemoryClaim)
             .filter(MemoryClaim.subject == fresh_subject)
             .all()
         )
@@ -146,7 +146,7 @@ def test_refresh_prunes_when_claim_no_longer_active(app_ctx, fresh_subject):
         ensure_memory_embedding(claim, embed_fn=_fake_embed)
         assert db.get_memory_embedding(claim.uuid, EMBED_MODEL_NAME) is not None
         claim.status = "rejected"
-        db.db.session.commit()
+        db.session.commit()
         refresh_claim_embedding(claim, embed_fn=_fake_embed)
         assert db.get_memory_embedding(claim.uuid, EMBED_MODEL_NAME) is None
     finally:
@@ -160,7 +160,7 @@ def test_prune_stale_drops_nonactive_keeps_active(app_ctx, fresh_subject):
         ensure_memory_embedding(active, embed_fn=_fake_embed)
         ensure_memory_embedding(stale, embed_fn=_fake_embed)
         stale.status = "superseded"
-        db.db.session.commit()
+        db.session.commit()
         pruned = prune_stale_embeddings()
         assert pruned >= 1
         assert db.get_memory_embedding(active.uuid, EMBED_MODEL_NAME) is not None
@@ -178,7 +178,7 @@ def test_prune_stale_drops_expired_active_claim(app_ctx, fresh_subject):
         # Still status=active, but past its expiry — retrieval won't use it, so
         # its embedding is dead weight and should be pruned.
         claim.expires_at = datetime.now(UTC) - timedelta(hours=1)
-        db.db.session.commit()
+        db.session.commit()
         prune_stale_embeddings()
         assert db.get_memory_embedding(claim.uuid, EMBED_MODEL_NAME) is None
     finally:
@@ -191,7 +191,7 @@ def test_sync_backfills_active_and_prunes_stale(app_ctx, fresh_subject):
     try:
         ensure_memory_embedding(stale, embed_fn=_fake_embed)
         stale.status = "rejected"
-        db.db.session.commit()
+        db.session.commit()
         embedded, pruned = sync_memory_embeddings(embed_fn=_fake_embed)
         assert embedded >= 1
         assert pruned >= 1
@@ -217,7 +217,7 @@ def test_candidate_embedding_survives_prune(app_ctx, fresh_subject):
         assert db.get_memory_embedding(superseded.uuid, EMBED_MODEL_NAME) is not None
         # Mark one superseded so prune has something to actually prune.
         superseded.status = "superseded"
-        db.db.session.commit()
+        db.session.commit()
         # Run prune — candidate's embedding must survive, superseded's must vanish.
         pruned = prune_stale_embeddings()
         assert pruned >= 1
@@ -254,7 +254,7 @@ def test_sync_candidate_embedding_survives(app_ctx, fresh_subject):
         # Give the superseded claim an embedding so prune has a concrete job.
         ensure_memory_embedding(superseded, embed_fn=_fake_embed)
         superseded.status = "superseded"
-        db.db.session.commit()
+        db.session.commit()
         # Full sync.
         embedded, pruned = sync_memory_embeddings(embed_fn=_fake_embed)
         assert pruned >= 1  # superseded was pruned

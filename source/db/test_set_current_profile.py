@@ -25,17 +25,17 @@ def app_ctx():
     ctx.push()
     saved = {}
     for key in KEYS:
-        row = db.db.session.query(db.AppSetting).filter_by(key=key).one_or_none()
+        row = db.session.query(db.AppSetting).filter_by(key=key).one_or_none()
         saved[key] = row.value if row is not None else None
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         for key, value in saved.items():
-            row = db.db.session.query(db.AppSetting).filter_by(key=key).one_or_none()
+            row = db.session.query(db.AppSetting).filter_by(key=key).one_or_none()
             if row is not None:
                 row.value = value
-        db.db.session.commit()
+        db.session.commit()
         ctx.pop()
 
 
@@ -44,7 +44,7 @@ def _template_uuid(index: int = 0) -> str:
 
 
 def _raw(key: str) -> str | None:
-    row = db.db.session.query(db.AppSetting).filter_by(key=key).one_or_none()
+    row = db.session.query(db.AppSetting).filter_by(key=key).one_or_none()
     return row.value if row is not None else None
 
 
@@ -136,11 +136,11 @@ def test_deleting_current_profile_clears_pointer_atomically(app_ctx):
     from uuid import uuid4 as u4
 
     pu, other = u4(), u4()
-    db.db.session.add(db.Profile(uuid=pu, name="Doomed", folder_uuid=None,
+    db.session.add(db.Profile(uuid=pu, name="Doomed", folder_uuid=None,
                                  position=998))
-    db.db.session.add(db.Profile(uuid=other, name="Kept", folder_uuid=None,
+    db.session.add(db.Profile(uuid=other, name="Kept", folder_uuid=None,
                                  position=999))
-    db.db.session.commit()
+    db.session.commit()
     try:
         db.set_current_profile(str(pu))
         stamp_before = _raw("profile.current_changed_at")
@@ -162,10 +162,10 @@ def test_deleting_current_profile_clears_pointer_atomically(app_ctx):
         assert context.profile is None and context.profile_uuid is None
         assert context.profile_changed_at == stamp_after
     finally:
-        db.db.session.rollback()
-        db.db.session.query(db.Profile).filter(
+        db.session.rollback()
+        db.session.query(db.Profile).filter(
             db.Profile.uuid.in_([pu, other])).delete()
-        db.db.session.commit()
+        db.session.commit()
 
 
 def test_concurrent_delete_and_switch_never_dangle(app_ctx):
@@ -177,9 +177,9 @@ def test_concurrent_delete_and_switch_never_dangle(app_ctx):
 
     for _ in range(3):
         pu = u4()
-        db.db.session.add(db.Profile(uuid=pu, name="Racer", folder_uuid=None,
+        db.session.add(db.Profile(uuid=pu, name="Racer", folder_uuid=None,
                                      position=997))
-        db.db.session.commit()
+        db.session.commit()
         db.set_current_profile(None)
         barrier = threading.Barrier(2)
         errors: list[Exception] = []
@@ -213,15 +213,15 @@ def test_concurrent_delete_and_switch_never_dangle(app_ctx):
         # a still-alive thread IS the failure.
         assert not any(t.is_alive() for t in threads), "worker deadlocked"
         assert not errors
-        db.db.session.expire_all()
+        db.session.expire_all()
         pointer = db.get_setting("profile.current")
         if pointer is not None:
             # Only acceptable when it resolves — never a dangling uuid.
             assert db.profile_get(UUID(str(pointer))) is not None
             db.set_current_profile(None)
-        db.db.session.query(db.Profile).filter(
+        db.session.query(db.Profile).filter(
             db.Profile.uuid == pu).delete()
-        db.db.session.commit()
+        db.session.commit()
 
 
 def test_internal_setting_hidden_from_listing_but_readable(app_ctx):

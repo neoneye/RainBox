@@ -31,10 +31,10 @@ def model(app_ctx) -> str:
     """A model name no other test or real call will collide with."""
     name = f"test-model-{uuid4().hex[:8]}"
     yield name
-    db.db.session.query(LlmCall).filter(LlmCall.model == name).delete(
+    db.session.query(LlmCall).filter(LlmCall.model == name).delete(
         synchronize_session=False
     )
-    db.db.session.commit()
+    db.session.commit()
 
 
 NOW = datetime(2026, 8, 10, 12, 0, 0, tzinfo=UTC)
@@ -62,7 +62,7 @@ def add_call(model: str, **overrides) -> LlmCall:
 class TestRecordLlmCall:
     def test_a_row_is_written_and_readable(self, model):
         add_call(model)
-        found = db.db.session.query(LlmCall).filter(LlmCall.model == model).all()
+        found = db.session.query(LlmCall).filter(LlmCall.model == model).all()
         assert len(found) == 1
         assert found[0].prompt_tokens == 1000
 
@@ -86,21 +86,21 @@ class TestSessionIsolation:
     def test_recording_does_not_commit_the_callers_pending_work(self, model):
         """The caller's half-finished transaction is not ours to commit."""
         pending = LlmCall(model=f"{model}-pending", caller="not-ready")
-        db.db.session.add(pending)
+        db.session.add(pending)
         try:
             add_call(model)
-            db.db.session.rollback()  # the caller changes its mind
+            db.session.rollback()  # the caller changes its mind
             left = (
-                db.db.session.query(LlmCall)
+                db.session.query(LlmCall)
                 .filter(LlmCall.model == f"{model}-pending")
                 .count()
             )
             assert left == 0, "the recorder committed someone else's row"
         finally:
-            db.db.session.query(LlmCall).filter(
+            db.session.query(LlmCall).filter(
                 LlmCall.model == f"{model}-pending"
             ).delete(synchronize_session=False)
-            db.db.session.commit()
+            db.session.commit()
 
     def test_recording_works_even_when_the_callers_transaction_is_broken(
         self, model
@@ -108,13 +108,13 @@ class TestSessionIsolation:
         """A caller that has already blown up should not also lose its
         telemetry — that is exactly the call worth having a record of."""
         try:
-            db.db.session.execute(sa.text("select * from table_that_is_not_there"))
+            db.session.execute(sa.text("select * from table_that_is_not_there"))
         except Exception:
             pass  # the session is now in a failed transaction
         add_call(model)
-        db.db.session.rollback()
+        db.session.rollback()
         assert (
-            db.db.session.query(LlmCall).filter(LlmCall.model == model).count() == 1
+            db.session.query(LlmCall).filter(LlmCall.model == model).count() == 1
         )
 
     def test_a_failed_recording_leaves_the_callers_session_usable(self, model):
@@ -125,7 +125,7 @@ class TestSessionIsolation:
         with pytest.raises(Exception):  # same primary key twice
             add_call(model, uuid=clash)
         # The caller's session must be unharmed by our failure.
-        assert db.db.session.query(LlmCall).filter(LlmCall.model == model).count() == 1
+        assert db.session.query(LlmCall).filter(LlmCall.model == model).count() == 1
 
 
 class TestRecentThroughputs:
@@ -175,10 +175,10 @@ class TestRecentThroughputs:
         try:
             assert all(t < 5000 for t, _reuse in db.recent_throughputs(model))
         finally:
-            db.db.session.query(LlmCall).filter(
+            db.session.query(LlmCall).filter(
                 LlmCall.model == f"{model}-other"
             ).delete(synchronize_session=False)
-            db.db.session.commit()
+            db.session.commit()
 
 
 class TestRecentPrefixChains:
@@ -200,33 +200,33 @@ class TestRecentPrefixChains:
         PendingRollbackError naming an unrelated INSERT.
         """
         add_call(model, prefix_chain=["real"])
-        db.db.session.execute(
+        db.session.execute(
             sa.text(
                 "insert into llm_call (uuid, started_at, caller, ok, model,"
                 " prefix_chain) values (:u, now(), 'x', true, :m, 'null'::jsonb)"
             ),
             {"u": uuid4(), "m": model},
         )
-        db.db.session.commit()
+        db.session.commit()
         assert db.recent_prefix_chains(model) == [["real"]]
 
     def test_a_json_object_chain_is_ignored_too(self, model):
         """Anything that isn't an array is not a prefix chain."""
         add_call(model, prefix_chain=["real"])
-        db.db.session.execute(
+        db.session.execute(
             sa.text(
                 "insert into llm_call (uuid, started_at, caller, ok, model,"
                 " prefix_chain) values (:u, now(), 'x', true, :m, '{}'::jsonb)"
             ),
             {"u": uuid4(), "m": model},
         )
-        db.db.session.commit()
+        db.session.commit()
         assert db.recent_prefix_chains(model) == [["real"]]
 
     def test_a_missing_chain_is_stored_as_sql_null_not_json_null(self, model):
         """Fixing the reader is not enough — stop creating the bad rows."""
         add_call(model, prefix_chain=None)
-        kind = db.db.session.execute(
+        kind = db.session.execute(
             sa.text(
                 "select jsonb_typeof(prefix_chain) from llm_call"
                 " where model = :m"
@@ -367,10 +367,10 @@ class TestRollup:
             assert by_key[model]["hit_rate"] == pytest.approx(0.5)
             assert by_key[f"{model}-b"]["hit_rate"] == pytest.approx(0.0)
         finally:
-            db.db.session.query(LlmCall).filter(
+            db.session.query(LlmCall).filter(
                 LlmCall.model == f"{model}-b"
             ).delete(synchronize_session=False)
-            db.db.session.commit()
+            db.session.commit()
 
     def test_grouping_by_caller(self, model):
         add_call(model, caller="assistant.decide")
@@ -506,7 +506,7 @@ class TestPrunePromptText:
             response_text="ancient reply",
         )
         assert db.prune_llm_call_prompts() >= 1
-        db.db.session.expire_all()
+        db.session.expire_all()
         found = db.get_llm_call(call_uuid)
         assert found is not None            # the metrics stay
         assert found.prompt_tokens == 1000
@@ -520,7 +520,7 @@ class TestPrunePromptText:
             messages=[{"role": "user", "content": "today"}],
             response_text="today's reply")
         db.prune_llm_call_prompts()
-        db.db.session.expire_all()
+        db.session.expire_all()
         found = db.get_llm_call(call_uuid)
         assert found is not None and found.response_text == "today's reply"
 
@@ -569,7 +569,7 @@ class TestPrune:
         add_call(model, started_at=datetime.now(UTC))
         deleted = db.prune_llm_calls(older_than_days=90)
         assert deleted >= 1
-        left = db.db.session.query(LlmCall).filter(LlmCall.model == model).all()
+        left = db.session.query(LlmCall).filter(LlmCall.model == model).all()
         assert len(left) == 1
 
 
@@ -613,6 +613,6 @@ class TestPromptPruneKeepsTracebacks:
                  messages=[{"role": "user", "content": "why so slow"}],
                  error_text="Traceback...\nopenai.APITimeoutError: timed out")
         db.prune_llm_call_prompts(older_than_days=14)
-        row = db.db.session.query(LlmCall).filter(LlmCall.model == model).one()
+        row = db.session.query(LlmCall).filter(LlmCall.model == model).one()
         assert row.messages is None
         assert "openai.APITimeoutError" in row.error_text

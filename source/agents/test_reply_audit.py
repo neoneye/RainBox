@@ -53,13 +53,13 @@ def room(app_ctx):
     try:
         yield chatroom.uuid, msg.uuid
     finally:
-        db.db.session.query(AssistantRun).filter(
+        db.session.query(AssistantRun).filter(
             AssistantRun.room_uuid == chatroom.uuid
         ).delete()
-        db.db.session.query(db.Chatroom).filter(
+        db.session.query(db.Chatroom).filter(
             db.Chatroom.uuid == chatroom.uuid
         ).delete()
-        db.db.session.commit()
+        db.session.commit()
 
 
 def _agent() -> AssistantAgent:

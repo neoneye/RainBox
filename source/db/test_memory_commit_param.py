@@ -20,7 +20,7 @@ def test_create_with_commit_false_is_rolled_back(app_ctx):
                                confidence=0.5, status="active",
                                room_uuid=marker, commit=False)
     assert c.uuid is not None            # flush assigned it
-    db.db.session.rollback()
+    db.session.rollback()
     assert db.get_memory_claim(c.uuid) is None   # nothing persisted
 
 
@@ -41,7 +41,7 @@ def test_delete_memory_embeddings_commit_false_is_rolled_back(app_ctx):
     # Delete with commit=False then rollback — embedding must survive
     n = db.delete_memory_embeddings(claim.uuid, commit=False)
     assert n == 1
-    db.db.session.rollback()
+    db.session.rollback()
     assert db.get_memory_embedding(claim.uuid, "test-model") is not None, (
         "embedding was committed despite commit=False"
     )
@@ -52,8 +52,8 @@ def test_delete_memory_embeddings_commit_false_is_rolled_back(app_ctx):
     assert db.get_memory_embedding(claim.uuid, "test-model") is None
 
     # Cleanup claim
-    db.db.session.query(db.MemoryClaim).filter_by(uuid=claim.uuid).delete()
-    db.db.session.commit()
+    db.session.query(db.MemoryClaim).filter_by(uuid=claim.uuid).delete()
+    db.session.commit()
 
 
 def test_create_accepts_trust_kwargs(app_ctx):
@@ -66,5 +66,5 @@ def test_create_accepts_trust_kwargs(app_ctx):
                                value_key="b", key_version=1)
     got = db.get_memory_claim(c.uuid)
     assert got.support_count == 1 and got.subj_pred_key == "a\x1fis"
-    db.db.session.query(db.MemoryClaim).filter_by(uuid=c.uuid).delete()
-    db.db.session.commit()
+    db.session.query(db.MemoryClaim).filter_by(uuid=c.uuid).delete()
+    db.session.commit()

@@ -22,42 +22,42 @@ def app_ctx():
 
 def test_persona_models_round_trip(app_ctx):
     fu, pu, ru = uuid4(), uuid4(), uuid4()
-    db.db.session.add(PersonaFolder(uuid=fu, name="T-folder", parent_uuid=None, position=0))
-    db.db.session.add(Persona(
+    db.session.add(PersonaFolder(uuid=fu, name="T-folder", parent_uuid=None, position=0))
+    db.session.add(Persona(
         uuid=pu, name="T-persona", content="Curious and blunt.",
         folder_uuid=fu, position=0,
     ))
-    db.db.session.add(PersonaRevision(
+    db.session.add(PersonaRevision(
         uuid=ru, persona_uuid=pu, content="Curious and blunt."))
-    db.db.session.commit()
+    db.session.commit()
     try:
-        f = db.db.session.execute(
+        f = db.session.execute(
             sa.select(PersonaFolder).where(PersonaFolder.uuid == fu)).scalar_one()
-        p = db.db.session.execute(
+        p = db.session.execute(
             sa.select(Persona).where(Persona.uuid == pu)).scalar_one()
-        r = db.db.session.execute(
+        r = db.session.execute(
             sa.select(PersonaRevision).where(PersonaRevision.uuid == ru)).scalar_one()
         assert f.name == "T-folder" and f.parent_uuid is None
         assert p.content == "Curious and blunt." and p.folder_uuid == fu
         assert r.persona_uuid == pu and r.content == p.content
         assert f.created_at and p.updated_at and r.created_at  # timestamp defaults fire
     finally:
-        db.db.session.execute(
+        db.session.execute(
             sa.delete(PersonaRevision).where(PersonaRevision.uuid == ru))
-        db.db.session.execute(sa.delete(Persona).where(Persona.uuid == pu))
-        db.db.session.execute(
+        db.session.execute(sa.delete(Persona).where(Persona.uuid == pu))
+        db.session.execute(
             sa.delete(PersonaFolder).where(PersonaFolder.uuid == fu))
-        db.db.session.commit()
+        db.session.commit()
 
 
 @pytest.fixture
 def clean_tree(app_ctx):
     """Empty the persona tables around a test (the DB is shared)."""
     def wipe():
-        db.db.session.execute(sa.delete(PersonaRevision))
-        db.db.session.execute(sa.delete(Persona))
-        db.db.session.execute(sa.delete(PersonaFolder))
-        db.db.session.commit()
+        db.session.execute(sa.delete(PersonaRevision))
+        db.session.execute(sa.delete(Persona))
+        db.session.execute(sa.delete(PersonaFolder))
+        db.session.commit()
     wipe()
     try:
         yield
@@ -213,7 +213,7 @@ def test_delete_persona_cascades_revisions(clean_tree):
     db.persona_update_content(p["uuid"], "text")
     assert db.persona_delete(UUID(p["uuid"])) is True
     assert db.persona_get(UUID(p["uuid"])) is None
-    assert db.db.session.execute(
+    assert db.session.execute(
         sa.select(sa.func.count(PersonaRevision.id))
         .where(PersonaRevision.persona_uuid == UUID(p["uuid"]))
     ).scalar_one() == 0
@@ -227,7 +227,7 @@ def test_delete_folder_cascades_the_subtree(clean_tree):
     assert db.persona_delete_folder(UUID(outer["id"])) is True
     tree = db.persona_load_tree()
     assert tree["folders"] == [] and tree["personas"] == []
-    assert db.db.session.execute(
+    assert db.session.execute(
         sa.select(sa.func.count(PersonaRevision.id))).scalar_one() == 0
 
 
@@ -244,7 +244,7 @@ def test_delete_folder_walks_a_subtree_larger_than_the_old_cap(clean_tree):
                                 parent_uuid=parent_uuid, position=0)
         chain.append(row)
         parent_uuid = row.uuid
-    db.db.session.add_all(chain)
+    db.session.add_all(chain)
     leaf = db.persona_create("Leaf", parent_uuid)  # commits the whole chain too
 
     assert db.persona_delete_folder(UUID(root["id"])) is True

@@ -32,7 +32,7 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -88,13 +88,13 @@ def test_create_board_via_loop_and_undo(app_ctx):
     bu = None
     try:
         agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
-        intent = db.db.session.query(AssistantWriteIntent).filter(
+        intent = db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.room_uuid == room.uuid).one()
         assert intent.state == "completed"
         bu = intent.result["undo"]["payload"]["board_uuid"]
         assert db.kanban_load_board(UUID(bu)) is not None  # board exists
         # the reply links to the new board
-        reply = db.db.session.query(db.ChatMessage).filter(
+        reply = db.session.query(db.ChatMessage).filter(
             db.ChatMessage.room_uuid == room.uuid,
             db.ChatMessage.kind == "message",
             db.ChatMessage.sender_uuid == ASSISTANT_UUID).order_by(
@@ -106,9 +106,9 @@ def test_create_board_via_loop_and_undo(app_ctx):
     finally:
         if bu and db.kanban_load_board(UUID(bu)) is not None:
             db.kanban_delete_board(UUID(bu))
-        db.db.session.query(AssistantWriteIntent).filter(
+        db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.room_uuid == room.uuid).delete()
-        db.db.session.query(AssistantRun).filter(
+        db.session.query(AssistantRun).filter(
             AssistantRun.room_uuid == room.uuid).delete()
-        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room.uuid).delete()
-        db.db.session.commit()
+        db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room.uuid).delete()
+        db.session.commit()

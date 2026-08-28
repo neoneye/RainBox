@@ -25,11 +25,11 @@ class _Ctx:
 
 
 def _cleanup(scope_text):
-    rows = db.db.session.query(MemoryClaim).filter(MemoryClaim.text == scope_text).all()
+    rows = db.session.query(MemoryClaim).filter(MemoryClaim.text == scope_text).all()
     for r in rows:
-        db.db.session.query(MemoryEvidence).filter_by(memory_uuid=r.uuid).delete()
-    db.db.session.query(MemoryClaim).filter(MemoryClaim.text == scope_text).delete()
-    db.db.session.commit()
+        db.session.query(MemoryEvidence).filter_by(memory_uuid=r.uuid).delete()
+    db.session.query(MemoryClaim).filter(MemoryClaim.text == scope_text).delete()
+    db.session.commit()
 
 
 def _cleanup_by_room(room_uuid):
@@ -41,7 +41,7 @@ def _cleanup_by_room(room_uuid):
 def test_handle_remember_creates_active_global_claim(app_ctx):
     out = _handle_remember(_Ctx(uuid4()), "alice is happy")
     assert "Remembered" in out
-    claim = db.db.session.query(MemoryClaim).filter_by(text="alice is happy").first()
+    claim = db.session.query(MemoryClaim).filter_by(text="alice is happy").first()
     assert claim.status == "active" and claim.scope == "global"
     assert claim.subj_pred_key   # keyed
     _cleanup("alice is happy")
@@ -82,7 +82,7 @@ def test_correct_via_candidate_leaves_active_replacement(app_ctx):
     )
     assert a_result.outcome in ("created", "corroborated"), \
         f"Unexpected outcome setting up A: {a_result.outcome}"
-    a_claim = a_result.claim or db.db.session.query(MemoryClaim).filter_by(text=text_a).first()
+    a_claim = a_result.claim or db.session.query(MemoryClaim).filter_by(text=text_a).first()
     assert a_claim is not None and a_claim.status == "active"
 
     class _CorrectCtx:
@@ -93,7 +93,7 @@ def test_correct_via_candidate_leaves_active_replacement(app_ctx):
     try:
         reply = _handle_correct(_CorrectCtx(), text_a, text_b)
 
-        db.db.session.expire_all()
+        db.session.expire_all()
 
         # A must be superseded
         a_reloaded = db.get_memory_claim(a_claim.uuid)
@@ -103,7 +103,7 @@ def test_correct_via_candidate_leaves_active_replacement(app_ctx):
 
         # Some claim with text B must be active
         active_b = (
-            db.db.session.query(MemoryClaim)
+            db.session.query(MemoryClaim)
             .filter(MemoryClaim.text == text_b, MemoryClaim.status == "active")
             .first()
         )
@@ -114,19 +114,19 @@ def test_correct_via_candidate_leaves_active_replacement(app_ctx):
         # Collect all claim uuids by text (all statuses) before deleting
         all_uuids = []
         for text in (text_a, text_b):
-            rows = db.db.session.query(MemoryClaim).filter(MemoryClaim.text == text).all()
+            rows = db.session.query(MemoryClaim).filter(MemoryClaim.text == text).all()
             all_uuids.extend(r.uuid for r in rows)
         # Delete evidence first (FK), then tombstones by created_from_uuid, then claims
-        db.db.session.query(MemoryEvidence).filter(
+        db.session.query(MemoryEvidence).filter(
             MemoryEvidence.memory_uuid.in_(all_uuids)
         ).delete(synchronize_session=False)
-        db.db.session.query(MemoryRejectedValue).filter(
+        db.session.query(MemoryRejectedValue).filter(
             MemoryRejectedValue.created_from_uuid.in_(all_uuids)
         ).delete(synchronize_session=False)
-        db.db.session.query(MemoryClaim).filter(
+        db.session.query(MemoryClaim).filter(
             MemoryClaim.uuid.in_(all_uuids)
         ).delete(synchronize_session=False)
-        db.db.session.commit()
+        db.session.commit()
 
 
 def test_handle_correct_keys_derived_from_new_text(app_ctx):
@@ -156,11 +156,11 @@ def test_handle_correct_keys_derived_from_new_text(app_ctx):
         reply = _handle_correct(_CorrectCtx(), text_a, text_b)
         assert "Corrected" in reply, f"Expected 'Corrected' in reply, got {reply!r}"
 
-        db.db.session.expire_all()
+        db.session.expire_all()
 
         # Find the new active claim with text_b
         new_active = (
-            db.db.session.query(MemoryClaim)
+            db.session.query(MemoryClaim)
             .filter(MemoryClaim.text == text_b, MemoryClaim.status == "active")
             .first()
         )
@@ -176,18 +176,18 @@ def test_handle_correct_keys_derived_from_new_text(app_ctx):
     finally:
         all_uuids = []
         for text in (text_a, text_b):
-            rows = db.db.session.query(MemoryClaim).filter(MemoryClaim.text == text).all()
+            rows = db.session.query(MemoryClaim).filter(MemoryClaim.text == text).all()
             all_uuids.extend(r.uuid for r in rows)
-        db.db.session.query(MemoryEvidence).filter(
+        db.session.query(MemoryEvidence).filter(
             MemoryEvidence.memory_uuid.in_(all_uuids)
         ).delete(synchronize_session=False)
-        db.db.session.query(MemoryRejectedValue).filter(
+        db.session.query(MemoryRejectedValue).filter(
             MemoryRejectedValue.created_from_uuid.in_(all_uuids)
         ).delete(synchronize_session=False)
-        db.db.session.query(MemoryClaim).filter(
+        db.session.query(MemoryClaim).filter(
             MemoryClaim.uuid.in_(all_uuids)
         ).delete(synchronize_session=False)
-        db.db.session.commit()
+        db.session.commit()
 
 
 def test_handle_confirm_refuses_conflict_candidate(app_ctx):
@@ -210,9 +210,9 @@ def test_handle_confirm_refuses_conflict_candidate(app_ctx):
     assert "conflict candidate" in out.lower()
     assert db.get_memory_claim(cand.uuid).status == "candidate"  # not activated
     # cleanup
-    db.db.session.query(MemoryEvidence).filter(MemoryEvidence.memory_uuid.in_(
-        db.db.session.query(MemoryClaim.uuid).filter_by(room_uuid=room))).delete(
+    db.session.query(MemoryEvidence).filter(MemoryEvidence.memory_uuid.in_(
+        db.session.query(MemoryClaim.uuid).filter_by(room_uuid=room))).delete(
         synchronize_session=False)
-    db.db.session.query(MemoryClaim).filter_by(room_uuid=room).delete()
-    db.db.session.query(MemoryRejectedValue).filter_by(room_uuid=room).delete()
-    db.db.session.commit()
+    db.session.query(MemoryClaim).filter_by(room_uuid=room).delete()
+    db.session.query(MemoryRejectedValue).filter_by(room_uuid=room).delete()
+    db.session.commit()

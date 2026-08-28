@@ -51,13 +51,13 @@ def room(app_ctx):
     finally:
         # Drop trace rows (assistant_step cascades from assistant_run) and the
         # room (chat messages, incl. debug-assistant pointers, cascade).
-        db.db.session.query(AssistantRun).filter(
+        db.session.query(AssistantRun).filter(
             AssistantRun.room_uuid == chatroom.uuid
         ).delete()
-        db.db.session.query(db.Chatroom).filter(
+        db.session.query(db.Chatroom).filter(
             db.Chatroom.uuid == chatroom.uuid
         ).delete()
-        db.db.session.commit()
+        db.session.commit()
 
 
 def _agent() -> AssistantAgent:
@@ -196,7 +196,7 @@ def test_terminal_run_enqueues_a_summary(room):
         uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
     run_uuid = result["assistant_run_uuid"]
     items = (
-        db.db.session.query(Inbox)
+        db.session.query(Inbox)
         .filter(Inbox.agent_uuid == ASSISTANT_RUN_SUMMARIZER_UUID)
         .all()
     )
@@ -357,7 +357,7 @@ def test_assistant_agent_is_a_model_group_agent_not_structured():
 
 def _steps_for(run_id):
     return (
-        db.db.session.query(AssistantStep)
+        db.session.query(AssistantStep)
         .filter(AssistantStep.run_uuid == run_id)
         .order_by(AssistantStep.id)
         .all()
@@ -372,7 +372,7 @@ def test_loop_persists_run_and_steps_to_tables(room):
     jid = uuid4()
     result = agent.handle(jid, {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
 
-    run = db.db.session.get(AssistantRun, result["assistant_run_uuid"])
+    run = db.session.get(AssistantRun, result["assistant_run_uuid"])
     assert run is not None
     assert run.status == "finished"
     assert run.journal_id == jid
@@ -431,7 +431,7 @@ def test_killed_mid_run_leaves_last_committed_step_and_marks_run_failed(room):
         agent.handle(uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
 
     runs = (
-        db.db.session.query(AssistantRun)
+        db.session.query(AssistantRun)
         .filter(AssistantRun.room_uuid == room_uuid)
         .all()
     )

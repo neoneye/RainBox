@@ -1497,7 +1497,7 @@ def _filter_recalled_candidates(
             logger.warning(
                 "telemetry: failed to record recall-filter verdicts; "
                 "swallowing so the query is not blocked", exc_info=True)
-            db.db.session.rollback()
+            db.session.rollback()
     return seeds, kept_claims, debug
 
 
@@ -1544,7 +1544,7 @@ def _record_recall_verdicts(
                        "relevancy": s.relevancy, "signals": cand.method}),
             commit=False,
         )
-    db.db.session.commit()
+    db.session.commit()
     for s in scored:
         db.prune_retrieval_fifo(
             target_type=("memory_claim" if s.qa_id in claims_by_id
@@ -1555,7 +1555,7 @@ def _record_recall_verdicts(
             capacity=capacity,
             commit=False,
         )
-    db.db.session.commit()
+    db.session.commit()
 
 
 # The scorer's note is NOT injected into the observation the model reads. It is
@@ -2824,7 +2824,7 @@ def _action_set_reminder(
         )
     origin_run_uuid = None
     if ctx.step_uuid is not None:
-        step = db.db.session.query(db.AssistantStep).filter_by(uuid=ctx.step_uuid).first()
+        step = db.session.query(db.AssistantStep).filter_by(uuid=ctx.step_uuid).first()
         origin_run_uuid = step.run_uuid if step is not None else None
     job = db.cron_create_one_shot_message(
         message=f"⏰ Reminder: {text}", fire_at=fire_at, target=str(ctx.room_uuid),
@@ -4207,18 +4207,18 @@ class AssistantAgent(ModelGroupAgent):
             )
         except Exception:
             logger.exception("assistant: failed to record failure step for run %s", run.uuid)
-            db.db.session.rollback()
+            db.session.rollback()
         try:
             db.finish_run(run, "failed", final_summary=err)
             db.set_failure_run_summary(run, err)
         except Exception:
             logger.exception("assistant: failed to mark run %s failed", run.uuid)
-            db.db.session.rollback()
+            db.session.rollback()
         try:
             db.post_assistant_failure_notice(run, err)
         except Exception:
             logger.exception("assistant: failed to post failure notice for run %s", run.uuid)
-            db.db.session.rollback()
+            db.session.rollback()
         self._request_summary(run)
 
     # --- the live-model seam --------------------------------------------------
@@ -4919,7 +4919,7 @@ class AssistantAgent(ModelGroupAgent):
                 "assistant: failed to record the second-opinion review; "
                 "the turn continues"
             )
-            db.db.session.rollback()
+            db.session.rollback()
             return None
 
     def _build_second_opinion_prompt(
@@ -5361,7 +5361,7 @@ class AssistantAgent(ModelGroupAgent):
         """
         try:
             row = (
-                db.db.session.query(db.AssistantStep)
+                db.session.query(db.AssistantStep)
                 .join(db.AssistantRun,
                       db.AssistantStep.run_uuid == db.AssistantRun.uuid)
                 .filter(db.AssistantRun.room_uuid == room_uuid)

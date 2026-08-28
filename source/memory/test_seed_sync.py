@@ -149,7 +149,7 @@ def sync_env(tmp_path, monkeypatch):
     try:
         yield env
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         db.set_setting("qa.facts_invalidated_at", prior_stamp)
         with psycopg.connect(db.psycopg_dsn(), autocommit=True) as c, c.cursor() as cur:
             cur.execute(psql.SQL("DROP TABLE IF EXISTS {}").format(
@@ -348,7 +348,7 @@ def test_entry_without_questions_does_not_loop_dirty(sync_env):
     every sync as changed and re-stamp qa.facts_invalidated_at on every
     assistant message."""
     db.set_setting("qa.facts_invalidated_at", None)
-    db.db.session.commit()
+    db.session.commit()
     _write(sync_env.path, [_entry_line("real", ["q1?"], "x"),
                            _entry_line("marker", [], "meta")])
     counts = seed_memory.sync_kb()

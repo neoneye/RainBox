@@ -32,7 +32,7 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -124,7 +124,7 @@ def test_propose_uses_diff_preview_then_confirm_writes(app_ctx, ws):
     )
     try:
         agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
-        intent = db.db.session.query(AssistantWriteIntent).filter(
+        intent = db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.room_uuid == chatroom.uuid).one()
         assert intent.state == "proposed"
         assert "+after" in intent.preview_text and "-before" in intent.preview_text
@@ -134,12 +134,12 @@ def test_propose_uses_diff_preview_then_confirm_writes(app_ctx, ws):
         assert f.read_text() == "after\n"
         assert db.get_write_intent(intent.uuid).state == "completed"
     finally:
-        db.db.session.query(AssistantWriteIntent).filter(
+        db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(AssistantRun).filter(
+        db.session.query(AssistantRun).filter(
             AssistantRun.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
-        db.db.session.commit()
+        db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+        db.session.commit()
 
 
 def test_confirm_refuses_if_file_changed_since_preview(app_ctx, ws):
@@ -160,7 +160,7 @@ def test_confirm_refuses_if_file_changed_since_preview(app_ctx, ws):
     )
     try:
         agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
-        intent = db.db.session.query(AssistantWriteIntent).filter(
+        intent = db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.room_uuid == chatroom.uuid).one()
         # File changes after the preview, before confirm.
         f.write_text("v1-edited-elsewhere\n")
@@ -169,9 +169,9 @@ def test_confirm_refuses_if_file_changed_since_preview(app_ctx, ws):
         assert f.read_text() == "v1-edited-elsewhere\n"  # NOT clobbered
         assert db.get_write_intent(intent.uuid).state == "failed"
     finally:
-        db.db.session.query(AssistantWriteIntent).filter(
+        db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(AssistantRun).filter(
+        db.session.query(AssistantRun).filter(
             AssistantRun.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
-        db.db.session.commit()
+        db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+        db.session.commit()

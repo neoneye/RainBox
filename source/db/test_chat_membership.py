@@ -32,19 +32,19 @@ def room_with_one_agent(app_ctx):
     assert human is not None, "seed_chat_defaults should have run"
     agent_a = ChatUser(uuid=uuid4(), name=f"mem-a-{uuid4().hex[:6]}", user_type="agent")
     agent_b = ChatUser(uuid=uuid4(), name=f"mem-b-{uuid4().hex[:6]}", user_type="agent")
-    db.db.session.add_all([agent_a, agent_b])
-    db.db.session.flush()
+    db.session.add_all([agent_a, agent_b])
+    db.session.flush()
     room = db.create_chatroom(
         f"mem-test-{uuid4().hex[:6]}", human.uuid, [agent_a.uuid]
     )
     try:
         yield room.uuid, human.uuid, agent_a.uuid, agent_b.uuid
     finally:
-        db.db.session.query(Chatroom).filter(Chatroom.uuid == room.uuid).delete()
-        db.db.session.query(ChatUser).filter(
+        db.session.query(Chatroom).filter(Chatroom.uuid == room.uuid).delete()
+        db.session.query(ChatUser).filter(
             ChatUser.uuid.in_([agent_a.uuid, agent_b.uuid])
         ).delete()
-        db.db.session.commit()
+        db.session.commit()
 
 
 def _member_uuids(room_uuid):

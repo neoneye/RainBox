@@ -37,7 +37,7 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -51,12 +51,12 @@ def room(app_ctx):
     try:
         yield chatroom.uuid, human.uuid
     finally:
-        db.db.session.rollback()
-        db.db.session.query(db.ChatMessage).filter(
+        db.session.rollback()
+        db.session.query(db.ChatMessage).filter(
             db.ChatMessage.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(db.Chatroom).filter(
+        db.session.query(db.Chatroom).filter(
             db.Chatroom.uuid == chatroom.uuid).delete()
-        db.db.session.commit()
+        db.session.commit()
 
 
 def _agent() -> AssistantAgent:

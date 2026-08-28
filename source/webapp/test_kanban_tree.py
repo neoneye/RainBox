@@ -28,7 +28,7 @@ def app_ctx():
     finally:
         # Close any read transaction so its ACCESS SHARE locks don't block
         # the next test's init_db ALTERs (single-process lock self-deadlock).
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -72,17 +72,17 @@ def _full_payload(*, folders=(), boards=()):
 def test_folder_table_and_board_column_exist(app_ctx):
     # The folder table is creatable and round-trips.
     f = KanbanBoardFolder(uuid=uuid4(), name="schema check")
-    db.db.session.add(f)
-    db.db.session.commit()
-    got = db.db.session.execute(
+    db.session.add(f)
+    db.session.commit()
+    got = db.session.execute(
         sa.select(KanbanBoardFolder).where(KanbanBoardFolder.uuid == f.uuid)
     ).scalar_one()
     assert got.name == "schema check"
     assert got.parent_uuid is None and got.position == 0
-    db.db.session.delete(got)
-    db.db.session.commit()
+    db.session.delete(got)
+    db.session.commit()
     # The board carries a folder_uuid column (null by default).
-    col = db.db.session.execute(sa.text(
+    col = db.session.execute(sa.text(
         "SELECT 1 FROM information_schema.columns "
         "WHERE table_name='kanban_board' AND column_name='folder_uuid'"
     )).first()

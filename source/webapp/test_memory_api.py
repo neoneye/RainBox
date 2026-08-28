@@ -22,7 +22,7 @@ def app_ctx():
     try:
         yield a
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -40,9 +40,9 @@ def _claim(text="api claim", status="active", sensitivity="private"):
 
 def _cleanup(*uuids):
     for u in uuids:
-        db.db.session.query(MemoryEvidence).filter_by(memory_uuid=u).delete()
-        db.db.session.query(MemoryClaim).filter_by(uuid=u).delete()
-    db.db.session.commit()
+        db.session.query(MemoryEvidence).filter_by(memory_uuid=u).delete()
+        db.session.query(MemoryClaim).filter_by(uuid=u).delete()
+    db.session.commit()
 
 
 def _find(rows, uuid):
@@ -109,7 +109,7 @@ def _post(client, uuid, action, **body):
     # The request commits in its own (app-context) session; expire the test
     # session's identity map so re-reads see the committed change rather than
     # the stale cached instance. (Test-only: production runs one session.)
-    db.db.session.expire_all()
+    db.session.expire_all()
     return resp
 
 
@@ -178,7 +178,7 @@ def test_correct_produces_keyed_claim(client):
                   expected_updated_at=c.updated_at.isoformat())
         assert r.status_code == 200
         new_uuid = r.get_json()["new_uuid"]
-        db.db.session.expire_all()
+        db.session.expire_all()
         new = db.get_memory_claim(new_uuid)
         assert new is not None
         assert new.status == "active"
@@ -194,16 +194,16 @@ def test_correct_produces_keyed_claim(client):
             uuids.append(new_uuid)
         # Clean up evidence, claims, tombstones (by created_from_uuid)
         from db.models import MemoryRejectedValue
-        db.db.session.query(MemoryEvidence).filter(
+        db.session.query(MemoryEvidence).filter(
             MemoryEvidence.memory_uuid.in_(uuids)
         ).delete(synchronize_session=False)
-        db.db.session.query(MemoryRejectedValue).filter(
+        db.session.query(MemoryRejectedValue).filter(
             MemoryRejectedValue.created_from_uuid.in_(uuids)
         ).delete(synchronize_session=False)
-        db.db.session.query(MemoryClaim).filter(
+        db.session.query(MemoryClaim).filter(
             MemoryClaim.uuid.in_(uuids)
         ).delete(synchronize_session=False)
-        db.db.session.commit()
+        db.session.commit()
 
 
 def test_sensitivity_change(client):
@@ -240,9 +240,9 @@ def test_detail_includes_recall_kpis(client):
         assert k["last_used"][0]["query"] == "matching probe"
         assert k["last_used"][0]["signals"] == "vector+fulltext"
     finally:
-        db.db.session.query(db.RetrievalEvent).filter_by(
+        db.session.query(db.RetrievalEvent).filter_by(
             target_id=str(c.uuid)).delete(synchronize_session=False)
-        db.db.session.commit()
+        db.session.commit()
         _cleanup(c.uuid)
 
 
@@ -318,12 +318,12 @@ def _cleanup_room(room_uuid):
     """Delete all memory rows seeded for a test room (claims, evidence, tombstones)."""
     from db import MemoryClaim, MemoryEvidence
     from db.models import MemoryRejectedValue
-    db.db.session.query(MemoryEvidence).filter(MemoryEvidence.memory_uuid.in_(
-        db.db.session.query(MemoryClaim.uuid).filter_by(room_uuid=room_uuid)
+    db.session.query(MemoryEvidence).filter(MemoryEvidence.memory_uuid.in_(
+        db.session.query(MemoryClaim.uuid).filter_by(room_uuid=room_uuid)
     )).delete(synchronize_session=False)
-    db.db.session.query(MemoryClaim).filter_by(room_uuid=room_uuid).delete()
-    db.db.session.query(MemoryRejectedValue).filter_by(room_uuid=room_uuid).delete()
-    db.db.session.commit()
+    db.session.query(MemoryClaim).filter_by(room_uuid=room_uuid).delete()
+    db.session.query(MemoryRejectedValue).filter_by(room_uuid=room_uuid).delete()
+    db.session.commit()
 
 
 def _seed_conflict(room):
@@ -350,7 +350,7 @@ def test_resolve_conflict_not_conflict(client):
     try:
         resp = client.post(f"/api/memory/{cand.uuid}/resolve",
                            json={"resolution": "not_conflict"})
-        db.db.session.expire_all()
+        db.session.expire_all()
         assert resp.status_code == 200
         body = resp.get_json()
         assert body["ok"] is True
@@ -368,7 +368,7 @@ def test_resolve_conflict_reject(client):
     try:
         resp = client.post(f"/api/memory/{cand.uuid}/resolve",
                            json={"resolution": "reject"})
-        db.db.session.expire_all()
+        db.session.expire_all()
         assert resp.status_code == 200
         body = resp.get_json()
         assert body["ok"] is True
@@ -452,7 +452,7 @@ def test_tombstone_hit_row_includes_subj_pred_key(client):
     # Bump hit_count to 1 so it shows in the list.
     from db.memory import record_tombstone_hit
     record_tombstone_hit(tomb, commit=True)
-    db.db.session.expire_all()
+    db.session.expire_all()
 
     try:
         r = client.get("/memory/api/claims")
@@ -467,10 +467,10 @@ def test_tombstone_hit_row_includes_subj_pred_key(client):
         assert "subj_pred_key" in our_hit, \
             f"subj_pred_key missing from tombstone_hit_row; row keys: {list(our_hit.keys())}"
     finally:
-        db.db.session.query(MemoryEvidence).filter_by(memory_uuid=c.uuid).delete()
-        db.db.session.query(MemoryClaim).filter_by(uuid=c.uuid).delete()
-        db.db.session.query(MemoryRejectedValue).filter_by(room_uuid=room).delete()
-        db.db.session.commit()
+        db.session.query(MemoryEvidence).filter_by(memory_uuid=c.uuid).delete()
+        db.session.query(MemoryClaim).filter_by(uuid=c.uuid).delete()
+        db.session.query(MemoryRejectedValue).filter_by(room_uuid=room).delete()
+        db.session.commit()
 
 
 def test_claim_detail_includes_subj_pred_key(client):
@@ -498,8 +498,8 @@ def test_claim_detail_includes_subj_pred_key(client):
         assert body["subj_pred_key"], \
             f"subj_pred_key is empty for structured claim; got {body['subj_pred_key']!r}"
     finally:
-        db.db.session.query(MemoryEvidence).filter_by(memory_uuid=c.uuid).delete()
-        db.db.session.query(MemoryClaim).filter_by(uuid=c.uuid).delete()
+        db.session.query(MemoryEvidence).filter_by(memory_uuid=c.uuid).delete()
+        db.session.query(MemoryClaim).filter_by(uuid=c.uuid).delete()
         from db.models import MemoryRejectedValue
-        db.db.session.query(MemoryRejectedValue).filter_by(room_uuid=room).delete()
-        db.db.session.commit()
+        db.session.query(MemoryRejectedValue).filter_by(room_uuid=room).delete()
+        db.session.commit()

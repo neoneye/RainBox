@@ -25,7 +25,7 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -81,21 +81,21 @@ def test_profile_block_injected_before_skills(app_ctx, tmp_path, monkeypatch):
         # Profile (who you are) comes before skills (how to do the task).
         assert prompt.index("About the user") < prompt.index("Relevant skills")
     finally:
-        db.db.session.query(AssistantRun).filter(
+        db.session.query(AssistantRun).filter(
             AssistantRun.room_uuid == chatroom.uuid
         ).delete()
-        claims = db.db.session.query(MemoryClaim).filter(
+        claims = db.session.query(MemoryClaim).filter(
             MemoryClaim.subject == tag
         ).all()
         for c in claims:
-            db.db.session.query(RetrievalEvent).filter(
+            db.session.query(RetrievalEvent).filter(
                 RetrievalEvent.target_id == str(c.uuid)
             ).delete()
-        db.db.session.query(MemoryClaim).filter(MemoryClaim.subject == tag).delete()
-        db.db.session.query(RetrievalEvent).filter(
+        db.session.query(MemoryClaim).filter(MemoryClaim.subject == tag).delete()
+        db.session.query(RetrievalEvent).filter(
             RetrievalEvent.target_id == "widget-active"
         ).delete()
-        db.db.session.query(db.Chatroom).filter(
+        db.session.query(db.Chatroom).filter(
             db.Chatroom.uuid == chatroom.uuid
         ).delete()
-        db.db.session.commit()
+        db.session.commit()

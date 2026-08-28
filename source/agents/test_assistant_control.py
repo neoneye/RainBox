@@ -22,7 +22,7 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -35,11 +35,11 @@ def room(app_ctx):
     try:
         yield chatroom.uuid
     finally:
-        db.db.session.query(AssistantRun).filter(
+        db.session.query(AssistantRun).filter(
             AssistantRun.room_uuid == chatroom.uuid
         ).delete()
-        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
-        db.db.session.commit()
+        db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+        db.session.commit()
 
 
 def _agent() -> AssistantAgent:
@@ -76,7 +76,7 @@ def _decider_that_inserts_control(agent, command, payload=None):
 
 def _steps(run_id):
     return (
-        db.db.session.query(AssistantStep)
+        db.session.query(AssistantStep)
         .filter(AssistantStep.run_uuid == run_id)
         .order_by(AssistantStep.id)
         .all()
@@ -95,7 +95,7 @@ def test_stop_at_step_boundary_leaves_clean_trace(room):
     result = agent.handle(uuid4(), {"room_uuid": str(room)})
 
     assert result["status"] == "stopped"
-    run = db.db.session.get(AssistantRun, result["assistant_run_uuid"])
+    run = db.session.get(AssistantRun, result["assistant_run_uuid"])
     assert run.status == "stopped"
     assert run.final_summary and "stopped by operator" in run.final_summary
     phases = [(s.action, s.phase) for s in _steps(run.uuid)]
@@ -156,7 +156,7 @@ def test_heartbeat_reads_no_orm_state_off_the_beating_thread(app_ctx, room):
     run_uuid = str(agent._run.uuid)
 
     # The state the failure needs, and the one every commit produces.
-    db.db.session.commit()
+    db.session.commit()
     assert "uuid" in sa_inspect(agent._run).unloaded, (
         "precondition: the run must be expired for this to test anything")
 

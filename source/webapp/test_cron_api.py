@@ -59,7 +59,7 @@ def test_cron_load_tree_includes_chatrooms(app_ctx):
 
 
 def test_migrate_message_target_name_to_uuid(app_ctx):
-    s = db.db.session
+    s = db.session
     room_uuid, ju_known, ju_ghost = uuid4(), uuid4(), uuid4()
     s.add(db.Chatroom(uuid=room_uuid, name="MigRoom", created_by=uuid4()))
     s.add(db.CronJob(uuid=ju_known, name="known", action_type="message", target="MigRoom"))
@@ -84,7 +84,7 @@ def cron_tree_snapshot(app_ctx):
     import sqlalchemy as sa
 
     def grab(model):
-        rows = db.db.session.execute(sa.select(model)).scalars().all()
+        rows = db.session.execute(sa.select(model)).scalars().all()
         return [
             {c.name: getattr(r, c.name) for c in model.__table__.columns if c.name != "id"}
             for r in rows
@@ -94,13 +94,13 @@ def cron_tree_snapshot(app_ctx):
     try:
         yield
     finally:
-        db.db.session.execute(sa.delete(CronJob))
-        db.db.session.execute(sa.delete(CronFolder))
+        db.session.execute(sa.delete(CronJob))
+        db.session.execute(sa.delete(CronFolder))
         for row in fsnap:
-            db.db.session.add(CronFolder(**row))
+            db.session.add(CronFolder(**row))
         for row in jsnap:
-            db.db.session.add(CronJob(**row))
-        db.db.session.commit()
+            db.session.add(CronJob(**row))
+        db.session.commit()
 
 
 @pytest.fixture
@@ -109,9 +109,9 @@ def empty_tree(cron_tree_snapshot):
     puts the operator's real rows (and the seeded System jobs) back after."""
     import sqlalchemy as sa
 
-    db.db.session.execute(sa.delete(CronJob))
-    db.db.session.execute(sa.delete(CronFolder))
-    db.db.session.commit()
+    db.session.execute(sa.delete(CronJob))
+    db.session.execute(sa.delete(CronFolder))
+    db.session.commit()
     yield
 
 
@@ -127,19 +127,19 @@ def test_cron_models_round_trip(app_ctx, cron_tree_snapshot):
     import sqlalchemy as sa
 
     fu, ju = uuid4(), uuid4()
-    db.db.session.execute(sa.delete(CronJob))
-    db.db.session.execute(sa.delete(CronFolder))
-    db.db.session.add(CronFolder(uuid=fu, name="T-folder", parent_uuid=None, enabled=True, position=0))
-    db.db.session.add(CronJob(
+    db.session.execute(sa.delete(CronJob))
+    db.session.execute(sa.delete(CronFolder))
+    db.session.add(CronFolder(uuid=fu, name="T-folder", parent_uuid=None, enabled=True, position=0))
+    db.session.add(CronJob(
         uuid=ju, name="T-job", enabled=False, folder_uuid=fu,
         cron_expr="*/5 * * * *", action_type="command", target="", message="",
         command="echo hi", description="d", position=0,
     ))
-    db.db.session.commit()
+    db.session.commit()
 
-    f = db.db.session.get(CronFolder, db.db.session.execute(
+    f = db.session.get(CronFolder, db.session.execute(
         sa.select(CronFolder.id).where(CronFolder.uuid == fu)).scalar_one())
-    j = db.db.session.execute(sa.select(CronJob).where(CronJob.uuid == ju)).scalar_one()
+    j = db.session.execute(sa.select(CronJob).where(CronJob.uuid == ju)).scalar_one()
     assert f.name == "T-folder" and f.enabled is True
     assert j.action_type == "command" and j.enabled is False and j.folder_uuid == fu
 
@@ -231,11 +231,11 @@ def test_delete_job_cascades_its_run_history(app_ctx, empty_tree):
 
     made = db.cron_create_job(_job_spec())
     ju = UUID(made["uuid"])
-    db.db.session.add(CronRun(uuid=uuid4(), cron_uuid=ju, status="ok"))
-    db.db.session.commit()
+    db.session.add(CronRun(uuid=uuid4(), cron_uuid=ju, status="ok"))
+    db.session.commit()
     assert db.cron_delete_job(ju) is True
     assert db.cron_load_tree()["jobs"] == []
-    assert db.db.session.execute(
+    assert db.session.execute(
         sa.select(sa.func.count(CronRun.id)).where(CronRun.cron_uuid == ju)
     ).scalar_one() == 0
     assert db.cron_delete_job(ju) is False
@@ -325,10 +325,10 @@ def test_cron_save_tree_preserves_created_at(app_ctx, empty_tree):
     from datetime import UTC, datetime
 
     old = datetime(2000, 1, 1, tzinfo=UTC)
-    db.db.session.execute(
+    db.session.execute(
         sa.update(CronJob).where(CronJob.uuid == UUID(ju)).values(updated_at=old)
     )
-    db.db.session.commit()
+    db.session.commit()
     job["name"] = "Renamed"
     db.cron_save_tree([], [job])
     out2 = db.cron_load_tree()["jobs"][0]
@@ -558,14 +558,14 @@ def test_cron_create_job_populates_next_run_at(app_ctx, empty_tree):
     import sqlalchemy as sa
 
     made = db.cron_create_job(_job_spec(cron="*/5 * * * *", timezone="UTC"))
-    row = db.db.session.execute(
+    row = db.session.execute(
         sa.select(db.CronJob).where(db.CronJob.uuid == UUID(made["uuid"]))
     ).scalar_one()
     assert row.next_run_at is not None
     before = row.next_run_at
     db.cron_save_tree([], [{**_job_spec(cron="0 9 * * 1", timezone="UTC"),
                             "uuid": made["uuid"]}])
-    db.db.session.refresh(row)
+    db.session.refresh(row)
     assert row.next_run_at != before
 
 
@@ -575,7 +575,7 @@ def test_one_shot_message_stores_origin(app_ctx, cron_tree_snapshot):
     job = db.cron_create_one_shot_message(
         message="⏰ Reminder: x", fire_at=datetime.now(UTC) + timedelta(hours=1),
         origin_run_uuid=run, origin_step_uuid=step)
-    fetched = db.db.session.get(db.CronJob, job.id)
+    fetched = db.session.get(db.CronJob, job.id)
     assert fetched.origin_run_uuid == run
     assert fetched.origin_step_uuid == step
 
@@ -584,7 +584,7 @@ def test_one_shot_message_origin_defaults_null(app_ctx, cron_tree_snapshot):
     from datetime import UTC, datetime, timedelta
     job = db.cron_create_one_shot_message(
         message="⏰ Reminder: y", fire_at=datetime.now(UTC) + timedelta(hours=1))
-    fetched = db.db.session.get(db.CronJob, job.id)
+    fetched = db.session.get(db.CronJob, job.id)
     assert fetched.origin_run_uuid is None and fetched.origin_step_uuid is None
 
 

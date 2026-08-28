@@ -119,10 +119,10 @@ def test_stream_reply_creates_thinking_and_answer_rows(app_ctx, monkeypatch):
     human = db.get_human_user()
     assert human is not None
     agent_uuid = uuid4()
-    db.db.session.add(
+    db.session.add(
         db.ChatUser(uuid=agent_uuid, name=f"cu-{uuid4().hex[:6]}", user_type="agent")
     )
-    db.db.session.flush()
+    db.session.flush()
     room = db.create_chatroom(f"stream-{uuid4().hex[:6]}", human.uuid, [agent_uuid])
     try:
         monkeypatch.setattr(
@@ -147,6 +147,6 @@ def test_stream_reply_creates_thinking_and_answer_rows(app_ctx, monkeypatch):
         assert by_kind["message"]["text"] == "Hello, world"
         assert by_kind["message"]["streaming"] is False
     finally:
-        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room.uuid).delete()
-        db.db.session.query(db.ChatUser).filter(db.ChatUser.uuid == agent_uuid).delete()
-        db.db.session.commit()
+        db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room.uuid).delete()
+        db.session.query(db.ChatUser).filter(db.ChatUser.uuid == agent_uuid).delete()
+        db.session.commit()

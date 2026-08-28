@@ -30,7 +30,7 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -42,14 +42,14 @@ def _ctx(dry_run=False, room_uuid=None):
 
 
 def _jobs_with(tag):
-    return db.db.session.query(CronJob).filter(CronJob.message.like(f"%{tag}%")).all()
+    return db.session.query(CronJob).filter(CronJob.message.like(f"%{tag}%")).all()
 
 
 def _cleanup_cron(tag):
     for j in _jobs_with(tag):
-        db.db.session.query(CronRun).filter(CronRun.cron_uuid == j.uuid).delete()
-    db.db.session.query(CronJob).filter(CronJob.message.like(f"%{tag}%")).delete()
-    db.db.session.commit()
+        db.session.query(CronRun).filter(CronRun.cron_uuid == j.uuid).delete()
+    db.session.query(CronJob).filter(CronJob.message.like(f"%{tag}%")).delete()
+    db.session.commit()
 
 
 def test_capability_is_confirm_tier_dry_run_write():
@@ -120,7 +120,7 @@ def test_propose_uses_dry_run_preview_and_does_not_schedule(app_ctx):
     )
     try:
         agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
-        intent = db.db.session.query(AssistantWriteIntent).filter(
+        intent = db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.room_uuid == chatroom.uuid).one()
         assert intent.state == "proposed"
         assert intent.preview_text.startswith("Would remind you at")
@@ -132,12 +132,12 @@ def test_propose_uses_dry_run_preview_and_does_not_schedule(app_ctx):
         assert db.get_write_intent(intent.uuid).state == "completed"
     finally:
         _cleanup_cron(tag)
-        db.db.session.query(AssistantWriteIntent).filter(
+        db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(AssistantRun).filter(
+        db.session.query(AssistantRun).filter(
             AssistantRun.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
-        db.db.session.commit()
+        db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+        db.session.commit()
 
 
 def test_one_shot_fires_once_then_retires(app_ctx):
@@ -150,20 +150,20 @@ def test_one_shot_fires_once_then_retires(app_ctx):
     try:
         fired = db.cron_tick(now=datetime.now(UTC))
         assert fired >= 1
-        db.db.session.refresh(job)
+        db.session.refresh(job)
         assert job.enabled is False  # retired after its single fire
-        texts = [m.text for m in db.db.session.query(ChatMessage).filter_by(
+        texts = [m.text for m in db.session.query(ChatMessage).filter_by(
             room_uuid=chatroom.uuid).all()]
         assert any(tag in t for t in texts)
         # A second tick does not fire it again.
-        before = db.db.session.query(CronRun).filter_by(cron_uuid=job.uuid).count()
+        before = db.session.query(CronRun).filter_by(cron_uuid=job.uuid).count()
         db.cron_tick(now=datetime.now(UTC))
-        assert db.db.session.query(CronRun).filter_by(cron_uuid=job.uuid).count() == before
+        assert db.session.query(CronRun).filter_by(cron_uuid=job.uuid).count() == before
     finally:
         _cleanup_cron(tag)
-        db.db.session.query(ChatMessage).filter_by(room_uuid=chatroom.uuid).delete()
-        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
-        db.db.session.commit()
+        db.session.query(ChatMessage).filter_by(room_uuid=chatroom.uuid).delete()
+        db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+        db.session.commit()
 
 
 def test_set_reminder_records_origin_from_step(app_ctx):
@@ -186,9 +186,9 @@ def test_set_reminder_records_origin_from_step(app_ctx):
         assert job.origin_step_uuid == step.uuid
     finally:
         _cleanup_cron(tag)
-        db.db.session.query(db.AssistantRun).filter(db.AssistantRun.uuid == run.uuid).delete()
-        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
-        db.db.session.commit()
+        db.session.query(db.AssistantRun).filter(db.AssistantRun.uuid == run.uuid).delete()
+        db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+        db.session.commit()
 
 
 def test_proposal_meta_attached_to_reply(app_ctx):
@@ -214,9 +214,9 @@ def test_proposal_meta_attached_to_reply(app_ctx):
         # The intent the card points at really exists and is proposed.
         assert reply["meta"]["intent_state"] == "proposed"
     finally:
-        db.db.session.query(db.AssistantWriteIntent).filter(
+        db.session.query(db.AssistantWriteIntent).filter(
             db.AssistantWriteIntent.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(db.AssistantRun).filter(
+        db.session.query(db.AssistantRun).filter(
             db.AssistantRun.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
-        db.db.session.commit()
+        db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+        db.session.commit()

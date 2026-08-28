@@ -34,24 +34,24 @@ def room_with_agent(client):
             uuid=agent_uuid, name=f"fb-api-{uuid4().hex[:6]}",
             user_type="agent",
         )
-        db.db.session.add(agent_user)
-        db.db.session.flush()
+        db.session.add(agent_user)
+        db.session.flush()
         room = db.create_chatroom(
             f"fb-api-{uuid4().hex[:6]}", human.uuid, [agent_uuid],
         )
         try:
             yield room.uuid, human.uuid, agent_uuid
         finally:
-            db.db.session.query(FeedbackEvent).filter(
+            db.session.query(FeedbackEvent).filter(
                 FeedbackEvent.room_uuid == room.uuid
             ).delete()
-            db.db.session.query(db.Chatroom).filter(
+            db.session.query(db.Chatroom).filter(
                 db.Chatroom.uuid == room.uuid
             ).delete()
-            db.db.session.query(db.ChatUser).filter(
+            db.session.query(db.ChatUser).filter(
                 db.ChatUser.uuid == agent_uuid
             ).delete()
-            db.db.session.commit()
+            db.session.commit()
 
 
 def _post_feedback(client, message_uuid, body):
@@ -144,10 +144,10 @@ def test_feedback_rejected_for_unknown_message(client):
 
 def _cleanup_retrieval_events(app, room_uuid):
     with app.app_context():
-        db.db.session.query(db.RetrievalEvent).filter(
+        db.session.query(db.RetrievalEvent).filter(
             db.RetrievalEvent.room_uuid == room_uuid
         ).delete(synchronize_session=False)
-        db.db.session.commit()
+        db.session.commit()
 
 
 def test_downvote_writes_downvoted_events_for_debug_memory(

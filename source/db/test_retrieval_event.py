@@ -26,10 +26,10 @@ def fresh_tag() -> str:
 
 
 def _cleanup(prefix: str) -> None:
-    db.db.session.query(RetrievalEvent).filter(
+    db.session.query(RetrievalEvent).filter(
         RetrievalEvent.target_id.like(f"{prefix}%")
     ).delete(synchronize_session=False)
-    db.db.session.commit()
+    db.session.commit()
 
 
 def test_record_retrieval_event_writes_a_row(app_ctx, fresh_tag):
@@ -49,7 +49,7 @@ def test_record_retrieval_event_writes_a_row(app_ctx, fresh_tag):
             metadata={"k": 5},
         )
         assert event.uuid is not None
-        reloaded = db.db.session.query(RetrievalEvent).filter_by(
+        reloaded = db.session.query(RetrievalEvent).filter_by(
             uuid=event.uuid
         ).first()
         assert reloaded.target_type == "qa_entry"
@@ -72,7 +72,7 @@ def test_record_retrieval_event_accepts_all_five_stages(app_ctx, fresh_tag):
                 stage=stage,
                 source="query_filter_router",
             )
-        rows = db.db.session.query(RetrievalEvent).filter(
+        rows = db.session.query(RetrievalEvent).filter(
             RetrievalEvent.target_id.like(f"{fresh_tag}%")
         ).all()
         assert {r.stage for r in rows} == {
@@ -93,7 +93,7 @@ def test_record_retrieval_event_rejects_unknown_stage(app_ctx, fresh_tag):
                 stage="not_a_real_stage",
                 source="query_filter_router",
             )
-        db.db.session.rollback()
+        db.session.rollback()
     finally:
         _cleanup(fresh_tag)
 
@@ -110,7 +110,7 @@ def test_record_retrieval_event_rejects_unknown_target_type(
                 stage="retrieved",
                 source="query_filter_router",
             )
-        db.db.session.rollback()
+        db.session.rollback()
     finally:
         _cleanup(fresh_tag)
 
@@ -137,7 +137,7 @@ def test_record_retrieval_event_filter_label_constraint(
                 stage="accepted",
                 filter_label="probably_relevant",
             )
-        db.db.session.rollback()
+        db.session.rollback()
     finally:
         _cleanup(fresh_tag)
 
@@ -181,14 +181,14 @@ def test_record_retrieval_event_commit_false_defers_commit(
         )
         # Flush gave us a uuid/id, and the row is visible in this session.
         assert event.uuid is not None
-        in_session = db.db.session.query(RetrievalEvent).filter_by(
+        in_session = db.session.query(RetrievalEvent).filter_by(
             uuid=event.uuid
         ).first()
         assert in_session is not None
         # Caller commits to make it durable.
-        db.db.session.commit()
+        db.session.commit()
         # Verify post-commit it's still there.
-        post_commit = db.db.session.query(RetrievalEvent).filter_by(
+        post_commit = db.session.query(RetrievalEvent).filter_by(
             uuid=event.uuid
         ).first()
         assert post_commit is not None
@@ -219,20 +219,20 @@ def test_prune_retrieval_fifo_keeps_newest_capacity_rows(app_ctx, fresh_tag):
         db.record_retrieval_event(   # different source: must survive
             target_type="memory_claim", target_id=tid, stage="rejected",
             query="other-source", source="chat_memory_retrieval", commit=False)
-        db.db.session.commit()
+        db.session.commit()
 
         deleted = db.prune_retrieval_fifo(
             target_type="memory_claim", target_id=tid, stage="rejected",
             source="memory_query.filter", capacity=10)
         assert deleted == 2
-        rows = (db.db.session.query(RetrievalEvent)
+        rows = (db.session.query(RetrievalEvent)
                 .filter_by(target_id=tid, stage="rejected",
                            source="memory_query.filter")
                 .order_by(RetrievalEvent.id.asc()).all())
         assert len(rows) == 10
         assert rows[0].query == "q2"      # oldest two (q0, q1) pruned
         assert rows[-1].query == "q11"
-        others = (db.db.session.query(RetrievalEvent)
+        others = (db.session.query(RetrievalEvent)
                   .filter(RetrievalEvent.target_id == tid,
                           (RetrievalEvent.stage == "used")
                           | (RetrievalEvent.source == "chat_memory_retrieval"))

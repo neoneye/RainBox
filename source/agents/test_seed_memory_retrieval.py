@@ -11,7 +11,7 @@ def app_ctx():
     try:
         yield
     finally:
-        db.db.session.rollback(); ctx.pop()
+        db.session.rollback(); ctx.pop()
 
 
 @pytest.fixture()

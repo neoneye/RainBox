@@ -35,10 +35,10 @@ def fresh_uuid():
 
 
 def _cleanup_claims_by_room(room_uuid: UUID) -> None:
-    db.db.session.query(MemoryClaim).filter(
+    db.session.query(MemoryClaim).filter(
         MemoryClaim.room_uuid == room_uuid
     ).delete()
-    db.db.session.commit()
+    db.session.commit()
 
 
 def test_create_memory_claim_persists_all_required_fields(app_ctx, fresh_uuid):
@@ -58,7 +58,7 @@ def test_create_memory_claim_persists_all_required_fields(app_ctx, fresh_uuid):
         )
         # Re-fetch fresh from the DB to confirm the row was persisted, not
         # just held in the session.
-        db.db.session.expire_all()
+        db.session.expire_all()
         reloaded = db.get_memory_claim(claim.uuid)
         assert reloaded is not None
         assert reloaded.scope == "room"
@@ -99,7 +99,7 @@ def test_invalid_enum_values_rejected_by_db(app_ctx, fresh_uuid, field, bad_valu
     finally:
         # IntegrityError leaves the session in a failed-transaction state;
         # roll back before cleanup runs.
-        db.db.session.rollback()
+        db.session.rollback()
         _cleanup_claims_by_room(room_uuid)
 
 
@@ -112,16 +112,16 @@ def test_invalid_confidence_rejected_by_db(app_ctx, fresh_uuid):
                 status="candidate", sensitivity="public", room_uuid=room_uuid,
             )
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         _cleanup_claims_by_room(room_uuid)
 
 
 def _cleanup_claims_and_evidence(room_uuid: UUID) -> None:
     """Delete claims for this test's room_uuid; their evidence cascades."""
-    db.db.session.query(MemoryClaim).filter(
+    db.session.query(MemoryClaim).filter(
         MemoryClaim.room_uuid == room_uuid
     ).delete()
-    db.db.session.commit()
+    db.session.commit()
 
 
 def test_add_memory_evidence_persists_provenance_and_source(app_ctx, fresh_uuid):
@@ -138,8 +138,8 @@ def test_add_memory_evidence_persists_provenance_and_source(app_ctx, fresh_uuid)
             source_id="abc-123",
             excerpt="the user said x",
         )
-        db.db.session.expire_all()
-        reloaded = db.db.session.query(MemoryEvidence).filter_by(uuid=ev.uuid).first()
+        db.session.expire_all()
+        reloaded = db.session.query(MemoryEvidence).filter_by(uuid=ev.uuid).first()
         assert reloaded is not None
         assert reloaded.memory_uuid == claim.uuid
         assert reloaded.provenance == "inferred_by_model"
@@ -167,7 +167,7 @@ def test_claim_can_have_multiple_evidence_with_different_provenance(app_ctx, fre
             source_type="manual", source_id=None,
         )
         rows = (
-            db.db.session.query(MemoryEvidence)
+            db.session.query(MemoryEvidence)
             .filter_by(memory_uuid=claim.uuid)
             .order_by(MemoryEvidence.id.asc())
             .all()
@@ -202,7 +202,7 @@ def test_invalid_evidence_enum_values_rejected(app_ctx, fresh_uuid, field, bad_v
         with pytest.raises(sa.exc.IntegrityError):
             db.add_memory_evidence(**args)
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         _cleanup_claims_and_evidence(room_uuid)
 
 
@@ -217,15 +217,15 @@ def test_deleting_claim_cascades_to_evidence(app_ctx, fresh_uuid):
             memory_uuid=claim.uuid, provenance="inferred_by_model",
             source_type="chat_message", source_id="m1",
         )
-        assert db.db.session.query(MemoryEvidence).filter_by(
+        assert db.session.query(MemoryEvidence).filter_by(
             memory_uuid=claim.uuid
         ).count() == 1
 
         # Cascade: deleting the claim removes its evidence.
-        db.db.session.query(MemoryClaim).filter_by(uuid=claim.uuid).delete()
-        db.db.session.commit()
+        db.session.query(MemoryClaim).filter_by(uuid=claim.uuid).delete()
+        db.session.commit()
 
-        assert db.db.session.query(MemoryEvidence).filter_by(
+        assert db.session.query(MemoryEvidence).filter_by(
             memory_uuid=claim.uuid
         ).count() == 0
     finally:
@@ -259,10 +259,10 @@ def test_list_memory_claims_filters_by_scope_status_and_room(app_ctx, fresh_uuid
         assert [x.uuid for x in actives] == [b.uuid]
     finally:
         # cleanup both rooms
-        db.db.session.query(MemoryClaim).filter(
+        db.session.query(MemoryClaim).filter(
             MemoryClaim.room_uuid.in_([room_uuid, other_room])
         ).delete()
-        db.db.session.commit()
+        db.session.commit()
 
 
 def test_supersede_memory_marks_old_and_creates_new_active(app_ctx, fresh_uuid):
@@ -282,7 +282,7 @@ def test_supersede_memory_marks_old_and_creates_new_active(app_ctx, fresh_uuid):
                 provenance="confirmed_by_user", source_type="manual",
             ),
         )
-        db.db.session.expire_all()
+        db.session.expire_all()
         old_reloaded = db.get_memory_claim(old.uuid)
         new_reloaded = db.get_memory_claim(new.uuid)
         assert old_reloaded is not None and old_reloaded.status == "superseded"
@@ -290,7 +290,7 @@ def test_supersede_memory_marks_old_and_creates_new_active(app_ctx, fresh_uuid):
         assert new_reloaded.supersedes_uuid == old.uuid
         assert new_reloaded.text == "new text"
         # The supersession also persisted an evidence row on the new claim.
-        ev = db.db.session.query(MemoryEvidence).filter_by(
+        ev = db.session.query(MemoryEvidence).filter_by(
             memory_uuid=new.uuid
         ).all()
         assert len(ev) == 1
@@ -318,12 +318,12 @@ def test_reject_memory_marks_rejected_and_preserves_evidence(app_ctx, fresh_uuid
                 excerpt="operator says this is wrong",
             ),
         )
-        db.db.session.expire_all()
+        db.session.expire_all()
         reloaded = db.get_memory_claim(claim.uuid)
         assert reloaded is not None and reloaded.status == "rejected"
         # Both the original inferred evidence AND the rejection evidence remain.
         ev = (
-            db.db.session.query(MemoryEvidence)
+            db.session.query(MemoryEvidence)
             .filter_by(memory_uuid=claim.uuid)
             .order_by(MemoryEvidence.id.asc())
             .all()
@@ -349,12 +349,12 @@ def test_init_db_is_idempotent_against_existing_database(app_ctx):
     try:
         db.init_db(app_ctx)
         db.init_db(app_ctx)  # second call must also succeed
-        db.db.session.expire_all()
+        db.session.expire_all()
         reloaded = db.get_memory_claim(sentinel.uuid)
         assert reloaded is not None, "init_db erased existing rows"
         assert reloaded.text == "idempotency sentinel"
     finally:
-        db.db.session.query(MemoryClaim).filter(
+        db.session.query(MemoryClaim).filter(
             MemoryClaim.room_uuid == sentinel_room
         ).delete()
-        db.db.session.commit()
+        db.session.commit()

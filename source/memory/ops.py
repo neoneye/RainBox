@@ -89,7 +89,7 @@ def find_memory_matches(
     normalized input. `status` filters by lifecycle (default "active");
     pass None to ignore status."""
     norm = normalize_memory_text(text)
-    q = db.db.session.query(MemoryClaim)
+    q = db.session.query(MemoryClaim)
     if status is not None:
         q = q.filter(MemoryClaim.status == status)
     return [c for c in q.all() if normalize_memory_text(c.text) == norm]
@@ -103,7 +103,7 @@ def _find_memory_by_substring(
     Used for `what do you remember about <topic>`."""
     norm = normalize_memory_text(topic)
     q = (
-        db.db.session.query(MemoryClaim)
+        db.session.query(MemoryClaim)
         .filter(MemoryClaim.status == status)
         .order_by(MemoryClaim.id.asc())
     )
@@ -180,7 +180,7 @@ def _handle_confirm(ctx: QueryContext, text: str) -> str:
         )
     claim.status = "active"
     claim.confidence = 1.0
-    db.db.session.commit()
+    db.session.commit()
     db.add_memory_evidence(
         memory_uuid=claim.uuid,
         provenance="confirmed_by_user",
@@ -217,7 +217,7 @@ def _handle_correct(ctx: QueryContext, old_text: str, new_text: str) -> str:
             },
         )
     except ValueError as exc:
-        db.db.session.rollback()
+        db.session.rollback()
         return f"Could not correct {old_text_snapshot!r} → {new_text!r}: {exc}"
     refresh_claim_embedding(new)
     refresh_claim_embedding(db.get_memory_claim(old.uuid))  # now superseded -> prune
@@ -235,7 +235,7 @@ def _handle_recall(ctx: QueryContext, topic: str) -> str:
         return f"Memories about {topic!r}:\n{bullets}"
     # No topic: list every active memory.
     all_active = (
-        db.db.session.query(MemoryClaim)
+        db.session.query(MemoryClaim)
         .filter(MemoryClaim.status == "active")
         .order_by(MemoryClaim.id.asc())
         .all()
@@ -254,7 +254,7 @@ def _handle_explain(ctx: QueryContext, topic: str) -> str:
         return f"I don't have any active memory matching {topic!r}."
     claim = matches[0]
     ev = (
-        db.db.session.query(MemoryEvidence)
+        db.session.query(MemoryEvidence)
         .filter(MemoryEvidence.memory_uuid == claim.uuid)
         .order_by(MemoryEvidence.id.asc())
         .all()
@@ -285,7 +285,7 @@ def _handle_used(ctx: QueryContext) -> str:
     if room_uuid is None:
         return "I have no record of memories used in this room."
     row = (
-        db.db.session.query(_ChatMessage)
+        db.session.query(_ChatMessage)
         .filter(
             _ChatMessage.room_uuid == room_uuid,
             _ChatMessage.kind == "debug-memory",

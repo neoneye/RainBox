@@ -37,10 +37,10 @@ def room_with_human(app_ctx):
     try:
         yield room.uuid, human.uuid
     finally:
-        db.db.session.query(db.Chatroom).filter(
+        db.session.query(db.Chatroom).filter(
             db.Chatroom.uuid == room.uuid
         ).delete()
-        db.db.session.commit()
+        db.session.commit()
 
 
 def _stub_query_internals(monkeypatch):
@@ -71,7 +71,7 @@ def test_remember_command_via_query_agent_handle_creates_memory(
             "message_uuid": str(msg.uuid),
         })
         rows = (
-            db.db.session.query(MemoryClaim)
+            db.session.query(MemoryClaim)
             .filter(MemoryClaim.text == text)
             .all()
         )
@@ -79,10 +79,10 @@ def test_remember_command_via_query_agent_handle_creates_memory(
         assert rows[0].status == "active"
     finally:
         # Cleanup: delete the memory + cascade evidence.
-        db.db.session.query(MemoryClaim).filter(
+        db.session.query(MemoryClaim).filter(
             MemoryClaim.text == text
         ).delete()
-        db.db.session.commit()
+        db.session.commit()
 
 
 def test_non_memory_query_falls_through_to_qa_path(
@@ -150,14 +150,14 @@ def test_remember_command_does_not_initialize_qa_path(
             "message_uuid": str(msg.uuid),
         })
         rows = (
-            db.db.session.query(MemoryClaim)
+            db.session.query(MemoryClaim)
             .filter(MemoryClaim.text == text)
             .all()
         )
         assert len(rows) == 1
         assert rows[0].status == "active"
     finally:
-        db.db.session.query(MemoryClaim).filter(
+        db.session.query(MemoryClaim).filter(
             MemoryClaim.text == text
         ).delete()
-        db.db.session.commit()
+        db.session.commit()

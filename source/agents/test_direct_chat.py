@@ -35,8 +35,8 @@ def direct_room(app_ctx):
     try:
         yield room.uuid, human.uuid
     finally:
-        db.db.session.query(Chatroom).filter(Chatroom.uuid == room.uuid).delete()
-        db.db.session.commit()
+        db.session.query(Chatroom).filter(Chatroom.uuid == room.uuid).delete()
+        db.session.commit()
 
 
 def _agent() -> DirectChatAgent:
@@ -235,5 +235,5 @@ def test_handle_rejects_agents_room(app_ctx):
         with pytest.raises(ValueError):
             _agent().handle(uuid4(), {"room_uuid": str(room.uuid)})
     finally:
-        db.db.session.query(Chatroom).filter(Chatroom.uuid == room.uuid).delete()
-        db.db.session.commit()
+        db.session.query(Chatroom).filter(Chatroom.uuid == room.uuid).delete()
+        db.session.commit()

@@ -40,8 +40,8 @@ def fresh_tag() -> str:
 
 def _make_room_and_user(prefix: str) -> tuple[ChatUser, Chatroom]:
     user = ChatUser(uuid=uuid4(), name=f"{prefix}-user", user_type="agent")
-    db.db.session.add(user)
-    db.db.session.flush()
+    db.session.add(user)
+    db.session.flush()
     room = db.create_chatroom(
         name=f"{prefix}-room",
         created_by=user.uuid,
@@ -59,33 +59,33 @@ def _post(room_uuid, sender_uuid, text: str, *, kind: str = "message"):
 
 def _cleanup(prefix: str) -> None:
     run_uuids = [
-        r.uuid for r in db.db.session.query(EvalRun)
+        r.uuid for r in db.session.query(EvalRun)
         .filter(EvalRun.name.like(f"{prefix}%")).all()
     ]
     if run_uuids:
-        db.db.session.query(EvalResult).filter(
+        db.session.query(EvalResult).filter(
             EvalResult.eval_run_uuid.in_(run_uuids)
         ).delete(synchronize_session=False)
-        db.db.session.query(EvalRun).filter(
+        db.session.query(EvalRun).filter(
             EvalRun.uuid.in_(run_uuids)
         ).delete(synchronize_session=False)
     room_uuids = [
-        r.uuid for r in db.db.session.query(Chatroom)
+        r.uuid for r in db.session.query(Chatroom)
         .filter(Chatroom.name.like(f"{prefix}%")).all()
     ]
     if room_uuids:
-        db.db.session.query(ChatMessage).filter(
+        db.session.query(ChatMessage).filter(
             ChatMessage.room_uuid.in_(room_uuids)
         ).delete(synchronize_session=False)
-        db.db.session.query(Chatroom).filter(
+        db.session.query(Chatroom).filter(
             Chatroom.uuid.in_(room_uuids)
         ).delete(synchronize_session=False)
-    db.db.session.query(ChatUser).filter(
+    db.session.query(ChatUser).filter(
         ChatUser.name.like(f"{prefix}%")
     ).delete(synchronize_session=False)
     # NOTE: do NOT delete the shared production_sample_message EvalCase —
     # it's idempotent and harmless across tests.
-    db.db.session.commit()
+    db.session.commit()
 
 
 def test_production_monitor_creates_eval_run_from_recent_chat(
@@ -124,8 +124,8 @@ def test_production_monitor_filters_out_human_messages(
             name=f"{fresh_tag}-human",
             user_type="human",
         )
-        db.db.session.add(human_user)
-        db.db.session.flush()
+        db.session.add(human_user)
+        db.session.flush()
 
         _post(room.uuid, agent_user.uuid,
               f"{fresh_tag} agent reply", kind="message")

@@ -29,8 +29,8 @@ def rooms(client):
         agent = db.ChatUser(
             uuid=uuid4(), name=f"det-agent-{uuid4().hex[:6]}", user_type="agent"
         )
-        db.db.session.add(agent)
-        db.db.session.flush()
+        db.session.add(agent)
+        db.session.flush()
         chatty = db.create_chatroom(
             f"det-chatty-{uuid4().hex[:6]}", human.uuid, [agent.uuid]
         )
@@ -50,13 +50,13 @@ def rooms(client):
         try:
             yield info
         finally:
-            db.db.session.query(db.Chatroom).filter(
+            db.session.query(db.Chatroom).filter(
                 db.Chatroom.uuid.in_([chatty.uuid, empty.uuid])
             ).delete()
-            db.db.session.query(db.ChatUser).filter(
+            db.session.query(db.ChatUser).filter(
                 db.ChatUser.uuid == agent.uuid
             ).delete()
-            db.db.session.commit()
+            db.session.commit()
 
 
 def _by_uuid(details, uuid):

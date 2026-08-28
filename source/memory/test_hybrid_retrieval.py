@@ -25,7 +25,7 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -44,8 +44,8 @@ def _claim(subject, text, *, status="active", sensitivity="public",
 
 
 def _cleanup(subject):
-    db.db.session.query(MemoryClaim).filter(MemoryClaim.subject == subject).delete()
-    db.db.session.commit()
+    db.session.query(MemoryClaim).filter(MemoryClaim.subject == subject).delete()
+    db.session.commit()
 
 
 def _boom_embed(_text):
@@ -186,16 +186,16 @@ def test_records_retrieval_telemetry(app_ctx, fresh_subject):
             embed_fn=_boom_embed,
         )
         events = (
-            db.db.session.query(RetrievalEvent)
+            db.session.query(RetrievalEvent)
             .filter(RetrievalEvent.target_type == "memory_claim",
                     RetrievalEvent.target_id == str(claim.uuid),
                     RetrievalEvent.source == "memory.hybrid")
             .all()
         )
         assert events, "hybrid retrieval should record telemetry"
-        db.db.session.query(RetrievalEvent).filter(
+        db.session.query(RetrievalEvent).filter(
             RetrievalEvent.target_id == str(claim.uuid)
         ).delete()
-        db.db.session.commit()
+        db.session.commit()
     finally:
         _cleanup(fresh_subject)

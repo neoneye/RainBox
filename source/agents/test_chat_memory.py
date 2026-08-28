@@ -78,10 +78,10 @@ def fresh_subject() -> str:
 
 
 def _cleanup(subject: str) -> None:
-    db.db.session.query(MemoryClaim).filter(
+    db.session.query(MemoryClaim).filter(
         MemoryClaim.subject == subject
     ).delete()
-    db.db.session.commit()
+    db.session.commit()
 
 
 def _room_with_chat_agent(human_uuid):
@@ -92,8 +92,8 @@ def _room_with_chat_agent(human_uuid):
     agent_user = db.ChatUser(
         uuid=agent_uuid, name=f"chat-{uuid4().hex[:6]}", user_type="agent",
     )
-    db.db.session.add(agent_user)
-    db.db.session.flush()
+    db.session.add(agent_user)
+    db.session.flush()
     room = db.create_chatroom(
         f"chatmem-{uuid4().hex[:6]}", human_uuid, [agent_uuid],
     )
@@ -105,16 +105,16 @@ def _cleanup_room(room_uuid, agent_uuid):
     # Finding 2). Delete them first so they don't accumulate across
     # test runs — same-room rows have no FK on chatroom so they
     # would otherwise leak.
-    db.db.session.query(db.RetrievalEvent).filter(
+    db.session.query(db.RetrievalEvent).filter(
         db.RetrievalEvent.room_uuid == room_uuid
     ).delete(synchronize_session=False)
-    db.db.session.query(db.Chatroom).filter(
+    db.session.query(db.Chatroom).filter(
         db.Chatroom.uuid == room_uuid
     ).delete()
-    db.db.session.query(db.ChatUser).filter(
+    db.session.query(db.ChatUser).filter(
         db.ChatUser.uuid == agent_uuid
     ).delete()
-    db.db.session.commit()
+    db.session.commit()
 
 
 def test_user_prompt_includes_relevant_memory(app_ctx, fresh_subject):
@@ -229,7 +229,7 @@ def test_handle_posts_debug_memory_row_when_memories_injected(
         agent.handle(journal_id=uuid4(), payload={"room_uuid": str(room_uuid)})
 
         debug_rows = (
-            db.db.session.query(ChatMessage)
+            db.session.query(ChatMessage)
             .filter(
                 ChatMessage.room_uuid == room_uuid,
                 ChatMessage.kind == "debug-memory",
@@ -271,7 +271,7 @@ def test_handle_does_not_post_debug_memory_when_no_memories(
         agent.handle(journal_id=uuid4(), payload={"room_uuid": str(room_uuid)})
 
         debug_rows = (
-            db.db.session.query(ChatMessage)
+            db.session.query(ChatMessage)
             .filter(
                 ChatMessage.room_uuid == room_uuid,
                 ChatMessage.kind == "debug-memory",
@@ -392,7 +392,7 @@ def test_chat_memory_retrieval_writes_retrieved_and_used_events(
             memories=mems,
         )
 
-        rows = db.db.session.query(db.RetrievalEvent).filter(
+        rows = db.session.query(db.RetrievalEvent).filter(
             db.RetrievalEvent.room_uuid == room_uuid
         ).all()
         assert len(rows) == 4  # 2 retrieved + 2 used
@@ -418,10 +418,10 @@ def test_chat_memory_retrieval_writes_retrieved_and_used_events(
             assert (r.metadata_ or {}).get("retrieval_limit") == 6
             assert (r.metadata_ or {}).get("include_secret") is False
     finally:
-        db.db.session.query(db.RetrievalEvent).filter(
+        db.session.query(db.RetrievalEvent).filter(
             db.RetrievalEvent.room_uuid == room_uuid
         ).delete(synchronize_session=False)
-        db.db.session.commit()
+        db.session.commit()
 
 
 def test_chat_memory_telemetry_empty_memories_is_noop(app_ctx):

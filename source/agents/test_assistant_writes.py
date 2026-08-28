@@ -37,7 +37,7 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -50,11 +50,11 @@ def room(app_ctx):
     try:
         yield chatroom.uuid
     finally:
-        db.db.session.query(AssistantRun).filter(
+        db.session.query(AssistantRun).filter(
             AssistantRun.room_uuid == chatroom.uuid
         ).delete()
-        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
-        db.db.session.commit()
+        db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+        db.session.commit()
 
 
 def _agent() -> AssistantAgent:
@@ -95,8 +95,8 @@ def test_remember_observation_carries_the_candidate_uuid(room):
         # the reply surfaces a /memory link so the operator can verify the claim
         assert obs.data["link"] == f"/memory?id={mem_uuid}"
     finally:
-        db.db.session.query(MemoryClaim).filter(MemoryClaim.text == text).delete()
-        db.db.session.commit()
+        db.session.query(MemoryClaim).filter(MemoryClaim.text == text).delete()
+        db.session.commit()
 
 
 def test_remember_dedupes_an_existing_claim(room):
@@ -110,7 +110,7 @@ def test_remember_dedupes_an_existing_claim(room):
         _decision(AssistantActionName.REPLY, message="Noted."))
     try:
         agent.handle(uuid4(), {"room_uuid": str(room)})
-        first = db.db.session.query(MemoryClaim).filter(MemoryClaim.text == text).all()
+        first = db.session.query(MemoryClaim).filter(MemoryClaim.text == text).all()
         assert len(first) == 1
         existing_uuid = first[0].uuid
 
@@ -121,7 +121,7 @@ def test_remember_dedupes_an_existing_claim(room):
             _decision(AssistantActionName.REPLY, message="Already have it."))
         agent2.handle(uuid4(), {"room_uuid": str(room)})
         # still exactly one claim with the original text; no second row created
-        again = db.db.session.query(MemoryClaim).filter(
+        again = db.session.query(MemoryClaim).filter(
             MemoryClaim.room_uuid == room,
             MemoryClaim.text.ilike("%triangle draw mug%")).all()
         assert len(again) == 1 and again[0].uuid == existing_uuid
@@ -135,8 +135,8 @@ def test_remember_dedupes_an_existing_claim(room):
         assert obs.data["link"] == f"/memory?id={existing_uuid}"
         assert "undo" not in obs.data
     finally:
-        db.db.session.query(MemoryClaim).filter(MemoryClaim.room_uuid == room).delete()
-        db.db.session.commit()
+        db.session.query(MemoryClaim).filter(MemoryClaim.room_uuid == room).delete()
+        db.session.commit()
 
 
 def test_remember_creates_candidate_memory_and_is_undoable(room):
@@ -151,7 +151,7 @@ def test_remember_creates_candidate_memory_and_is_undoable(room):
     try:
         result = agent.handle(uuid4(), {"room_uuid": str(room)})
         assert result["status"] == "finished"
-        claims = db.db.session.query(MemoryClaim).filter(MemoryClaim.text == text).all()
+        claims = db.session.query(MemoryClaim).filter(MemoryClaim.text == text).all()
         assert len(claims) == 1
         assert claims[0].status == "candidate"  # assistant_interpreted → candidate
         # Undo: rejecting it reverses the write.
@@ -159,8 +159,8 @@ def test_remember_creates_candidate_memory_and_is_undoable(room):
                                           "source_type": "manual"})
         assert db.get_memory_claim(claims[0].uuid).status == "rejected"
     finally:
-        db.db.session.query(MemoryClaim).filter(MemoryClaim.text == text).delete()
-        db.db.session.commit()
+        db.session.query(MemoryClaim).filter(MemoryClaim.text == text).delete()
+        db.session.commit()
 
 
 def test_remember_is_undoable_through_the_write_intent_ledger(room):
@@ -176,7 +176,7 @@ def test_remember_is_undoable_through_the_write_intent_ledger(room):
     )
     try:
         result = agent.handle(uuid4(), {"room_uuid": str(room)})
-        intent = db.db.session.query(AssistantWriteIntent).filter(
+        intent = db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.room_uuid == room).one()
         assert intent.state == "completed"
         # The intent points at its producing step by uuid (the identity pointer),
@@ -191,8 +191,8 @@ def test_remember_is_undoable_through_the_write_intent_ledger(room):
         assert db.get_memory_claim(mem_uuid).status == "rejected"  # undo rejected it
         assert db.get_write_intent(intent.uuid).state == "undone"
     finally:
-        db.db.session.query(MemoryClaim).filter(MemoryClaim.text == text).delete()
-        db.db.session.commit()
+        db.session.query(MemoryClaim).filter(MemoryClaim.text == text).delete()
+        db.session.commit()
 
 
 def test_undo_remember_leaves_no_tombstone_but_direct_reject_does(room):
@@ -213,7 +213,7 @@ def test_undo_remember_leaves_no_tombstone_but_direct_reject_does(room):
     try:
         # --- path 1: remember then undo via write-intent ledger ---------------
         result = agent.handle(uuid4(), {"room_uuid": str(room)})
-        intent = db.db.session.query(AssistantWriteIntent).filter(
+        intent = db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.run_uuid == result["assistant_run_uuid"]
         ).one()
         mem_uuid = UUID(intent.result["undo"]["payload"]["memory_uuid"])
@@ -257,18 +257,18 @@ def test_undo_remember_leaves_no_tombstone_but_direct_reject_does(room):
             "tombstone logic is broken"
         )
     finally:
-        db.db.session.query(MemoryRejectedValue).filter(
+        db.session.query(MemoryRejectedValue).filter(
             MemoryRejectedValue.room_uuid == room
         ).delete()
-        db.db.session.query(MemoryEvidence).filter(
+        db.session.query(MemoryEvidence).filter(
             MemoryEvidence.memory_uuid.in_(
-                db.db.session.query(MemoryClaim.uuid).filter(
+                db.session.query(MemoryClaim.uuid).filter(
                     MemoryClaim.room_uuid == room
                 )
             )
         ).delete(synchronize_session=False)
-        db.db.session.query(MemoryClaim).filter(MemoryClaim.room_uuid == room).delete()
-        db.db.session.commit()
+        db.session.query(MemoryClaim).filter(MemoryClaim.room_uuid == room).delete()
+        db.session.commit()
 
 
 # --- confirm tier: memory_activate --------------------------------------------
@@ -292,7 +292,7 @@ def test_confirm_tier_proposes_without_executing(room):
         result = agent.handle(uuid4(), {"room_uuid": str(room)})
         # An intent was proposed; the claim was NOT activated inline.
         intents = (
-            db.db.session.query(AssistantWriteIntent)
+            db.session.query(AssistantWriteIntent)
             .filter(AssistantWriteIntent.run_uuid == result["assistant_run_uuid"])
             .all()
         )
@@ -300,8 +300,8 @@ def test_confirm_tier_proposes_without_executing(room):
         assert intents[0].state == "proposed"
         assert db.get_memory_claim(cand.uuid).status == "candidate"  # not executed
     finally:
-        db.db.session.query(MemoryClaim).filter(MemoryClaim.subject == "write-test").delete()
-        db.db.session.commit()
+        db.session.query(MemoryClaim).filter(MemoryClaim.subject == "write-test").delete()
+        db.session.commit()
 
 
 def test_confirm_then_execute_activates_claim(room):
@@ -314,7 +314,7 @@ def test_confirm_then_execute_activates_claim(room):
     try:
         result = agent.handle(uuid4(), {"room_uuid": str(room)})
         intent = (
-            db.db.session.query(AssistantWriteIntent)
+            db.session.query(AssistantWriteIntent)
             .filter(AssistantWriteIntent.run_uuid == result["assistant_run_uuid"])
             .one()
         )
@@ -322,11 +322,11 @@ def test_confirm_then_execute_activates_claim(room):
         obs = execute_write_intent(intent.uuid, confirmed_by_uuid=uuid4())
         assert obs.ok
         assert db.get_memory_claim(cand.uuid).status == "active"
-        db.db.session.refresh(intent)
+        db.session.refresh(intent)
         assert intent.state == "completed"
     finally:
-        db.db.session.query(MemoryClaim).filter(MemoryClaim.subject == "write-test").delete()
-        db.db.session.commit()
+        db.session.query(MemoryClaim).filter(MemoryClaim.subject == "write-test").delete()
+        db.session.commit()
 
 
 def test_execute_refused_unless_proposed(room):
@@ -339,7 +339,7 @@ def test_execute_refused_unless_proposed(room):
     try:
         result = agent.handle(uuid4(), {"room_uuid": str(room)})
         intent = (
-            db.db.session.query(AssistantWriteIntent)
+            db.session.query(AssistantWriteIntent)
             .filter(AssistantWriteIntent.run_uuid == result["assistant_run_uuid"])
             .one()
         )
@@ -350,8 +350,8 @@ def test_execute_refused_unless_proposed(room):
         assert obs.ok is False  # cannot execute a rejected intent
         assert db.get_memory_claim(cand.uuid).status == "candidate"
     finally:
-        db.db.session.query(MemoryClaim).filter(MemoryClaim.subject == "write-test").delete()
-        db.db.session.commit()
+        db.session.query(MemoryClaim).filter(MemoryClaim.subject == "write-test").delete()
+        db.session.commit()
 
 
 def test_execute_refuses_non_confirm_tier_capability(app_ctx):
@@ -370,8 +370,8 @@ def test_execute_refuses_non_confirm_tier_capability(app_ctx):
         refreshed = db.get_write_intent(intent.uuid)
         assert refreshed.state == "failed"
     finally:
-        db.db.session.query(AssistantWriteIntent).filter(
+        db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.run_uuid == run.uuid
         ).delete()
-        db.db.session.query(AssistantRun).filter(AssistantRun.uuid == run.uuid).delete()
-        db.db.session.commit()
+        db.session.query(AssistantRun).filter(AssistantRun.uuid == run.uuid).delete()
+        db.session.commit()

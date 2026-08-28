@@ -28,14 +28,14 @@ def fresh_tag() -> str:
 
 
 def _cleanup(prefix: str) -> None:
-    db.db.session.query(RetrievalEvent).filter(
+    db.session.query(RetrievalEvent).filter(
         RetrievalEvent.target_id.like(f"{prefix}%")
     ).delete(synchronize_session=False)
-    db.db.session.commit()
+    db.session.commit()
 
 
 def _events_for(prefix: str) -> list[RetrievalEvent]:
-    return db.db.session.query(RetrievalEvent).filter(
+    return db.session.query(RetrievalEvent).filter(
         RetrievalEvent.target_id.like(f"{prefix}%")
     ).order_by(RetrievalEvent.id.asc()).all()
 

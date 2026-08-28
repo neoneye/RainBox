@@ -39,7 +39,7 @@ def app_ctx():
     try:
         yield application
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -82,9 +82,9 @@ def _rendered(client, run) -> tuple[str, str]:
 
 def _cleanup(run_uuid, room_uuid) -> None:
     # assistant_step / assistant_write_intent cascade off assistant_run.
-    db.db.session.query(AssistantRun).filter(AssistantRun.uuid == run_uuid).delete()
-    db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room_uuid).delete()
-    db.db.session.commit()
+    db.session.query(AssistantRun).filter(AssistantRun.uuid == run_uuid).delete()
+    db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room_uuid).delete()
+    db.session.commit()
 
 
 def test_assistant_page_has_no_tree_and_points_to_overview(app_ctx, client):
@@ -497,8 +497,8 @@ def test_step_model_renders_as_a_link(app_ctx, client):
         assert "qwen-2.5-7b" in body
     finally:
         _cleanup(run.uuid, room.uuid)
-        db.db.session.query(db.ModelConfig).filter(db.ModelConfig.uuid == mc.uuid).delete()
-        db.db.session.commit()
+        db.session.query(db.ModelConfig).filter(db.ModelConfig.uuid == mc.uuid).delete()
+        db.session.commit()
 
 
 def test_selected_run_has_kebab_with_actions(app_ctx, client):
@@ -785,7 +785,7 @@ def _real_run_shape(run):
     end = t0 + timedelta(seconds=57)
     step.settled_at = end
     run.started_at = t0
-    db.db.session.commit()
+    db.session.commit()
     return end
 
 
@@ -812,7 +812,7 @@ def test_rows_are_attributed_to_a_step_by_position_not_by_step_index(
     # Pinned to the last row, so the stretch after it is the run's own tail
     # rather than the days between the fixture's dates and today.
     run.finished_at = end
-    db.db.session.commit()
+    db.session.commit()
     try:
         page, md = _rendered(client, run)
         assert sorted(set(re.findall(r'data-step="([^"]*)"', page))) == [
@@ -1000,7 +1000,7 @@ def _run_with_hidden_calls(run, t0):
     run.finished_at = t0 + timedelta(seconds=41)
     step.settled_at = t0 + timedelta(seconds=9)
     gated.settled_at = t0 + timedelta(seconds=34)
-    db.db.session.commit()
+    db.session.commit()
     return step, gated
 
 
@@ -1991,9 +1991,9 @@ def test_recall_filter_renders_through_the_shared_step_machinery(app_ctx, client
         assert "in 3100" in page and "out 216" in page
     finally:
         _cleanup(run.uuid, room.uuid)
-        db.db.session.query(db.ModelConfig).filter(
+        db.session.query(db.ModelConfig).filter(
             db.ModelConfig.uuid == scorer.uuid).delete()
-        db.db.session.commit()
+        db.session.commit()
 
 
 def test_gated_recall_filter_leaves_no_row_because_no_model_ran(app_ctx, client):

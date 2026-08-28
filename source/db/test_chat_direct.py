@@ -35,8 +35,8 @@ def direct_room(app_ctx):
     try:
         yield room.uuid, human.uuid
     finally:
-        db.db.session.query(Chatroom).filter(Chatroom.uuid == room.uuid).delete()
-        db.db.session.commit()
+        db.session.query(Chatroom).filter(Chatroom.uuid == room.uuid).delete()
+        db.session.commit()
 
 
 @pytest.fixture
@@ -47,8 +47,8 @@ def agents_room(app_ctx):
     try:
         yield room.uuid, human.uuid
     finally:
-        db.db.session.query(Chatroom).filter(Chatroom.uuid == room.uuid).delete()
-        db.db.session.commit()
+        db.session.query(Chatroom).filter(Chatroom.uuid == room.uuid).delete()
+        db.session.commit()
 
 
 def test_create_chatroom_defaults_to_agents(agents_room):
@@ -101,13 +101,13 @@ def stored_prompt(app_ctx):
     """One /prompt row to link rooms to."""
     from db.models import Prompt
     row = Prompt(uuid=uuid4(), name="Pirate", content="You are a pirate.")
-    db.db.session.add(row)
-    db.db.session.commit()
+    db.session.add(row)
+    db.session.commit()
     try:
         yield row.uuid
     finally:
-        db.db.session.query(Prompt).filter(Prompt.uuid == row.uuid).delete()
-        db.db.session.commit()
+        db.session.query(Prompt).filter(Prompt.uuid == row.uuid).delete()
+        db.session.commit()
 
 
 def test_set_chatroom_settings_prompt_link(direct_room, stored_prompt):
@@ -133,8 +133,8 @@ def test_resolve_room_system_prompt(direct_room, stored_prompt):
         db.get_chatroom(room_uuid)) == "You are a pirate."
     # Linked version deleted: no system message (NOT the stale free text).
     from db.models import Prompt
-    db.db.session.query(Prompt).filter(Prompt.uuid == stored_prompt).delete()
-    db.db.session.commit()
+    db.session.query(Prompt).filter(Prompt.uuid == stored_prompt).delete()
+    db.session.commit()
     assert db.resolve_room_system_prompt(db.get_chatroom(room_uuid)) == ""
 
 

@@ -25,7 +25,7 @@ def app_ctx():
     try:
         yield application
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -42,10 +42,10 @@ def run(app_ctx):
     try:
         yield r
     finally:
-        db.db.session.rollback()
-        db.db.session.query(AssistantRun).filter(
+        db.session.rollback()
+        db.session.query(AssistantRun).filter(
             AssistantRun.uuid == r.uuid).delete()
-        db.db.session.commit()
+        db.session.commit()
 
 
 def _review(run, **over):

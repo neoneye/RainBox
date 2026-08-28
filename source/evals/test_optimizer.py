@@ -54,7 +54,7 @@ def fresh_tag() -> str:
 def _cleanup(prefix: str) -> None:
     # Collect cases for this test by name prefix.
     case_uuids = [
-        c.uuid for c in db.db.session.query(EvalCase)
+        c.uuid for c in db.session.query(EvalCase)
         .filter(EvalCase.name.like(f"{prefix}%")).all()
     ]
     # Also collect any EvalRuns produced by the default runner that
@@ -62,31 +62,31 @@ def _cleanup(prefix: str) -> None:
     # so we can't filter by name — instead find runs whose config
     # references the case UUIDs).
     direct_run_uuids = [
-        r.uuid for r in db.db.session.query(EvalRun)
+        r.uuid for r in db.session.query(EvalRun)
         .filter(EvalRun.name.like(f"{prefix}%")).all()
     ]
     derived_run_uuids: list = []
     if case_uuids:
         case_uuid_strs = {str(u) for u in case_uuids}
         # Find runs whose config["case_uuids"] intersects our cases.
-        for r in db.db.session.query(EvalRun).all():
+        for r in db.session.query(EvalRun).all():
             cfg = r.config or {}
             cfg_uuids = cfg.get("case_uuids") or []
             if any(s in case_uuid_strs for s in cfg_uuids):
                 derived_run_uuids.append(r.uuid)
     all_run_uuids = list({*direct_run_uuids, *derived_run_uuids})
     if all_run_uuids:
-        db.db.session.query(EvalResult).filter(
+        db.session.query(EvalResult).filter(
             EvalResult.eval_run_uuid.in_(all_run_uuids)
         ).delete(synchronize_session=False)
-        db.db.session.query(EvalRun).filter(
+        db.session.query(EvalRun).filter(
             EvalRun.uuid.in_(all_run_uuids)
         ).delete(synchronize_session=False)
     if case_uuids:
-        db.db.session.query(EvalCase).filter(
+        db.session.query(EvalCase).filter(
             EvalCase.uuid.in_(case_uuids)
         ).delete(synchronize_session=False)
-    db.db.session.commit()
+    db.session.commit()
 
 
 def _make_case(prefix: str, label: str, split: str = "train") -> EvalCase:
@@ -357,7 +357,7 @@ def test_default_runner_evalruns_are_cleaned_up_after_test(
     # the cleanup helper found it via the case_uuids link.
     leaked: list = []
     try:
-        leaked = db.db.session.query(EvalRun).filter(
+        leaked = db.session.query(EvalRun).filter(
             EvalRun.config["case_uuids"].astext.contains(str(case_uuid))
         ).all()
     except Exception:
@@ -369,7 +369,7 @@ def test_default_runner_evalruns_are_cleaned_up_after_test(
     # scan:
     if not leaked:
         # Python-side scan as a safety check.
-        for r in db.db.session.query(EvalRun).all():
+        for r in db.session.query(EvalRun).all():
             cfg = r.config or {}
             if str(case_uuid) in (cfg.get("case_uuids") or []):
                 leaked.append(r)

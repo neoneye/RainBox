@@ -24,8 +24,8 @@ def client():
 
 def _cleanup_run(app, run_id: int) -> None:
     with app.app_context():
-        db.db.session.query(AssistantRun).filter(AssistantRun.uuid == run_id).delete()
-        db.db.session.commit()
+        db.session.query(AssistantRun).filter(AssistantRun.uuid == run_id).delete()
+        db.session.commit()
 
 
 def test_run_endpoint_returns_run_and_steps(client):

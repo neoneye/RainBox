@@ -61,8 +61,8 @@ def test_repo_detail_lists_root_including_dotgit(tmp_path):
     a = db.make_app()
     db.init_db(a)
     with a.app_context():
-        db.db.session.add(GitRepo(uuid=ru, name="R", path=str(tmp_path), position=0))
-        db.db.session.commit()
+        db.session.add(GitRepo(uuid=ru, name="R", path=str(tmp_path), position=0))
+        db.session.commit()
     try:
         d = app.test_client().get(f"/git/api/repos/{ru}/detail").get_json()
         assert d["ok"] is True and d["isRepo"] is True
@@ -71,8 +71,8 @@ def test_repo_detail_lists_root_including_dotgit(tmp_path):
         assert d["entries"][0]["isDir"] is True                   # directories first
     finally:
         with a.app_context():
-            db.db.session.execute(sa.delete(GitRepo).where(GitRepo.uuid == ru))
-            db.db.session.commit()
+            db.session.execute(sa.delete(GitRepo).where(GitRepo.uuid == ru))
+            db.session.commit()
 
 
 def test_repo_detail_unknown_uuid_404():

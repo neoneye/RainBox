@@ -46,14 +46,14 @@ def test_numeric_backfill_fills_from_confidence(app_ctx, fresh_uuid):
     c = _db.create_memory_claim(scope="global", kind="fact", text="bf",
                                 confidence=0.7, status="active", room_uuid=fresh_uuid)
     # simulate a legacy row: null the new numeric columns
-    _db.db.session.execute(sa.text(
+    _db.session.execute(sa.text(
         "UPDATE memory_claim SET epistemic_confidence=NULL, retrieval_strength=NULL, "
         "support_count=NULL WHERE uuid=:u"), {"u": str(c.uuid)})
-    _db.db.session.commit()
+    _db.session.commit()
     _db._backfill_memory_trust_numeric()   # idempotent helper
     row = _db.get_memory_claim(c.uuid)
     assert row.epistemic_confidence == 0.7
     assert row.retrieval_strength == 0.7
     assert row.support_count == 1
-    _db.db.session.query(_db.MemoryClaim).filter_by(uuid=c.uuid).delete()
-    _db.db.session.commit()
+    _db.session.query(_db.MemoryClaim).filter_by(uuid=c.uuid).delete()
+    _db.session.commit()

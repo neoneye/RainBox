@@ -24,22 +24,22 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
 @pytest.fixture
 def profile(app_ctx):
     pu = uuid4()
-    db.db.session.add(Profile(
+    db.session.add(Profile(
         uuid=pu, name="LanguageTest", folder_uuid=None, position=999))
-    db.db.session.commit()
+    db.session.commit()
     try:
         yield pu
     finally:
-        db.db.session.rollback()
-        db.db.session.query(Profile).filter(Profile.uuid == pu).delete()
-        db.db.session.commit()
+        db.session.rollback()
+        db.session.query(Profile).filter(Profile.uuid == pu).delete()
+        db.session.commit()
 
 
 @pytest.fixture
@@ -146,14 +146,14 @@ def test_flat_save_preserves_languages(profile, fixed_stamp):
 def test_languages_save_preserves_other_subtrees(profile, fixed_stamp):
     dynamic = {
         "screen": {"value": "3440x1440", "seen_at": "2026-07-01T00:00:00Z"}}
-    row = db.db.session.execute(
+    row = db.session.execute(
         db.db.select(Profile).where(Profile.uuid == profile)).scalar_one()
     row.data = {
         "full_name": "Keeper",
         "dynamic": dynamic,
         "calibration": {"topics": [{"topic": "Python"}]},
     }
-    db.db.session.commit()
+    db.session.commit()
     db.languages_put(profile, [_row()])
     data = db.profile_get(profile)["data"]
     assert data["full_name"] == "Keeper"
@@ -188,9 +188,9 @@ def test_duplicate_keeps_semantics_and_mints_language_identity(
             {r["id"] for r in source})
         assert all(r["updated_at"] == LATER_STAMP for r in copied)
     finally:
-        db.db.session.query(Profile).filter(
+        db.session.query(Profile).filter(
             Profile.uuid == UUID(duplicate["uuid"])).delete()
-        db.db.session.commit()
+        db.session.commit()
 
 
 def test_languages_api_round_trip_and_profile_projection(profile, fixed_stamp):

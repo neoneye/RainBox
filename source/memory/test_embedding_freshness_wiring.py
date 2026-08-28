@@ -24,7 +24,7 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -41,10 +41,10 @@ def _ctx(query: str):
 
 
 def _cleanup_text(*texts: str):
-    db.db.session.query(MemoryClaim).filter(MemoryClaim.text.in_(texts)).delete(
+    db.session.query(MemoryClaim).filter(MemoryClaim.text.in_(texts)).delete(
         synchronize_session=False
     )
-    db.db.session.commit()
+    db.session.commit()
 
 
 def test_remember_command_embeds_the_active_claim(app_ctx):
@@ -53,7 +53,7 @@ def test_remember_command_embeds_the_active_claim(app_ctx):
     assert cmd is not None
     try:
         handle_memory_command(_ctx(f"remember that {text}"), cmd)
-        claim = db.db.session.query(MemoryClaim).filter(MemoryClaim.text == text).one()
+        claim = db.session.query(MemoryClaim).filter(MemoryClaim.text == text).one()
         assert db.get_memory_embedding(claim.uuid, EMBED_MODEL_NAME) is not None
     finally:
         _cleanup_text(text)
@@ -63,7 +63,7 @@ def test_forget_command_prunes_the_embedding(app_ctx):
     text = f"freshness forget {uuid4()}"
     try:
         handle_memory_command(_ctx(f"remember that {text}"), parse_memory_command(f"remember that {text}"))
-        claim = db.db.session.query(MemoryClaim).filter(MemoryClaim.text == text).one()
+        claim = db.session.query(MemoryClaim).filter(MemoryClaim.text == text).one()
         assert db.get_memory_embedding(claim.uuid, EMBED_MODEL_NAME) is not None
         handle_memory_command(_ctx(f"forget that {text}"), parse_memory_command(f"forget that {text}"))
         assert db.get_memory_embedding(claim.uuid, EMBED_MODEL_NAME) is None
@@ -76,12 +76,12 @@ def test_correct_command_embeds_new_and_prunes_old(app_ctx):
     new = f"freshness new {uuid4()}"
     try:
         handle_memory_command(_ctx(f"remember that {old}"), parse_memory_command(f"remember that {old}"))
-        old_claim = db.db.session.query(MemoryClaim).filter(MemoryClaim.text == old).one()
+        old_claim = db.session.query(MemoryClaim).filter(MemoryClaim.text == old).one()
         handle_memory_command(
             _ctx(f"correct that {old} -> {new}"),
             parse_memory_command(f"correct that {old} -> {new}"),
         )
-        new_claim = db.db.session.query(MemoryClaim).filter(MemoryClaim.text == new).one()
+        new_claim = db.session.query(MemoryClaim).filter(MemoryClaim.text == new).one()
         assert db.get_memory_embedding(new_claim.uuid, EMBED_MODEL_NAME) is not None
         assert db.get_memory_embedding(old_claim.uuid, EMBED_MODEL_NAME) is None
     finally:
@@ -104,10 +104,10 @@ def test_assistant_activate_memory_embeds_the_claim(app_ctx):
         _action_activate_memory(ctx, {"memory_uuid": str(claim.uuid)})
         assert db.get_memory_embedding(claim.uuid, EMBED_MODEL_NAME) is not None
     finally:
-        db.db.session.query(MemoryClaim).filter(MemoryClaim.text == text).delete(
+        db.session.query(MemoryClaim).filter(MemoryClaim.text == text).delete(
             synchronize_session=False
         )
-        db.db.session.commit()
+        db.session.commit()
 
 
 def test_assistant_remember_embeds_the_candidate_claim(app_ctx):
@@ -123,7 +123,7 @@ def test_assistant_remember_embeds_the_candidate_claim(app_ctx):
         assert claim.status == "candidate"
         assert db.get_memory_embedding(claim.uuid, EMBED_MODEL_NAME) is not None
     finally:
-        db.db.session.query(MemoryClaim).filter(MemoryClaim.text == text).delete(
+        db.session.query(MemoryClaim).filter(MemoryClaim.text == text).delete(
             synchronize_session=False
         )
-        db.db.session.commit()
+        db.session.commit()

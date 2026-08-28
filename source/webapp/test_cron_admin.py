@@ -27,7 +27,7 @@ def app_ctx():
 @pytest.fixture
 def nested(app_ctx):
     """My Life / Computer / <job>, with one run. Yields (job, run); cleans up."""
-    s = db.db.session
+    s = db.session
     f1, f2, ju, ru = uuid.uuid4(), uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     s.add(db.CronFolder(uuid=f1, name="My Life", parent_uuid=None, position=0))
     s.add(db.CronFolder(uuid=f2, name="Computer", parent_uuid=f1, position=0))
@@ -61,7 +61,7 @@ def test_cron_run_cell_shows_short_uuid_and_path(nested):
 
 
 def test_cron_run_cell_unfiled_job(app_ctx):
-    s = db.db.session
+    s = db.session
     ju, ru = uuid.uuid4(), uuid.uuid4()
     s.add(db.CronJob(uuid=ju, name="Loose", folder_uuid=None, action_type="message"))
     s.add(db.CronRun(uuid=ru, cron_uuid=ju, trigger="manual"))
@@ -76,7 +76,7 @@ def test_cron_run_cell_unfiled_job(app_ctx):
 
 
 def test_cron_run_cell_deleted_job(app_ctx):
-    s = db.db.session
+    s = db.session
     run = db.CronRun(uuid=uuid.uuid4(), cron_uuid=uuid.uuid4(), trigger="scheduled")
     cell = str(_cron_run_job_path(None, None, run, "cron_uuid"))
     assert "deleted job" in cell
@@ -85,7 +85,7 @@ def test_cron_run_cell_deleted_job(app_ctx):
 # ---- target column (message jobs store a chatroom uuid) --------------------
 
 def test_cron_target_label_variants(app_ctx):
-    s = db.db.session
+    s = db.session
     room_uuid = uuid.uuid4()
     s.add(db.Chatroom(uuid=room_uuid, name="Ops", created_by=uuid.uuid4()))
     s.commit()
@@ -105,7 +105,7 @@ def test_cron_target_label_variants(app_ctx):
 def test_admin_cronjob_page_renders(app_ctx):
     """Render /admin/cronjob/ end-to-end (catches formatter import/runtime errors
     the unit tests miss)."""
-    s = db.db.session
+    s = db.session
     room_uuid, ju = uuid.uuid4(), uuid.uuid4()
     s.add(db.Chatroom(uuid=room_uuid, name="AdminRoom", created_by=uuid.uuid4()))
     s.add(db.CronJob(uuid=ju, name="MsgJob", action_type="message", target=str(room_uuid)))

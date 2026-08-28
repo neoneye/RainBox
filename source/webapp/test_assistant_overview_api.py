@@ -23,11 +23,11 @@ def _seed(created, summary_trigger, *, outcome=None, status="finished", n_steps=
             else datetime.now(UTC) + timedelta(seconds=12),
             summary={"trigger": summary_trigger, "outcome": outcome},
         )
-        db.db.session.add(run)
+        db.session.add(run)
         for i in range(n_steps):
-            db.db.session.add(AssistantStep(
+            db.session.add(AssistantStep(
                 uuid=uuid4(), run_uuid=run.uuid, step_index=i, phase="observed"))
-        db.db.session.commit()
+        db.session.commit()
         created.append(run.uuid)
         return run.uuid
 
@@ -36,9 +36,9 @@ def _cleanup(created):
     a = db.make_app()
     with a.app_context():
         for ru in created:
-            db.db.session.query(AssistantRun).filter(
+            db.session.query(AssistantRun).filter(
                 AssistantRun.uuid == ru).delete()
-        db.db.session.commit()
+        db.session.commit()
 
 
 def test_runs_endpoint_shape():
@@ -122,8 +122,8 @@ def test_range_filters_by_recency():
                 started_at=datetime.now(UTC) - timedelta(days=5),
                 finished_at=datetime.now(UTC) - timedelta(days=5),
                 summary={"trigger": f"old {tag}", "outcome": "resolved"})
-            db.db.session.add(old)
-            db.db.session.commit()
+            db.session.add(old)
+            db.session.commit()
             created.append(old.uuid)
         out = app.test_client().get(
             f"/assistant-overview/api/runs?q={tag}&range=24h").get_json()
@@ -170,10 +170,10 @@ def test_step_count_matches_how_assistant_numbers_its_timeline():
                     ("acceptance_criteria", True, "observed"),
                     ("reply_audit", True, "observed"),
                     ("stop", False, "control")):
-                db.db.session.add(AssistantStep(
+                db.session.add(AssistantStep(
                     uuid=uuid4(), run_uuid=rid, step_index=0, phase=phase,
                     action=action, code_driven=code_driven))
-            db.db.session.commit()
+            db.session.commit()
         out = app.test_client().get(
             f"/assistant-overview/api/runs?q={tag}").get_json()
         assert out["runs"][0]["steps"] == 5

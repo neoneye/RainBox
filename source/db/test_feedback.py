@@ -37,8 +37,8 @@ def room_with_agent(app_ctx):
     agent_user = db.ChatUser(
         uuid=agent_uuid, name=f"fb-test-{uuid4().hex[:6]}", user_type="agent",
     )
-    db.db.session.add(agent_user)
-    db.db.session.flush()
+    db.session.add(agent_user)
+    db.session.flush()
     room = db.create_chatroom(
         f"fb-{uuid4().hex[:6]}", human.uuid, [agent_uuid],
     )
@@ -47,16 +47,16 @@ def room_with_agent(app_ctx):
     finally:
         # Feedback rows for this room must be torn down first since they
         # reference message_uuid but have no FK cascade.
-        db.db.session.query(FeedbackEvent).filter(
+        db.session.query(FeedbackEvent).filter(
             FeedbackEvent.room_uuid == room.uuid
         ).delete()
-        db.db.session.query(db.Chatroom).filter(
+        db.session.query(db.Chatroom).filter(
             db.Chatroom.uuid == room.uuid
         ).delete()
-        db.db.session.query(db.ChatUser).filter(
+        db.session.query(db.ChatUser).filter(
             db.ChatUser.uuid == agent_uuid
         ).delete()
-        db.db.session.commit()
+        db.session.commit()
 
 
 def test_upvote_persists_feedback_event(app_ctx, room_with_agent):
@@ -71,7 +71,7 @@ def test_upvote_persists_feedback_event(app_ctx, room_with_agent):
         comment=None,
         created_by_uuid=human_uuid,
     )
-    db.db.session.expire_all()
+    db.session.expire_all()
     reloaded = db.get_feedback_event(fb.uuid)
     assert reloaded is not None
     assert reloaded.rating == "upvote"
@@ -94,7 +94,7 @@ def test_downvote_with_comment_persists_the_comment(app_ctx, room_with_agent):
         comment="answer felt unrelated",
         created_by_uuid=human_uuid,
     )
-    db.db.session.expire_all()
+    db.session.expire_all()
     reloaded = db.get_feedback_event(fb.uuid)
     assert reloaded is not None
     assert reloaded.rating == "downvote"
@@ -114,7 +114,7 @@ def test_invalid_rating_is_rejected_by_db_constraint(app_ctx, room_with_agent):
             comment=None,
             created_by_uuid=human_uuid,
         )
-    db.db.session.rollback()
+    db.session.rollback()
 
 
 def test_metadata_includes_rated_message_text(app_ctx, room_with_agent):
@@ -131,7 +131,7 @@ def test_metadata_includes_rated_message_text(app_ctx, room_with_agent):
         comment=None,
         created_by_uuid=human_uuid,
     )
-    db.db.session.expire_all()
+    db.session.expire_all()
     reloaded = db.get_feedback_event(fb.uuid)
     assert reloaded is not None
     meta = reloaded.metadata_
@@ -151,7 +151,7 @@ def test_metadata_includes_previous_human_message_text(app_ctx, room_with_agent)
         comment=None,
         created_by_uuid=human_uuid,
     )
-    db.db.session.expire_all()
+    db.session.expire_all()
     reloaded = db.get_feedback_event(fb.uuid)
     meta = reloaded.metadata_
     assert meta["prev_human_message_uuid"] == str(prev.uuid)
@@ -183,7 +183,7 @@ def test_metadata_includes_latest_prior_debug_memory_payload(app_ctx, room_with_
         comment=None,
         created_by_uuid=human_uuid,
     )
-    db.db.session.expire_all()
+    db.session.expire_all()
     reloaded = db.get_feedback_event(fb.uuid)
     meta = reloaded.metadata_
     assert meta["debug_memory"] is not None
@@ -213,7 +213,7 @@ def test_metadata_includes_latest_prior_debug_query_payload(app_ctx, room_with_a
         comment=None,
         created_by_uuid=human_uuid,
     )
-    db.db.session.expire_all()
+    db.session.expire_all()
     reloaded = db.get_feedback_event(fb.uuid)
     meta = reloaded.metadata_
     assert meta["debug_query"] is not None
@@ -233,7 +233,7 @@ def test_metadata_omits_optional_snapshots_when_absent(app_ctx, room_with_agent)
         comment=None,
         created_by_uuid=human_uuid,
     )
-    db.db.session.expire_all()
+    db.session.expire_all()
     reloaded = db.get_feedback_event(fb.uuid)
     meta = reloaded.metadata_
     assert meta["rated_message_text"] == "hello first"
@@ -249,17 +249,17 @@ def test_metadata_omits_optional_snapshots_when_absent(app_ctx, room_with_agent)
 
 
 def _cleanup_feedback_room(room_uuid, extra_user_uuids=()):
-    db.db.session.query(FeedbackEvent).filter(
+    db.session.query(FeedbackEvent).filter(
         FeedbackEvent.room_uuid == room_uuid
     ).delete()
-    db.db.session.query(db.Chatroom).filter(
+    db.session.query(db.Chatroom).filter(
         db.Chatroom.uuid == room_uuid
     ).delete()
     for u in extra_user_uuids:
-        db.db.session.query(db.ChatUser).filter(
+        db.session.query(db.ChatUser).filter(
             db.ChatUser.uuid == u
         ).delete()
-    db.db.session.commit()
+    db.session.commit()
 
 
 def test_feedback_metadata_captures_same_turn_debug_memory(
@@ -286,7 +286,7 @@ def test_feedback_metadata_captures_same_turn_debug_memory(
         comment=None,
         created_by_uuid=human_uuid,
     )
-    db.db.session.expire_all()
+    db.session.expire_all()
     reloaded = db.get_feedback_event(fb.uuid)
     meta = reloaded.metadata_
     assert meta["debug_memory"] is not None
@@ -332,7 +332,7 @@ def test_feedback_metadata_ignores_stale_debug_memory(
         comment=None,
         created_by_uuid=human_uuid,
     )
-    db.db.session.expire_all()
+    db.session.expire_all()
     reloaded = db.get_feedback_event(fb.uuid)
     meta = reloaded.metadata_
     dbg = meta.get("debug_memory")
@@ -355,13 +355,13 @@ def test_feedback_metadata_ignores_other_agent_debug_memory(app_ctx):
     agent_a_uuid = uuid4()
     agent_b_uuid = uuid4()
     tag = uuid4().hex[:6]
-    db.db.session.add(db.ChatUser(
+    db.session.add(db.ChatUser(
         uuid=agent_a_uuid, name=f"fb-a-{tag}", user_type="agent",
     ))
-    db.db.session.add(db.ChatUser(
+    db.session.add(db.ChatUser(
         uuid=agent_b_uuid, name=f"fb-b-{tag}", user_type="agent",
     ))
-    db.db.session.flush()
+    db.session.flush()
     room = db.create_chatroom(
         f"fb-multi-{tag}", human.uuid, [agent_a_uuid, agent_b_uuid],
     )
@@ -388,7 +388,7 @@ def test_feedback_metadata_ignores_other_agent_debug_memory(app_ctx):
             comment=None,
             created_by_uuid=human.uuid,
         )
-        db.db.session.expire_all()
+        db.session.expire_all()
         reloaded = db.get_feedback_event(fb.uuid)
         meta = reloaded.metadata_
         dbg = meta.get("debug_memory")

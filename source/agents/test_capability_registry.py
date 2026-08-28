@@ -33,8 +33,8 @@ def app_ctx():
     finally:
         # Always clear any operator disable so it can't leak into other tests.
         db.set_setting("assistant.disabled_capabilities", [])
-        db.db.session.commit()
-        db.db.session.rollback()
+        db.session.commit()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -81,7 +81,7 @@ def test_catalog_lists_enabled_prompt_exposed_capabilities():
 
 def test_disabled_capability_removed_from_prompt_and_dispatch(app_ctx):
     db.set_setting("assistant.disabled_capabilities", ["memory_query"])
-    db.db.session.commit()
+    db.session.commit()
 
     human = db.get_human_user()
     assert human is not None
@@ -103,7 +103,7 @@ def test_disabled_capability_removed_from_prompt_and_dispatch(app_ctx):
         # Removed from dispatch: the memory_query step is a validation failure
         # (planned -> failed), never a running/observed dispatch.
         steps = (
-            db.db.session.query(AssistantStep)
+            db.session.query(AssistantStep)
             .filter(AssistantStep.run_uuid == result["assistant_run_uuid"])
             .order_by(AssistantStep.id)
             .all()
@@ -115,16 +115,16 @@ def test_disabled_capability_removed_from_prompt_and_dispatch(app_ctx):
         assert ("reply", "final") in phases
         assert result["status"] == "finished"
     finally:
-        db.db.session.query(AssistantRun).filter(
+        db.session.query(AssistantRun).filter(
             AssistantRun.room_uuid == room.uuid
         ).delete()
-        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room.uuid).delete()
-        db.db.session.commit()
+        db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room.uuid).delete()
+        db.session.commit()
 
 
 def test_enabled_capabilities_excludes_disabled(app_ctx):
     db.set_setting("assistant.disabled_capabilities", ["kanban_read"])
-    db.db.session.commit()
+    db.session.commit()
     enabled = enabled_capabilities()
     assert AssistantActionName.KANBAN_READ not in enabled
     assert AssistantActionName.MEMORY_QUERY in enabled
@@ -132,7 +132,7 @@ def test_enabled_capabilities_excludes_disabled(app_ctx):
 
 def test_capability_report_reflects_disable(app_ctx):
     db.set_setting("assistant.disabled_capabilities", ["workspace_read_command"])
-    db.db.session.commit()
+    db.session.commit()
     report = {r["name"]: r for r in capability_report()}
     assert report["workspace_read_command"]["enabled"] is False
     assert report["memory_query"]["enabled"] is True

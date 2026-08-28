@@ -27,9 +27,9 @@ def _mk_claim(room, *, subject="alice", predicate="prefers", obj="tea"):
 
 
 def _cleanup(room):
-    db.db.session.query(MemoryClaim).filter_by(room_uuid=room).delete()
-    db.db.session.query(MemoryRejectedValue).filter_by(room_uuid=room).delete()
-    db.db.session.commit()
+    db.session.query(MemoryClaim).filter_by(room_uuid=room).delete()
+    db.session.query(MemoryRejectedValue).filter_by(room_uuid=room).delete()
+    db.session.commit()
 
 
 def test_with_note_appends_without_collision():
@@ -53,7 +53,7 @@ def test_write_tombstone_is_idempotent_on_key(app_ctx):
     c = _mk_claim(room)
     write_tombstone(c, reason="one")
     write_tombstone(c, reason="two")   # same key -> upsert, not a 2nd row
-    n = db.db.session.query(MemoryRejectedValue).filter_by(room_uuid=room).count()
+    n = db.session.query(MemoryRejectedValue).filter_by(room_uuid=room).count()
     assert n == 1
     _cleanup(room)
 

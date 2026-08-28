@@ -28,17 +28,17 @@ def app_ctx():
     ctx.push()
     saved = {}
     for key in KEYS:
-        row = db.db.session.query(db.AppSetting).filter_by(key=key).one_or_none()
+        row = db.session.query(db.AppSetting).filter_by(key=key).one_or_none()
         saved[key] = row.value if row is not None else None
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         for key, value in saved.items():
-            row = db.db.session.query(db.AppSetting).filter_by(key=key).one_or_none()
+            row = db.session.query(db.AppSetting).filter_by(key=key).one_or_none()
             if row is not None:
                 row.value = value
-        db.db.session.commit()
+        db.session.commit()
         ctx.pop()
 
 
@@ -52,12 +52,12 @@ def room(app_ctx):
     try:
         yield room
     finally:
-        db.db.session.rollback()
-        db.db.session.query(db.ChatMessage).filter(
+        db.session.rollback()
+        db.session.query(db.ChatMessage).filter(
             db.ChatMessage.room_uuid == room.uuid).delete()
-        db.db.session.query(db.Chatroom).filter(
+        db.session.query(db.Chatroom).filter(
             db.Chatroom.uuid == room.uuid).delete()
-        db.db.session.commit()
+        db.session.commit()
 
 
 def _agent():
@@ -160,17 +160,17 @@ def test_marker_label_with_special_characters_is_safe(room):
     name = 'Böse <script>"& profile'
     profile_uuid = uuid4()
     row = db.Profile(uuid=profile_uuid, name=name, folder_uuid=None, position=0)
-    db.db.session.add(row)
-    db.db.session.commit()
+    db.session.add(row)
+    db.session.commit()
     try:
         db.set_current_profile(str(profile_uuid))
         assert _post(agent, room.uuid) is True
         assert f"switched to {name}." in _markers(room.uuid)[0]["text"]
     finally:
         db.set_current_profile(None)
-        db.db.session.query(db.Profile).filter(
+        db.session.query(db.Profile).filter(
             db.Profile.uuid == profile_uuid).delete()
-        db.db.session.commit()
+        db.session.commit()
 
 
 # ---- combined causes -------------------------------------------------------

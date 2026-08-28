@@ -31,7 +31,7 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -61,8 +61,8 @@ def test_forget_by_uuid_rejects_the_memory(app_ctx):
         assert obs.ok is True
         assert db.get_memory_claim(c.uuid).status == "rejected"
     finally:
-        db.db.session.query(MemoryClaim).filter_by(uuid=c.uuid).delete()
-        db.db.session.commit()
+        db.session.query(MemoryClaim).filter_by(uuid=c.uuid).delete()
+        db.session.commit()
 
 
 def test_forget_by_text_matches_a_candidate(app_ctx):
@@ -73,8 +73,8 @@ def test_forget_by_text_matches_a_candidate(app_ctx):
         assert obs.ok is True
         assert db.get_memory_claim(c.uuid).status == "rejected"
     finally:
-        db.db.session.query(MemoryClaim).filter_by(uuid=c.uuid).delete()
-        db.db.session.commit()
+        db.session.query(MemoryClaim).filter_by(uuid=c.uuid).delete()
+        db.session.commit()
 
 
 def test_forget_observation_links_to_the_memory_page(app_ctx):
@@ -85,8 +85,8 @@ def test_forget_observation_links_to_the_memory_page(app_ctx):
         obs = _action_forget_memory(_ctx(), {"memory_uuid": str(c.uuid)})
         assert obs.data["link"] == f"/memory?id={c.uuid}"
     finally:
-        db.db.session.query(MemoryClaim).filter_by(uuid=c.uuid).delete()
-        db.db.session.commit()
+        db.session.query(MemoryClaim).filter_by(uuid=c.uuid).delete()
+        db.session.commit()
 
 
 def test_forget_returns_an_undo_record_that_reactivates(app_ctx):
@@ -103,8 +103,8 @@ def test_forget_returns_an_undo_record_that_reactivates(app_ctx):
         assert back.ok is True
         assert db.get_memory_claim(c.uuid).status == "active"
     finally:
-        db.db.session.query(MemoryClaim).filter_by(uuid=c.uuid).delete()
-        db.db.session.commit()
+        db.session.query(MemoryClaim).filter_by(uuid=c.uuid).delete()
+        db.session.commit()
 
 
 def test_reactivate_refuses_a_claim_that_is_not_rejected(app_ctx):
@@ -116,8 +116,8 @@ def test_reactivate_refuses_a_claim_that_is_not_rejected(app_ctx):
         assert obs.ok is False
         assert db.get_memory_claim(c.uuid).status == "active"  # untouched
     finally:
-        db.db.session.query(MemoryClaim).filter_by(uuid=c.uuid).delete()
-        db.db.session.commit()
+        db.session.query(MemoryClaim).filter_by(uuid=c.uuid).delete()
+        db.session.commit()
 
 
 def test_forget_no_match_fails(app_ctx):
@@ -151,12 +151,12 @@ def test_forget_via_loop_executes_inline_and_is_undoable(app_ctx):
     )
     try:
         agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
-        intent = db.db.session.query(AssistantWriteIntent).filter(
+        intent = db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.room_uuid == chatroom.uuid).one()
         assert intent.state == "completed"                       # log-and-undo: inline
         assert db.get_memory_claim(c.uuid).status == "rejected"  # gone immediately
         # the reply carries a /memory link so the operator can inspect it
-        reply = db.db.session.query(db.ChatMessage).filter(
+        reply = db.session.query(db.ChatMessage).filter(
             db.ChatMessage.room_uuid == chatroom.uuid,
             db.ChatMessage.kind == "message",
             db.ChatMessage.sender_uuid == ASSISTANT_UUID).order_by(
@@ -166,10 +166,10 @@ def test_forget_via_loop_executes_inline_and_is_undoable(app_ctx):
         assert undo_write_intent(intent.uuid).ok is True
         assert db.get_memory_claim(c.uuid).status == "active"
     finally:
-        db.db.session.query(AssistantWriteIntent).filter(
+        db.session.query(AssistantWriteIntent).filter(
             AssistantWriteIntent.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(AssistantRun).filter(
+        db.session.query(AssistantRun).filter(
             AssistantRun.room_uuid == chatroom.uuid).delete()
-        db.db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
-        db.db.session.query(MemoryClaim).filter_by(uuid=c.uuid).delete()
-        db.db.session.commit()
+        db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+        db.session.query(MemoryClaim).filter_by(uuid=c.uuid).delete()
+        db.session.commit()

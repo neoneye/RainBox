@@ -20,7 +20,7 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()  # release read locks before the next init_db ALTERs
+        db.session.rollback()  # release read locks before the next init_db ALTERs
         ctx.pop()
 
 

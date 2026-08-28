@@ -134,7 +134,7 @@ def _recover_assistant_journal(journal_id: UUID, reason: str) -> None:
         logger.exception(
             "failed to recover interrupted assistant journal %s", journal_id
         )
-        db.db.session.rollback()
+        db.session.rollback()
 
 
 def _recover_runs_from_previous_supervisor() -> None:
@@ -169,7 +169,7 @@ def supervisor_loop(stop_event: threading.Event) -> None:
                         logger.info("cron: fired %d due job(s)", n)
                 except Exception:
                     logger.exception("cron tick failed")
-                    db.db.session.rollback()
+                    db.session.rollback()
 
             for journal_row in db.fetch_unrouted_terminal():
                 found_work = True

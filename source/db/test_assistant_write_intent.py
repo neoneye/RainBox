@@ -19,7 +19,7 @@ def app_ctx():
     try:
         yield app
     finally:
-        db.db.session.rollback()
+        db.session.rollback()
         ctx.pop()
 
 
@@ -31,8 +31,8 @@ def run(app_ctx):
     try:
         yield r
     finally:
-        db.db.session.query(AssistantRun).filter(AssistantRun.uuid == r.uuid).delete()
-        db.db.session.commit()
+        db.session.query(AssistantRun).filter(AssistantRun.uuid == r.uuid).delete()
+        db.session.commit()
 
 
 def test_create_write_intent_is_proposed_with_payload_hash(run):
@@ -97,9 +97,9 @@ def test_intent_cascades_when_run_deleted(app_ctx):
         preview_text="p", room_uuid=r.room_uuid, agent_uuid=r.agent_uuid,
     )
     iid = intent.id
-    db.db.session.query(AssistantRun).filter(AssistantRun.uuid == r.uuid).delete()
-    db.db.session.commit()
-    assert db.db.session.get(AssistantWriteIntent, iid) is None
+    db.session.query(AssistantRun).filter(AssistantRun.uuid == r.uuid).delete()
+    db.session.commit()
+    assert db.session.get(AssistantWriteIntent, iid) is None
 
 
 def test_create_write_intent_accepts_completed_state_and_result(run):

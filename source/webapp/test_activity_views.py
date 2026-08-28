@@ -35,10 +35,10 @@ def client():
 def model(client) -> str:
     name = f"test-model-{uuid4().hex[:8]}"
     yield name
-    db.db.session.query(LlmCall).filter(LlmCall.model == name).delete(
+    db.session.query(LlmCall).filter(LlmCall.model == name).delete(
         synchronize_session=False
     )
-    db.db.session.commit()
+    db.session.commit()
 
 
 def add_call(model: str, minutes_ago: int = 1, **overrides):

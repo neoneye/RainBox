@@ -49,10 +49,10 @@ def fresh_subject() -> str:
 
 
 def _cleanup(subject: str) -> None:
-    db.db.session.query(MemoryClaim).filter(
+    db.session.query(MemoryClaim).filter(
         MemoryClaim.subject == subject
     ).delete()
-    db.db.session.commit()
+    db.session.commit()
 
 
 def test_memory_answer_returns_public_fact_and_never_the_secret(

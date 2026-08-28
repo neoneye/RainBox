@@ -766,7 +766,7 @@ def post_feedback(message_uuid: str) -> Response | tuple[Response, int]:
     - rating must be "upvote" or "downvote" (400)
     """
     msg_uuid = _parse_uuid(message_uuid)
-    msg = db.db.session.query(db.ChatMessage).filter_by(uuid=msg_uuid).first()
+    msg = db.session.query(db.ChatMessage).filter_by(uuid=msg_uuid).first()
     if msg is None:
         abort(404, "message not found")
     room = db.get_chatroom(msg.room_uuid)
@@ -807,7 +807,7 @@ def post_feedback(message_uuid: str) -> Response | tuple[Response, int]:
             "feedback succeeds"
         )
         try:
-            db.db.session.rollback()
+            db.session.rollback()
         except Exception:
             pass
     return jsonify({"uuid": str(fb.uuid), "rating": fb.rating}), 201

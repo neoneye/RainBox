@@ -18,14 +18,14 @@ def client():
     ctx.push()
     # Snapshot the raw app_setting values so teardown RESTORES operator config
     # exactly — never clobber the live, shared DB's real settings to NULL.
-    before = {r.key: r.value for r in db.db.session.query(db.AppSetting).all()}
+    before = {r.key: r.value for r in db.session.query(db.AppSetting).all()}
     try:
         yield app.test_client()
     finally:
-        db.db.session.rollback()
-        for row in db.db.session.query(db.AppSetting).all():
+        db.session.rollback()
+        for row in db.session.query(db.AppSetting).all():
             row.value = before.get(row.key)  # absent-before -> None (unset)
-        db.db.session.commit()
+        db.session.commit()
         ctx.pop()
 
 
@@ -243,7 +243,7 @@ def test_set_shields_stamps_facts_invalidated_when_changed(client):
     try:
         db.set_setting("qa.unlocked_shields", [])
         db.set_setting("qa.facts_invalidated_at", None)
-        db.db.session.commit()
+        db.session.commit()
         r = client.post("/settings/api/set",
                         json={"key": "qa.unlocked_shields", "value": ["alice.travel"]})
         assert r.status_code == 200
@@ -262,21 +262,21 @@ def test_set_shields_stamps_facts_invalidated_when_changed(client):
     finally:
         db.set_setting("qa.unlocked_shields", [])
         db.set_setting("qa.facts_invalidated_at", None)
-        db.db.session.commit()
+        db.session.commit()
 
 
 def test_set_non_shield_setting_does_not_stamp(client):
     import db
     try:
         db.set_setting("qa.facts_invalidated_at", None)
-        db.db.session.commit()
+        db.session.commit()
         r = client.post("/settings/api/set", json={"key": "cron.paused", "value": True})
         assert r.status_code == 200
         assert db.get_setting("qa.facts_invalidated_at") in (None, "")
     finally:
         db.set_setting("cron.paused", False)
         db.set_setting("qa.facts_invalidated_at", None)
-        db.db.session.commit()
+        db.session.commit()
 
 
 def test_repopulate_does_not_stamp_at_endpoint_level(client, monkeypatch):
@@ -289,13 +289,13 @@ def test_repopulate_does_not_stamp_at_endpoint_level(client, monkeypatch):
                         lambda: {"unchanged": 3, "updated": 0, "embedded": 0, "deleted": 0})
     try:
         db.set_setting("qa.facts_invalidated_at", None)
-        db.db.session.commit()
+        db.session.commit()
         r = client.post("/settings/api/repopulate_memory")
         assert r.status_code == 200
         assert db.get_setting("qa.facts_invalidated_at") in (None, "")
     finally:
         db.set_setting("qa.facts_invalidated_at", None)
-        db.db.session.commit()
+        db.session.commit()
 
 
 def test_rebuild_stamps_facts_invalidated(client, monkeypatch):
@@ -305,13 +305,13 @@ def test_rebuild_stamps_facts_invalidated(client, monkeypatch):
     monkeypatch.setattr(seed_memory, "rebuild_kb", lambda: {"entries": 1, "documents": 1})
     try:
         db.set_setting("qa.facts_invalidated_at", None)
-        db.db.session.commit()
+        db.session.commit()
         r = client.post("/settings/api/rebuild_memory")
         assert r.status_code == 200
         assert db.get_setting("qa.facts_invalidated_at"), "rebuild must stamp"
     finally:
         db.set_setting("qa.facts_invalidated_at", None)
-        db.db.session.commit()
+        db.session.commit()
 
 
 def test_a_choice_setting_renders_as_a_dropdown(client):

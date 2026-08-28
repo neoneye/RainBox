@@ -22,29 +22,29 @@ def app_ctx():
 
 def test_git_models_round_trip(app_ctx):
     fu, ru = uuid4(), uuid4()
-    db.db.session.add(GitFolder(uuid=fu, name="T-folder", parent_uuid=None, position=0))
-    db.db.session.add(GitRepo(
+    db.session.add(GitFolder(uuid=fu, name="T-folder", parent_uuid=None, position=0))
+    db.session.add(GitRepo(
         uuid=ru, name="T-repo", folder_uuid=fu,
         path="/tmp/t-repo", description="d", position=0,
     ))
-    db.db.session.commit()
+    db.session.commit()
     try:
-        f = db.db.session.execute(sa.select(GitFolder).where(GitFolder.uuid == fu)).scalar_one()
-        r = db.db.session.execute(sa.select(GitRepo).where(GitRepo.uuid == ru)).scalar_one()
+        f = db.session.execute(sa.select(GitFolder).where(GitFolder.uuid == fu)).scalar_one()
+        r = db.session.execute(sa.select(GitRepo).where(GitRepo.uuid == ru)).scalar_one()
         assert f.name == "T-folder" and f.parent_uuid is None
         assert r.path == "/tmp/t-repo" and r.folder_uuid == fu
         assert f.created_at and r.updated_at  # timestamp defaults fire
     finally:
-        db.db.session.execute(sa.delete(GitRepo).where(GitRepo.uuid == ru))
-        db.db.session.execute(sa.delete(GitFolder).where(GitFolder.uuid == fu))
-        db.db.session.commit()
+        db.session.execute(sa.delete(GitRepo).where(GitRepo.uuid == ru))
+        db.session.execute(sa.delete(GitFolder).where(GitFolder.uuid == fu))
+        db.session.commit()
 
 
 @pytest.fixture
 def git_tree_snapshot(app_ctx):
     """Snapshot the git tables, yield, then restore — non-destructive."""
     def grab(model):
-        rows = db.db.session.execute(sa.select(model)).scalars().all()
+        rows = db.session.execute(sa.select(model)).scalars().all()
         return [
             {c.name: getattr(r, c.name) for c in model.__table__.columns if c.name != "id"}
             for r in rows
@@ -53,22 +53,22 @@ def git_tree_snapshot(app_ctx):
     try:
         yield
     finally:
-        db.db.session.execute(sa.delete(GitRepo))
-        db.db.session.execute(sa.delete(GitFolder))
+        db.session.execute(sa.delete(GitRepo))
+        db.session.execute(sa.delete(GitFolder))
         for row in fsnap:
-            db.db.session.add(GitFolder(**row))
+            db.session.add(GitFolder(**row))
         for row in rsnap:
-            db.db.session.add(GitRepo(**row))
-        db.db.session.commit()
+            db.session.add(GitRepo(**row))
+        db.session.commit()
 
 
 @pytest.fixture
 def clean_tree(git_tree_snapshot):
     """An empty git tree for the duration of the test; git_tree_snapshot puts
     the operator's real rows back afterwards."""
-    db.db.session.execute(sa.delete(GitRepo))
-    db.db.session.execute(sa.delete(GitFolder))
-    db.db.session.commit()
+    db.session.execute(sa.delete(GitRepo))
+    db.session.execute(sa.delete(GitFolder))
+    db.session.commit()
     yield
 
 

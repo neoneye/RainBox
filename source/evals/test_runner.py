@@ -36,23 +36,23 @@ def fresh_tag() -> str:
 
 def _cleanup(prefix: str) -> None:
     run_uuids = [
-        r.uuid for r in db.db.session.query(EvalRun)
+        r.uuid for r in db.session.query(EvalRun)
         .filter(EvalRun.name.like(f"{prefix}%")).all()
     ]
     if run_uuids:
-        db.db.session.query(EvalResult).filter(
+        db.session.query(EvalResult).filter(
             EvalResult.eval_run_uuid.in_(run_uuids)
         ).delete(synchronize_session=False)
-        db.db.session.query(EvalRun).filter(
+        db.session.query(EvalRun).filter(
             EvalRun.uuid.in_(run_uuids)
         ).delete(synchronize_session=False)
-    db.db.session.query(EvalCase).filter(
+    db.session.query(EvalCase).filter(
         EvalCase.name.like(f"{prefix}%")
     ).delete(synchronize_session=False)
-    db.db.session.query(db.MemoryClaim).filter(
+    db.session.query(db.MemoryClaim).filter(
         db.MemoryClaim.subject == prefix
     ).delete(synchronize_session=False)
-    db.db.session.commit()
+    db.session.commit()
 
 
 def _case(
@@ -425,7 +425,7 @@ def test_cli_runs_a_single_case_and_exits_successfully(app_ctx, fresh_tag):
         # Commit so the subprocess (a separate Postgres connection) sees the
         # row. The fixtures already commit through their helpers; an extra
         # commit here is a no-op but defensive.
-        db.db.session.commit()
+        db.session.commit()
         result = subprocess.run(
             [
                 "venv/bin/python", "-m", "evals.runner",
@@ -454,7 +454,7 @@ def test_cli_failure_line_shows_case_name(app_ctx, fresh_tag):
             input={"actual_output": "no match"},
             expected={"must_include": ["never seen"]},
         )
-        db.db.session.commit()
+        db.session.commit()
         result = subprocess.run(
             [
                 "venv/bin/python", "-m", "evals.runner",

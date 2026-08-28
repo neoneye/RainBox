@@ -101,7 +101,7 @@ class GateDecision:
 
 def _load_results(run_uuid: UUID) -> dict[str, EvalResult]:
     rows = (
-        db.db.session.query(EvalResult)
+        db.session.query(EvalResult)
         .filter(EvalResult.eval_run_uuid == run_uuid)
         .all()
     )
@@ -112,7 +112,7 @@ def _load_case_meta(case_uuids: set[str]) -> dict[str, EvalCase]:
     if not case_uuids:
         return {}
     rows = (
-        db.db.session.query(EvalCase)
+        db.session.query(EvalCase)
         .filter(EvalCase.uuid.in_([UUID(u) for u in case_uuids]))
         .all()
     )
