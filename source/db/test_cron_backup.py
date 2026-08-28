@@ -32,7 +32,13 @@ def settings_unset(app_ctx):
     """Force the backup.* settings to unset for a deterministic baseline, then
     restore the operator's real values. Needed because these tests run against
     the shared live DB where the operator may have configured backup.repo etc.;
-    a test must never depend on (or destroy) that config."""
+    a test must never depend on (or destroy) that config.
+
+    Every test in this file wants it, including the ones that configure a
+    recipient through the environment: settings resolve DB -> env -> default,
+    so a stored row silently outranks the env var such a test just set, and
+    the test then passes while exercising the wrong source. Deleting the env
+    var is likewise not enough on its own -- a stored row survives it."""
     keys = ("backup.repo", "backup.age_recipient", "backup.git_push")
     sel = db.db.session.query(db.AppSetting).filter(db.AppSetting.key.in_(keys))
     before = {r.key: r.value for r in sel.all()}
@@ -100,7 +106,8 @@ def age_recipient(tmp_path_factory, monkeypatch):
     return recipient
 
 
-def test_fire_backup_job_writes_file_to_command_path(firing, tmp_path, age_recipient):
+def test_fire_backup_job_writes_file_to_command_path(
+        firing, tmp_path, age_recipient, settings_unset):
     job = firing(command=str(tmp_path), name="Nightly")
     run = db.fire_cron_job(job, trigger="manual")
 
@@ -130,7 +137,8 @@ def test_fire_backup_job_without_destination_posts_error(firing, monkeypatch, se
                for t in _cron_texts())
 
 
-def test_fire_backup_job_without_recipient_posts_error(firing, tmp_path, monkeypatch):
+def test_fire_backup_job_without_recipient_posts_error(
+        firing, tmp_path, monkeypatch, settings_unset):
     """Fail-closed via the cron path: a destination but no public key -> error
     event, no file written (never a plaintext fallback)."""
     monkeypatch.delenv("RAINBOX_BACKUP_AGE_RECIPIENT", raising=False)
@@ -176,7 +184,8 @@ def test_cron_backup_uses_db_settings_not_just_env(firing, tmp_path, tmp_path_fa
         db.db.session.commit()
 
 
-def test_cron_tick_fires_due_backup(firing, tmp_path, age_recipient):
+def test_cron_tick_fires_due_backup(
+        firing, tmp_path, age_recipient, settings_unset):
     from datetime import timedelta
 
     past = datetime.now(UTC) - timedelta(minutes=1)
