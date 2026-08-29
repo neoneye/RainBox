@@ -85,6 +85,37 @@ def test_translate_request_reads_as_its_source_language():
     assert d.confidence.get("en", 0.0) < _PRESENT
 
 
+EN_QUOTE = (
+    "the quick brown fox jumps over the lazy dog and then it runs away into "
+    "the forest where nobody can find it any more, which is the whole point"
+)
+
+
+def test_a_quoted_passage_is_content_not_the_message_s_language():
+    """A quote is what the operator is asking about, not what they are writing
+    in. By volume a long English quote swamps the Danish sentence wrapping it,
+    so reading the message whole answers English and the gate treats a Danish
+    turn as a switch."""
+    assert detect(f'Kan du forklare mig dette: "{EN_QUOTE}"').top == "da"
+    assert detect(f'Kan du forklare mig dette: "{EN_QUOTE} {EN_QUOTE}"').top == "da"
+    # The same in reverse: an English request quoting Danish is English.
+    assert detect(
+        'Can you explain this to me: "det virker ikke rigtigt her"').top == "en"
+
+
+def test_a_message_that_is_only_a_quote_is_read_whole():
+    """Nothing is left after the quote comes out, so there is nothing to read
+    but the quote itself."""
+    assert detect(f'"{EN_QUOTE}"').top == "en"
+
+
+def test_code_is_not_read_as_language():
+    """Backticked code is content too, and it drags the reading of the sentence
+    around it."""
+    d = detect("Hvorfor fejler `db.session.query(AppSetting)` her?")
+    assert d.top == "da"
+
+
 def test_an_undeclared_language_is_reported_honestly():
     """The detector is not restricted to any profile's languages, so a language
     nobody declared is reported as itself rather than force-fitted to a

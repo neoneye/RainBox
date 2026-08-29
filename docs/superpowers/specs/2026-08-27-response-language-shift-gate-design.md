@@ -120,6 +120,32 @@ now. Measured against the three cases that matter:
 The old scheme gets two of the three wrong; the vote scheme gets all three, and
 by clear margins rather than narrow ones.
 
+### Quoted passages are content
+
+A message can hold more than one language, and usually the extra one is not the
+operator's: `Kan du forklare mig dette: "standard arm orange"` is a Danish
+request about an English phrase. Detection reads a message whole, so it answers
+by volume — and volume belongs to whatever was pasted in. Measured, a Danish
+sentence wrapping a 150-character English quote scores `en` 1.00 and `da` 0.000,
+which reads a Danish turn as a switch, and a few such messages carry the window
+to English so the gate stops skipping for anyone who quotes habitually.
+
+Detection therefore runs on the message with quoted spans and code removed —
+matched double quotes, guillemets, curly quotes, backticks and fenced blocks —
+and falls back to the whole message when nothing is left, because then the
+quote *is* the message. Single quotes need four characters between them so that
+an apostrophe in `LLM'en` or `don't` does not open a span.
+
+This corrects both directions: the Danish request above reads `da`, and
+`Can you explain this to me: "det virker ikke rigtigt"` reads `en`, where
+reading it whole answered `da`. It also sharpens ordinary technical writing —
+`Hvorfor fejler ` + "`db.session.query(AppSetting)`" + ` her?` goes from `da`
+0.53 to 0.94 once the identifier stops being read as prose.
+
+Naming a language inside a quote still triggers the name check, which reads the
+raw text: quoting is not a way to smuggle an instruction past the gate, and the
+classifier is the right place to judge one.
+
 ### The shift test
 
     window_dominant = argmax over languages of

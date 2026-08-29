@@ -75,6 +75,15 @@ NAME_MIN_LETTERS = 4
 #: Tulu (`tcy`), Tigre (`tig`), Mende (`men`) and Karen (`kbj`) among them.
 NAME_LONG_CODE_MIN_LETTERS = 6
 
+#: Quoted passages and code: what the operator is asking ABOUT, not what they
+#: are writing IN. By volume a long quote swamps the sentence wrapping it, so
+#: reading a message whole answers the quote's language and a Danish turn
+#: carrying an English passage reads as a switch. Single quotes need four
+#: characters before they count, so an apostrophe in `LLM'en` or `don't` does
+#: not open one.
+_QUOTED_SPAN = re.compile(
+    r"```.*?```|`[^`]*`|\"[^\"]*\"|«[^»]*»|“[^”]*”|'[^']{4,}'", re.S)
+
 #: Runs of letters -- `\w` minus digits and the underscore, which Python
 #: has no positive class for, hence the double negation. Unicode-aware, so
 #: an endonym in any script tokenises the way an ASCII name does.
@@ -164,6 +173,21 @@ def _detect_cached(text: str) -> Detection:
         # with. Digits and punctuation are not language.
         return Detection(
             letters=0, language_poor=True, undetected=False, top=None)
+    unquoted = _QUOTED_SPAN.sub(" ", text)
+    if unquoted != text:
+        # Read what the operator wrote around the quote. If that alone carries
+        # language, it is the answer; if the quote was the whole message there
+        # is nothing left and the message is read whole instead.
+        outside = _detect_text(unquoted, _letter_count(unquoted))
+        if not outside.language_poor and not outside.undetected:
+            return Detection(
+                letters=letters, language_poor=False, undetected=False,
+                top=outside.top, confidence=outside.confidence)
+    return _detect_text(text, letters)
+
+
+def _detect_text(text: str, letters: int) -> Detection:
+    """Detect one string, reporting `letters` as the message's own count."""
     values = _detector().compute_language_confidence_values(text)
     confidence: dict[str, float] = {}
     for value in values:
