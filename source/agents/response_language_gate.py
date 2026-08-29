@@ -44,10 +44,16 @@ WINDOW_MESSAGES = 8
 #: WINDOW_MESSAGES messages outweighs any single message, so one message is
 #: at most a WINDOW_MESSAGES'th of a saturated window.
 WEIGHT_CAP = 200
-#: The request must carry at least this share of the window's language.
-#: Measured, same-language requests score 0.23-1.00 and different-language
-#: requests 0.00-0.05; this sits in that gap.
-SHIFT_FLOOR = 0.15
+#: The window's language must hold at least this fraction of the request's own
+#: strongest candidate. A ratio rather than an absolute share, because absolute
+#: confidence is not comparable across messages: short Latin text spreads
+#: thinly over the languages sharing its script, so `what do I do for work`
+#: scores only 0.106 for English and `kan du hjaelpe mig med det her` only
+#: 0.106 for Danish -- in both the window's own language is still the top
+#: candidate, and an absolute floor would call an unchanged conversation a
+#: shift. Measured, a request in the window's language scores 1.00 on this
+#: ratio every time, while a genuine change tops out at 0.311.
+SHIFT_RATIO = 0.5
 #: Shorter tokens are not put to the CLDR name lookup -- `the`, `a` and `to`
 #: all resolve to obscure language codes. This is the floor for a code that
 #: itself has a two-letter ISO 639-1 tag; a three-letter code needs
@@ -359,6 +365,10 @@ class GateDecision:
     window_dominant: str | None = None
     window_size: int = 0
     window_share: float | None = None
+    #: `window_share` as a fraction of the request's strongest candidate --
+    #: the number the shift test actually compares, so the threshold can be
+    #: retuned from recorded rows.
+    window_share_ratio: float | None = None
     request_top: str | None = None
     request_letters: int = 0
     named_language: str | None = None
@@ -374,6 +384,7 @@ class GateDecision:
             "window_dominant": self.window_dominant,
             "window_size": self.window_size,
             "window_share": self.window_share,
+            "window_share_ratio": self.window_share_ratio,
             "request_top": self.request_top,
             "request_letters": self.request_letters,
             "named_language": self.named_language,
@@ -487,17 +498,22 @@ def decide(
                 window_dominant=dominant,
                 window_size=size,
                 window_share=0.0,
+                window_share_ratio=0.0,
                 request_letters=request.letters,
                 detector_ms=elapsed(),
             )
         share = request.share(dominant)
-        shifted = share < SHIFT_FLOOR
+        # Scale-free: how much of its own best guess the request gives to the
+        # window's language, not how much it gives in absolute terms.
+        strongest = max(request.confidence.values())
+        shifted = share < SHIFT_RATIO * strongest
         return GateDecision(
             should_ask=shifted,
             trigger=TRIGGER_SHIFT if shifted else TRIGGER_REUSE,
             window_dominant=dominant,
             window_size=size,
             window_share=share,
+            window_share_ratio=(share / strongest) if strongest else 0.0,
             request_top=request.top,
             request_letters=request.letters,
             detector_ms=elapsed(),

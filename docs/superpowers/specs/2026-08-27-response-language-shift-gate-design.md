@@ -99,7 +99,8 @@ at 400 the single paste outvotes even a full window.
     window_dominant = argmax over languages of
         sum(confidence(language, message) * weight(message) for message in window)
 
-    shift = confidence(window_dominant, current_request) < SHIFT_FLOOR
+    strongest = max(confidence(language, current_request) for language in ...)
+    shift = confidence(window_dominant, current_request) < SHIFT_RATIO * strongest
 
 `confidence` is lingua's full distribution
 (`compute_language_confidence_values`), not just the winning label.
@@ -124,10 +125,28 @@ changed language, and every flap is a spurious call. The confidence in a
 | Finnish prose | 0.00 | 0.00 |
 
 Reading the column for the window's own language: same-language requests score
-0.23-1.00, different-language requests score 0.00-0.05. `SHIFT_FLOOR = 0.15`
-sits in that gap. The two cases the design turns on both land correctly —
-Danish with English nouns in a Danish window scores 0.38 and skips;
-`translate to english: <Danish>` in an English window scores 0.05 and asks.
+0.23-1.00, different-language requests 0.00-0.05.
+
+**The comparison is a ratio, not an absolute floor**, because those absolute
+numbers are not comparable between messages. Short Latin text spreads its
+confidence across every language sharing the script, so the correct answer
+scores low for reasons that have nothing to do with whether the language
+changed: `what do I do for work` gives English only 0.106, and `kan du hjaelpe
+mig med det her` gives Danish only 0.106. An absolute floor calls both of those
+a shift and spends a model call on an unchanged conversation.
+
+What stays stable is how much of its *own best guess* the request gives to the
+window's language. Measured across English, Danish, Spanish and Chinese
+windows, a request in the window's language scores **1.00** on that ratio every
+time — the window's language is simply the request's top candidate — while a
+genuine change tops out at **0.311** (English against a Danish window, which
+share a script and some vocabulary). `SHIFT_RATIO = 0.5` sits in that gap.
+
+The two cases the design turns on both land correctly: Danish with English
+nouns in a Danish window scores 1.00 and skips, even though its absolute Danish
+share is only 0.38 and its top label flaps toward Norwegian;
+`translate to english: <Danish>` in an English window scores 0.05 absolute and
+asks.
 
 In the assembled gate that translate request is in fact caught one step
 earlier, by the name check below: the text contains the token `english`. Both
@@ -301,8 +320,8 @@ Run `response_language_classifier` when **any** of:
 2. the request names a language (CLDR names and endonyms);
 3. the profile's currently declared languages differ from the snapshot taken
    when the reused classification was recorded;
-4. the request's confidence in the window's dominant language is below
-   `SHIFT_FLOOR`;
+4. the request gives the window's dominant language less than `SHIFT_RATIO` of
+   its own strongest candidate;
 5. the window contains no qualifying messages;
 6. the detector raised, or was asked and found no language.
 
@@ -332,7 +351,7 @@ restricts lingua to the tags in `languages.rows` for accuracy on short text, and
 accepts that unknown languages force-fit to a declared tag; the margin rule was
 that force-fit's mitigation. Unrestricted, a Finnish request scores `fi` 1.00
 and — measured — assigns 0.00 to both English and Danish, so it falls below
-`SHIFT_FLOOR` for any window and asks. The force-fit trap closes by
+`SHIFT_RATIO` for any window and asks. The force-fit trap closes by
 construction rather than by a threshold.
 
 Measured on this repo's Python with `lingua-language-detector==2.2.0`:
@@ -492,7 +511,7 @@ holds for every trigger rather than for five of six.
 
 `LETTER_FLOOR = 16`, `CONFIDENCE_FLOOR = 0.20`, `WINDOW_MESSAGES = 8`,
 `WEIGHT_CAP = 200` and
-`SHIFT_FLOOR = 0.15` are starting values. `SHIFT_FLOOR` and `WEIGHT_CAP` are
+`SHIFT_RATIO = 0.5` are starting values. `SHIFT_RATIO` and `WEIGHT_CAP` are
 each placed against a measured crossover; the other two are judgement, and all
 four are tuned against runs where the switch was on rather than fixed here.
 

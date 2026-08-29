@@ -9,7 +9,7 @@ from agents.response_language_gate import (
     Detection,
     GateDecision,
     LETTER_FLOOR,
-    SHIFT_FLOOR,
+    SHIFT_RATIO,
     TRIGGER_DETECTOR_ERROR,
     TRIGGER_EMPTY_WINDOW,
     TRIGGER_NAMED_LANGUAGE,
@@ -23,6 +23,10 @@ from agents.response_language_gate import (
     names_a_language,
     window_dominant,
 )
+
+#: A language either shows up in a message's shares or it does not; these
+#: detection tests only need a bound that tells those apart.
+_PRESENT = 0.15
 
 # Measured cases from the design spec. The Danish ones avoid non-ASCII where
 # the spelling allows it, so a terminal or editor cannot silently change what
@@ -55,12 +59,12 @@ def test_detect_reports_the_share_of_each_language():
     english = detect(EN_PROSE)
     assert english.top == "en"
     assert english.confidence["en"] >= 0.9
-    assert english.confidence.get("da", 0.0) < SHIFT_FLOOR
+    assert english.confidence.get("da", 0.0) < _PRESENT
 
     danish = detect(DA_PROSE)
     assert danish.top == "da"
-    assert danish.confidence["da"] >= SHIFT_FLOOR
-    assert danish.confidence.get("en", 0.0) < SHIFT_FLOOR
+    assert danish.confidence["da"] >= _PRESENT
+    assert danish.confidence.get("en", 0.0) < _PRESENT
 
 
 def test_danish_with_english_nouns_keeps_its_danish_share():
@@ -68,8 +72,8 @@ def test_danish_with_english_nouns_keeps_its_danish_share():
     Danish confuses with Norwegian Bokmal -- but Danish's own share stays well
     clear of the floor, which is why the gate tests the share."""
     d = detect(DA_WITH_ENGLISH_NOUNS)
-    assert d.confidence["da"] >= SHIFT_FLOOR
-    assert d.confidence.get("en", 0.0) < SHIFT_FLOOR
+    assert d.confidence["da"] >= _PRESENT
+    assert d.confidence.get("en", 0.0) < _PRESENT
 
 
 def test_translate_request_reads_as_its_source_language():
@@ -77,8 +81,8 @@ def test_translate_request_reads_as_its_source_language():
     know that, and must not pretend to: it reports Danish, which is a shift
     away from an English window and therefore asks the classifier."""
     d = detect(DA_TRANSLATE_REQUEST)
-    assert d.confidence["da"] >= SHIFT_FLOOR
-    assert d.confidence.get("en", 0.0) < SHIFT_FLOOR
+    assert d.confidence["da"] >= _PRESENT
+    assert d.confidence.get("en", 0.0) < _PRESENT
 
 
 def test_an_undeclared_language_is_reported_honestly():
@@ -88,8 +92,8 @@ def test_an_undeclared_language_is_reported_honestly():
     asks."""
     d = detect(FI_PROSE)
     assert d.top == "fi"
-    assert d.confidence.get("en", 0.0) < SHIFT_FLOOR
-    assert d.confidence.get("da", 0.0) < SHIFT_FLOOR
+    assert d.confidence.get("en", 0.0) < _PRESENT
+    assert d.confidence.get("da", 0.0) < _PRESENT
 
 
 def test_a_low_confidence_top_is_still_a_usable_share():
@@ -97,7 +101,7 @@ def test_a_low_confidence_top_is_still_a_usable_share():
     has to sit under that, or ordinary debugging messages read as shifts."""
     d = detect(EN_DEBUGGING)
     assert d.top == "en"
-    assert d.confidence["en"] >= SHIFT_FLOOR
+    assert d.confidence["en"] >= _PRESENT
 
 
 def test_short_text_is_not_put_to_the_detector():
@@ -327,7 +331,7 @@ def test_an_unchanged_conversation_reuses():
     assert d.should_ask is False
     assert d.trigger == TRIGGER_REUSE
     assert d.window_dominant == "en"
-    assert d.window_share is not None and d.window_share >= SHIFT_FLOOR
+    assert d.window_share is not None and d.window_share >= _PRESENT
 
 
 def test_danish_technical_writing_in_a_danish_window_reuses():
@@ -336,6 +340,22 @@ def test_danish_technical_writing_in_a_danish_window_reuses():
     d = _decide(DA_WINDOW, DA_WITH_ENGLISH_NOUNS)
     assert d.should_ask is False
     assert d.trigger == TRIGGER_REUSE
+
+
+def test_a_short_message_in_the_same_language_reuses():
+    """Short Latin text spreads its confidence thinly across the languages that
+    share the script, so an absolute floor reads an unchanged conversation as a
+    shift. `what do I do for work` scores 0.106 for English and `kan du
+    hjaelpe mig med det her` 0.106 for Danish -- in both the window's own
+    language is still the strongest candidate by a wide margin, which is what
+    the test has to read."""
+    english = _decide([EN_PROSE, "tell me where I live"],
+                      "what do I do for work")
+    assert english.should_ask is False, english.trigger
+
+    danish = _decide([DA_PROSE, DA_WITH_ENGLISH_NOUNS],
+                     "kan du hjaelpe mig med det her")
+    assert danish.should_ask is False, danish.trigger
 
 
 def test_a_change_of_language_asks():
@@ -347,7 +367,7 @@ def test_a_change_of_language_asks():
     assert d.should_ask is True
     assert d.trigger == TRIGGER_SHIFT
     assert d.window_dominant == "en"
-    assert d.window_share is not None and d.window_share < SHIFT_FLOOR
+    assert d.window_share is not None and d.window_share < _PRESENT
 
 
 DA_TRANSLATE_REQUEST_UNNAMED = (
