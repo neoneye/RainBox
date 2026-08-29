@@ -84,15 +84,41 @@ neither is language-poor: it stays out of the window and, as the current
 request, out of the shift test entirely, so an acknowledgement never spends a
 model call.
 
-Each qualifying message contributes `min(letter_count, WEIGHT_CAP)` weight, so
-one long paste cannot define the window on its own. The cap bounds a long
-message's influence rather than neutralising it, and `WEIGHT_CAP = 200` is
-where that bound becomes real: measured against a 3560-letter English paste
-(p(en) 1.00, so 200 after capping), a saturated eight-message Danish window
-scores 243 and outvotes it, while three short Danish messages score 96 and do
-not — which is correct, because 3560 letters of English is more language
-evidence than three short sentences. Above ~280 the cap fails its own purpose:
-at 400 the single paste outvotes even a full window.
+**Every message casts one vote, scaled to its own strongest candidate, and
+votes decay with age.** Neither raw confidence nor length compares across
+messages, and weighting by either lets the window answer for a conversation
+that has already moved on.
+
+Confidence is not comparable between languages. Danish detects at 1.00 where
+an equally clear English sentence reaches 0.375, because English shares its
+script and much of its vocabulary with more of the field. Summing raw
+confidence therefore counts a Danish message roughly three times as heavily as
+an English one that is just as unambiguous.
+
+Length is not comparable either. It was included on the reasoning that a long
+message says more about the conversation's language than a short one — but a
+long passage the operator quoted is not better evidence of what they are
+writing in than the sentence they just typed. Measured on a real conversation
+that had switched to English three messages earlier, one 152-letter Danish
+message at p 1.00 scored 152 against 63 for the three English messages after
+it, so the window kept answering Danish and every turn asked. Capping how much length any one
+message could contribute bounds that, but only loosely: a cap tight enough to
+stop a long paste winning is also tight enough that ordinary long messages stop
+counting for more than short ones, which is the whole reason length was there.
+
+Scaling each message's shares to its own top candidate makes one message one
+vote regardless of script or length, and `WINDOW_HALF_LIFE = 3.0` messages
+decays those votes so the window tracks what the conversation is running in
+now. Measured against the three cases that matter:
+
+| window | confidence x length | one vote, decayed |
+|---|---|---|
+| switched to English 3 messages ago | `da` ✗ | `en` ✓ |
+| Danish throughout | `da` ✓ | `da` ✓ |
+| one long English paste among Danish | `en` ✗ | `da` ✓ |
+
+The old scheme gets two of the three wrong; the vote scheme gets all three, and
+by clear margins rather than narrow ones.
 
 ### The shift test
 
@@ -510,9 +536,9 @@ classification was resolved, the next turn asks, and the recovery claim above
 holds for every trigger rather than for five of six.
 
 `LETTER_FLOOR = 16`, `CONFIDENCE_FLOOR = 0.20`, `WINDOW_MESSAGES = 8`,
-`WEIGHT_CAP = 200` and
-`SHIFT_RATIO = 0.5` are starting values. `SHIFT_RATIO` and `WEIGHT_CAP` are
-each placed against a measured crossover; the other two are judgement, and all
+`WINDOW_HALF_LIFE = 3.0` and
+`SHIFT_RATIO = 0.5` are starting values. `SHIFT_RATIO` and `CONFIDENCE_FLOOR`
+are each placed against a measured gap; the other two are judgement, and all
 four are tuned against runs where the switch was on rather than fixed here.
 
 ## Failure handling

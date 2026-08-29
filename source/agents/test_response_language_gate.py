@@ -208,6 +208,42 @@ def test_the_window_keeps_only_the_most_recent_messages():
     assert size == WINDOW_MESSAGES
 
 
+EN_SWITCH = [
+    "hvor bor jeg henne af?",
+    "du skrev en meget lang joke paa dansk om skelettet der ikke ville "
+    "slaas med nogen som helst, og jeg forstod den simpelthen ikke rigtigt",
+    "can you say something funny about AI and testing",
+    "explain the joke",
+    "explain the joke, I meant the one about the skeleton",
+]
+
+
+def test_the_window_follows_a_conversation_that_switched():
+    """Three English messages after a long, confident Danish one. Danish
+    detects at 1.00 where English rarely clears 0.45, and the Danish message is
+    the longest, so scoring by confidence times length keeps answering Danish
+    however long the operator writes in English -- and every turn asks."""
+    dominant, _ = window_dominant(EN_SWITCH)
+    assert dominant == "en"
+
+
+def test_a_confident_language_does_not_outvote_a_diffuse_one():
+    """Detector confidence is not comparable between languages: a Danish
+    message scores 1.00 where an equally clear English one scores 0.375,
+    because English shares its script and vocabulary with more of the field. A
+    message votes for its own best guess, so both count once."""
+    da = detect("det virker ikke rigtigt")
+    en = detect("explain the joke")
+    assert da.confidence["da"] > en.confidence["en"] * 2
+    # One Danish message must not outweigh two English ones.
+    dominant, _ = window_dominant([
+        "det virker ikke rigtigt",
+        "explain the joke, I meant the one about the skeleton",
+        "can you say something funny about AI and testing",
+    ])
+    assert dominant == "en"
+
+
 def test_a_long_message_cannot_single_handedly_define_the_window():
     """Weight is capped, so one long paste counts as several messages rather
     than as the whole conversation: a full window outvotes it."""
