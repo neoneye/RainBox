@@ -12,12 +12,15 @@ import user_profile
 from agents.assistant import (
     AssistantAgent,
     FACTS_INVALIDATION_NOTICE,
+    _combined_context_notice,
     _demote_trailing_context_marker,
+    _facts_invalidation_notice,
     _is_context_marker,
 )
 from agents.config import ASSISTANT_UUID
 
-KEYS = ("profile.current", "qa.facts_invalidated_at", "profile.current_changed_at")
+KEYS = ("profile.current", "qa.facts_invalidated_at",
+        "qa.facts_invalidated_reason", "profile.current_changed_at")
 
 
 @pytest.fixture
@@ -283,3 +286,68 @@ def test_demote_trailing_context_marker_noop_without_trailing_marker():
     a = {"sender_type": "human", "text": "a", "kind": "message", "meta": {}}
     b = {"sender_type": "agent", "text": "b", "kind": "message", "meta": {}}
     assert _demote_trailing_context_marker([a, b]) == [a, b]
+
+
+# ---- the notice names which thing moved ------------------------------------
+
+def test_facts_notice_names_the_cause_that_stamped_it(room):
+    """"A setting changed" is true of every cause and recognisable as none of
+    them: an operator who had just edited question_answer.jsonl read it as a
+    setting they had not touched. Each cause gets its own wording, so the
+    sentence identifies the operator's own action back to them."""
+    agent = _agent()
+    db.mark_facts_invalidated("qa_sync")
+    assert _post(agent, room.uuid) is True
+    text = _markers(room.uuid)[-1]["text"]
+    assert "question_answer.jsonl" in text
+    assert "changed on disk" in text
+    assert "re-synced from it" in text
+
+    db.mark_facts_invalidated("shields")
+    assert _post(agent, room.uuid) is True
+    text = _markers(room.uuid)[-1]["text"]
+    assert "shield settings changed" in text
+    assert "question_answer.jsonl" not in text
+
+    db.mark_facts_invalidated("rebuild")
+    assert _post(agent, room.uuid) is True
+    text = _markers(room.uuid)[-1]["text"]
+    assert "rebuilt from its source files" in text
+
+    # Every wording keeps the instruction that makes the notice actionable.
+    for m in _markers(room.uuid):
+        assert "Re-check any fact with memory_query" in m["text"]
+
+
+def test_unknown_cause_falls_back_to_the_generic_wording(room):
+    """Stamps written before the causes existed carry no reason — the notice
+    must still post, just without naming a cause it does not know."""
+    agent = _agent()
+    db.mark_facts_invalidated()
+    assert _post(agent, room.uuid) is True
+    assert _markers(room.uuid)[-1]["text"] == FACTS_INVALIDATION_NOTICE
+    assert _facts_invalidation_notice(None) == FACTS_INVALIDATION_NOTICE
+    assert _facts_invalidation_notice("no-such-cause") == FACTS_INVALIDATION_NOTICE
+
+
+def test_stamping_a_cause_replaces_the_previous_one(room):
+    """The reason describes the stamp beside it, so a later cause must not
+    leave the previous one behind for the next notice to quote."""
+    db.mark_facts_invalidated("qa_sync")
+    assert db.get_setting("qa.facts_invalidated_reason") == "qa_sync"
+    db.mark_facts_invalidated()
+    assert db.get_setting("qa.facts_invalidated_reason") is None
+
+
+def test_combined_notice_names_the_facts_cause_too(room):
+    """A profile switch and a Q&A change pending together still say which Q&A
+    change it was."""
+    agent = _agent()
+    db.set_setting("profile.current", None)
+    db.mark_facts_invalidated("qa_sync")
+    db.set_setting("profile.current_changed_at", "2026-08-30T00:00:00+00:00")
+    assert _post(agent, room.uuid) is True
+    text = _markers(room.uuid)[-1]["text"]
+    assert "question_answer.jsonl" in text
+    assert "profile" in text
+    assert _combined_context_notice(None, "shields").count("shield") == 1

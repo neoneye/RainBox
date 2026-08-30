@@ -1002,14 +1002,49 @@ returned ok. Reading a task is not moving it. If you have not performed the acti
 yet, perform it now — do not `reply` claiming a result you have not produced."""
 
 
+# What every facts notice closes with: the instruction that makes it useful
+# rather than merely informative.
+_FACTS_RECHECK_TAIL: str = (
+    "Re-check any fact with memory_query before relying on it — earlier "
+    "answers in this conversation may be out of date."
+)
+
 # Posted into a room once after a shield/Q&A change so the model re-checks facts
 # instead of reusing an earlier answer from the transcript.
+#
+# The notice names its cause. "A setting changed" is true of every cause and
+# recognisable as none of them: an operator who had just edited
+# question_answer.jsonl read it as a setting they had not touched, and went
+# looking for one. Each head below says which thing moved, so the sentence
+# identifies the operator's own action back to them.
+_FACTS_CAUSE_HEADS: dict[str, str] = {
+    "qa_sync": (
+        "Notice: a Q&A source file (question_answer.jsonl) changed on disk, so "
+        "the knowledge base was re-synced from it and stored facts may differ "
+        "from earlier in this conversation."
+    ),
+    "shields": (
+        "Notice: the Q&A shield settings changed, so which stored facts are "
+        "visible may differ from earlier in this conversation."
+    ),
+    "rebuild": (
+        "Notice: the Q&A knowledge base was rebuilt from its source files, so "
+        "stored facts may differ from earlier in this conversation."
+    ),
+}
+
+# The wording for a stamp whose cause is unknown — one written before the
+# causes existed, or by a caller that could not name one.
 FACTS_INVALIDATION_NOTICE: str = (
     "Notice: a setting changed since earlier in this conversation, so stored "
-    "facts and the Q&A knowledge base may now differ. Re-check any fact with "
-    "memory_query before relying on it — earlier answers in this conversation "
-    "may be out of date."
+    "facts and the Q&A knowledge base may now differ. " + _FACTS_RECHECK_TAIL
 )
+
+
+def _facts_invalidation_notice(reason: str | None) -> str:
+    """The facts-only marker text for a stamp written by `reason`."""
+    head = _FACTS_CAUSE_HEADS.get(reason or "")
+    return f"{head} {_FACTS_RECHECK_TAIL}" if head else FACTS_INVALIDATION_NOTICE
 
 
 def _profile_switch_notice(label: str | None) -> str:
@@ -1026,14 +1061,27 @@ def _profile_switch_notice(label: str | None) -> str:
             "answer.")
 
 
-def _combined_context_notice(label: str | None) -> str:
+# The facts half of a combined notice, as a clause that follows "…, and".
+# Same causes as _FACTS_CAUSE_HEADS, phrased to sit mid-sentence.
+_FACTS_CAUSE_CLAUSES: dict[str, str] = {
+    "qa_sync": ("a Q&A source file (question_answer.jsonl) changed on disk, so "
+                "the knowledge base was re-synced from it"),
+    "shields": "the Q&A shield settings also changed",
+    "rebuild": "the Q&A knowledge base was also rebuilt from its source files",
+}
+_FACTS_CLAUSE_FALLBACK: str = "stored facts or the Q&A knowledge base also changed"
+
+
+def _combined_context_notice(label: str | None, reason: str | None = None) -> str:
     """One marker acknowledging two distinct pending events: a profile switch
-    AND a separate facts/Q&A invalidation."""
+    AND a separate facts/Q&A invalidation. The facts half names its cause, the
+    same way the facts-only notice does."""
     if label:
         head = f"Notice: the active profile switched to {label}, and"
     else:
         head = "Notice: the active profile was unset, and"
-    return (f"{head} stored facts or the Q&A knowledge base also changed. "
+    clause = _FACTS_CAUSE_CLAUSES.get(reason or "", _FACTS_CLAUSE_FALLBACK)
+    return (f"{head} {clause}. "
             "Identity, formatting, and knowledge calibration now follow the "
             "active profile; room history is preserved. Re-check "
             "profile-dependent assumptions and re-read facts with "
@@ -4636,11 +4684,12 @@ class AssistantAgent(ModelGroupAgent):
         the facts stamp): a cause is pending when no prior room marker
         carries its exact current stamp. One marker checkpoints both current
         stamps, so several changes before a room runs coalesce to the latest
-        state. The text is the generic facts notice for a facts-only event,
-        the tailored profile notice for a switch-only event, or one combined
+        state. The text is the facts notice for a facts-only event, the
+        tailored profile notice for a switch-only event, or one combined
         notice when both are pending — in either order of occurrence, an
         unacknowledged Q&A event is never silently absorbed by a later
-        switch. Returns True when a marker was posted (the caller must then
+        switch. Both facts wordings name the cause the stamp recorded, so a
+        notice the operator's own JSONL edit produced says so. Returns True when a marker was posted (the caller must then
         restore the progress bubble the terminal-kind post just reaped).
         Best-effort: a failure here must never break the turn."""
         try:
@@ -4660,12 +4709,13 @@ class AssistantAgent(ModelGroupAgent):
                 return False
 
             label = str((context.profile or {}).get("name") or "").strip() or None
+            reason = context.facts_invalidated_reason
             if profile_pending and facts_pending:
-                text = _combined_context_notice(label)
+                text = _combined_context_notice(label, reason)
             elif profile_pending:
                 text = _profile_switch_notice(label)
             else:
-                text = FACTS_INVALIDATION_NOTICE
+                text = _facts_invalidation_notice(reason)
             meta = {
                 "context_invalidation": True,
                 "facts_invalidation": facts or None,

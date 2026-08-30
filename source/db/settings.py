@@ -213,6 +213,19 @@ SETTINGS: dict[str, Setting] = {
                     "posts a one-time 're-check facts' notice into a room the "
                     "next time it runs there after this changes.",
     ),
+    "qa.facts_invalidated_reason": Setting(
+        "qa.facts_invalidated_reason", None, "string", None, internal=True,
+        description="Which cause wrote the stamp above, as a short key the "
+                    "assistant turns into the notice's wording: 'qa_sync' "
+                    "(a Q&A source file changed on disk and the knowledge "
+                    "base was re-synced from it), 'shields' (the unlocked "
+                    "shield list changed), 'rebuild' (the knowledge base was "
+                    "rebuilt from Settings). A notice naming its cause is the "
+                    "difference between the operator recognising their own "
+                    "JSONL edit and hunting for a setting nobody touched. "
+                    "Unset on a stamp written before the causes existed, "
+                    "which reads as the generic wording; not operator-facing.",
+    ),
     "assistant.formatting_guide": Setting(
         "assistant.formatting_guide", None, "bool", False,
         description="Inject the active profile's deterministic formatting "
@@ -430,15 +443,20 @@ def set_current_profile(value: object) -> str | None:
     return stamp
 
 
-def mark_facts_invalidated() -> str:
-    """Stamp `qa.facts_invalidated_at` with the current time and return it.
+def mark_facts_invalidated(reason: str | None = None) -> str:
+    """Stamp `qa.facts_invalidated_at` with the current time and return it,
+    recording `reason` as the cause in `qa.facts_invalidated_reason`.
 
     Called when a change can stale prior facts (a shield toggle or a Q&A
     repopulate). The assistant compares this against the markers already in a
-    room to post a one-time re-check-facts notice. App context required; the
-    value is persisted immediately via set_setting."""
+    room to post a one-time re-check-facts notice, and turns the cause into
+    that notice's wording — so every production caller passes one. `reason`
+    stays optional only so a stamp can still be written where the cause is
+    genuinely unknown; that reads as the generic wording. App context
+    required; both values are persisted immediately via set_setting."""
     stamp = datetime.now(UTC).isoformat()
     set_setting("qa.facts_invalidated_at", stamp)
+    set_setting("qa.facts_invalidated_reason", reason or None)
     return stamp
 
 

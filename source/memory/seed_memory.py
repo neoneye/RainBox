@@ -1128,11 +1128,16 @@ def _sync_locked(vs: PGVectorStore) -> tuple[dict[str, int], bool]:
 
 def _stamp_facts_if_changed(counts: dict[str, int]) -> None:
     """Post the one-time re-check-facts signal, but only when the sync actually
-    changed something — a clean reconcile stays silent."""
+    changed something — a clean reconcile stays silent.
+
+    The cause recorded is "qa_sync" for both callers of this function: the
+    automatic reconcile in _ensure_populated and the Settings 'Repopulate'
+    button do the same thing for the same reason — a source file on disk no
+    longer matches the table — and the notice reads the same either way."""
     if not (counts["updated"] or counts["embedded"] or counts["deleted"]):
         return
     try:
-        db.mark_facts_invalidated()
+        db.mark_facts_invalidated("qa_sync")
     except Exception:  # pragma: no cover — no app context; the sync succeeded
         logger.warning("sync_kb: could not stamp qa.facts_invalidated_at", exc_info=True)
 

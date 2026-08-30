@@ -197,7 +197,8 @@ turn.
   only its own block, never the turn.
 - **One declared-profile context snapshot per turn.**
   `user_profile.current_profile_context()` reads `profile.current`,
-  `qa.facts_invalidated_at`, and `profile.current_changed_at` in one
+  `qa.facts_invalidated_at`, its cause (`qa.facts_invalidated_reason`), and
+  `profile.current_changed_at` in one
   statement and resolves the profile once; the room marker and all three
   declared blocks render from that snapshot, and the handle path performs no
   second settings lookup — a switch committed mid-turn applies wholly to the
@@ -208,9 +209,12 @@ turn.
   cause — a facts/Q&A invalidation (`qa.facts_invalidated_at`) or a
   `profile.current` switch (`profile.current_changed_at`) — has not been
   acknowledged in this room, the assistant posts one visible notice: the
-  generic re-check-facts text for a facts-only event, a tailored notice for
+  re-check-facts text for a facts-only event, a tailored notice for
   a profile switch, or a combined notice when distinct events are both
-  pending. The two stamps are written independently (`set_current_profile`
+  pending. Both facts wordings name the cause the stamp recorded — a source
+  file changed on disk, a shield toggle, a rebuild — so the operator can tell
+  their own `question_answer.jsonl` edit from a setting they never touched; a
+  stamp with no recorded cause reads as the generic text. The two stamps are written independently (`set_current_profile`
   never touches the facts stamp — a switch changes the declared-profile
   blocks, not the Q&A base), so a Q&A event followed by a switch still
   surfaces as combined in either order. The marker's `meta` checkpoints both

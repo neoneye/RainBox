@@ -650,6 +650,15 @@ this:
   room via its exact stamp in the marker's `meta` (`facts_invalidation` /
   `profile_context_changed`), and no history is removed — the operator's
   message stays the current one.
+- The notice names which thing moved. `mark_facts_invalidated` records the
+  cause alongside the stamp in `qa.facts_invalidated_reason` — `qa_sync` (a
+  source file changed on disk and the table was re-synced from it), `shields`,
+  or `rebuild` — and the assistant turns that key into the wording. The
+  automatic reconcile and the Repopulate button share `qa_sync`: they do the
+  same thing for the same reason. A stamp with no cause reads as the generic
+  "a setting changed" text, which is what every notice used to say — an
+  operator who had just edited `question_answer.jsonl` read that as a setting
+  they had not touched, and went looking for one.
 
 This is a **soft** signal by design, not a hard boundary: it nudges the model to
 re-query but leaves the earlier answer in history. A hard guarantee would mean
@@ -690,7 +699,7 @@ blocked until an authenticated operator control plane exists.
 | Chat query agents | `agents/query.py`, `agents/query_router.py`, `agents/query_filter_router.py` |
 | Base data | `data/question_answer.jsonl` |
 | pgvector table | `data_seed_memory` |
-| Settings | `qa.unlocked_shields`, `customize.dir`, `qa.facts_invalidated_at` |
+| Settings | `qa.unlocked_shields`, `customize.dir`, `qa.facts_invalidated_at`, `qa.facts_invalidated_reason` |
 | Constants | `TOP_K_NODES=50`, `TOP_K_VECTOR=5`, `TOP_K_FULLTEXT=5`, `MIN_SCORE=0.60`, `MIN_MARGIN=0.05`, `TOP_K_FILTER=5`, `FILTER_KEEP_THRESHOLD=4`, `FILTER_KEEP_TOP_N=2`, `FILTER_KEEP_TOP_FLOOR=2` |
 | Inspection page | `/memory/developer` (`webapp/memory_developer_views.py`, `static/memory_developer.js`) |
 | Tests | `memory/test_seed_memory_errors.py`, `memory/test_seed_shields.py`, `memory/test_seed_documents.py`, `memory/test_seed_sync.py` |

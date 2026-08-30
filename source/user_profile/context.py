@@ -25,7 +25,7 @@ from db.models import AppSetting, db as sqla
 logger = logging.getLogger(__name__)
 
 _CONTEXT_KEYS = ("profile.current", "qa.facts_invalidated_at",
-                 "profile.current_changed_at")
+                 "qa.facts_invalidated_reason", "profile.current_changed_at")
 
 
 @dataclass(frozen=True)
@@ -36,13 +36,18 @@ class ProfileContext:
     profile_uuid: UUID | None = None
     profile: dict[str, Any] | None = field(default=None)
     facts_invalidated_at: str | None = None
+    # Which cause wrote the facts stamp ('qa_sync', 'shields', 'rebuild'), so
+    # the room notice can name it instead of saying "a setting changed" about
+    # an edit the operator made to a file themselves. None on a stamp written
+    # before the causes existed.
+    facts_invalidated_reason: str | None = None
     profile_changed_at: str | None = None
 
 
 def current_profile_context() -> ProfileContext:
-    """Read `profile.current`, `qa.facts_invalidated_at`, and
+    """Read `profile.current`, `qa.facts_invalidated_at`, its cause, and
     `profile.current_changed_at` in one database statement, then resolve the
-    pointer to one profile dict. All three settings are DB-only (no env, no
+    pointer to one profile dict. All four settings are DB-only (no env, no
     default), so the raw rows are the effective values; NULL/"" reads as
     unset. App context required."""
     rows = sqla.session.execute(
@@ -71,5 +76,6 @@ def current_profile_context() -> ProfileContext:
         profile_uuid=profile_uuid,
         profile=profile,
         facts_invalidated_at=values.get("qa.facts_invalidated_at"),
+        facts_invalidated_reason=values.get("qa.facts_invalidated_reason"),
         profile_changed_at=values.get("profile.current_changed_at"),
     )

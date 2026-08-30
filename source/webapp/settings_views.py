@@ -471,7 +471,7 @@ def settings_set_api() -> tuple[Response, int] | Response:
         db.session.rollback()
         return jsonify({"ok": False, "error": str(exc)}), 400
     if key == "qa.unlocked_shields" and db.get_setting(key) != old_shields:
-        db.mark_facts_invalidated()
+        db.mark_facts_invalidated("shields")
     return jsonify({"ok": True, "setting": _setting_row(key)})
 
 
@@ -513,5 +513,5 @@ def settings_rebuild_memory() -> tuple[Response, int] | Response:
         return jsonify({"ok": False, "error": str(exc)}), 502
     # A full rebuild always re-embeds, so prior conversation facts are always
     # due for a re-check.
-    db.mark_facts_invalidated()
+    db.mark_facts_invalidated("rebuild")
     return jsonify({"ok": True, **counts})
