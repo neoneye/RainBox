@@ -42,6 +42,8 @@ CONFIDENCE_FLOOR = 0.20
 #: 0.98 against two languages, 0.94 against four, 0.72 against eight and 0.42
 #: against twelve, against 0.25 unrestricted. Four is at the knee.
 LANGUAGE_SLOTS = 4
+#: How many qualifying operator messages define "the conversation's language".
+WINDOW_MESSAGES = 8
 #: How many messages back a vote is worth half of the newest one. The window
 #: answers what language the conversation is running in *now*, so a message the
 #: operator has already moved on from fades rather than counting forever.
@@ -251,6 +253,58 @@ def language_slots(
         if detection.top not in slots:
             slots.append(detection.top)
     return tuple(slots[:LANGUAGE_SLOTS])
+
+
+def window_dominant(texts: Sequence[str]) -> tuple[str | None, int]:
+    """The language the recent conversation has been running in.
+
+    `texts` are the operator's messages, oldest first; the most recent
+    WINDOW_MESSAGES qualifying ones are taken. Each contributes its whole
+    confidence distribution rather than only its winning label, so a message
+    split between two languages votes for both in proportion -- which is what
+    keeps a Danish conversation reading as Danish when individual messages
+    tip towards Norwegian.
+
+    Every message casts one vote, its shares scaled to its own strongest
+    candidate. Neither raw confidence nor length compares across messages:
+    Danish detects at 1.00 where an equally clear English sentence reaches
+    0.375, because English shares its script and vocabulary with more of the
+    field, and a long quoted passage is not better evidence of what the
+    conversation is running in than the sentence the operator just wrote.
+    Scoring by confidence times length let one long Danish message outvote the
+    three English ones after it, so the window kept answering Danish for a
+    conversation that had already switched.
+
+    Votes decay with age at WINDOW_HALF_LIFE, because the question is which
+    language the conversation is running in now, not which it has used most.
+
+    Returns (dominant base subtag, qualifying message count). A count of zero
+    means the window said nothing -- distinct from a window that chose a
+    language.
+    """
+    window: list[Detection] = []
+    for text in reversed(list(texts)):
+        detection = detect(text)
+        if detection.language_poor or detection.undetected:
+            continue
+        window.append(detection)
+        if len(window) >= WINDOW_MESSAGES:
+            break
+    if not window:
+        return None, 0
+    totals: dict[str, float] = {}
+    for age, detection in enumerate(window):
+        strongest = max(detection.confidence.values())
+        if not strongest:
+            continue
+        weight = 0.5 ** (age / WINDOW_HALF_LIFE)
+        for code, value in detection.confidence.items():
+            totals[code] = totals.get(code, 0.0) + (value / strongest) * weight
+    # Ties break on the code itself, so the answer never depends on dict
+    # insertion order -- which is the window's own ordering, and incidental to
+    # what "the conversation's language" means.
+    dominant = min(totals, key=lambda code: (-totals[code], code))
+    return dominant, len(window)
 
 
 def _writes_a_morpheme_per_character(token: str) -> bool:
