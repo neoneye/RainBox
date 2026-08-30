@@ -251,7 +251,10 @@ def test_all_templates_have_only_language_rows(app_ctx):
         assert all("note" not in row for row in data["languages"]["rows"])
 
 
-def test_request_and_serialized_size_caps(profile):
+def test_request_size_cap(profile):
+    """The per-request cap is ten times the stored-row cap: generous enough
+    that no legitimate edit (which only ever sends a handful of rows) can
+    hit it, while still rejecting a clearly abusive request early."""
     request_cap = 10 * profile_languages.MAX_LANGUAGE_ROWS
     with pytest.raises(db.ProfileLanguagesError, match=f"at most {request_cap}"):
         db.languages_put(profile, [{}] * (request_cap + 1))
