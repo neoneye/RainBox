@@ -582,6 +582,15 @@ def test_a_constructed_classification_with_six_languages_keeps_declared_order():
         "de", "en-US", "da", "fr", "es", "it"]
     assert [item.score for item in result.languages][-2:] == [1, 1]
 
+    markdown = agent._format_reply_language_markdown(result)
+    rendered_section = markdown.split("## Languages", 1)[1]
+    rendered_codes = [
+        line[len("- `"):-1]
+        for line in rendered_section.splitlines()
+        if line.startswith("- `")
+    ]
+    assert rendered_codes == ["de", "en-US", "da", "fr", "es", "it"]
+
 
 # --- resolution wired into the turn ---------------------------------------
 

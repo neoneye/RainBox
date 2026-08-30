@@ -278,10 +278,10 @@ def test_a_language_list_at_the_cap_is_accepted():
 
 def test_a_serialized_snapshot_at_the_cap_stays_under_the_byte_limit():
     """The byte-size cap exists in case a future MAX_LANGUAGE_ROWS or
-    MAX_LANGUAGE_NOTE_CHARS grows again; at today's six-row cap, even the
-    largest possible snapshot (max-length tag and note on every row) fits
-    comfortably inside it, so the byte cap can no longer be exercised through
-    the row-count cap alone."""
+    MAX_LANGUAGE_NOTE_CHARS grows again; at today's six-row cap, a snapshot
+    with a max-length note on every row (a six-character tag, well under the
+    35-character tag limit) fits comfortably inside it, so the byte cap can
+    no longer be exercised through the row-count cap alone."""
     rows = [
         _row(f"en-x{i:02d}", "intermediate", "neutral", note="𝕏" * 400)
         for i in range(profile_languages.MAX_LANGUAGE_ROWS)
@@ -289,3 +289,17 @@ def test_a_serialized_snapshot_at_the_cap_stays_under_the_byte_limit():
     canonical = profile_languages.validate_language_rows(rows, [])
     blob = json.dumps({"rows": canonical}, ensure_ascii=False)
     assert len(blob.encode("utf-8")) < profile_languages.MAX_LANGUAGES_BYTES
+
+
+def test_a_snapshot_over_a_forced_byte_cap_is_rejected(monkeypatch):
+    """The row cap makes the byte cap unreachable through ordinary input (see
+    the snapshot-at-the-cap test above), but the raise still ships and a
+    future rise in MAX_LANGUAGE_ROWS or MAX_LANGUAGE_NOTE_CHARS could put it
+    back in reach. Drive it here by shrinking MAX_LANGUAGES_BYTES for the
+    duration of this test, never by changing the shipped constant."""
+    monkeypatch.setattr(profile_languages, "MAX_LANGUAGES_BYTES", 0)
+    with pytest.raises(
+        db.ProfileLanguagesError, match=r"languages exceeds 0 bytes serialized",
+    ):
+        profile_languages.validate_language_rows(
+            [_row("en-US", "native", "neutral")], [])
