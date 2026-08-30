@@ -256,6 +256,19 @@ def test_detecting_within_an_empty_slot_set_is_undecided():
     assert detect_within("hvor bor jeg?", ()) is None
 
 
+def test_detecting_within_a_single_slot_returns_it_without_consulting_the_detector():
+    """With one candidate there is no choice to make, so the detector has
+    nothing to contribute. The only slot wins by default, regardless of what
+    the text actually says. This is correct: the caller has already narrowed
+    the field to this one language and is asking which of the candidates it
+    is -- implicitly, one of them."""
+    # Even though the text is clearly Danish, the single slot is English.
+    # The short-circuit returns it anyway.
+    assert detect_within("hvor bor jeg?", ("en",)) == "en"
+    # With duplicates that reduce to one, still returns the sole code.
+    assert detect_within("hvor bor jeg?", ("en", "en")) == "en"
+
+
 def test_the_dominant_language_follows_a_sustained_switch():
     """Three English messages after a long, confident Danish one. Danish detects
     far higher than English ever does, so weighting by raw confidence keeps

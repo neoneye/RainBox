@@ -301,7 +301,11 @@ def detect_within(text: str, slots: Sequence[str]) -> str | None:
         return None
     if len(unique) == 1:
         return unique[0]
-    detector = _restricted_detector(unique)
+    # Sort to normalise the cache key: the same set always produces the same
+    # canonical tuple, so the detector is built once per distinct set, not once
+    # per distinct ordering of that set.
+    sorted_unique = tuple(sorted(unique))
+    detector = _restricted_detector(sorted_unique)
     if detector is None:
         return None
     values = detector.compute_language_confidence_values(text or "")
