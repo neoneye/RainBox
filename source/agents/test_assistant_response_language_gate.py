@@ -560,6 +560,29 @@ def test_a_constructed_classification_says_it_was_not_a_model():
     assert "detect" in result.reason.lower()
 
 
+def test_a_constructed_classification_with_six_languages_keeps_declared_order():
+    """Six is the first declared-list length where the 1..5 score range runs
+    out: with six candidates the last two both clamp to score 1, so their
+    relative order can no longer come from the scores and instead depends on
+    `_format_reply_language_markdown`'s tie-break on original index. That
+    index is only correct if `_constructed_classification` still places the
+    resolved language first and the rest in their declared order even once
+    the scores stop being distinct."""
+    agent = _agent()
+    profile = {"data": {"languages": {"rows": [
+        {"tag": "en-US", "level": "native", "stance": "prefer", "note": ""},
+        {"tag": "da", "level": "native", "stance": "neutral", "note": ""},
+        {"tag": "de", "level": "fluent", "stance": "neutral", "note": ""},
+        {"tag": "fr", "level": "fluent", "stance": "neutral", "note": ""},
+        {"tag": "es", "level": "intermediate", "stance": "neutral", "note": ""},
+        {"tag": "it", "level": "beginner", "stance": "neutral", "note": ""},
+    ]}}}
+    result = agent._constructed_classification("de", profile)
+    assert [item.code for item in result.languages] == [
+        "de", "en-US", "da", "fr", "es", "it"]
+    assert [item.score for item in result.languages][-2:] == [1, 1]
+
+
 # --- resolution wired into the turn ---------------------------------------
 
 EN_MESSAGES = [

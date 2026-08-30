@@ -20,7 +20,10 @@ from language_tags import (
     effective_language_rows,
 )
 
-MAX_LANGUAGE_ROWS = 100
+#: Four languages reach the detector and the rest only inform the classifier on
+#: the rare turn it runs, so a longer list has no consumer -- and a list long
+#: enough to page through is one nobody curates.
+MAX_LANGUAGE_ROWS = 6
 MAX_LANGUAGE_NOTE_CHARS = 400
 MAX_LANGUAGES_BYTES = 64 * 1024
 
