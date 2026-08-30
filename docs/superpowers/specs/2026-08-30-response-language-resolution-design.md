@@ -175,32 +175,40 @@ source rank 3, `formatting_guide` rank 4), so this is for clarity rather than
 correctness: a rank-4 instruction contradicting rank 3 is how small models are
 made to wobble.
 
-A profile that declares no languages at all still does not ask. Being made to
-wait on a model for a question the model cannot answer any better than the code
-can — there is no history and no language in the request, so it would be
-guessing from the same nothing — is a poor trade for a case that is pure
-guesswork either way.
+A profile that declares no languages at all resolves to **English**, and does
+not ask.
 
-The fallback is CLDR's likely language for whatever locale the profile does
-carry. A profile with no languages but a country gets that country's language:
+Inferring a language from the profile's country was considered and rejected.
+CLDR will happily answer it — `und-DK` maximises to `da`, `und-JP` to `ja` — but
+country is not language, and this installation's own operator is the
+counter-example: resident in Denmark, primary response language `en-US`. Region
+inference would confidently give them the wrong answer. English here is the
+value CLDR itself returns for an unknown locale (`Language.get("und").maximize()`
+is `en-Latn-US`), which is the right shape for a fallback: it is what you get
+when nothing is known, not a claim about anyone.
 
-| profile locale | resolved |
-|---|---|
-| `DK` | `da` |
-| `JP` | `ja` |
-| `BR` | `pt` |
-| `IN` | `hi` |
-| nothing at all | `en` |
+This is not the anglocentrism the project guards against. That rule is about
+assuming a user's *world* — that they drive, bill in USD, read AM/PM, run on
+120V — where the assumption is both wrong and invisible. A reply language when
+the operator has stated none is a coin that has to land somewhere, it is
+overridden the moment they declare a language or write one, and getting it wrong
+costs one message.
 
-The last row is not a hardcoded English default. `Language.get("und").maximize()`
-returns `en-Latn-US` — asked with no information, the Unicode consortium's own
-data answers English. Reaching that answer through CLDR rather than through a
-literal in our source keeps the rule the same shape as every other language
-decision here, and means a profile that says anything at all about where its
-owner is gets a better answer than English automatically.
+**Nonsense resolves the same way, because it cannot be told apart from
+language.** `osuf ljweroiux jsdfoij wnoer` detects as Dutch at 0.215
+unrestricted, and restricted to a declared set it scores 0.899 — squarely inside
+the range real text occupies (0.83-1.00). No threshold separates them, and a
+gibberish detector is not a thing this design is going to grow. So a first
+message is not allowed to pull the conversation into a language the profile has
+not declared: nonsense and a genuine foreign first contact are the same input as
+far as the detector is concerned, and both resolve to the preferred language.
 
-This restores the `langcodes` dependency, which was dropped as unused during an
-earlier cleanup; `language_data` alone does not carry likely-subtags.
+The cost of that is stated plainly: someone whose very first message is in a
+language they never declared gets one reply in the wrong language. Their second
+message has history behind it, the request is then weighed against a real
+window, and the turn resolves — or asks, if the language is still undeclared.
+One wrong reply at first contact, recovered on the next turn, is the price of
+never spending a model call on `osuf ljweroiux jsdfoij wnoer`.
 
 This rule and trigger 3 divide the first turn between them, and the division is
 worth stating because both could be read as owning it. A first request that
@@ -267,11 +275,11 @@ candidate, and the per-message confidence normalisation.
 3. **Storing the room's language set.** It is derivable from two existing
    sources. A stored copy is a second source of truth that will drift from the
    messages, and the operator explicitly asked for it to stay internal.
-4. **Reading the `en` fallback as an anglocentric default.** It is CLDR's
-   answer for an unknown locale, not a choice made here, and it is reached only
-   after the profile's declared languages and its locale have both said nothing.
-   Replacing it with a literal would look identical in the common case and
-   would stop a Danish or Japanese profile getting its own language.
+4. **"Improving" the English fallback with region inference.** CLDR makes it a
+   one-liner and it looks strictly better. It is not: country is not language,
+   and the operator this was designed with lives in Denmark and prefers
+   American English. A declared language is the only thing that should decide
+   this, and English is what CLDR returns when nothing is declared.
 5. **Assuming a room has one language, or two.** A room may have several
    members with disjoint languages. Nothing in the mechanism may assume a
    particular language, count, or script.
