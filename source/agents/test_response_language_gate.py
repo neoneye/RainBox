@@ -8,6 +8,7 @@ alone. It reads no settings and no database, so these tests need neither.
 from agents.response_language_gate import (
     Detection,
     GateDecision,
+    LANGUAGE_SLOTS,
     LETTER_FLOOR,
     SHIFT_RATIO,
     TRIGGER_DETECTOR_ERROR,
@@ -17,11 +18,10 @@ from agents.response_language_gate import (
     TRIGGER_PROFILE_CHANGED,
     TRIGGER_REUSE,
     TRIGGER_SHIFT,
-    WINDOW_MESSAGES,
     decide,
     detect,
+    language_slots,
     names_a_language,
-    window_dominant,
 )
 
 #: A language either shows up in a message's shares or it does not; these
@@ -191,99 +191,43 @@ def test_language_poor_and_undetected_are_different_answers():
     assert unclassifiable.letters == 0
 
 
-def test_window_dominant_reads_a_uniform_conversation():
-    dominant, size = window_dominant([EN_PROSE, EN_DEBUGGING])
-    assert dominant == "en"
-    assert size == 2
+def test_slots_are_the_recently_used_languages_newest_first():
+    """The scan walks back from the newest message, so the order is the room's
+    own recency and doubles as the eviction order."""
+    slots = language_slots(
+        [DA_PROSE, EN_PROSE, "我现在用的是什么语言？"], pinned=())
+    assert slots[0] == "zh"
+    assert set(slots) == {"zh", "en", "da"}
 
 
-def test_short_messages_do_not_enter_the_window():
-    """An acknowledgement between two real messages neither counts nor votes."""
-    dominant, size = window_dominant([DA_PROSE, "ok", DA_WITH_ENGLISH_NOUNS])
-    assert dominant == "da"
-    assert size == 2
+def test_pinned_languages_are_always_present():
+    """The profile's primary and secondary stay candidates however long ago
+    they were used -- a declaration is a standing statement of intent."""
+    slots = language_slots([EN_PROSE, EN_DEBUGGING], pinned=("en", "da"))
+    assert "da" in slots
 
 
-def test_a_window_of_only_short_messages_is_empty():
-    """Empty is a distinct answer, not a language. The caller asks the
-    classifier rather than guessing from nothing."""
-    dominant, size = window_dominant(["ok", "tak", "ja"])
-    assert dominant is None
-    assert size == 0
+def test_the_set_is_capped_and_evicts_the_oldest_unpinned():
+    """Four is the cap because the detector's sharpness decays with the size of
+    the set; a fifth language pushes out the least recently used one that is
+    not pinned."""
+    texts = [DA_PROSE, "Bitte antworte auf Deutsch bitte sehr gerne",
+             "Voglio che tu risponda in italiano adesso per favore",
+             EN_PROSE, "我现在用的是什么语言？"]
+    slots = language_slots(texts, pinned=("en",))
+    assert len(slots) == LANGUAGE_SLOTS
+    assert "en" in slots          # pinned, though it is not the newest
+    assert "zh" in slots          # newest
+    assert "da" not in slots      # oldest unpinned, evicted
 
 
-def test_a_tie_breaks_on_the_language_code(monkeypatch):
-    """Two languages carrying identical weight is a real, if rare, state. The
-    winner is the lower code rather than whichever the window happened to
-    insert first, so the answer does not depend on message order."""
-    import agents.response_language_gate as gate
-
-    tied = Detection(letters=40, language_poor=False, undetected=False,
-                     top="da", confidence={"da": 0.5, "en": 0.5})
-    monkeypatch.setattr(gate, "detect", lambda _text: tied)
-
-    dominant, size = window_dominant(["one message", "another message"])
-    assert dominant == "da"
-    assert size == 2
-
-    # Reversing the window must not reverse the answer.
-    assert window_dominant(["another message", "one message"])[0] == "da"
+def test_language_poor_messages_do_not_claim_a_slot():
+    """An acknowledgement is not evidence that a language belongs to the room."""
+    assert language_slots(["ok", "tak", EN_PROSE], pinned=()) == ("en",)
 
 
-def test_the_window_keeps_only_the_most_recent_messages():
-    """A language the operator left behind long ago must not outvote the one
-    they are using now."""
-    texts = [DA_PROSE] * 20 + [EN_PROSE] * WINDOW_MESSAGES
-    dominant, size = window_dominant(texts)
-    assert dominant == "en"
-    assert size == WINDOW_MESSAGES
-
-
-EN_SWITCH = [
-    "hvor bor jeg henne af?",
-    "du skrev en meget lang joke paa dansk om skelettet der ikke ville "
-    "slaas med nogen som helst, og jeg forstod den simpelthen ikke rigtigt",
-    "can you say something funny about AI and testing",
-    "explain the joke",
-    "explain the joke, I meant the one about the skeleton",
-]
-
-
-def test_the_window_follows_a_conversation_that_switched():
-    """Three English messages after a long, confident Danish one. Danish
-    detects at 1.00 where English rarely clears 0.45, and the Danish message is
-    the longest, so scoring by confidence times length keeps answering Danish
-    however long the operator writes in English -- and every turn asks."""
-    dominant, _ = window_dominant(EN_SWITCH)
-    assert dominant == "en"
-
-
-def test_a_confident_language_does_not_outvote_a_diffuse_one():
-    """Detector confidence is not comparable between languages: a Danish
-    message scores 1.00 where an equally clear English one scores 0.375,
-    because English shares its script and vocabulary with more of the field. A
-    message votes for its own best guess, so both count once."""
-    da = detect("det virker ikke rigtigt")
-    en = detect("explain the joke")
-    assert da.confidence["da"] > en.confidence["en"] * 2
-    # One Danish message must not outweigh two English ones.
-    dominant, _ = window_dominant([
-        "det virker ikke rigtigt",
-        "explain the joke, I meant the one about the skeleton",
-        "can you say something funny about AI and testing",
-    ])
-    assert dominant == "en"
-
-
-def test_a_long_message_cannot_single_handedly_define_the_window():
-    """Weight is capped, so one long paste counts as several messages rather
-    than as the whole conversation: a full window outvotes it."""
-    long_english = EN_PROSE * 40
-    danish = ([DA_PROSE, DA_WITH_ENGLISH_NOUNS] * WINDOW_MESSAGES)[
-        :WINDOW_MESSAGES - 1]
-    dominant, size = window_dominant([long_english, *danish])
-    assert dominant == "da"
-    assert size == WINDOW_MESSAGES
+def test_pinned_languages_survive_an_empty_room():
+    assert language_slots([], pinned=("en", "da")) == ("en", "da")
 
 
 def test_a_named_language_is_found_in_any_language():
