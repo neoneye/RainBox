@@ -417,3 +417,52 @@ def test_editing_hides_the_clamp_toggles():
     body = _body()
     assert ("msgEl.querySelectorAll('.msg-more-toggle')"
             ".forEach(b => { b.style.display = 'none'; });") in body
+
+
+def test_message_stamp_is_the_clock_with_a_full_hover_title():
+    """The row shows the clock alone; the date it belongs to is carried by the
+    day divider above that day's first message. The full instant — date,
+    seconds, two digits of the millisecond field — stays reachable on hover,
+    which is the only way to order two rows written in the same minute."""
+    body = _body()
+    assert "t.textContent = formatClock(m);" in body
+    assert "t.title = formatFullStamp(m);" in body
+    assert ".msg-time{color:#888;margin-left:0.5em;cursor:help}" in body
+    assert "return pad2(d.getHours()) + ':' + pad2(d.getMinutes());" in body
+    assert "'.' + pad2(Math.floor(d.getMilliseconds() / 10));" in body
+    # Derived from created_at (tz-aware, unrounded), not the pre-rounded
+    # `timestamp` string, which has no seconds to show.
+    assert "const d = new Date(m.created_at || '');" in body
+
+
+def test_day_divider_labels_the_date_once_per_day():
+    """A full-width rule with "2026 August 30" in the middle, above the first
+    message of each date. Year first so the ordering is unambiguous, month name
+    from the browser's locale rather than a hardcoded English table."""
+    body = _body()
+    assert (".day-sep::before,.day-sep::after{content:\"\";flex:1 1 auto;"
+            "height:1px;background:#e2e0ea}") in body
+    assert ("return d.getFullYear() + ' '\n"
+            "    + d.toLocaleDateString(undefined, {month: 'long'}) + ' ' "
+            "+ d.getDate();") in body
+    assert "function makeDaySeparator" in body
+
+
+def test_every_append_path_goes_through_the_divider_check():
+    """Rows reach the log from initial load, fetchNew, and the SSE streaming
+    upsert. All three must place dividers, or a row that arrived by push would
+    open a new day with no date on screen."""
+    body = _body()
+    assert "appendMessageNode(makeMessage(m), m);" in body        # appendMessage
+    assert "    appendMessageNode(node, m);\n  }" in body          # upsertMessage
+    assert "if (day && day !== lastRenderedDay()){" in body
+
+
+def test_deleting_rows_prunes_stranded_dividers():
+    """A progress bubble is deleted when the real reply lands and may have been
+    the only message of its day, which would leave a divider heading nothing."""
+    body = _body()
+    assert "function pruneDaySeparators" in body
+    assert "    renderedIds.delete(id);\n  });\n  pruneDaySeparators();" in body
+    assert ("const heads = !!next && next.dataset.day === el.dataset.day\n"
+            "      && shownDay !== el.dataset.day;") in body

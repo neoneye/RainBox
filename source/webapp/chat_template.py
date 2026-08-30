@@ -174,7 +174,13 @@ CHAT_TEMPLATE: str = """
   .msg-type{font-size:0.66rem;text-transform:uppercase;letter-spacing:0.03em;padding:1px 6px;border-radius:999px;margin-left:0.5em;vertical-align:middle}
   .msg-type-human{background:#dbeafe;color:#1e40af}
   .msg-type-agent{background:#e9d5ff;color:#6b21a8}
-  .msg-time{color:#888;margin-left:0.5em}
+  .msg-time{color:#888;margin-left:0.5em;cursor:help}
+  /* Day divider. The row's own stamp is the clock alone, so the date it
+     belongs to is carried once — here, above that day's first message —
+     instead of being repeated on every line. Big-endian label so the
+     ordering reads the same in any locale. */
+  .day-sep{display:flex;align-items:center;gap:0.8em;color:#8b8b95;font-size:0.78rem;letter-spacing:0.04em;user-select:none}
+  .day-sep::before,.day-sep::after{content:"";flex:1 1 auto;height:1px;background:#e2e0ea}
   /* Non-"message" rows (debug-router, thinking, …): a muted, dashed bubble with
      a kind badge, so they read as diagnostics rather than real chat. */
   .msg-debug{opacity:0.8;background:#f6f4fb;border:1px dashed #c4b5e0;border-radius:8px;padding:6px 10px}
@@ -525,13 +531,113 @@ try {
 } catch (e) {}
 syncSidebarModeOptions();
 
+// --- when a message was written -------------------------------------------
+//
+// A row's own stamp is the clock alone ("16:58"): in a log read top to bottom
+// the date is the same for screens at a time, so repeating it on every line is
+// noise. The date is carried once instead, by a divider above the first
+// message of each day, and in full by the stamp's hover title.
+//
+// Everything here reads `created_at` (tz-aware, unrounded) rather than the
+// server's pre-rounded `timestamp` string, because the title needs seconds and
+// sub-second digits that the rounded form has already thrown away. `timestamp`
+// stays the fallback for a row whose `created_at` is missing or unparseable.
+function messageDate(m){
+  const d = new Date(m.created_at || '');
+  return isNaN(d.getTime()) ? null : d;
+}
+function pad2(n){ return (n < 10 ? '0' : '') + n; }
+
+// The local day a row belongs to, as a YYYY-MM-DD key. Dividers are placed by
+// comparing these keys, never Date objects — two instants in the same day are
+// not equal, their keys are.
+function messageDayKey(m){
+  const d = messageDate(m);
+  if (!d) return (m.timestamp || '').slice(0, 10);
+  return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+}
+
+// "2026 August 30". Year first so the ordering is unambiguous in any locale,
+// but the month NAME comes from the browser's locale rather than a hardcoded
+// table of English months.
+function formatDayLabel(d){
+  return d.getFullYear() + ' '
+    + d.toLocaleDateString(undefined, {month: 'long'}) + ' ' + d.getDate();
+}
+
+// What the row shows: the clock, nothing else.
+function formatClock(m){
+  const d = messageDate(m);
+  if (!d) return (m.timestamp || '').slice(11) || (m.timestamp || '');
+  return pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+}
+
+// What hovering the row's stamp shows: the full date, seconds, and two digits
+// of the millisecond field — enough to order two rows written in the same
+// minute, which the visible clock alone cannot do.
+function formatFullStamp(m){
+  const d = messageDate(m);
+  if (!d) return m.timestamp || '';
+  return messageDayKey(m) + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes())
+    + ':' + pad2(d.getSeconds()) + '.' + pad2(Math.floor(d.getMilliseconds() / 10));
+}
+
+function makeDaySeparator(dayKey, label){
+  const el = document.createElement('div');
+  el.className = 'day-sep';
+  el.dataset.day = dayKey;
+  const span = document.createElement('span');
+  span.textContent = label;
+  el.appendChild(span);
+  return el;
+}
+
+// The day of the last message in the log. Walks back from the end rather than
+// querying the whole log: after an append the newest message is the last
+// element, or one hop behind a divider, so this is O(1) in practice.
+function lastRenderedDay(){
+  for (let el = log.lastElementChild; el; el = el.previousElementSibling){
+    if (el.classList.contains('msg')) return el.dataset.day || null;
+  }
+  return null;
+}
+
+// Append a built row, preceded by its day divider when it opens a new date.
+// Every path that adds a message to the log goes through here, so a divider
+// can never be missed for a row that arrived by SSE rather than initial load.
+function appendMessageNode(node, m){
+  const day = node.dataset.day;
+  if (day && day !== lastRenderedDay()){
+    const d = messageDate(m);
+    log.appendChild(makeDaySeparator(day, d ? formatDayLabel(d) : day));
+  }
+  log.appendChild(node);
+}
+
+// A divider earns its place only while a message of its day follows it and
+// none precedes it. Removing rows can strand one — a progress bubble is
+// deleted when the real reply lands, and it may have been the only message of
+// its day — so re-check the whole log after any removal.
+function pruneDaySeparators(){
+  let shownDay = null;
+  Array.from(log.children).forEach((el) => {
+    if (el.classList.contains('msg')){ shownDay = el.dataset.day || shownDay; return; }
+    if (!el.classList.contains('day-sep')) return;
+    let next = el.nextElementSibling;
+    while (next && !next.classList.contains('msg')) next = next.nextElementSibling;
+    const heads = !!next && next.dataset.day === el.dataset.day
+      && shownDay !== el.dataset.day;
+    if (!heads) el.remove();
+  });
+}
+
 // Append a message unless it's already rendered. A message can arrive via two
 // racing paths (the post's own fetchNew and the SSE push), so dedup by id
 // rather than relying on the `after` cursor being current.
 function appendMessage(m){
   if (renderedIds.has(m.id)) return;
   renderedIds.add(m.id);
-  log.appendChild(makeMessage(m));
+  appendMessageNode(makeMessage(m), m);
   lastId = Math.max(lastId, m.id);
 }
 
@@ -541,6 +647,7 @@ function removeDeletedMessages(ids){
     if (node) node.remove();
     renderedIds.delete(id);
   });
+  pruneDaySeparators();
 }
 
 // How close to the bottom still counts as "following the conversation". This
@@ -590,7 +697,7 @@ function upsertMessage(m){
   } else {
     renderedIds.add(m.id);
     lastId = Math.max(lastId, m.id);
-    log.appendChild(node);
+    appendMessageNode(node, m);
   }
   if (pinned) log.scrollTop = log.scrollHeight;
 }
@@ -1112,6 +1219,9 @@ function makeMessage(m){
   // refresh the text in place. `_row` is the newest row the node is showing.
   msg.dataset.messageId = String(m.id);
   msg.dataset.renderKey = messageRenderKey(m);
+  // The day this row belongs to, so appending the next one can tell whether a
+  // divider is due without re-parsing dates already computed here.
+  msg.dataset.day = messageDayKey(m);
   msg._row = m;
 
   const head = document.createElement('div');
@@ -1124,7 +1234,8 @@ function makeMessage(m){
   badge.textContent = m.sender_type;
   const t = document.createElement('span');
   t.className = 'msg-time';
-  t.textContent = m.timestamp;
+  t.textContent = formatClock(m);
+  t.title = formatFullStamp(m);
   head.appendChild(s);
   head.appendChild(badge);
   head.appendChild(t);
