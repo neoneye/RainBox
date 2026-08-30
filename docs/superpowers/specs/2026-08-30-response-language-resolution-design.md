@@ -141,6 +141,12 @@ with one added filter.
 So a turn that resolves to a language the room has resolved before reuses *that
 language's* answer rather than only the most recent one.
 
+Reuse is per room and is not shared between rooms. The answer for "what does a
+Danish reply look like" plausibly does not depend on the room, so sharing would
+save a call per language per room — but a room with several people in it is
+exactly where the answer may legitimately differ, and that is the direction this
+design is being prepared for. The saving is not worth spending the distinction.
+
 How much this saves depends on how often the operator switches, which is
 unmeasured — see the warning on the switch figure above. It is included because
 it is nearly free (one added filter on a query already made) and because it
@@ -152,11 +158,23 @@ different question from whether it should exist.
 ## Cold start
 
 With no usable history and no clear language in the request, the reply uses the
-profile's **preferred** language. `valid_profile_languages()` in
+preferred language of **the profile of the room's first human writer**. `valid_profile_languages()` in
 `source/user_profile/formatting.py` already defines that deterministically — a
 `prefer` row sorts first, declaration order settles the rest — so this
 introduces no new notion of preference and behaves sensibly when no row is
 marked preferred or several are.
+
+Anchoring on the first writer rather than on "the operator" is what makes the
+rule survive a room with several people in it. A room takes its language from
+whoever opened the conversation, which is both the natural reading and the only
+answer available before anyone else has spoken. Later speakers move the room the
+ordinary way, through the recency-weighted window — the first writer sets the
+starting point, not a permanent one.
+
+Today this degenerates: `chat_user` carries no link to a profile, so one active
+profile serves every member and "the first writer's profile" and "the profile"
+are the same object. The rule is written this way so that wiring profiles to
+users later changes a lookup rather than a rule.
 
 **This rule is scoped to the vacuum, and the scope is load-bearing.**
 `format_formatting_guide` carries a deliberate decision in the opposite
@@ -216,7 +234,9 @@ preferred language, because that is what the model should conclude from text
 that says nothing.
 
 The cost is bounded and small: at most one call, on a room's first message, and
-only when that message matches nothing declared. A first message in a declared
+only when that message matches nothing declared. The operator's expectation —
+not a measurement — is that this is rare: initial messages are almost always in
+one clear language, and starting a room with nonsense is not something they do. A first message in a declared
 language still resolves deterministically, which is the common case by a wide
 margin.
 
@@ -318,13 +338,6 @@ candidate, and the per-message confidence normalisation.
 
 ## Open questions
 
-- **Should a language's classification be shared across rooms?** As written it
-  is per room, so a new room pays one model call per language before it settles.
-  For an operator who opens rooms often that is the dominant remaining cost, and
-  the answer for "what does a Danish reply look like" plausibly does not depend
-  on the room. Against: a room of several people is exactly where the answer
-  might legitimately differ. Unresolved; the per-room form is the conservative
-  starting point.
 - **Does a per-language reuse expire?** A classification recorded months ago is
   still a fine answer for "what does a Danish reply look like", and the profile
   snapshot already covers the one thing that invalidates it. Left unexpired
