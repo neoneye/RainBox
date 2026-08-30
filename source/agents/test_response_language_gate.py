@@ -21,6 +21,8 @@ from agents.response_language_gate import (
     WINDOW_MESSAGES,
     decide,
     detect,
+    detect_within,
+    dominant_language,
     language_slots,
     names_a_language,
     window_dominant,
@@ -240,6 +242,44 @@ def test_language_poor_messages_do_not_claim_a_slot():
 
 def test_pinned_languages_survive_an_empty_room():
     assert language_slots([], pinned=("en", "da")) == ("en", "da")
+
+
+def test_detecting_within_the_slots_is_sharp():
+    """Restricting to the room's own languages is what makes confidence usable:
+    the same Danish sentence reads 0.25 against every language lingua knows and
+    0.94 against four."""
+    assert detect_within("hvor bor jeg?", ("en", "da")) == "da"
+    assert detect_within("explain the joke", ("en", "da")) == "en"
+
+
+def test_detecting_within_an_empty_slot_set_is_undecided():
+    assert detect_within("hvor bor jeg?", ()) is None
+
+
+def test_the_dominant_language_follows_a_sustained_switch():
+    """Three English messages after a long, confident Danish one. Danish detects
+    far higher than English ever does, so weighting by raw confidence keeps
+    answering Danish however long the operator writes in English."""
+    texts = [
+        "du skrev en meget lang joke paa dansk om skelettet der ikke ville "
+        "slaas med nogen som helst, og jeg forstod den simpelthen ikke",
+        "can you say something funny about AI and testing",
+        "explain the joke",
+        "explain the joke, I meant the one about the skeleton",
+    ]
+    assert dominant_language(texts, ("en", "da")) == "en"
+
+
+def test_one_foreign_sentence_does_not_move_the_conversation():
+    """The half-life is the only knob deciding how many messages make a switch
+    real, and one is not enough."""
+    texts = [DA_PROSE, "det virker ikke rigtigt", "hvad er klokken",
+             "Proceed with 5W1H"]
+    assert dominant_language(texts, ("en", "da")) == "da"
+
+
+def test_a_room_with_nothing_to_weigh_is_undecided():
+    assert dominant_language(["ok", "tak"], ("en", "da")) is None
 
 
 def test_window_dominant_reads_a_uniform_conversation():

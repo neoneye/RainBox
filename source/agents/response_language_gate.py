@@ -268,6 +268,77 @@ def language_slots(
     return tuple(slots[:LANGUAGE_SLOTS])
 
 
+@functools.lru_cache(maxsize=64)
+def _restricted_detector(slots: tuple[str, ...]):
+    """A detector over just these languages, built once per distinct set.
+
+    Restriction is what makes confidence usable rather than merely available:
+    the same Danish sentence reads 0.25 against every language lingua knows and
+    0.94 against four. It also force-fits anything outside the set, which is why
+    `decide` asks the unrestricted detector whether the request belongs to these
+    languages before believing this one's answer.
+    """
+    from lingua import IsoCode639_1, LanguageDetectorBuilder
+
+    codes = []
+    for code in slots:
+        try:
+            codes.append(getattr(IsoCode639_1, code.upper()))
+        except AttributeError:
+            continue
+    if len(codes) < 2:
+        # lingua needs two languages to choose between. One slot is not a
+        # choice, and zero is not a question.
+        return None
+    return LanguageDetectorBuilder.from_iso_codes_639_1(*codes).build()
+
+
+def detect_within(text: str, slots: Sequence[str]) -> str | None:
+    """Which of `slots` this text is, or None when there is nothing to choose."""
+    unique = tuple(dict.fromkeys(code for code in slots if code))
+    if not unique:
+        return None
+    if len(unique) == 1:
+        return unique[0]
+    detector = _restricted_detector(unique)
+    if detector is None:
+        return None
+    values = detector.compute_language_confidence_values(text or "")
+    if not values:
+        return None
+    return values[0].language.iso_code_639_1.name.lower()
+
+
+def dominant_language(
+    texts: Sequence[str], slots: Sequence[str],
+) -> str | None:
+    """Which of `slots` the conversation is running in.
+
+    Every message casts one vote for its own language and votes decay with age
+    at WINDOW_HALF_LIFE, so the newest message weighs most and one foreign
+    sentence does not move a conversation while a sustained switch does.
+
+    Votes are equal rather than weighted by confidence or length. Neither
+    compares between messages: a Danish sentence detects far higher than an
+    equally clear English one, and a long quoted passage is not better evidence
+    of what the operator is writing in than the sentence they just typed.
+    """
+    totals: dict[str, float] = {}
+    for age, text in enumerate(reversed(list(texts))):
+        detection = detect(text)
+        if detection.language_poor or detection.undetected:
+            continue
+        code = detect_within(text, slots)
+        if code is None:
+            continue
+        totals[code] = totals.get(code, 0.0) + 0.5 ** (age / WINDOW_HALF_LIFE)
+    if not totals:
+        return None
+    # Ties break on the code itself, so the answer never depends on dict
+    # insertion order -- which is the scan's own order, and incidental.
+    return min(totals, key=lambda code: (-totals[code], code))
+
+
 def window_dominant(texts: Sequence[str]) -> tuple[str | None, int]:
     """The language the recent conversation has been running in.
 
