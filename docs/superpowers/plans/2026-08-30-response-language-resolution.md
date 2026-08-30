@@ -178,28 +178,14 @@ above assert membership rather than a full ordering for exactly that reason.
 Run: `cd source && ./venv/bin/python -m pytest agents/test_response_language_gate.py -q -k "slots or pinned"`
 Expected: PASS, 5 tests.
 
-- [ ] **Step 5: Remove `window_dominant` and its tests**
-
-Delete `window_dominant` from the module and delete the tests naming it:
-`test_window_dominant_reads_a_uniform_conversation`,
-`test_short_messages_do_not_enter_the_window`,
-`test_a_window_of_only_short_messages_is_empty`,
-`test_a_tie_breaks_on_the_language_code`,
-`test_the_window_keeps_only_the_most_recent_messages`,
-`test_a_long_message_cannot_single_handedly_define_the_window`,
-`test_the_window_follows_a_conversation_that_switched`,
-`test_a_confident_language_does_not_outvote_a_diffuse_one`.
-
-Their behaviour is re-established by Task 2's dominant-language tests, which
-cover the same properties against the new mechanism. Remove `WINDOW_MESSAGES`
-too — the scan is bounded by `LANGUAGE_SLOTS`, not by a message count.
-
-- [ ] **Step 6: Run the module's whole test file**
+- [ ] **Step 5: Run the module's whole test file**
 
 Run: `cd source && ./venv/bin/python -m pytest agents/test_response_language_gate.py -q`
-Expected: PASS. Failures naming `window_dominant` mean a test was missed in step 5.
+Expected: PASS, whole file. `window_dominant` and its tests stay for now —
+`decide()` still calls it, and everything the old mechanism owns is removed in
+one pass at the end, once nothing calls it.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add source/agents/response_language_gate.py source/agents/test_response_language_gate.py
@@ -979,15 +965,14 @@ replace the existing gate block with:
                 return
 ```
 
-Delete `_previous_room_classification` and `_profile_languages_changed`, and the
-tests that exercise them: nothing is reused, so there is nothing to read back and
-nothing to invalidate.
+Leave `_previous_room_classification` and `_profile_languages_changed` in place
+for now — the final task removes them together with everything else the old
+mechanism owns, once nothing calls any of it.
 
 - [ ] **Step 5: Run the tests**
 
 Run: `cd source && ./venv/bin/python -m pytest agents/test_assistant_response_language_gate.py -q`
-Expected: PASS. Failures naming `_previous_room_classification` or
-`_profile_languages_changed` mean a test was missed in step 4.
+Expected: PASS, whole file.
 
 - [ ] **Step 6: Run the regression suite**
 
@@ -1236,6 +1221,66 @@ behind constants this design still uses.
 ```bash
 git add source/notes/ docs/superpowers/specs/
 git commit -m "docs(assistant): describe response-language resolution"
+```
+
+---
+
+### Task 9: Remove the superseded mechanism
+
+**Files:**
+- Modify: `source/agents/response_language_gate.py`
+- Modify: `source/agents/assistant.py`
+- Test: `source/agents/test_response_language_gate.py`
+- Test: `source/agents/test_assistant_response_language_gate.py`
+
+Everything the shift gate owned is removed in one pass, now that nothing calls
+it. Doing it here rather than as each replacement lands is what keeps every
+earlier task's boundary green: `decide()` calls `window_dominant`, and
+`assistant.py` calls `decide()`, so an early deletion reds the branch for
+several tasks.
+
+- [ ] **Step 1: Confirm nothing calls the old surface**
+
+Run: `cd source && grep -rn "window_dominant\|GateDecision\|SHIFT_RATIO\|_previous_room_classification\|_profile_languages_changed\|TRIGGER_SHIFT\|TRIGGER_NO_PREVIOUS\|TRIGGER_PROFILE_CHANGED\|TRIGGER_EMPTY_WINDOW\|WINDOW_MESSAGES" --include="*.py" . | grep -v "^./agents/test_"`
+Expected: only the definitions themselves. A hit in non-test code means an
+earlier task left a caller behind — fix that before deleting.
+
+- [ ] **Step 2: Delete the module's old surface**
+
+From `source/agents/response_language_gate.py` remove: `window_dominant`,
+`WINDOW_MESSAGES`, `SHIFT_RATIO`, `GateDecision`, `decide`, the trigger
+constants `TRIGGER_NO_PREVIOUS`, `TRIGGER_PROFILE_CHANGED`, `TRIGGER_SHIFT`,
+`TRIGGER_EMPTY_WINDOW`, and `Detection.share` if nothing references it.
+
+- [ ] **Step 3: Delete the assistant's old surface**
+
+From `source/agents/assistant.py` remove `_previous_room_classification` and
+`_profile_languages_changed`. Nothing is reused, so there is nothing to read
+back and nothing to invalidate.
+
+- [ ] **Step 4: Delete the tests that exercised them**
+
+Delete every test naming a removed symbol. In
+`agents/test_response_language_gate.py` those are the `window_dominant` tests
+and the `decide` tests; in `agents/test_assistant_response_language_gate.py`
+those are the `_previous_room_classification` and `_profile_languages_changed`
+tests. The behaviour they pinned is re-established against the new mechanism by
+Tasks 1-3 and Task 5.
+
+Do not delete a test merely because it fails — read it first. A failing test
+that does not name a removed symbol is a regression in the new code, not
+leftover coverage.
+
+- [ ] **Step 5: Run the suites**
+
+Run: `cd source && ./venv/bin/python -m pytest agents/ webapp/ db/ -q`
+Expected: PASS.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add source/agents/
+git commit -m "refactor(assistant): remove the superseded shift gate"
 ```
 
 ---
