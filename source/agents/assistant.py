@@ -4498,10 +4498,9 @@ class AssistantAgent(ModelGroupAgent):
 
         `has_history` reaches `format_formatting_guide` unchanged — it decides
         whether that guide's language line is printable at all, see its own
-        docstring. Defaults True: the eval harness's single-message cases
-        measure the guide's language line itself, not what a history-less
-        room does, so they always take the default rather than being read as
-        history-less turns."""
+        docstring. Every caller, including the eval harness, derives it from
+        its own `messages` via `_has_history`; the True default here only
+        covers a caller with no messages to derive it from."""
         if profile is None:
             return "", "", ""
         if formatting_enabled is None or calibration_enabled is None:
@@ -4575,15 +4574,16 @@ class AssistantAgent(ModelGroupAgent):
         measure the guide alone. Nothing persists: `self._run` is None on an
         eval agent, so the classifier's checkpoint and step rows are
         skipped."""
-        # has_history stays at its default (True): every case here is one
-        # synthetic message, never a real room's first turn, and the
-        # profile_guidance "language" family exists specifically to measure
-        # the guide's language line — passing len(messages) > 1 through
-        # would silently delete that line from every case and the family
-        # would stop testing anything.
+        # Derived from THESE messages, the same way every production call
+        # site does — a case with no prior message renders exactly what a
+        # room's first turn renders (the guide's language line dropped; see
+        # format_formatting_guide's docstring). The profile_guidance
+        # "language" family cases carry a prior message for exactly this
+        # reason, so they remain the cases that exercise that line.
         identity, formatting, calibration = (
             self._build_declared_profile_blocks(
-                profile, formatting_enabled=True, calibration_enabled=True))
+                profile, formatting_enabled=True, calibration_enabled=True,
+                has_history=self._has_history(messages)))
         self._identity_block = identity
         self._formatting_block = formatting if include_formatting else ""
         self._calibration_block = calibration if include_calibration else ""

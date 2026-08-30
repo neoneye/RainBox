@@ -274,3 +274,8 @@ def test_a_resolved_row_shows_what_it_read():
     assert "en-US" in event["detail_html"]
     assert "da" in event["detail_html"]
     assert "never made" not in event["detail_html"]
+    # The legible "resolved language" line, not just the raw gate dict the
+    # "gate decision" block already dumps as JSON (which also contains
+    # "en-US" and "da" — the assertions above alone would pass even with the
+    # resolved-language block deleted).
+    assert "en-US — chosen among en, da" in event["detail_html"]

@@ -695,6 +695,10 @@ def _skipped(event: dict) -> list[dict]:
             _block("error", payload.get("error")),
         )
     gate = payload.get("gate") or {}
+    # The marker above is only ever set on a branch that resolved a language,
+    # so `language` is never None here — but that is an assumption about the
+    # assistant's own code, not something this pane can see, and `resolved`
+    # below renders nothing rather than failing if it is ever violated.
     language = gate.get("language")
     slots = gate.get("slots") or []
     resolved = (f"{language} — chosen among {', '.join(slots)}"
