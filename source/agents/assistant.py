@@ -3788,7 +3788,8 @@ class AssistantAgent(ModelGroupAgent):
                 self._build_declared_profile_blocks(
                     context.profile,
                     formatting_enabled=formatting_on,
-                    calibration_enabled=calibration_on)
+                    calibration_enabled=calibration_on,
+                    has_history=self._has_history(messages))
             )
             self._profile_block = self._build_profile_block(journal_id, room_uuid)
             # The acceptance-criteria step 0: code-driven (the model cannot
@@ -4479,6 +4480,7 @@ class AssistantAgent(ModelGroupAgent):
         self, profile: dict[str, Any] | None, *,
         formatting_enabled: bool | None = None,
         calibration_enabled: bool | None = None,
+        has_history: bool = True,
     ) -> tuple[str, str, str]:
         """(identity, formatting, calibration) bodies rendered from the turn's
         snapshot profile. The formatters fail independently: a failure logs
@@ -4492,7 +4494,14 @@ class AssistantAgent(ModelGroupAgent):
         passes its live release gate (evals/profile_gate.py) — the blocks
         gate and ship separately. `None` reads the settings (the handle
         path); the eval harness passes explicit booleans so its variants
-        never depend on production state. The identity block is not gated."""
+        never depend on production state. The identity block is not gated.
+
+        `has_history` reaches `format_formatting_guide` unchanged — it decides
+        whether that guide's language line is printable at all, see its own
+        docstring. Defaults True: the eval harness's single-message cases
+        measure the guide's language line itself, not what a history-less
+        room does, so they always take the default rather than being read as
+        history-less turns."""
         if profile is None:
             return "", "", ""
         if formatting_enabled is None or calibration_enabled is None:
@@ -4510,7 +4519,8 @@ class AssistantAgent(ModelGroupAgent):
             logger.warning("assistant: identity block failed", exc_info=True)
         if formatting_enabled:
             try:
-                formatting = user_profile.format_formatting_guide(profile)
+                formatting = user_profile.format_formatting_guide(
+                    profile, has_history=has_history)
             except Exception:
                 logger.warning("assistant: formatting guide failed",
                                exc_info=True)
@@ -4565,6 +4575,12 @@ class AssistantAgent(ModelGroupAgent):
         measure the guide alone. Nothing persists: `self._run` is None on an
         eval agent, so the classifier's checkpoint and step rows are
         skipped."""
+        # has_history stays at its default (True): every case here is one
+        # synthetic message, never a real room's first turn, and the
+        # profile_guidance "language" family exists specifically to measure
+        # the guide's language line — passing len(messages) > 1 through
+        # would silently delete that line from every case and the family
+        # would stop testing anything.
         identity, formatting, calibration = (
             self._build_declared_profile_blocks(
                 profile, formatting_enabled=True, calibration_enabled=True))
@@ -6150,7 +6166,8 @@ class AssistantAgent(ModelGroupAgent):
         # switch (see that method's docstring), so it stays a bespoke append
         # rather than going through _append_static_head's generic
         # "formatting" block.
-        guide = self._criteria_formatting_guide()
+        guide = self._criteria_formatting_guide(
+            has_history=self._has_history(messages))
         if guide:
             prompt.append_text("formatting_guide", guide)
         prompt.append_turn_instructions(ACCEPTANCE_CRITERIA_TURN_INSTRUCTIONS)
@@ -6181,17 +6198,23 @@ class AssistantAgent(ModelGroupAgent):
             "criteria the reply to that request must satisfy.")
         return prompt.render()
 
-    def _criteria_formatting_guide(self) -> str:
+    def _criteria_formatting_guide(self, *, has_history: bool = True) -> str:
         """The formatting guide as a criteria-call INPUT, rendered from the
         criteria snapshot profile regardless of the assistant.formatting_guide
         switch — that switch gates only the decide-prompt injection, and the
         criteria step needs the guide's derived defaults (units ->
         temperature, separators) even while the injected block is still
-        gated off. Deterministic, no DB access; best-effort."""
+        gated off. Deterministic, no DB access; best-effort.
+
+        `has_history` reaches `format_formatting_guide` unchanged, from the
+        same turn the criteria call is establishing — its own caller reads
+        `messages` to say whether the room has anything before the current
+        request."""
         if not self._criteria_profile:
             return ""
         try:
-            return user_profile.format_formatting_guide(self._criteria_profile)
+            return user_profile.format_formatting_guide(
+                self._criteria_profile, has_history=has_history)
         except Exception:
             logger.warning("assistant: criteria formatting guide failed",
                            exc_info=True)
@@ -6379,7 +6402,8 @@ class AssistantAgent(ModelGroupAgent):
         self._identity_block, self._formatting_block, self._calibration_block = (
             self._build_declared_profile_blocks(
                 context.profile, formatting_enabled=formatting_on,
-                calibration_enabled=calibration_on))
+                calibration_enabled=calibration_on,
+                has_history=self._has_history(messages)))
         self._criteria_profile = context.profile
         self._run_acceptance_criteria_call(
             step_index=step_index, messages=messages, scratchpad=scratchpad,
@@ -6467,6 +6491,15 @@ class AssistantAgent(ModelGroupAgent):
     @staticmethod
     def _message_role(message: dict[str, Any]) -> str:
         return "user" if message.get("sender_type") == "human" else "assistant"
+
+    @staticmethod
+    def _has_history(messages: list[dict[str, Any]]) -> bool:
+        """Whether `messages` carries anything before the current one — the
+        same emptiness test that leaves `conversation_history_xml` as
+        `<none/>`. A room's very first message has nothing before it to
+        mirror, which is what the formatting guide's language line assumes
+        it can read."""
+        return bool(messages[:-1])
 
     # Tier 1. Fixed order, and ordered so the per-call block SETS nest:
     #

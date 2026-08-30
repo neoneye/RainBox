@@ -249,3 +249,28 @@ def test_a_never_made_skip_still_carries_no_duration():
     assert event["seconds"] == "—"
     assert "never made" in event["detail_html"]
     assert "no model group is bound" in event["detail_html"]
+
+
+def test_a_resolved_row_shows_what_it_read():
+    """The row replaces a 9-18s model call, so it has to say which language it
+    chose and which languages it chose between."""
+    step = _step("response_language_classifier", at=1, ms=12)
+    step.phase = "skipped"
+    step.duration_ms = 12
+    # The marker sits at the TOP LEVEL of args, beside `gate` -- that is where
+    # db/assistant_log.py:560 and the `_skipped` pane both read it.
+    step.args = {
+        "gate_replaced_call": True,
+        "gate": {"ask": False, "trigger": "resolved", "language": "en-US",
+                 "slots": ["en", "da"], "named_language": None,
+                 "detector_ms": 11},
+    }
+    step.observation_preview = (
+        '{"reason": "Resolved by detection.", "languages": ['
+        '{"code": "en-US", "score": 5}]}')
+    view = log_view(_run(), [step])
+    event = next(e for e in view["events"] if e["kind"] == "skipped")
+    assert event["duration_ms"] == 12
+    assert "en-US" in event["detail_html"]
+    assert "da" in event["detail_html"]
+    assert "never made" not in event["detail_html"]

@@ -306,6 +306,28 @@ def test_explicit_empty_language_rows_render_no_language_line():
     assert body == ""
 
 
+def test_the_language_line_is_dropped_when_there_is_no_history():
+    """With no conversation to mirror, `reply in the language of the current
+    message` points at something unknowable and forbids the fallback."""
+    profile = {"data": {"languages": {"rows": [
+        {"tag": "en-US", "level": "native", "stance": "prefer", "note": ""},
+    ]}}}
+    with_history = format_formatting_guide(profile, has_history=True)
+    without = format_formatting_guide(profile, has_history=False)
+    assert "language of the current message" in with_history
+    assert "language of the current message" not in without
+
+
+def test_the_rest_of_the_guide_survives_without_history():
+    """Only the language line is conditional; units, currency and the rest are
+    not about the conversation."""
+    profile = {"data": {"units": "metric", "languages": {"rows": [
+        {"tag": "en-US", "level": "native", "stance": "prefer", "note": ""},
+    ]}}}
+    without = format_formatting_guide(profile, has_history=False)
+    assert "Units" in without
+
+
 # ---- prompt-boundary validation --------------------------------------------
 
 def test_validators_reject_arbitrary_text():

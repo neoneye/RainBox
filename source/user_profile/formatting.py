@@ -244,11 +244,14 @@ def valid_profile_languages(profile: dict[str, Any]) -> tuple[str | None, str | 
 # ---- the renderer --------------------------------------------------------
 
 def format_formatting_guide(profile: dict[str, Any],
-                            now: datetime | None = None) -> str:
+                            now: datetime | None = None, *,
+                            has_history: bool = True) -> str:
     """Render one profile's locale fields as the formatting-guide body
     (deterministic; no DB access). Returns "" when no directive is usable.
     `now` is the injectable clock for the timezone offset; tests pin it on
-    both sides of a DST boundary."""
+    both sides of a DST boundary. `has_history` says whether the turn has a
+    conversation before its current message; see the language block below
+    for why that gates one line rather than nothing."""
     data = profile.get("data") or {}
     if now is None:
         now = datetime.now(UTC)
@@ -322,11 +325,20 @@ def format_formatting_guide(profile: dict[str, Any],
                      "with a supplied or freshly retrieved rate.")
 
     language, secondary_language = valid_profile_languages(profile)
-    if language is not None:
+    if language is not None and has_history:
         # The preferred language is NOT the output language: replies mirror
         # the conversation. Small models read a bare "prefer da" as a
         # directive to switch, so the rule is spelled out as absolute and
         # the profile languages are demoted to explicit-request-only.
+        #
+        # Dropped outright with no history: a room's first message has no
+        # conversation to mirror, so "reply in the language of the current
+        # message" points at nothing the turn can read yet. Printing it
+        # anyway would forbid exactly what the resolver does for such a
+        # turn when the message itself is too short or ambiguous to
+        # classify -- it falls back to the profile's preferred language with
+        # no explicit request behind it, which is what this line's "only
+        # when the message asks for it" rules out.
         known = (
             f"{language} or {secondary_language}"
             if secondary_language else language)
