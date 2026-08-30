@@ -132,28 +132,35 @@ It is also why the three "English sentence in a Danish conversation" exceptions
 resolve the way the model resolved them: one English message does not outweigh
 the Danish around it.
 
-## Reuse is per language
+## There is nothing to reuse
 
-The trace already records a classification on every `observed` classifier row.
-"The room's last classification whose top language is X" is the existing query
-with one added filter.
+An earlier draft of this design stored a classification per language and reused
+it, so a room paid one model call per language before it settled. That is still
+one call too many: waiting eleven seconds to be told *yes, this is English* is
+the exact annoyance this design exists to remove, and it lands on the first
+message of every new room.
 
-So a turn that resolves to a language the room has resolved before reuses *that
-language's* answer rather than only the most recent one.
+It is also unnecessary. `_format_reply_language_markdown` is **score-free** — it
+sorts by score and then emits an ordered list of tags with a one-line reason, so
+the numbers never reach a prompt. What downstream calls consume is a ranking,
+and a ranking can be constructed without a model:
 
-Reuse is per room and is not shared between rooms. The answer for "what does a
-Danish reply look like" plausibly does not depend on the room, so sharing would
-save a call per language per room — but a room with several people in it is
-exactly where the answer may legitimately differ, and that is the direction this
-design is being prepared for. The saving is not worth spending the distinction.
+    the resolved language first, then the profile's other declared languages
+    in their own preference order, with a reason stating how it was decided.
 
-How much this saves depends on how often the operator switches, which is
-unmeasured — see the warning on the switch figure above. It is included because
-it is nearly free (one added filter on a query already made) and because it
-removes a failure the shift gate has by construction: with a single reuse slot,
-every return to a previous language costs a model call no matter how well
-established that language is. Whether that failure is frequent or rare is a
-different question from whether it should exist.
+No score is invented, because none is needed. The structured result stays the
+evaluation authority and records that the turn was resolved deterministically
+rather than pretending to be a model verdict.
+
+Two mechanisms fall out of the design as a consequence:
+
+- **The per-language store, and the question of sharing it between rooms.**
+  There is nothing to store and nothing to share. A room does not "settle" into
+  a language; every turn is computed from what is in front of it.
+- **The profile-change snapshot.** It exists only to catch a stored answer going
+  stale against an edited profile. An answer computed from the profile each turn
+  cannot be stale, so an edit takes effect on the next message with no
+  invalidation machinery at all.
 
 ## Cold start
 
@@ -259,13 +266,8 @@ Run `response_language_classifier` when **any** of:
    declared, and the model can. A profile declaring nothing has nothing to
    match against and takes English instead, below;
 3. the unrestricted detector's top language is outside the room's candidate set;
-4. the resolved language carries language but has no recorded classification
-   in this room yet — at most once per language per room (see the open question
-   about sharing these across rooms);
-5. the two detectors disagree about which candidate language it is;
-6. the profile's declared languages have changed since the reused classification
-   was recorded;
-7. detection raised.
+4. the two detectors disagree about which candidate language it is;
+5. detection raised.
 
 Otherwise resolve deterministically, by one mechanism rather than three
 cases: **the recency-weighted dominant language over the room's messages,
@@ -294,7 +296,8 @@ comparing languages across a wide field:
 - the language-name check exempts scripts that write a morpheme per character
   from its length minimums, and scans inside tokens for scripts that write
   without spaces;
-- the profile-change snapshot that invalidates a reused classification.
+The profile-change snapshot is **not** carried over: nothing is reused, so
+nothing can go stale.
 
 **Dissolved**, because the restricted detector removes the problem they solve:
 the fixed-size message window, the shift ratio against the request's strongest
@@ -338,10 +341,10 @@ candidate, and the per-message confidence normalisation.
 
 ## Open questions
 
-- **Does a per-language reuse expire?** A classification recorded months ago is
-  still a fine answer for "what does a Danish reply look like", and the profile
-  snapshot already covers the one thing that invalidates it. Left unexpired
-  until something argues otherwise.
+- **Does the deterministic ranking need the room's other languages at all?**
+  It lists the resolved language first and the profile's remaining declared
+  languages after it, mirroring what the classifier returns. Whether anything
+  downstream reads past the first entry is unverified.
 - **Do the room's resolved languages need a floor?** One accidental message in a
   language currently adds it to the candidate set permanently. Recency weighting
   makes it harmless for the *window*, but it also widens the restricted
