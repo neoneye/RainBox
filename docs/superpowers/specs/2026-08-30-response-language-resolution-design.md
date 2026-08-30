@@ -8,6 +8,25 @@ language outright and calls the model only where a deterministic answer would
 be a guess. The earlier document's reading fixes are kept and named below; its
 comparison machinery is not.
 
+## What is not known
+
+The skip rate on representative traffic. There is no sample of the operator's
+ordinary conversation in the trace: what is recorded is development work and
+deliberate tests, both unrepresentative in opposite directions — the work is
+monolingual English, the tests switch language almost every turn.
+
+This matters for how the design is judged. On monolingual traffic the shift gate
+it supersedes already skips nearly every turn, so the gain there is not fewer
+model calls but fewer thresholds: four defects on the current branch came from
+comparing confidences that are not comparable, and restricting the detector to a
+room's own languages removes that whole class. The call-count gain is real only
+to the extent that switching, cold starts and short messages are real, and those
+frequencies are unknown.
+
+Nothing here should be enabled on the strength of a projected saving. The
+measurement to take is the one the parent proposal asked for and nobody has
+taken: run it on ordinary traffic and count.
+
 ## The goal, stated as the operator did
 
 > I don't want the LLM to be triggered in my typical interaction with the
@@ -23,9 +42,15 @@ which cases are left over.
 
 All figures below come from this installation's own trace and messages.
 
-**Switching is mostly returning.** Of 19 recorded language switches, **17 (89%)
-were back to a language the room had already used.** Under the shift gate every
-one of those costs a model call, because reuse has a single slot per room.
+**Switching is mostly returning — in a sample that cannot carry the claim.**
+Of 19 recorded language switches, 17 were back to a language the room had
+already used. **Those switches are test messages**, written to exercise the
+ReAct loop, not ordinary conversation; the operator's real traffic is primarily
+American English with occasional Danish, and no representative sample of it
+exists. The shape is still informative — a returning switch is cheap to serve
+and a novel one is not — but the frequency is not, and this document must not
+be read as projecting a saving from it. The parent proposal made the same
+warning about its own 94.6% figure, for the same reason.
 
 **Restricting the detector to a room's own languages makes confidence
 comparable.** The same message, detected against all 75 languages and against a
@@ -48,7 +73,10 @@ as one language, correctly, and needs no model call.
 
 **A deterministic answer matches the model.** Detecting the request and mapping
 it to the matching declared profile row reproduces the model's own top answer on
-**173 of 177** recorded classifications (98%). The four exceptions are not
+**173 of 177** recorded classifications (98%). Unlike the switch figure this one
+survives its sample: excluding every message that is itself a language
+experiment leaves **170 of 173, still 98%**, so it is measured over ordinary
+work and not over the language tests. The four exceptions are not
 noise, and they define two of the rules below:
 
 - three are an English sentence inside a Danish conversation, where the model
@@ -111,8 +139,15 @@ The trace already records a classification on every `observed` classifier row.
 with one added filter.
 
 So a turn that resolves to a language the room has resolved before reuses *that
-language's* answer. This is what turns the measured 89% from a model call into a
-lookup, and it is the single largest saving in this design.
+language's* answer rather than only the most recent one.
+
+How much this saves depends on how often the operator switches, which is
+unmeasured — see the warning on the switch figure above. It is included because
+it is nearly free (one added filter on a query already made) and because it
+removes a failure the shift gate has by construction: with a single reuse slot,
+every return to a previous language costs a model call no matter how well
+established that language is. Whether that failure is frequent or rare is a
+different question from whether it should exist.
 
 ## Cold start
 
