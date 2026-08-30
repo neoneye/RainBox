@@ -6,7 +6,6 @@ alone. It reads no settings and no database, so these tests need neither.
 """
 
 from agents.response_language_gate import (
-    Detection,
     GateDecision,
     LANGUAGE_SLOTS,
     LETTER_FLOOR,
