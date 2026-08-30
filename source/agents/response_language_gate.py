@@ -274,9 +274,10 @@ def _restricted_detector(slots: tuple[str, ...]):
 
     Restriction is what makes confidence usable rather than merely available:
     the same Danish sentence reads 0.25 against every language lingua knows and
-    0.94 against four. It also force-fits anything outside the set, which is why
-    `decide` asks the unrestricted detector whether the request belongs to these
-    languages before believing this one's answer.
+    0.94 against four. It also force-fits anything outside the set, so a
+    confident answer from this detector is not on its own proof that the text
+    belongs to one of `slots` -- that check is the unrestricted detector's,
+    separately.
     """
     from lingua import IsoCode639_1, LanguageDetectorBuilder
 
