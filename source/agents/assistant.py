@@ -819,7 +819,7 @@ DEFAULT_REPLY_LANGUAGE = "en"
 
 
 SOURCE_PRIORITY_SECTION: str = """\
-<source_priority highest_first="true">
+<source_priority order="rank 1 is the highest authority">
   <source rank="1">successful current_turn_steps observations</source>
   <source rank="2">current_user_request</source>
   <source rank="3">reply_language_markdown (ranked reply-language classification for this turn)</source>
@@ -830,7 +830,7 @@ SOURCE_PRIORITY_SECTION: str = """\
 </source_priority>"""
 
 ACCEPTANCE_CRITERIA_SOURCE_PRIORITY_SECTION: str = """\
-<source_priority highest_first="true">
+<source_priority order="rank 1 is the highest authority">
   <source rank="1">successful current_turn_steps observations</source>
   <source rank="2">current_user_request</source>
   <source rank="3">reply_language_markdown (ranked reply-language classification for this turn)</source>
@@ -907,7 +907,12 @@ Only when that also comes back empty,
 say that nothing is stored about them: it is the answer to what was asked,
 and repeating what you know about the nearer person answers a question
 nobody asked.
-Interpret the user-prompt sections with this precedence:
+Interpret the user-prompt sections with this precedence. Rank 1 is the
+highest authority and the last rank the lowest — the smaller the rank
+number, the more it outranks. Where two sources conflict, the smaller rank
+number wins. Where every rank above it is silent on the point, the next
+rank down decides it: a low rank is not a source to ignore, only one that
+yields when something above it speaks.
 """ + SOURCE_PRIORITY_SECTION + """
 assistant_persona is the character you are playing: adopt its voice, manner and
 attitude in every message you write to the user. Adhering to it is not optional

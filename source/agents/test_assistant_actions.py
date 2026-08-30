@@ -204,7 +204,9 @@ def test_user_prompt_has_xml_zones_turn_instructions_first_and_escaped_content()
 
 
 def test_source_priority_policy_is_in_decide_turn_instructions():
-    assert '<source_priority highest_first="true">' in DECIDE_TURN_INSTRUCTIONS
+    assert '<source_priority order="rank 1 is the highest authority">' in (
+        DECIDE_TURN_INSTRUCTIONS
+    )
     assert '<source rank="1">successful current_turn_steps observations</source>' in (
         DECIDE_TURN_INSTRUCTIONS
     )
