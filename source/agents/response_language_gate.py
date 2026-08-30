@@ -509,6 +509,10 @@ TRIGGER_SHIFT = "shift"
 TRIGGER_EMPTY_WINDOW = "empty_window"
 TRIGGER_DETECTOR_ERROR = "detector_error"
 TRIGGER_REUSE = "reuse"
+TRIGGER_FIRST_MESSAGE_UNMATCHED = "first_message_unmatched"
+TRIGGER_OUTSIDE_SLOTS = "outside_slots"
+TRIGGER_DETECTORS_DISAGREE = "detectors_disagree"
+TRIGGER_RESOLVED = "resolved"
 
 
 @dataclass(frozen=True)
@@ -687,3 +691,116 @@ def decide(
             detector_ms=elapsed(),
             error=f"{type(exc).__name__}: {exc}",
         )
+
+
+@dataclass(frozen=True)
+class Resolution:
+    """What the turn decided, and what it read to decide it.
+
+    Recorded whole on the step row: a turn that skipped the assistant's most
+    expensive call has to say what it saw and what it concluded, or a reply in
+    the wrong language leaves the operator guessing.
+    """
+
+    ask: bool
+    trigger: str
+    language: str | None = None
+    slots: tuple[str, ...] = ()
+    named_language: str | None = None
+    detector_ms: int = 0
+    error: str | None = None
+
+    def as_args(self) -> dict:
+        args = {
+            "ask": self.ask,
+            "trigger": self.trigger,
+            "language": self.language,
+            "slots": list(self.slots),
+            "named_language": self.named_language,
+            "detector_ms": self.detector_ms,
+        }
+        if self.error:
+            args["error"] = self.error
+        return args
+
+
+def resolve(
+    *,
+    history: Sequence[str],
+    request: str,
+    pinned: Sequence[str],
+    fallback: str,
+) -> Resolution:
+    """Decide the reply language, or that only a model can.
+
+    `history` is the operator's earlier messages, oldest first; `request` is the
+    message being answered and is excluded from the history it is judged
+    against. `pinned` is the profile's primary and secondary; `fallback` is what
+    to use when nothing else decides.
+
+    Every uncertainty resolves toward asking. A needless ask costs latency; a
+    wrong resolution costs one reply in the wrong language, which is visible and
+    corrects on the next turn.
+
+    The whole body runs under one broad `except Exception`. This is not
+    sloppiness to be narrowed later -- it is the fail-open guarantee itself:
+    whatever goes wrong here, from a detector crash to a future bug in this
+    function, must resolve to "ask the model", never to a raised exception
+    that breaks the turn. Narrowing it would silently drop that guarantee for
+    every failure mode this function's author did not think of.
+    """
+    started = time.perf_counter()
+
+    def elapsed() -> int:
+        return int((time.perf_counter() - started) * 1000)
+
+    try:
+        # Cheapest, and independent of everything else: an instruction naming a
+        # language is invisible to detection, because it is written in whatever
+        # language the operator is already using.
+        named = names_a_language(request)
+        if named:
+            return Resolution(
+                ask=True, trigger=TRIGGER_NAMED_LANGUAGE,
+                named_language=named[0], detector_ms=elapsed())
+
+        slots = language_slots(history, pinned)
+        detection = detect(request)
+
+        if detection.language_poor or detection.undetected:
+            # Nothing in the request to read. Keep the conversation if there is
+            # one, and otherwise take the fallback -- there is nothing here for
+            # a model to decide between either.
+            language = dominant_language(history, slots) or fallback
+            return Resolution(
+                ask=False, trigger=TRIGGER_RESOLVED, language=language,
+                slots=slots, detector_ms=elapsed())
+
+        if detection.top not in slots:
+            # The unrestricted detector says this is not one of the room's
+            # languages. Restricted detection would force-fit it to one, so the
+            # model decides -- and on a first message that is also the only way
+            # to tell a foreign language from nonsense.
+            trigger = (TRIGGER_FIRST_MESSAGE_UNMATCHED if not slots
+                       or not history else TRIGGER_OUTSIDE_SLOTS)
+            return Resolution(
+                ask=True, trigger=trigger, slots=slots,
+                detector_ms=elapsed())
+
+        within = detect_within(request, slots)
+        if within is None or within != detection.top:
+            # The two instruments disagree about which of the room's languages
+            # this is -- or the restricted one could not decide at all.
+            # Neither is authoritative over the other, so the model settles it.
+            return Resolution(
+                ask=True, trigger=TRIGGER_DETECTORS_DISAGREE, slots=slots,
+                detector_ms=elapsed())
+
+        return Resolution(
+            ask=False, trigger=TRIGGER_RESOLVED, language=within,
+            slots=slots, detector_ms=elapsed())
+    except Exception as exc:
+        logger.warning("response-language resolution failed open", exc_info=True)
+        return Resolution(
+            ask=True, trigger=TRIGGER_DETECTOR_ERROR, detector_ms=elapsed(),
+            error=f"{type(exc).__name__}: {exc}")

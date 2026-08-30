@@ -5,6 +5,8 @@ The gate answers one question — should the classifier run — from the message
 alone. It reads no settings and no database, so these tests need neither.
 """
 
+import pytest
+
 from agents.response_language_gate import (
     Detection,
     GateDecision,
@@ -12,19 +14,25 @@ from agents.response_language_gate import (
     LETTER_FLOOR,
     SHIFT_RATIO,
     TRIGGER_DETECTOR_ERROR,
+    TRIGGER_DETECTORS_DISAGREE,
     TRIGGER_EMPTY_WINDOW,
+    TRIGGER_FIRST_MESSAGE_UNMATCHED,
     TRIGGER_NAMED_LANGUAGE,
     TRIGGER_NO_PREVIOUS,
+    TRIGGER_OUTSIDE_SLOTS,
     TRIGGER_PROFILE_CHANGED,
+    TRIGGER_RESOLVED,
     TRIGGER_REUSE,
     TRIGGER_SHIFT,
     WINDOW_MESSAGES,
+    Resolution,
     decide,
     detect,
     detect_within,
     dominant_language,
     language_slots,
     names_a_language,
+    resolve,
     window_dominant,
 )
 
@@ -678,3 +686,111 @@ def test_the_canonical_translate_request_asks():
     """
     d = _decide(EN_WINDOW, DA_TRANSLATE_REQUEST, has_previous=True)
     assert d.should_ask is True
+
+
+EN_HISTORY = [EN_PROSE, EN_DEBUGGING]
+
+
+def _resolve(history, request, pinned=("en", "da"), fallback="en"):
+    return resolve(history=history, request=request,
+                   pinned=pinned, fallback=fallback)
+
+
+def test_an_ordinary_turn_resolves_without_the_model():
+    """The case that must never cost a model call: a message in a language the
+    room already speaks."""
+    r = _resolve(EN_HISTORY, "what do I do for work")
+    assert r.ask is False
+    assert r.trigger == TRIGGER_RESOLVED
+    assert r.language == "en"
+
+
+def test_a_switch_to_another_slot_language_resolves():
+    """Switching to a language the room already speaks is not a question for a
+    model -- the detector can see which one it is.
+
+    Uses DA_WITH_ENGLISH_NOUNS rather than DA_PROSE: DA_PROSE contains
+    `dansk` mid-sentence, which the name check would catch first, testing
+    TRIGGER_NAMED_LANGUAGE instead of the detection path this case means to
+    exercise."""
+    r = _resolve(EN_HISTORY, DA_WITH_ENGLISH_NOUNS)
+    assert r.ask is False
+    assert r.language == "da"
+
+
+def test_a_named_language_asks():
+    r = _resolve(EN_HISTORY, "Please answer in French from now on.")
+    assert r.ask is True
+    assert r.trigger == TRIGGER_NAMED_LANGUAGE
+    assert r.named_language == "French"
+
+
+def test_a_language_outside_the_slots_asks():
+    """Restricted detection would force-fit this to a slot language. The
+    unrestricted detector is what notices it does not belong."""
+    r = _resolve(EN_HISTORY, "Haluaisin etta vastaat minulle suomeksi kiitos")
+    assert r.ask is True
+    assert r.trigger == TRIGGER_OUTSIDE_SLOTS
+
+
+def test_a_first_message_matching_no_declared_language_asks():
+    """Nonsense and a genuine foreign first contact are one input to the
+    detector -- `osuf ljweroiux jsdfoij wnoer` reads as Dutch at 0.215 and 0.899
+    against a declared set. Only the model can tell them apart."""
+    r = _resolve([], "osuf ljweroiux jsdfoij wnoer")
+    assert r.ask is True
+    assert r.trigger == TRIGGER_FIRST_MESSAGE_UNMATCHED
+
+
+def test_a_first_message_in_a_declared_language_resolves():
+    """The annoyance this design exists to remove: waiting on a model to be
+    told yes, this is English."""
+    r = _resolve([], "can you say something funny about AI and testing")
+    assert r.ask is False
+    assert r.language == "en"
+
+
+def test_a_language_poor_first_message_takes_the_fallback():
+    """No history and nothing in the request to read. There is nothing for a
+    model to decide between, so it is not asked."""
+    r = _resolve([], "ok", pinned=(), fallback="en")
+    assert r.ask is False
+    assert r.language == "en"
+
+
+def test_a_language_poor_request_keeps_the_conversation():
+    """`ok` in an English conversation does not restart the question."""
+    r = _resolve(EN_HISTORY, "ok")
+    assert r.ask is False
+    assert r.language == "en"
+
+
+def test_a_raising_detector_asks_when_resolving():
+    """A resolver that cannot decide has decided to ask.
+
+    Named distinctly from the `decide()` test of the same shape above --
+    an identical name here would silently shadow it in the module namespace
+    and drop it from collection."""
+    import agents.response_language_gate as gate
+
+    def boom(_text):
+        raise RuntimeError("detector unavailable")
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(gate, "detect", boom)
+    try:
+        r = _resolve(EN_HISTORY, EN_PROSE)
+    finally:
+        monkeypatch.undo()
+    assert r.ask is True
+    assert r.trigger == TRIGGER_DETECTOR_ERROR
+    assert "detector unavailable" in r.as_args()["error"]
+
+
+def test_the_decision_records_what_it_read():
+    args = _resolve(EN_HISTORY, "what do I do for work").as_args()
+    assert args["trigger"] == TRIGGER_RESOLVED
+    assert args["ask"] is False
+    assert args["language"] == "en"
+    assert set(args["slots"]) >= {"en", "da"}
+    assert isinstance(args["detector_ms"], int)
