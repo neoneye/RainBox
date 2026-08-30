@@ -476,8 +476,8 @@ working on the request. You do not answer the request and you do not plan
 actions; you only state the reply's constraints, as structured output:
 
 - processing: the user preferences that steer the work — which units,
-  timezone, currency or locale the work must adopt, and which setting each
-  one comes from.
+  timezone or currency the work must adopt, and which setting each one comes
+  from.
 - formatting: the user preferences that steer the final message — number
   separators and decimal mark, date and time format, units and temperature,
   spelling.
@@ -495,6 +495,18 @@ leave `formatting` thin: these criteria are what the reply gets checked
 against, so a preference you leave out is one nobody verifies. Numbers are the
 usual casualty — whenever the reply will carry a computed value, an amount, a
 date or a temperature, the convention governing it belongs in `formatting`.
+
+The reply's LANGUAGE is not yours to decide. It was settled before this call
+by a narrow classifier whose result you are shown as
+reply_language_markdown, listing the languages highest confidence first;
+restate that first language in `formatting` and never re-derive it. The
+conversation and the settings are the wrong evidence for it and will
+mislead you: a transcript running in one language and a settings block
+naming a country both survive a request written in something else, and the
+request is what the classification already read. When
+reply_language_markdown is absent, no language was resolved — then say the
+reply mirrors the language of the current request, which is the formatting
+guide's standing rule, and still name no language of your own.
 
 Resolve an ambiguity from the user settings ONLY when they provide a default
 for it, and disclose that choice in `assumptions`. When the settings provide
@@ -6053,11 +6065,12 @@ class AssistantAgent(ModelGroupAgent):
     ) -> str:
         """The criteria call's user prompt: who is asking (identity) and the
         formatting guide, then the request, the turn's conversation history,
-        and — for a revision — the prior criteria and the run's steps so
-        far, without which the call would reproduce the same criteria
-        deterministically and the revision would be a no-op. NOT the action
-        catalog: this call plans constraints, not actions. Same ElementTree
-        escaping guarantee as the other prompt builders.
+        the language this turn already resolved, and — for a revision — the
+        prior criteria and the run's steps so far, without which the call
+        would reproduce the same criteria deterministically and the revision
+        would be a no-op. NOT the action catalog: this call plans
+        constraints, not actions. Same ElementTree escaping guarantee as the
+        other prompt builders.
 
         The history is here in both roles. The operator's requests and
         preferences are the authoritative context, but how the assistant has
@@ -6083,6 +6096,20 @@ class AssistantAgent(ModelGroupAgent):
         if guide:
             prompt.append_text("formatting_guide", guide)
         prompt.append_turn_instructions(ACCEPTANCE_CRITERIA_TURN_INSTRUCTIONS)
+
+        # The turn's already-settled reply language, in the same score-free
+        # projection the decide, second-opinion and audit calls read. This
+        # call runs after the classifier, so the answer exists — and it is
+        # shown here to keep the call OUT of the question, not to invite it
+        # in: the other evidence in this prompt is a transcript and a
+        # settings block, and both outlast a request written in another
+        # language. Empty when nothing resolved — a section asserting a
+        # decision nobody made is worse than none, and turn_instructions says
+        # what to do in its absence.
+        if self._reply_language_markdown:
+            prompt.append_text(
+                "reply_language_markdown", self._reply_language_markdown)
+
         revising = prior_criteria is not None
         if revising:
             prompt.append_text(

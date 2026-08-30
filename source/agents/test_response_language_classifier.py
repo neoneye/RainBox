@@ -360,14 +360,21 @@ def test_ranked_markdown_is_injected_into_every_later_decide_without_scores(room
         assert "scores are intentionally omitted" in decide_prompt
 
 
-def test_classifier_output_skips_criteria_but_reaches_second_opinion():
+def test_classifier_output_reaches_criteria_and_second_opinion():
+    """Every call that can state a reply language is shown the classification.
+
+    The criteria call most of all: its whole output is a set of constraints
+    the later calls follow, so a language it settles on its own — from the
+    transcript and the settings block, the only evidence it would otherwise
+    have — reaches them as a rule contradicting the classification.
+    """
     agent = _agent()
     agent._reply_language_markdown = (
         agent._format_reply_language_markdown(_classification()))
     messages = [{"sender_type": "human", "text": "Translate this to English."}]
     criteria_prompt = agent._build_acceptance_criteria_prompt(messages)
-    assert "<reply_language_markdown" not in criteria_prompt
-    assert "en-GB" not in criteria_prompt
+    assert "<reply_language_markdown" in criteria_prompt
+    assert "- `en-GB`" in criteria_prompt
 
     decision = AssistantStepDecision(
         reason="calculate",

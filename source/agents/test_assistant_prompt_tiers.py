@@ -248,6 +248,7 @@ CRITERIA_EXPECTED = [
     "conversation_history_xml",
     "user_settings_json", "formatting_guide",
     "turn_instructions",
+    "reply_language_markdown",
     "prior_acceptance_criteria",
     "current_turn_steps", "criteria_request",
 ]

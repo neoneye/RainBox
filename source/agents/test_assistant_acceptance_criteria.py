@@ -880,3 +880,58 @@ def test_a_model_written_criterion_cannot_forge_the_section_structure():
         "## Processing", "## Formatting", "## Assumptions"]
     assert not [ln for ln in lines if ln.startswith("- ")]
     assert "## Assumptions none whatsoever" in lines[1]
+
+
+# --- the turn's resolved reply language ---------------------------------------
+
+
+def test_criteria_prompt_carries_the_resolved_reply_language(room):
+    """The criteria call must be shown the language the turn already resolved.
+
+    Without it this call re-decides the reply language from what it can see —
+    a Danish-heavy transcript and a Denmark-shaped settings block — and
+    outranks nothing while contradicting everything: the resolved language is
+    rank 3 in the shared source priority and these criteria are rank 4, but a
+    concrete sentence naming Danish beats an ordered list naming en-US at the
+    calls that read both.
+    """
+    agent = _agent()
+    agent._reply_language_markdown = (
+        "## Reason\nResolved by detection: the request is in en-US.\n\n"
+        "## Languages - highest confidence first\n- `en-US`\n- `da`")
+    messages = [
+        {"sender_type": "human", "text": "hvad er klokken i Tokyo?"},
+        {"sender_type": "agent", "text": "Klokken er 08:00 i Tokyo."},
+        {"sender_type": "human", "text": "tell me 10 ways AI is a threat"},
+    ]
+    prompt = agent._build_acceptance_criteria_prompt(messages)
+    assert "<reply_language_markdown>" in prompt
+    assert "`en-US`" in prompt
+    # Ahead of the request the criteria answer, like every other call that
+    # carries both.
+    assert prompt.index("<reply_language_markdown>") < prompt.index(
+        "<criteria_request>")
+
+
+def test_criteria_prompt_omits_reply_language_when_unresolved(room):
+    """A turn whose classifier failed or was never bound resolves no language.
+    An empty section would assert a decision nobody made, so none is rendered
+    and the criteria call falls back to the formatting guide's mirror rule."""
+    agent = _agent()
+    agent._reply_language_markdown = ""
+    messages = [{"sender_type": "human", "text": "convert 10537337172 feet"}]
+    prompt = agent._build_acceptance_criteria_prompt(messages)
+    # The tag, not the word: turn_instructions names the section
+    # unconditionally, to say what its absence means.
+    assert "<reply_language_markdown>" not in prompt
+
+
+def test_criteria_instructions_do_not_invite_a_language_decision(room):
+    """`processing` asks which preferences steer the work. Listing `locale`
+    there is what licensed this call to name a reply language of its own; the
+    instructions now say the language is already fixed and is restated, never
+    re-derived."""
+    text = ACCEPTANCE_CRITERIA_TURN_INSTRUCTIONS
+    assert "timezone, currency or locale" not in text
+    assert "reply_language_markdown" in text
+    assert "never re-derive it" in text

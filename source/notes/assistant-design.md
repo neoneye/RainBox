@@ -500,10 +500,21 @@ field cannot be told apart from an oversight. For the same reason the system
 prompt carries no worked example: a copyable one gets emitted verbatim in
 place of criteria derived from the actual request.
 
-Response language is deliberately absent. The preceding
-`reply_language_markdown` from the dedicated classifier is injected directly
-into decide and second-opinion prompts; the broader criteria call does not
-reinterpret or duplicate it.
+Response language is not this call's to decide, and it is shown the decision
+so that it cannot make one. The preceding `reply_language_markdown` from the
+dedicated classifier is injected here as it is into the decide,
+second-opinion and audit prompts, and `turn_instructions` tells the call to
+restate its first language in `formatting` and never re-derive it.
+
+Withholding it does not keep the call out of the question — it only leaves it
+answering from the wrong evidence. The call sees a transcript and a settings
+block, both of which outlast a request written in another language, so a
+room running in one language answers an English request with "the response
+must adopt the user's preferred locale, which is Danish." That sentence then
+outranks nothing and beats everything: the criteria are rank 4 in the shared
+`source_priority` and the classification is rank 3, but a concrete sentence
+naming a language wins over an ordered list at the calls that read both, and
+the audit passes the reply while narrating the override.
 
 The call has its own small persona prompt
 (`ACCEPTANCE_CRITERIA_SYSTEM_PROMPT`, not the assistant's working prompt);
