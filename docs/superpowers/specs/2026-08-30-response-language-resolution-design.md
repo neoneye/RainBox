@@ -176,7 +176,12 @@ correctness: a rank-4 instruction contradicting rank 3 is how small models are
 made to wobble.
 
 A profile that declares no languages at all resolves to **English**, and does
-not ask.
+not ask. This is the one first-message case that stays out of the model's
+hands, and the reason is that there is nothing for the model to decide between:
+with no declared language, "which of the operator's languages is this?" has an
+empty answer set whatever the message says. Where the profile does declare
+languages and the message matches none of them, the model is asked — see
+trigger 2.
 
 Inferring a language from the profile's country was considered and rejected.
 CLDR will happily answer it — `und-DK` maximises to `da`, `und-JP` to `ja` — but
@@ -194,21 +199,26 @@ the operator has stated none is a coin that has to land somewhere, it is
 overridden the moment they declare a language or write one, and getting it wrong
 costs one message.
 
-**Nonsense resolves the same way, because it cannot be told apart from
-language.** `osuf ljweroiux jsdfoij wnoer` detects as Dutch at 0.215
-unrestricted, and restricted to a declared set it scores 0.899 — squarely inside
-the range real text occupies (0.83-1.00). No threshold separates them, and a
-gibberish detector is not a thing this design is going to grow. So a first
-message is not allowed to pull the conversation into a language the profile has
-not declared: nonsense and a genuine foreign first contact are the same input as
-far as the detector is concerned, and both resolve to the preferred language.
+**A first message that matches no declared language goes to the model.** This
+is the one place where the model is worth its cost, and it is worth it because
+of a limit that is now measured rather than assumed: nonsense cannot be told
+apart from language by detection. `osuf ljweroiux jsdfoij wnoer` reads as Dutch
+at 0.215 unrestricted, and restricted to a declared set it scores 0.899 —
+squarely inside the range real text occupies (0.83-1.00). No threshold divides
+them, and no gibberish detector is coming.
 
-The cost of that is stated plainly: someone whose very first message is in a
-language they never declared gets one reply in the wrong language. Their second
-message has history behind it, the request is then weighed against a real
-window, and the turn resolves — or asks, if the language is still undeclared.
-One wrong reply at first contact, recovered on the next turn, is the price of
-never spending a model call on `osuf ljweroiux jsdfoij wnoer`.
+The model can make that distinction, and it is the only component here that
+can. So a first message whose language does not clearly match a declared one —
+gibberish and a genuine foreign first contact alike, because they are one input
+to the detector — is classified rather than guessed at. Someone whose first
+message is Spanish gets Spanish; someone who mashes the keyboard gets the
+preferred language, because that is what the model should conclude from text
+that says nothing.
+
+The cost is bounded and small: at most one call, on a room's first message, and
+only when that message matches nothing declared. A first message in a declared
+language still resolves deterministically, which is the common case by a wide
+margin.
 
 This rule and trigger 3 divide the first turn between them, and the division is
 worth stating because both could be read as owning it. A first request that
@@ -223,14 +233,19 @@ anything about its own language, not whether the room is new.
 Run `response_language_classifier` when **any** of:
 
 1. the request names a language (CLDR names and endonyms, unchanged);
-2. the unrestricted detector's top language is outside the room's candidate set;
-3. the resolved language carries language but has no recorded classification
+2. the room has no usable history and the request matches none of the
+   profile's declared languages, *and the profile declares at least one* — the
+   one case where detection cannot distinguish nonsense from a language nobody
+   declared, and the model can. A profile declaring nothing has nothing to
+   match against and takes English instead, below;
+3. the unrestricted detector's top language is outside the room's candidate set;
+4. the resolved language carries language but has no recorded classification
    in this room yet — at most once per language per room (see the open question
    about sharing these across rooms);
-4. the two detectors disagree about which candidate language it is;
-5. the profile's declared languages have changed since the reused classification
+5. the two detectors disagree about which candidate language it is;
+6. the profile's declared languages have changed since the reused classification
    was recorded;
-6. detection raised.
+7. detection raised.
 
 Otherwise resolve deterministically, by one mechanism rather than three
 cases: **the recency-weighted dominant language over the room's messages,
