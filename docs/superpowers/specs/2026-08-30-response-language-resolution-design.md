@@ -179,18 +179,60 @@ in a language the room does not speak, and the classifier decides. Removing the
 unrestricted detector as redundant would make every unknown language read as a
 known one; it is load-bearing, not defensive.
 
+## This design lets detection decide, not only gate
+
+`source/notes/proposals/2026-08-17-gating-the-response-language-classifier.md`
+established the constraint a reader following the proposal chain arrives with:
+*detection may gate but must never decide* — a cheap detector may decide
+whether to ask the classifier, never what language to reply in. The superseded
+`2026-08-27-response-language-shift-gate-design.md` says that constraint is
+"carried here unchanged."
+
+This design does not carry it unchanged. It reverses it. `resolve()` returns
+`within` — the restricted detector's own answer — as the resolved reply
+language on the whole non-ask path; detection is not consulted for permission
+to skip a decision made elsewhere, it *is* the decision. A reader who arrives
+here through the proposal chain and expects the earlier rule to still hold
+would be wrong, and the silence would be the kind of thing that surfaces as a
+confused bug report much later. Naming the reversal here is that surfacing.
+
+The reversal is safe for a reason the 08-17 proposal's own worry does not
+apply to. That proposal rejected a detector as the classifier because a single
+restricted instrument force-fits: asked *what language is this* against a
+declared set, it always answers with one of them, confidently, even for
+Finnish. This design does not ask one instrument that question. It asks two:
+the unrestricted detector first, for membership — *is this even one of the
+room's languages* — and only a text that passes that check reaches the
+restricted detector for *which one*. A message the unrestricted detector does
+not place inside the room's slots never reaches the restricted detector at
+all; the classifier decides instead. That membership check is the thing 08-17
+had no way to ask for, because it is stated in terms of *gating*, not in terms
+of *two detectors answering two different questions* — the reversal is what
+made the safer mechanism thinkable, not a hazard it introduces.
+
+What is left of the original constraint is its spirit, not its letter: every
+place detection's answer is uncertain — the two detectors disagree, the
+restricted one cannot decide, the message is undetected, or anything raises —
+still resolves to asking, exactly as 08-17 asked for. Detection now decides
+the confident cases outright, and asks for every case it is not sure of.
+
 ## Recency, and how the slots are filled
 
 One backward scan over the room's operator messages does both jobs. Walking from
 the newest message back, each qualifying message is detected and its language
-noted; the scan stops once four distinct languages have been seen or the scan
-bound is reached. That ordering *is* the LRU: the languages, most recently used
-first, are the room's slots.
+noted; the scan stops once four distinct languages have been seen or
+SCAN_HORIZON_MESSAGES messages have been read, whichever comes first. That
+ordering *is* the LRU: the languages, most recently used first, are the room's
+slots. The horizon bounds a monolingual room, whose four slots never fill and
+which would otherwise walk its entire history every turn; it is set from
+WINDOW_HALF_LIFE so that nothing past it could carry a vote worth reading (see
+that constant).
 
-The same scan answers what the conversation is currently running in. Each message
-votes for its language and votes decay with age, so the most recent message
-weighs most. This is the mechanism that settles a question the operator raised
-and did not need to decide by hand: a single foreign sentence inside a
+The same scan answers what the conversation is running in *when the request
+itself has no language to decide with* — an acknowledgement, a bare URL. Each
+history message votes for its language and votes decay with age, so the most
+recent weighs most. This is the mechanism that settles a question the operator
+raised and did not need to decide by hand: a single foreign sentence inside a
 conversation does not move it, while a sustained switch does. The half-life is
 the only knob controlling how many messages make a switch real.
 
@@ -198,9 +240,16 @@ The superseded design ran a fixed-size window for the second job alone and had
 no notion of slots. Here they are one traversal, which is why the window does
 not survive as a separate thing.
 
-It is also why the three "English sentence in a Danish conversation" exceptions
-resolve the way the model resolved them: one English message does not outweigh
-the Danish around it.
+The request itself never enters this scan (see "The rule, assembled" below):
+when it carries a language, its own restricted detection decides outright, and
+the window is not consulted. This is a real, accepted divergence from the three
+measured "English sentence in a Danish conversation" exceptions, where the
+model used conversation context a detector does not have: a lone English
+request in a Danish room resolves to English here, matching the request rather
+than what the model chose for that trace. That follows the repo's own
+long-standing rule — a reply mirrors the language of the current message — and
+staying deterministic on the common case is worth the disagreement on three
+recorded turns.
 
 ## There is nothing to reuse
 
@@ -261,13 +310,16 @@ instruction to switch. That decision stands wherever a conversation exists.
 Widening the cold-start rule into a general preference would silently reverse
 it.
 
-In the same case the formatting guide's language line — *reply in the language
-of the current message; never switch on your own. Use en-US or da only when the
-message asks for it* — is suppressed. With no history and an unclear message it
-points at something unknowable and forbids the fallback the operator asked for.
-The precedence already resolves the conflict (`reply_language_markdown` is
-source rank 3, `formatting_guide` rank 4), so this is for clarity rather than
-correctness: a rank-4 instruction contradicting rank 3 is how small models are
+In the same case the formatting guide's language line drops its mirroring
+clause — *reply in the language of the current message; never switch on your
+own* — while keeping the rest: *Use en-US or da only when the message asks for
+it; an explicit request always wins*, plus any declared variant, are all still
+well-defined with no conversation at all. With no history and an unclear
+message, only the mirroring clause points at something unknowable and forbids
+the fallback the operator asked for. The precedence already resolves the
+conflict (`reply_language_markdown` is source rank 3, `formatting_guide` rank
+4), so dropping that one clause is for clarity rather than correctness: a
+rank-4 instruction contradicting rank 3 is how small models are
 made to wobble.
 
 A profile that declares no languages at all resolves to **English** without
@@ -347,14 +399,18 @@ Run `response_language_classifier` when **any** of:
    restricted one cannot decide between them;
 6. detection raised.
 
-Otherwise resolve deterministically, by one mechanism rather than three
-cases: **the recency-weighted dominant language over the room's messages,
-counting the current request as the newest and heaviest vote.** The request
-therefore weighs most without automatically winning, which is what makes a
-single foreign sentence fail to move a conversation while a sustained switch
-moves it. When no message in the room carries language at all — a new room whose
-first request is `ok` — there is nothing to weigh, and the cold-start rule
-below supplies the answer.
+Otherwise resolve deterministically: **the request decides when it carries a
+language of its own; the room's recency-weighted window decides when it does
+not.** A request with enough language in it to classify is judged entirely on
+its own restricted detection — the window is not consulted, and does not need
+to be, because the request already answers the question. Only a language-poor
+request (an `ok`, a bare acknowledgement) falls through to the window, which
+answers what the conversation is running in from the messages before it: each
+one votes for its language and votes decay with age, so a single foreign
+sentence among them does not move the answer while a sustained switch does.
+When no message in the room carries language at all — a new room whose first
+request is `ok` — there is nothing to weigh, and the cold-start rule below
+supplies the answer.
 
 Every uncertainty resolves toward asking. A wrong ask costs latency; a wrong
 resolution costs a reply in the wrong language, which is visible and corrects on
