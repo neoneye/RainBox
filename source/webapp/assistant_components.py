@@ -671,8 +671,8 @@ def _activity(event: dict) -> list[dict]:
 
 
 def _skipped(event: dict) -> list[dict]:
-    """A call that was never made, or the response-language gate that ran in
-    its place.
+    """A call that was never made, or the response-language resolution that
+    ran in its place.
 
     Two different rows share this pane, told apart by the explicit
     `gate_replaced_call` marker. `db/assistant_log.py` copies a `gate` block
@@ -680,11 +680,12 @@ def _skipped(event: dict) -> list[dict]:
     payload never carries one either — the marker names what actually
     happened (the call was replaced or it wasn't), rather than being inferred
     from which of the payload's optional fields happen to be populated.
-    Without the marker: nothing ran, and nothing failed. With it: the gate DID
-    run, spent real time, and reached a verdict — reusing the room's last
-    classification rather than asking the model again. That row gets the
-    decision and the language it reused instead of the "never made" note,
-    because saying nothing ran would be untrue.
+    Without the marker: nothing ran, and nothing failed. With it: the
+    resolution DID run, spent real time, and constructed the classification
+    the turn proceeds on from detection — nothing is reused, because there is
+    no earlier answer being read back. That row gets the resolved language,
+    the languages it chose between, and the decision behind them instead of
+    the "never made" note, because saying nothing ran would be untrue.
     """
     payload = event.get("payload") or {}
     if not payload.get("gate_replaced_call"):
@@ -693,14 +694,23 @@ def _skipped(event: dict) -> list[dict]:
             _block("reason", payload.get("reason")),
             _block("error", payload.get("error")),
         )
+    gate = payload.get("gate") or {}
+    # The marker above is only ever set on a branch that resolved a language,
+    # so `language` is never None here — but that is an assumption about the
+    # assistant's own code, not something this pane can see, and `resolved`
+    # below renders nothing rather than failing if it is ever violated.
+    language = gate.get("language")
+    slots = gate.get("slots") or []
+    resolved = (f"{language} — chosen among {', '.join(slots)}"
+                if language and slots else language)
     return [_note(
-        "The gate ran in place of this call and decided the conversation's "
-        "language had not changed — the classification below is reused, not "
-        "freshly answered."
+        "This turn's reply language was resolved in place of the call: "
+        "constructed from detection below, not asked of the model."
     )] + _blocks(
         _block("reason", payload.get("reason")),
+        _block("resolved language", resolved),
         _block("gate decision", payload.get("gate")),
-        _block("reused classification", payload.get("observation_preview")),
+        _block("constructed classification", payload.get("observation_preview")),
         _block("error", payload.get("error")),
     )
 

@@ -108,9 +108,20 @@ def _build_case_prompts(
     include_formatting: bool, include_calibration: bool,
     include_classifier: bool = False,
 ) -> tuple[str, str]:
-    message = str((case.input or {}).get("message") or "")
-    messages = [{"sender_type": "human", "text": message, "kind": "message",
-                 "meta": {}}]
+    case_input = case.input or {}
+    message = str(case_input.get("message") or "")
+    messages: list[dict[str, Any]] = []
+    # Most cases are a room's first turn: no prior message, no history. The
+    # language family carries an explicit `prior_message` to exercise the
+    # cases against a realistic multi-turn room rather than a bare first
+    # message, matching the shape of conversation the mirroring rule the
+    # cases measure is meant for.
+    prior = str(case_input.get("prior_message") or "").strip()
+    if prior:
+        messages.append({"sender_type": "human", "text": prior,
+                         "kind": "message", "meta": {}})
+    messages.append({"sender_type": "human", "text": message,
+                     "kind": "message", "meta": {}})
     return agent.build_turn_prompts(
         messages=messages, profile=profile,
         include_formatting=include_formatting,
@@ -415,7 +426,7 @@ def _template_uuid(template_name: str) -> str:
 
 # Bumped whenever a shipped case definition changes; seeded cases whose
 # rubric carries an older rev are updated in place (they are code-owned).
-SEED_REV = 8
+SEED_REV = 9
 
 
 def _seed_hash(input_obj: Any, expected_obj: Any, rubric_obj: Any) -> str:
@@ -580,6 +591,9 @@ def _seed_specs() -> list[dict[str, Any]]:
             {"tag": "en-GB", "level": "fluent", "stance": "prefer"},
         ]}},
     }
+    # Topic-neutral filler so a language case has a message before its own —
+    # see the language family's comment below for why that matters.
+    _LANGUAGE_PRIOR_MESSAGE = "Hi, I have a quick question."
 
     date_message = "Write 31 December 2026 as a short numeric date."
     specs: list[dict[str, Any]] = [
@@ -732,9 +746,17 @@ def _seed_specs() -> list[dict[str, Any]]:
         # delivery. Marker words (the Danish copula, lift/elevator) belong
         # HERE, in scoring data, and never in a prompt — a contrastive
         # example in a prompt gets parroted into unrelated replies.
+        #
+        # Every case here carries `prior_message`: a room with a message
+        # before the current one, matching the ordinary shape of the
+        # conversation the mirroring rule these cases measure is meant for,
+        # rather than a bare first message. The filler is topic-neutral
+        # English so it exercises that shape without itself carrying a
+        # language cue the case's own message doesn't.
         {"name": "pg language: ambiguous conversion uses metric default",
          "family": "language", "seed_id": "language.metric_default",
-         "input": {"message": "Convert 1053737172 feet.",
+         "input": {"prior_message": _LANGUAGE_PRIOR_MESSAGE,
+                   "message": "Convert 1053737172 feet.",
                    "profile": _language_profile},
          # Either spelling: the marker only checks that the metric target was
          # chosen over another imperial unit, not which English variant wrote
@@ -743,13 +765,15 @@ def _seed_specs() -> list[dict[str, Any]]:
                       "must_not_include": ["yard"]}},
         {"name": "pg language: Danish question gets a Danish reply",
          "family": "language", "seed_id": "language.mirror_danish",
-         "input": {"message": "Hvor mange meter er der på en kilometer?",
+         "input": {"prior_message": _LANGUAGE_PRIOR_MESSAGE,
+                   "message": "Hvor mange meter er der på en kilometer?",
                    "profile": _language_profile},
          "expected": {"must_include": ["1000", "meter"],
                       "must_not_include": ["There are", "there are"]}},
         {"name": "pg language: English question gets no Danish",
          "family": "language", "seed_id": "language.no_unrequested_danish",
-         "input": {"message": "How many meters are there in a kilometer?",
+         "input": {"prior_message": _LANGUAGE_PRIOR_MESSAGE,
+                   "message": "How many meters are there in a kilometer?",
                    "profile": _language_profile},
          # " er " with spaces: the Danish copula as a whole word — a coarse
          # telltale of an unrequested switch to the profile's preferred da,
@@ -758,7 +782,8 @@ def _seed_specs() -> list[dict[str, Any]]:
                       "must_not_include": [" er ", "Der er"]}},
         {"name": "pg language: explicit Danish request wins over English",
          "family": "language", "seed_id": "language.explicit_wins",
-         "input": {"message": "Answer in Danish: how many meters are there "
+         "input": {"prior_message": _LANGUAGE_PRIOR_MESSAGE,
+                   "message": "Answer in Danish: how many meters are there "
                               "in a kilometer?",
                    "profile": _language_profile},
          "expected": {"must_include": ["1000"],
@@ -766,7 +791,8 @@ def _seed_specs() -> list[dict[str, Any]]:
                                             "en kilometer er"]]}},
         {"name": "pg language: declared variant reaches the reply",
          "family": "language", "seed_id": "language.variant_vocabulary",
-         "input": {"message": "Translate to English: 'Fahrstuhl'.",
+         "input": {"prior_message": _LANGUAGE_PRIOR_MESSAGE,
+                   "message": "Translate to English: 'Fahrstuhl'.",
                    "profile": _variant_profile},
          # Vocabulary, not spelling: the declared variant must reach the word
          # choice. This is the fidelity metric the proposal keeps separate

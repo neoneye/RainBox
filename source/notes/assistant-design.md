@@ -381,54 +381,93 @@ to reinterpret Likert values. It currently has no inclusion threshold, so
 tests must establish whether its reason and ordering are sufficient for
 genuinely multilingual and low-confidence cases.
 
-### Gating the classifier
+### Resolving the reply language without asking
 
-The classifier sits behind a deterministic gate, switched by
-`assistant.response_language_gate` (default off), that decides whether the
-turn needs to ask it at all. Most turns just re-confirm the language the
-previous turn already established, and that question can be answered from the
-messages themselves, without a model.
+Most turns are not really open questions: the conversation is already running
+in some language and the request just continues it. `response_language_gate.py`
+answers that from the messages and the profile alone, behind the same switch as
+before, `assistant.response_language_gate` (default off), and calls the
+classifier only where a computed answer would be a guess. It reads no settings
+and touches no database, so it is a pure function of what the turn already has
+in hand.
 
-The gate runs each operator message through lingua's unrestricted detector to
-get its full confidence distribution over every language lingua knows, then
-compares the current request against a weighted window of the preceding
-qualifying operator messages (the last 8, each weighted by letter count up to
-a cap of 200, so one long paste cannot outvote a whole window of ordinary
-messages). Assistant replies never enter the window: a reply is written in
-whatever language a previous resolution chose, and letting replies vote would
-let one wrong resolution justify itself on every later turn.
+**The room's candidate languages live in four slots.** `language_slots()` fills
+two of them from the profile: `primary` and `secondary`, from
+`valid_profile_languages()`, are pinned regardless of how recently they were
+used — a declaration is a standing statement of intent, not an observation. The
+other two hold whichever other languages the operator's own messages used most
+recently: the function walks the messages backward, appending each newly seen
+language until the combined list reaches four. Because this is recomputed on
+every turn, the two unpinned slots always reflect only the most recently used
+other languages — a language used once and then abandoned falls back out once
+two more recent ones have taken its place, with nothing to evict by hand.
+Assistant replies never enter the scan: a reply carries whatever language a
+previous decision chose, and letting it vote would let a wrong decision
+perpetuate itself. A language-poor or undetected message claims no slot — an
+acknowledgement is not evidence a language belongs to the room.
 
-It asks the classifier when the request names a language — matched against
-CLDR's own name and endonym tables, filtered to tokens of four or more
-letters that round-trip back into that code's own recorded names, which
-rules out incidental matches (`the` → `thx`, `second` → `cs`) without a
-hand-written language table or a restriction to two-letter ISO codes
-(Cherokee's `chr` and Cebuano's `ceb` are recognised just as any language
-with a two-letter tag is) — or when the request's confidence in the
-window's dominant language falls short of a floor (a request the detector
-cannot read at all counts as zero confidence here), or when there is nothing
-in the room to reuse, or when the window has no qualifying message, or when
-the detector itself raises. Otherwise it reuses the room's last recorded
-classification, read back from the most recent `observed`
-`response_language_classifier` step row for that room.
+**Two detectors ask two different questions.** `detect()` runs lingua's
+detector over every language it knows, unrestricted — *is this one of the
+room's languages at all?* `detect_within()` runs a second detector built only
+over the room's four slots — *which one?* Restricting is what makes the
+confidence usable rather than merely available: the same Danish sentence
+(`hvor bor jeg?`) reads 0.25 against everything lingua knows and 0.94 restricted
+to four candidate languages. But a restricted detector force-fits anything
+handed to it, so a confident answer from it is not on its own proof the text
+belongs to the room's languages — that question is the unrestricted detector's,
+asked separately, and dropping it would make every unknown language read as a
+known one.
 
-Detection only ever gates; it never decides. The detected language is
-compared against the window's, never installed as the reply's language — that
-stays the classifier's call, made fresh whenever the gate asks it to run.
+**The answer is constructed, not stored.** `resolve()` returns a `Resolution`;
+when it resolves rather than asks, `_constructed_classification()` builds a
+`ResponseLanguageClassification` from the winning base language and the
+profile's declared rows — a detected `en` becomes the profile's own `en-US`
+when that row exists, rather than losing the variant — and that classification
+goes through `_format_reply_language_markdown()` exactly as a model's answer
+would. Nothing survives between turns: the profile is read fresh each time, so
+an edited declaration takes effect on the very next message with nothing to
+invalidate.
+
+**Cold start falls back to the profile's preferred language, and only in the
+vacuum.** When the request is language-poor and `dominant_language()` finds
+nothing in the room's history to vote with — a brand new room, or one where
+nothing so far has matched a slot — the reply falls back to the profile's
+`primary` language, or `en` when none is declared. That fallback holds only
+while there is nothing else to go on: the moment the history carries a
+language `dominant_language()` can vote with, its recency-weighted vote takes
+over, and a declared preference does not override what the conversation is actually
+in — the same rule `format_formatting_guide` states directly, that the
+preferred language is not the output language.
+
+**Several situations still ask the classifier**, each recorded as the
+resolution's `trigger`: the request itself names a language (`named_language`,
+via `names_a_language()`, matched against CLDR's own names and endonyms — the
+one signal that catches an instruction like "answer in Danish from now on",
+written in whatever language the operator is already using); the unrestricted
+detector's top pick isn't one of the room's slots, on a first message
+(`first_message_unmatched`) or later (`outside_slots`) — the room's slots may
+themselves be empty, so this is also what asks on a first message when the
+profile has declared nothing; the unrestricted detector found no language at
+all among the ones it knows (`undetected`, distinct from language-poor, which
+resolves instead); the restricted detector can't settle on any of the slots
+(`restricted_undecided`); the two detectors pick different languages
+(`detectors_disagree`); or resolution itself raised (`detector_error`). Every
+uncertainty here resolves toward asking: a needless ask costs latency, a wrong
+resolution costs one reply in the wrong language, which is visible and
+self-corrects on the next turn.
 
 A skipped turn still writes a `response_language_classifier` step row,
 `phase="skipped"`, so the trace stays a complete account of the turn. It
-carries the gate's full decision as `args` (which condition fired, the
-window's dominant language and size, the request's share of it, the
-request's own top language, and the matched name when the request named
-one), the reused classification as its `observation_preview` — so the row
-states which language the turn actually proceeded in, not merely that it
-declined to ask — and a `duration_ms` that is the gate's own elapsed time
-rather than a model call's, so a row that used to read 9-18s reads
-sub-second in place. An explicit `gate_replaced_call` marker on the row's
-`args` is what tells this skip apart from the classifier's other skipped
-row, the pre-existing one recorded when no model group is bound for the
-slot — both carry `phase="skipped"`, but only the gate's carries the marker.
+carries the resolution's full decision as `args` (the trigger, the slots it
+read, the matched name when the request named one), the constructed
+classification as its `observation_preview` — so the row states which
+language the turn actually proceeded in, not merely that it declined to ask —
+and a `duration_ms` that is the resolver's own elapsed time rather than a
+model call's, so a row that used to read 9-18s reads sub-second in place. An
+explicit `gate_replaced_call` marker on the row's `args` is what tells this
+skip apart from the classifier's other skipped row, the pre-existing one
+recorded when no model group is bound for the slot — both carry
+`phase="skipped"`, but only this one carries the marker.
 
 ## Acceptance criteria
 

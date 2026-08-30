@@ -1,16 +1,16 @@
-"""Deterministic gate in front of the response-language classifier.
+"""Deterministic reply-language resolution in front of the response-language
+classifier.
 
 The classifier is the assistant's first model call on every turn, and on most
-turns it re-confirms the language the previous turn already established. This
-module answers the cheaper question — *has anything changed enough to be worth
-asking* — from the messages alone.
+turns it re-confirms the language the conversation is already running in.
+This module answers that from the messages alone — which language a reply
+should be in, or that only a model can decide — without a model call.
 
 It reads no settings and touches no database, so it is a pure function of its
-input and testable without either. It also never decides which language to use:
-that answer is the classifier's, and on a skip the caller reuses the room's
-previous classification. A detector asked "what language is this" answers the
-wrong question confidently on a request like `translate to english: <Danish>`;
-asked "has this changed", it is well posed.
+input and testable without either. A detector asked "what language is this"
+answers the wrong question confidently on a request like `translate to
+english: <Danish>`; the checks here are built around questions it can answer
+honestly instead.
 """
 
 from __future__ import annotations
@@ -25,21 +25,37 @@ from typing import Sequence
 
 logger = logging.getLogger(__name__)
 
-#: Below this many letters a message carries no usable language signal.
-#: Measured, `ok` tops out at `zu` 0.06 and `tak` at `mi` 0.08 -- noise at
-#: noise-level confidence, which would read as a shift away from any window.
+#: Below this many letters a Latin-script message carries no usable language
+#: signal. Measured, `ok` tops out at `zu` 0.06 and `tak` at `mi` 0.08 -- noise
+#: at noise-level confidence, indistinguishable from a genuine short message.
 LETTER_FLOOR = 16
-#: How many qualifying operator messages define "the conversation's language".
-WINDOW_MESSAGES = 8
-#: Per-message weight ceiling: a long message counts as several short ones,
-#: never as the whole conversation. At this value a saturated window of
-#: WINDOW_MESSAGES messages outweighs any single message, so one message is
-#: at most a WINDOW_MESSAGES'th of a saturated window.
-WEIGHT_CAP = 200
-#: The request must carry at least this share of the window's language.
-#: Measured, same-language requests score 0.23-1.00 and different-language
-#: requests 0.00-0.05; this sits in that gap.
-SHIFT_FLOOR = 0.15
+#: The other way a message proves it carries language: the detector is sure of
+#: it. A character count is a proxy for information content, and the proxy only
+#: holds for scripts that spell words out. A complete Chinese sentence is ten
+#: characters and `你好` is two, both detected at 1.00 -- where the script alone
+#: nearly fixes the language, length stops meaning anything. Measured, the
+#: weakest short real non-Latin text scores 0.26 (Cyrillic, which like Latin is
+#: shared by several languages) while Latin noise tops out at 0.12.
+CONFIDENCE_FLOOR = 0.20
+#: How many languages a room detects against. The restricted detector's
+#: sharpness decays with the size of the set -- measured, `hvor bor jeg?` reads
+#: 0.98 against two languages, 0.94 against four, 0.72 against eight and 0.42
+#: against twelve, against 0.25 unrestricted. Four is at the knee.
+LANGUAGE_SLOTS = 4
+#: How many messages back a vote is worth half of the newest one. The window
+#: answers what language the conversation is running in *now*, so a message the
+#: operator has already moved on from fades rather than counting forever.
+WINDOW_HALF_LIFE = 3.0
+#: The furthest back either backward scan reads, whatever the history's
+#: actual length. At WINDOW_HALF_LIFE=3.0 a message this far back has decayed
+#: to 0.5 ** (60 / 3.0), on the order of 1e-6 of the newest message's vote --
+#: reading further back could not change which language wins, only cost a
+#: detection on a message that no longer matters. Unbounded, `language_slots`
+#: walks the whole history whenever a monolingual room never fills its four
+#: slots, and `dominant_language` always does; both cost real time (500
+#: messages, 0.4s cold) and can thrash `_detect_cached`'s bounded cache in an
+#: install with several long rooms.
+SCAN_HORIZON_MESSAGES = 60
 #: Shorter tokens are not put to the CLDR name lookup -- `the`, `a` and `to`
 #: all resolve to obscure language codes. This is the floor for a code that
 #: itself has a two-letter ISO 639-1 tag; a three-letter code needs
@@ -62,9 +78,35 @@ NAME_MIN_LETTERS = 4
 #: Tulu (`tcy`), Tigre (`tig`), Mende (`men`) and Karen (`kbj`) among them.
 NAME_LONG_CODE_MIN_LETTERS = 6
 
+#: Quoted passages and code: what the operator is asking ABOUT, not what they
+#: are writing IN. By volume a long quote swamps the sentence wrapping it, so
+#: reading a message whole answers the quote's language and a Danish turn
+#: carrying an English passage reads as a switch. Single quotes need four
+#: characters before they count, so an apostrophe in `LLM'en` or `don't` does
+#: not open one.
+_QUOTED_SPAN = re.compile(
+    r"```.*?```|`[^`]*`|\"[^\"]*\"|«[^»]*»|“[^”]*”|'[^']{4,}'", re.S)
+
 #: Runs of letters -- `\w` minus digits and the underscore, which Python
 #: has no positive class for, hence the double negation. Unicode-aware, so
 #: an endonym in any script tokenises the way an ASCII name does.
+#: Scripts that write a morpheme per character, so a two-character token is an
+#: ordinary word rather than a fragment. The length minimums below are
+#: Latin-script heuristics -- they exist because short Latin function words
+#: collide with obscure language names -- and applying them here would reject
+#: 中文, 英语, 日本語 and 한국어, each of which names a language. Measured over 42
+#: common Chinese, Japanese and Korean words, the round-trip alone admits only
+#: the genuine language names and nothing else, so these scripts do not need a
+#: length rule to stay precise.
+_DENSE_SCRIPT_PREFIXES = ("CJK", "HIRAGANA", "KATAKANA", "HANGUL")
+#: These scripts also write without spaces, so a whole sentence arrives as one
+#: token and the language name has to be found inside it. Language names in
+#: them run two to four characters (中文, 英语, 日本語, 한국어), which bounds the
+#: scan. Measured over ordinary Chinese sentences it produces no spurious
+#: match: the names are compound morphemes that do not fall out of surrounding
+#: text by accident.
+_DENSE_NAME_SIZES = range(2, 5)
+
 _WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
 
 
@@ -76,23 +118,17 @@ def _letter_count(text: str) -> int:
 class Detection:
     """What the detector made of one message.
 
-    `below_floor` and `undetected` are deliberately separate: the first means
-    nothing was asked of the detector, the second means it was asked and found
-    nothing. Only the second is worth a model call.
+    `language_poor` and `undetected` are deliberately separate: the first means
+    the message has too little language in it to be worth classifying, the
+    second means the detector was asked and found nothing. Only the second is
+    worth a model call.
     """
 
     letters: int
-    below_floor: bool
+    language_poor: bool
     undetected: bool
     top: str | None
     confidence: dict[str, float] = field(default_factory=dict)
-
-    def share(self, code: str | None) -> float:
-        """This message's confidence in `code` -- the number the shift test
-        compares. Absent means zero, which is the honest reading."""
-        if not code:
-            return 0.0
-        return self.confidence.get(code, 0.0)
 
 
 @functools.lru_cache(maxsize=1)
@@ -101,15 +137,16 @@ def _detector():
 
     Unrestricted on purpose. Restricting to the operator's declared languages
     is faster, but then a language nobody declared force-fits to one that is
-    declared, and the gate skips a genuine shift. Unrestricted, an undeclared
-    language scores near zero against any window and asks. Models load lazily,
-    so resident memory settles around 141 MB rather than the gigabytes an eager
-    build would cost.
+    declared, hiding a genuine switch to something new. Unrestricted, an
+    undeclared language scores near zero against any set of slots and is
+    asked about instead. Models load lazily, so resident memory settles
+    around 141 MB rather than the gigabytes an eager build would cost.
 
-    Importing lingua costs ~2.4s, and the gate ships switched off, so the
-    import is here rather than at module level: an operator who never enables
-    the gate never pays it, and the one who does pays it on the first gated
-    turn -- a fifth of the call it replaces.
+    Importing lingua costs ~2.4s, and the switch this module serves ships
+    off by default, so the import is here rather than at module level: an
+    operator who never enables it never pays the cost, and the one who does
+    pays it on the first resolved turn -- a fifth of the model call it
+    replaces.
     """
     from lingua import LanguageDetectorBuilder
 
@@ -118,9 +155,10 @@ def _detector():
 
 @functools.lru_cache(maxsize=512)
 def _detect_cached(text: str) -> Detection:
-    """Memoised because the window re-reads the same history every turn, and a
-    message's language cannot change after it is written. Without this a turn
-    spends WINDOW_MESSAGES x ~10ms redetecting settled messages.
+    """Memoised because the room's slots and history re-read the same messages
+    every turn, and a message's language cannot change after it is written.
+    Without this a turn spends as many detections as its largest caller's scan
+    x ~10ms redetecting settled messages.
 
     Keyed on the message text, so the cache holds the text as well as the
     result. That is bounded in count but not in size; measured against real
@@ -128,9 +166,26 @@ def _detect_cached(text: str) -> Detection:
     messages ever written total 0.5 MB, against an average message of 377
     bytes."""
     letters = _letter_count(text)
-    if letters < LETTER_FLOOR:
+    if letters == 0:
+        # Nothing for the detector to read, and nothing a window could vote
+        # with. Digits and punctuation are not language.
         return Detection(
-            letters=letters, below_floor=True, undetected=False, top=None)
+            letters=0, language_poor=True, undetected=False, top=None)
+    unquoted = _QUOTED_SPAN.sub(" ", text)
+    if unquoted != text:
+        # Read what the operator wrote around the quote. If that alone carries
+        # language, it is the answer; if the quote was the whole message there
+        # is nothing left and the message is read whole instead.
+        outside = _detect_text(unquoted, _letter_count(unquoted))
+        if not outside.language_poor and not outside.undetected:
+            return Detection(
+                letters=letters, language_poor=False, undetected=False,
+                top=outside.top, confidence=outside.confidence)
+    return _detect_text(text, letters)
+
+
+def _detect_text(text: str, letters: int) -> Detection:
+    """Detect one string, reporting `letters` as the message's own count."""
     values = _detector().compute_language_confidence_values(text)
     confidence: dict[str, float] = {}
     for value in values:
@@ -140,10 +195,19 @@ def _detect_cached(text: str) -> Detection:
         confidence[code] = value.value
     if not confidence:
         return Detection(
-            letters=letters, below_floor=False, undetected=True, top=None)
+            letters=letters, language_poor=False, undetected=True, top=None)
     top = max(confidence, key=lambda code: confidence[code])
+    # Two ways to carry language, and either is enough: enough letters to read,
+    # or a detector certain enough that length stops mattering. Requiring both
+    # would discard a ten-character Chinese sentence; requiring neither would
+    # admit `ok`.
+    if letters < LETTER_FLOOR and confidence[top] < CONFIDENCE_FLOOR:
+        # The shares are dropped rather than reported: nothing downstream may
+        # vote with noise, and an empty distribution cannot be misread as one.
+        return Detection(
+            letters=letters, language_poor=True, undetected=False, top=None)
     return Detection(
-        letters=letters, below_floor=False, undetected=False, top=top,
+        letters=letters, language_poor=False, undetected=False, top=top,
         confidence=confidence)
 
 
@@ -152,45 +216,147 @@ def detect(text: str) -> Detection:
     return _detect_cached(text or "")
 
 
-def window_dominant(texts: Sequence[str]) -> tuple[str | None, int]:
-    """The language the recent conversation has been running in.
+def language_slots(
+    texts: Sequence[str], pinned: Sequence[str],
+) -> tuple[str, ...]:
+    """The room's candidate languages: pinned languages first, then the rest
+    newest to oldest.
 
-    `texts` are the operator's messages, oldest first; the most recent
-    WINDOW_MESSAGES qualifying ones are taken. Each contributes its whole
-    confidence distribution rather than only its winning label, so a message
-    split between two languages votes for both in proportion -- which is what
-    keeps a Danish conversation reading as Danish when individual messages
-    tip towards Norwegian.
-
-    Weight is the letter count capped at WEIGHT_CAP: a long message says more
-    about the conversation's language than a short one, but a pasted document
-    counts as several messages rather than as the whole conversation -- a
-    full window of ordinary messages still outweighs it.
-
-    Returns (dominant base subtag, qualifying message count). A count of zero
-    means the window said nothing -- distinct from a window that chose a
+    `texts` are the operator's messages, oldest last is not assumed -- they
+    arrive oldest first and are walked backwards, so the first language found is
+    the most recent. That ordering is the eviction order: a fifth language
+    displaces the least recently used one. Pinned languages sit ahead of that
+    order regardless of how recently they were used -- a pinned language used
+    fifty messages ago still comes back before an unpinned language used one
+    message ago, so `slots[0]` is not necessarily the room's most recent
     language.
+
+    `pinned` are the profile's primary and secondary languages. They are
+    candidates whether or not they were used lately, because a declaration is a
+    standing statement of intent rather than an observation. Only two are
+    pinned, not every declared language: a profile may declare more languages
+    than there are slots, and holding them all would give back the sharpness the
+    cap exists to protect. Duplicate pinned codes collapse to one -- a repeated
+    code would otherwise spend a second slot on a language already held.
+
+    Language-poor messages claim no slot -- an acknowledgement is not evidence
+    that a language belongs to the room.
+
+    The result is capped at LANGUAGE_SLOTS even if `pinned` alone exceeds it --
+    only primary and secondary are ever pinned today, so this is a defensive
+    edge rather than a live path, but a caller passing more than four pinned
+    codes gets the first four rather than all of them.
+
+    The scan also stops at SCAN_HORIZON_MESSAGES messages back, whether or not
+    the slots have filled -- a monolingual room never fills its four slots, so
+    without this bound every turn would walk the room's entire history.
     """
-    window: list[Detection] = []
-    for text in reversed(list(texts)):
-        detection = detect(text)
-        if detection.below_floor or detection.undetected:
-            continue
-        window.append(detection)
-        if len(window) >= WINDOW_MESSAGES:
+    slots: list[str] = list(dict.fromkeys(code for code in pinned if code))
+    for age, text in enumerate(reversed(list(texts))):
+        if age >= SCAN_HORIZON_MESSAGES or len(slots) >= LANGUAGE_SLOTS:
             break
-    if not window:
-        return None, 0
+        detection = detect(text)
+        if detection.language_poor or detection.undetected or not detection.top:
+            continue
+        if detection.top not in slots:
+            slots.append(detection.top)
+    return tuple(slots[:LANGUAGE_SLOTS])
+
+
+@functools.lru_cache(maxsize=64)
+def _restricted_detector(slots: tuple[str, ...]):
+    """A detector over just these languages, built once per distinct set.
+
+    Restriction is what makes confidence usable rather than merely available:
+    the same Danish sentence reads 0.25 against every language lingua knows and
+    0.94 against four. It also force-fits anything outside the set, so a
+    confident answer from this detector is not on its own proof that the text
+    belongs to one of `slots` -- that check is the unrestricted detector's,
+    separately.
+    """
+    from lingua import IsoCode639_1, LanguageDetectorBuilder
+
+    codes = []
+    for code in slots:
+        try:
+            codes.append(getattr(IsoCode639_1, code.upper()))
+        except AttributeError:
+            continue
+    if len(codes) < 2:
+        # lingua needs two languages to choose between. One slot is not a
+        # choice, and zero is not a question.
+        return None
+    return LanguageDetectorBuilder.from_iso_codes_639_1(*codes).build()
+
+
+def detect_within(text: str, slots: Sequence[str]) -> str | None:
+    """Which of `slots` this text is, or None when there is nothing to choose."""
+    unique = tuple(dict.fromkeys(code for code in slots if code))
+    if not unique:
+        return None
+    if len(unique) == 1:
+        return unique[0]
+    # Sort to normalise the cache key: the same set always produces the same
+    # canonical tuple, so the detector is built once per distinct set, not once
+    # per distinct ordering of that set.
+    sorted_unique = tuple(sorted(unique))
+    detector = _restricted_detector(sorted_unique)
+    if detector is None:
+        return None
+    values = detector.compute_language_confidence_values(text or "")
+    if not values:
+        return None
+    return values[0].language.iso_code_639_1.name.lower()
+
+
+def dominant_language(
+    texts: Sequence[str], slots: Sequence[str],
+) -> str | None:
+    """Which of `slots` the conversation is running in.
+
+    Every message casts one vote for its own language and votes decay with age
+    at WINDOW_HALF_LIFE, so the newest message weighs most and one foreign
+    sentence does not move a conversation while a sustained switch does.
+
+    Votes are equal rather than weighted by confidence or length. Neither
+    compares between messages: a Danish sentence detects far higher than an
+    equally clear English one, and a long quoted passage is not better evidence
+    of what the operator is writing in than the sentence they just typed.
+
+    The scan stops at SCAN_HORIZON_MESSAGES messages back: past that a vote
+    has decayed to numerical irrelevance (see that constant), so reading
+    further back could only cost a detection, never change the answer.
+    """
     totals: dict[str, float] = {}
-    for detection in window:
-        weight = min(detection.letters, WEIGHT_CAP)
-        for code, value in detection.confidence.items():
-            totals[code] = totals.get(code, 0.0) + value * weight
+    for age, text in enumerate(reversed(list(texts))):
+        if age >= SCAN_HORIZON_MESSAGES:
+            break
+        detection = detect(text)
+        if detection.language_poor or detection.undetected:
+            continue
+        if detection.top not in slots:
+            # Restricted detection force-fits anything outside `slots` to one
+            # of them -- a German message would confidently read as Danish
+            # against a Danish slot. A message in a language the room no
+            # longer has a slot for is evidence about nothing the slots can
+            # express, so it casts no vote rather than an invented one.
+            continue
+        code = detect_within(text, slots)
+        if code is None:
+            continue
+        totals[code] = totals.get(code, 0.0) + 0.5 ** (age / WINDOW_HALF_LIFE)
+    if not totals:
+        return None
     # Ties break on the code itself, so the answer never depends on dict
-    # insertion order -- which is the window's own ordering, and incidental to
-    # what "the conversation's language" means.
-    dominant = min(totals, key=lambda code: (-totals[code], code))
-    return dominant, len(window)
+    # insertion order -- which is the scan's own order, and incidental.
+    return min(totals, key=lambda code: (-totals[code], code))
+
+
+def _writes_a_morpheme_per_character(token: str) -> bool:
+    """Whether `token` is in a script the length minimums do not apply to."""
+    return any(
+        unicodedata.name(char, "").startswith(_DENSE_SCRIPT_PREFIXES)
+        for char in token)
 
 
 @functools.lru_cache(maxsize=None)
@@ -246,7 +412,8 @@ def _token_language(token: str) -> str | None:
     """
     from language_data.names import name_to_code
 
-    if len(token) < NAME_MIN_LETTERS:
+    dense = _writes_a_morpheme_per_character(token)
+    if not dense and len(token) < NAME_MIN_LETTERS:
         return None
     try:
         code = name_to_code("language", token, "und")
@@ -254,67 +421,78 @@ def _token_language(token: str) -> str | None:
         return None
     if not code:
         return None
-    if len(code) > 2 and len(token) < NAME_LONG_CODE_MIN_LETTERS:
+    if not dense and len(code) > 2 and len(token) < NAME_LONG_CODE_MIN_LETTERS:
         return None
     if token.casefold() not in _recorded_names(code):
         return None
     return code
 
 
+def _name_candidates(token: str) -> tuple[str, ...]:
+    """The substrings of `token` that could be a language name.
+
+    A space-separated script gives one candidate: the token itself. A script
+    that writes without spaces gives every short substring, because the token
+    is a whole clause and the name sits inside it.
+    """
+    if not _writes_a_morpheme_per_character(token):
+        return (token,)
+    return tuple(
+        token[start:start + size]
+        for size in _DENSE_NAME_SIZES
+        for start in range(len(token) - size + 1))
+
+
 def names_a_language(text: str) -> tuple[str, str] | None:
     """The first language `text` names, as (matched token, code).
 
     This is the one signal that sees an instruction like "answer in Danish
-    from now on" -- written in the conversation's current language, so the
-    detector reads no shift and the window reads no change.
+    from now on" -- written in the conversation's current language, so
+    nothing else in this module can catch it.
     """
     for token in _WORD_RE.findall(text or ""):
-        code = _token_language(token)
-        if code:
-            return token, code
+        for candidate in _name_candidates(token):
+            code = _token_language(candidate)
+            if code:
+                return candidate, code
     return None
 
 
-TRIGGER_NO_PREVIOUS = "no_previous"
 TRIGGER_NAMED_LANGUAGE = "named_language"
-TRIGGER_PROFILE_CHANGED = "profile_changed"
-TRIGGER_SHIFT = "shift"
-TRIGGER_EMPTY_WINDOW = "empty_window"
 TRIGGER_DETECTOR_ERROR = "detector_error"
-TRIGGER_REUSE = "reuse"
+TRIGGER_FIRST_MESSAGE_UNMATCHED = "first_message_unmatched"
+TRIGGER_OUTSIDE_SLOTS = "outside_slots"
+TRIGGER_UNDETECTED = "undetected"
+TRIGGER_DETECTORS_DISAGREE = "detectors_disagree"
+#: The restricted detector had nothing to say at all -- distinct from
+#: `TRIGGER_DETECTORS_DISAGREE`, where it did answer and the two disagreed.
+TRIGGER_RESTRICTED_UNDECIDED = "restricted_undecided"
+TRIGGER_RESOLVED = "resolved"
 
 
 @dataclass(frozen=True)
-class GateDecision:
-    """Why the classifier is about to run, or not.
+class Resolution:
+    """What the turn decided, and what it read to decide it.
 
-    Recorded whole on the step row: a run that skipped its most expensive call
-    has to say what it read and what it concluded, or the operator is left
-    guessing at a reply in the wrong language.
+    Recorded whole on the step row: a turn that skipped the assistant's most
+    expensive call has to say what it saw and what it concluded, or a reply in
+    the wrong language leaves the operator guessing.
     """
 
-    should_ask: bool
+    ask: bool
     trigger: str
-    window_dominant: str | None = None
-    window_size: int = 0
-    window_share: float | None = None
-    request_top: str | None = None
-    request_letters: int = 0
+    language: str | None = None
+    slots: tuple[str, ...] = ()
     named_language: str | None = None
     detector_ms: int = 0
-    #: Set only on the fail-open path, so a run says what broke rather than
-    #: silently looking like an ordinary ask.
     error: str | None = None
 
     def as_args(self) -> dict:
         args = {
-            "should_ask": self.should_ask,
+            "ask": self.ask,
             "trigger": self.trigger,
-            "window_dominant": self.window_dominant,
-            "window_size": self.window_size,
-            "window_share": self.window_share,
-            "request_top": self.request_top,
-            "request_letters": self.request_letters,
+            "language": self.language,
+            "slots": list(self.slots),
             "named_language": self.named_language,
             "detector_ms": self.detector_ms,
         }
@@ -323,40 +501,38 @@ class GateDecision:
         return args
 
 
-def decide(
+def resolve(
     *,
-    window_texts: Sequence[str],
-    request_text: str,
-    has_previous: bool,
-    profile_languages_changed: bool,
-) -> GateDecision:
-    """Should the response-language classifier run this turn?
+    history: Sequence[str],
+    request: str,
+    pinned: Sequence[str],
+    fallback: str,
+) -> Resolution:
+    """Decide the reply language, or that only a model can.
 
-    Every uncertainty resolves towards asking. A false ask costs one classifier
-    call -- latency, never correctness. A false skip replies in the
-    conversation's established language, which is degraded and visible rather
-    than a hard error. Most of the time it also repairs itself on the next
-    turn: the operator either writes in the other language, which is a shift,
-    or names it, which is the name check. A `/profile` language edit is the one
-    path that does not repair itself that way -- the operator can keep writing
-    in the language they always have, leaving nothing for the shift test or
-    the name check to see -- which is what `profile_languages_changed` exists
-    to catch.
+    `history` is the operator's earlier messages, oldest first; `request` is the
+    message being answered and is excluded from the history it is judged
+    against. `pinned` is the profile's primary and secondary; `fallback` is what
+    to use when nothing else decides.
 
-    `profile_languages_changed` is the one signal this module cannot compute
-    itself, because it is not a function of the messages: the caller snapshots
-    the operator's declared profile languages onto the classification a skip
-    would reuse, and compares that snapshot against what is currently
-    declared, passing only the verdict of that comparison. This keeps the
-    module a pure function of `window_texts` and `request_text` -- it does not
-    need to know what a profile is.
+    Every uncertainty resolves toward asking. A needless ask costs latency; a
+    wrong resolution costs one reply in the wrong language, which is visible and
+    corrects on the next turn.
+
+    `language_poor` and `undetected` resolve differently, matching the
+    distinction `Detection` documents: a language-poor request has too little
+    language in it to classify, so there is nothing for a model to decide
+    between either -- it resolves from the conversation, or the fallback, like
+    any other case with nothing to read. An undetected request was put to the
+    detector and it found nothing among languages it does know -- that is a
+    real message worth a model call, not a short one.
 
     The whole body runs under one broad `except Exception`. This is not
     sloppiness to be narrowed later -- it is the fail-open guarantee itself:
     whatever goes wrong here, from a detector crash to a future bug in this
-    function, must resolve to "ask the classifier", never to a raised
-    exception that breaks the turn. Narrowing it would silently drop that
-    guarantee for every failure mode this function's author did not think of.
+    function, must resolve to "ask the model", never to a raised exception
+    that breaks the turn. Narrowing it would silently drop that guarantee for
+    every failure mode this function's author did not think of.
     """
     started = time.perf_counter()
 
@@ -364,89 +540,66 @@ def decide(
         return int((time.perf_counter() - started) * 1000)
 
     try:
-        # Cheapest first, and independent of everything else: an instruction
-        # naming a language is invisible to both the detector and the window,
-        # because it is written in the conversation's current language. The
-        # matched token is what goes on the trace -- `named_language` records
-        # a name, not a code, so a three-letter CLDR code (Cherokee's `chr`)
-        # is never mistaken for the two-letter codes lingua deals in.
-        named = names_a_language(request_text)
+        # Cheapest, and independent of everything else: an instruction naming a
+        # language is invisible to detection, because it is written in whatever
+        # language the operator is already using.
+        named = names_a_language(request)
         if named:
-            return GateDecision(
-                should_ask=True,
-                trigger=TRIGGER_NAMED_LANGUAGE,
-                named_language=named[0],
-                detector_ms=elapsed(),
-            )
-        if not has_previous:
-            return GateDecision(
-                should_ask=True,
-                trigger=TRIGGER_NO_PREVIOUS,
-                detector_ms=elapsed(),
-            )
-        if profile_languages_changed:
-            # The one ask-trigger that is not a function of the messages at
-            # all: the operator changed their declared reply languages on
-            # `/profile` without writing anything that looks like a shift or
-            # naming a language, so neither of the checks above can see it.
-            # Checked before the shift test so a profile change is never
-            # masked by a window that still reads as unchanged.
-            return GateDecision(
-                should_ask=True,
-                trigger=TRIGGER_PROFILE_CHANGED,
-                detector_ms=elapsed(),
-            )
-        request = detect(request_text)
-        dominant, size = window_dominant(window_texts)
-        if dominant is None:
-            return GateDecision(
-                should_ask=True,
-                trigger=TRIGGER_EMPTY_WINDOW,
-                window_size=size,
-                request_top=request.top,
-                request_letters=request.letters,
-                detector_ms=elapsed(),
-            )
-        if request.below_floor:
-            # Too short to classify is not the same as unclassifiable. There is
-            # nothing here to shift, and the previous resolution is the
-            # deterministic answer.
-            return GateDecision(
-                should_ask=False,
-                trigger=TRIGGER_REUSE,
-                window_dominant=dominant,
-                window_size=size,
-                request_letters=request.letters,
-                detector_ms=elapsed(),
-            )
-        if request.undetected:
-            return GateDecision(
-                should_ask=True,
-                trigger=TRIGGER_SHIFT,
-                window_dominant=dominant,
-                window_size=size,
-                window_share=0.0,
-                request_letters=request.letters,
-                detector_ms=elapsed(),
-            )
-        share = request.share(dominant)
-        shifted = share < SHIFT_FLOOR
-        return GateDecision(
-            should_ask=shifted,
-            trigger=TRIGGER_SHIFT if shifted else TRIGGER_REUSE,
-            window_dominant=dominant,
-            window_size=size,
-            window_share=share,
-            request_top=request.top,
-            request_letters=request.letters,
-            detector_ms=elapsed(),
-        )
+            return Resolution(
+                ask=True, trigger=TRIGGER_NAMED_LANGUAGE,
+                named_language=named[0], detector_ms=elapsed())
+
+        slots = language_slots(history, pinned)
+        detection = detect(request)
+
+        if detection.language_poor:
+            # Too little language in the request to classify. Keep the
+            # conversation if there is one, and otherwise take the fallback --
+            # there is nothing here for a model to decide between either.
+            language = dominant_language(history, slots) or fallback
+            return Resolution(
+                ask=False, trigger=TRIGGER_RESOLVED, language=language,
+                slots=slots, detector_ms=elapsed())
+
+        if detection.undetected:
+            # The detector was asked and found nothing, unlike `language_poor`
+            # -- there is a genuine message here, just not one that matches a
+            # language the detector knows. That is worth a model call.
+            return Resolution(
+                ask=True, trigger=TRIGGER_UNDETECTED, slots=slots,
+                detector_ms=elapsed())
+
+        if detection.top not in slots:
+            # The unrestricted detector says this is not one of the room's
+            # languages. Restricted detection would force-fit it to one, so the
+            # model decides -- and on a first message that is also the only way
+            # to tell a foreign language from nonsense.
+            trigger = (TRIGGER_FIRST_MESSAGE_UNMATCHED if not history
+                       else TRIGGER_OUTSIDE_SLOTS)
+            return Resolution(
+                ask=True, trigger=trigger, slots=slots,
+                detector_ms=elapsed())
+
+        within = detect_within(request, slots)
+        if within is None:
+            # The restricted detector could not decide at all -- there is no
+            # second opinion here for the model to weigh, only an absence.
+            return Resolution(
+                ask=True, trigger=TRIGGER_RESTRICTED_UNDECIDED, slots=slots,
+                detector_ms=elapsed())
+        if within != detection.top:
+            # The two instruments disagree about which of the room's
+            # languages this is. Neither is authoritative over the other, so
+            # the model settles it.
+            return Resolution(
+                ask=True, trigger=TRIGGER_DETECTORS_DISAGREE, slots=slots,
+                detector_ms=elapsed())
+
+        return Resolution(
+            ask=False, trigger=TRIGGER_RESOLVED, language=within,
+            slots=slots, detector_ms=elapsed())
     except Exception as exc:
-        logger.warning(
-            "response-language gate failed open", exc_info=True)
-        return GateDecision(
-            should_ask=True,
-            trigger=TRIGGER_DETECTOR_ERROR,
-            detector_ms=elapsed(),
-            error=f"{type(exc).__name__}: {exc}",
-        )
+        logger.warning("response-language resolution failed open", exc_info=True)
+        return Resolution(
+            ask=True, trigger=TRIGGER_DETECTOR_ERROR, detector_ms=elapsed(),
+            error=f"{type(exc).__name__}: {exc}")

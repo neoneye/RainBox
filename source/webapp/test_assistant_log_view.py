@@ -10,7 +10,6 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
-from agents.response_language_gate import GateDecision
 from webapp.assistant_log_view import log_view
 
 T0 = datetime(2026, 8, 24, 20, 30, tzinfo=UTC)
@@ -205,10 +204,15 @@ def test_a_gate_skip_carries_its_decision_and_duration():
     step.phase = "skipped"
     step.reason = ("the conversation's language has not changed; reusing "
                    "this room's last classification")
-    decision = GateDecision(should_ask=False, trigger="reuse",
-                            window_dominant="da", window_size=3,
-                            window_share=0.62, detector_ms=4)
-    step.args = {"gate": decision.as_args(), "gate_replaced_call": True}
+    # A historical row's shape -- an older run recorded a decision with these
+    # keys, and the log view has to keep rendering it correctly.
+    decision_args = {
+        "should_ask": False, "trigger": "reuse", "window_dominant": "da",
+        "window_size": 3, "window_share": 0.62, "window_share_ratio": None,
+        "request_top": None, "request_letters": 0, "named_language": None,
+        "detector_ms": 4,
+    }
+    step.args = {"gate": decision_args, "gate_replaced_call": True}
     step.observation_preview = (
         '{\n "reason": "Danish conversation.",\n "languages": [\n  {\n'
         '   "code": "da",\n   "score": 5\n  }\n ]\n}')
@@ -249,3 +253,33 @@ def test_a_never_made_skip_still_carries_no_duration():
     assert event["seconds"] == "—"
     assert "never made" in event["detail_html"]
     assert "no model group is bound" in event["detail_html"]
+
+
+def test_a_resolved_row_shows_what_it_read():
+    """The row replaces a 9-18s model call, so it has to say which language it
+    chose and which languages it chose between."""
+    step = _step("response_language_classifier", at=1, ms=12)
+    step.phase = "skipped"
+    step.duration_ms = 12
+    # The marker sits at the TOP LEVEL of args, beside `gate` -- that is where
+    # db/assistant_log.py:560 and the `_skipped` pane both read it.
+    step.args = {
+        "gate_replaced_call": True,
+        "gate": {"ask": False, "trigger": "resolved", "language": "en-US",
+                 "slots": ["en", "da"], "named_language": None,
+                 "detector_ms": 11},
+    }
+    step.observation_preview = (
+        '{"reason": "Resolved by detection.", "languages": ['
+        '{"code": "en-US", "score": 5}]}')
+    view = log_view(_run(), [step])
+    event = next(e for e in view["events"] if e["kind"] == "skipped")
+    assert event["duration_ms"] == 12
+    assert "en-US" in event["detail_html"]
+    assert "da" in event["detail_html"]
+    assert "never made" not in event["detail_html"]
+    # The legible "resolved language" line, not just the raw gate dict the
+    # "gate decision" block already dumps as JSON (which also contains
+    # "en-US" and "da" — the assertions above alone would pass even with the
+    # resolved-language block deleted).
+    assert "en-US — chosen among en, da" in event["detail_html"]

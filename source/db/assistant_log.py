@@ -550,7 +550,8 @@ def _step_events(step) -> list[dict]:
         # `Assistant._response_language_gate_args`'s docstring). A row with
         # the marker is the response-language gate: it ran in place of the
         # classifier's model call, reached a verdict, and cost real time — so
-        # it carries that duration and the decision alongside what it reused.
+        # it carries that duration and the decision alongside the
+        # classification it constructed from detection.
         # A row without it is a call the loop genuinely could not make (no
         # model group bound); it cost nothing, so it carries no duration and
         # draws no bar — but a run where a call was skipped and one where it

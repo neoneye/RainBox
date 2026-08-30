@@ -96,6 +96,18 @@ def test_formatting_guide_injected_after_identity(room):
     assert "switched to Germany" not in prompt
 
 
+def test_first_turn_language_line_unchanged_with_gate_off(room):
+    """`assistant.response_language_gate` ships off by default, and the
+    `room` fixture posts the room's only message -- no history behind it.
+    With the gate off this must not suppress anything: the guide's Language
+    line has always carried the full mirroring clause on a room's first
+    turn, and the gate switch being off must reproduce that unchanged."""
+    db.set_current_profile(_germany_uuid())
+    prompt = _run_capture(room)["user_prompt"]
+    assert ("- Language: reply in the language of the current message; "
+            "never switch on your own.") in prompt
+
+
 def test_blocks_default_off_until_gated(room):
     """The formatting and calibration switches default OFF (each block ships
     only after its release gate passes); the identity block is not gated.

@@ -306,6 +306,45 @@ def test_explicit_empty_language_rows_render_no_language_line():
     assert body == ""
 
 
+def test_the_mirroring_clause_is_dropped_when_asked():
+    """With no conversation to mirror, `reply in the language of the current
+    message` points at something unknowable. `mirror_conversation` is the
+    caller's own call — the function reads no setting and no history — so
+    both the default and the opposite value are exercised directly."""
+    profile = {"data": {"languages": {"rows": [
+        {"tag": "en-US", "level": "native", "stance": "prefer", "note": ""},
+    ]}}}
+    mirrored = format_formatting_guide(profile, mirror_conversation=True)
+    not_mirrored = format_formatting_guide(profile, mirror_conversation=False)
+    assert "language of the current message" in mirrored
+    assert "language of the current message" not in not_mirrored
+
+
+def test_only_the_mirroring_clause_is_conditional():
+    """The explicit-request clause and the variant clause need no
+    conversation to be true, so they render even when the mirroring clause
+    does not; units, currency and the rest are not about the conversation at
+    all."""
+    profile = {"data": {"units": "metric", "languages": {"rows": [
+        {"tag": "en-US", "level": "native", "stance": "prefer", "note": ""},
+    ]}}}
+    body = format_formatting_guide(profile, mirror_conversation=False)
+    assert "Units" in body
+    assert "Use en-US only when the message asks for it" in body
+    assert "an explicit request always wins" in body
+    assert "use the en-US variant" in body
+
+
+def test_default_mirrors_with_no_information_supplied():
+    """`mirror_conversation` defaults True: a caller with no opinion about
+    history or the gate switch gets today's guide, unchanged — the same
+    thing every caller got before the response-language gate existed."""
+    profile = {"data": {"languages": {"rows": [
+        {"tag": "en-US", "level": "native", "stance": "prefer", "note": ""},
+    ]}}}
+    assert "language of the current message" in format_formatting_guide(profile)
+
+
 # ---- prompt-boundary validation --------------------------------------------
 
 def test_validators_reject_arbitrary_text():

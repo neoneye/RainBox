@@ -2,6 +2,10 @@
 
 **Status:** Implemented. Ships behind `assistant.response_language_gate`,
 default off.
+**Superseded by:** `2026-08-30-response-language-resolution-design.md`, which
+resolves the reply language outright instead of gating on a detected shift.
+This document's measurements are kept — they are the reasoning behind
+constants the later design still uses.
 **Date:** 2026-08-27
 **Extends:** `source/notes/proposals/2026-08-17-gating-the-response-language-classifier.md`,
 which established that a cheap detector may decide *whether to ask* the
@@ -49,30 +53,110 @@ on every later turn. The classifier prompt already carries an anti-perpetuation
 rule; the gate must not reintroduce underneath it the problem that rule exists
 to prevent. Operator messages are the record of what the human actually wrote.
 
-**Qualifying** means the message's Unicode letter count is at or above
-`LETTER_FLOOR`. Acknowledgements carry no language content, and unrestricted the
-detector says so in the only way it can — measured, `ok` tops out at `zu` 0.06
-and `tak` at `mi` 0.08, noise at noise-level confidence. Against any window both
-score below `SHIFT_FLOOR`, so without a floor every acknowledgement would ask.
-The floor keeps them out of the window and, as the current request, out of the
-shift test entirely.
+**Qualifying** means the message carries language, which it can prove two
+ways: a Unicode letter count at or above `LETTER_FLOOR`, **or** a detector
+confidence at or above `CONFIDENCE_FLOOR`. Either is enough.
 
-Each qualifying message contributes `min(letter_count, WEIGHT_CAP)` weight, so
-one long paste cannot define the window on its own. The cap bounds a long
-message's influence rather than neutralising it, and `WEIGHT_CAP = 200` is
-where that bound becomes real: measured against a 3560-letter English paste
-(p(en) 1.00, so 200 after capping), a saturated eight-message Danish window
-scores 243 and outvotes it, while three short Danish messages score 96 and do
-not — which is correct, because 3560 letters of English is more language
-evidence than three short sentences. Above ~280 the cap fails its own purpose:
-at 400 the single paste outvotes even a full window.
+The letter count alone would be a script test wearing the costume of a length
+test. It is a proxy for information content, and the proxy only holds for
+scripts that spell words out: a complete Chinese sentence is ten characters and
+`你好` is two, both detected at 1.00. Where the script alone nearly fixes the
+language, length stops meaning anything, and requiring it discards fluent
+requests as though they were acknowledgements.
+
+Confidence alone does not work either. Measured, the weakest short real
+non-Latin text scores 0.26 (Cyrillic — like Latin, shared by several languages,
+so the confidence spreads thin), while `hej med dig` scores 0.10 and an
+ordinary English debugging line 0.19. There is no threshold separating those
+from noise. Taking the two together does separate them, because they fail on
+different inputs:
+
+| message | letters | confidence | qualifies |
+|---|---|---|---|
+| `我现在用的是什么语言？` | 10 | 1.00 | yes, on confidence |
+| `你好` | 2 | 1.00 | yes, on confidence |
+| `как дела` | 7 | 0.26 | yes, on confidence |
+| an English debugging line | 47 | 0.19 | yes, on length |
+| `hej med dig` | 11 | 0.10 | no |
+| `ok` | 2 | 0.06 | no |
+| `tak` | 3 | 0.08 | no |
+| `y` | 1 | 0.12 | no |
+
+Latin noise tops out at 0.12 and the weakest real non-Latin text scores 0.26,
+so `CONFIDENCE_FLOOR = 0.20` sits in that gap. A message that qualifies on
+neither is language-poor: it stays out of the window and, as the current
+request, out of the shift test entirely, so an acknowledgement never spends a
+model call.
+
+**Every message casts one vote, scaled to its own strongest candidate, and
+votes decay with age.** Neither raw confidence nor length compares across
+messages, and weighting by either lets the window answer for a conversation
+that has already moved on.
+
+Confidence is not comparable between languages. Danish detects at 1.00 where
+an equally clear English sentence reaches 0.375, because English shares its
+script and much of its vocabulary with more of the field. Summing raw
+confidence therefore counts a Danish message roughly three times as heavily as
+an English one that is just as unambiguous.
+
+Length is not comparable either. It was included on the reasoning that a long
+message says more about the conversation's language than a short one — but a
+long passage the operator quoted is not better evidence of what they are
+writing in than the sentence they just typed. Measured on a real conversation
+that had switched to English three messages earlier, one 152-letter Danish
+message at p 1.00 scored 152 against 63 for the three English messages after
+it, so the window kept answering Danish and every turn asked. Capping how much length any one
+message could contribute bounds that, but only loosely: a cap tight enough to
+stop a long paste winning is also tight enough that ordinary long messages stop
+counting for more than short ones, which is the whole reason length was there.
+
+Scaling each message's shares to its own top candidate makes one message one
+vote regardless of script or length, and `WINDOW_HALF_LIFE = 3.0` messages
+decays those votes so the window tracks what the conversation is running in
+now. Measured against the three cases that matter:
+
+| window | confidence x length | one vote, decayed |
+|---|---|---|
+| switched to English 3 messages ago | `da` ✗ | `en` ✓ |
+| Danish throughout | `da` ✓ | `da` ✓ |
+| one long English paste among Danish | `en` ✗ | `da` ✓ |
+
+The old scheme gets two of the three wrong; the vote scheme gets all three, and
+by clear margins rather than narrow ones.
+
+### Quoted passages are content
+
+A message can hold more than one language, and usually the extra one is not the
+operator's: `Kan du forklare mig dette: "standard arm orange"` is a Danish
+request about an English phrase. Detection reads a message whole, so it answers
+by volume — and volume belongs to whatever was pasted in. Measured, a Danish
+sentence wrapping a 150-character English quote scores `en` 1.00 and `da` 0.000,
+which reads a Danish turn as a switch, and a few such messages carry the window
+to English so the gate stops skipping for anyone who quotes habitually.
+
+Detection therefore runs on the message with quoted spans and code removed —
+matched double quotes, guillemets, curly quotes, backticks and fenced blocks —
+and falls back to the whole message when nothing is left, because then the
+quote *is* the message. Single quotes need four characters between them so that
+an apostrophe in `LLM'en` or `don't` does not open a span.
+
+This corrects both directions: the Danish request above reads `da`, and
+`Can you explain this to me: "det virker ikke rigtigt"` reads `en`, where
+reading it whole answered `da`. It also sharpens ordinary technical writing —
+`Hvorfor fejler ` + "`db.session.query(AppSetting)`" + ` her?` goes from `da`
+0.53 to 0.94 once the identifier stops being read as prose.
+
+Naming a language inside a quote still triggers the name check, which reads the
+raw text: quoting is not a way to smuggle an instruction past the gate, and the
+classifier is the right place to judge one.
 
 ### The shift test
 
     window_dominant = argmax over languages of
         sum(confidence(language, message) * weight(message) for message in window)
 
-    shift = confidence(window_dominant, current_request) < SHIFT_FLOOR
+    strongest = max(confidence(language, current_request) for language in ...)
+    shift = confidence(window_dominant, current_request) < SHIFT_RATIO * strongest
 
 `confidence` is lingua's full distribution
 (`compute_language_confidence_values`), not just the winning label.
@@ -97,10 +181,28 @@ changed language, and every flap is a spurious call. The confidence in a
 | Finnish prose | 0.00 | 0.00 |
 
 Reading the column for the window's own language: same-language requests score
-0.23-1.00, different-language requests score 0.00-0.05. `SHIFT_FLOOR = 0.15`
-sits in that gap. The two cases the design turns on both land correctly —
-Danish with English nouns in a Danish window scores 0.38 and skips;
-`translate to english: <Danish>` in an English window scores 0.05 and asks.
+0.23-1.00, different-language requests 0.00-0.05.
+
+**The comparison is a ratio, not an absolute floor**, because those absolute
+numbers are not comparable between messages. Short Latin text spreads its
+confidence across every language sharing the script, so the correct answer
+scores low for reasons that have nothing to do with whether the language
+changed: `what do I do for work` gives English only 0.106, and `kan du hjaelpe
+mig med det her` gives Danish only 0.106. An absolute floor calls both of those
+a shift and spends a model call on an unchanged conversation.
+
+What stays stable is how much of its *own best guess* the request gives to the
+window's language. Measured across English, Danish, Spanish and Chinese
+windows, a request in the window's language scores **1.00** on that ratio every
+time — the window's language is simply the request's top candidate — while a
+genuine change tops out at **0.311** (English against a Danish window, which
+share a script and some vocabulary). `SHIFT_RATIO = 0.5` sits in that gap.
+
+The two cases the design turns on both land correctly: Danish with English
+nouns in a Danish window scores 1.00 and skips, even though its absolute Danish
+share is only 0.38 and its top label flaps toward Norwegian;
+`translate to english: <Danish>` in an English window scores 0.05 absolute and
+asks.
 
 In the assembled gate that translate request is in fact caught one step
 earlier, by the name check below: the text contains the token `english`. Both
@@ -160,6 +262,22 @@ always asks is the status quo with extra steps. Two filters, both data-driven:
 2. **the token must round-trip** — it must appear in `code_to_names(code)`, the
    set of that code's recorded names. `second` resolves to `cs` but is not among
    Czech's names, so it is rejected; so is `margin`, which resolves to `mrt`.
+
+Both length rules are Latin-script heuristics: they exist because short Latin
+function words collide with obscure language names. In Chinese, Japanese and
+Korean one character is a morpheme, the names run two to three characters
+(`中文`, `英语`, `日本語`, `한국어`), and the collision does not arise — measured over
+42 common words in those scripts the round-trip admits the genuine language
+names and nothing else. Tokens in those scripts are therefore exempt from both
+minimums.
+
+Those scripts also write without spaces, so a whole clause arrives as one token
+and the name has to be found inside it. For such a token the check scans every
+two-to-four-character substring, which is bounded by the length of the names it
+is looking for and costs about a millisecond on a 640-character paste.
+Measured over ordinary Chinese sentences it yields no spurious match. Note that
+`我现在用的是什么语言？` — *what language am I writing in* — correctly matches no name:
+it asks about a language without naming one, and belongs to the shift test.
 
 The round-trip runs the same CLDR data in both directions, so the filter adds no
 table of its own and stays language-agnostic. Measured over a nineteen-case
@@ -258,16 +376,16 @@ Run `response_language_classifier` when **any** of:
 2. the request names a language (CLDR names and endonyms);
 3. the profile's currently declared languages differ from the snapshot taken
    when the reused classification was recorded;
-4. the request's confidence in the window's dominant language is below
-   `SHIFT_FLOOR`;
+4. the request gives the window's dominant language less than `SHIFT_RATIO` of
+   its own strongest candidate;
 5. the window contains no qualifying messages;
 6. the detector raised, or was asked and found no language.
 
 Otherwise reuse the previous classification.
 
-A request below `LETTER_FLOOR` is never put to the detector, so it satisfies
-neither 4 nor 6 — being too short to classify is not the same as being
-unclassifiable, and only the second is worth a model call. Triggers 1, 2 and 3
+A language-poor request satisfies neither 4 nor 6 — carrying too little
+language to classify is not the same as being unclassifiable, and only the
+second is worth a model call. Triggers 1, 2 and 3
 still apply to it, so `in Danish please` — short and explicit — still asks,
 and so does a profile-language edit on a turn whose request is just `ok`.
 
@@ -289,7 +407,7 @@ restricts lingua to the tags in `languages.rows` for accuracy on short text, and
 accepts that unknown languages force-fit to a declared tag; the margin rule was
 that force-fit's mitigation. Unrestricted, a Finnish request scores `fi` 1.00
 and — measured — assigns 0.00 to both English and Danish, so it falls below
-`SHIFT_FLOOR` for any window and asks. The force-fit trap closes by
+`SHIFT_RATIO` for any window and asks. The force-fit trap closes by
 construction rather than by a threshold.
 
 Measured on this repo's Python with `lingua-language-detector==2.2.0`:
@@ -307,11 +425,13 @@ Detection is **5-13ms per message warm**, 64ms on the first call.
 `source/agents/response_language_gate.py`, a new module with no dependency on
 the assistant:
 
-- `detect(text) -> Detection` — letter count, and when the text is at or above
-  `LETTER_FLOOR`, the top language, its base subtag and the full confidence
-  distribution. A `Detection` distinguishes its two empty cases: *below floor*
-  (nothing was asked of the detector) and *undetected* (the detector was asked
-  and found nothing). Only the second is trigger 6.
+- `detect(text) -> Detection` — letter count, and for a message that carries
+  language, the top language, its base subtag and the full confidence
+  distribution. A `Detection` distinguishes its two empty cases:
+  *language-poor* (too little language to be worth classifying, so its shares
+  are dropped rather than reported — nothing downstream may vote with noise)
+  and *undetected* (the detector was asked and found nothing). Only the second
+  is trigger 6.
 - `window_dominant(texts: Sequence[str]) -> tuple[str | None, int]` — the
   weighted argmax above, with the number of messages that qualified. `(None,
   0)` when none did, which is trigger 5.
@@ -445,9 +565,10 @@ currently declared codes no longer match the snapshot taken when the reused
 classification was resolved, the next turn asks, and the recovery claim above
 holds for every trigger rather than for five of six.
 
-`LETTER_FLOOR = 16`, `WINDOW_MESSAGES = 8`, `WEIGHT_CAP = 200` and
-`SHIFT_FLOOR = 0.15` are starting values. `SHIFT_FLOOR` and `WEIGHT_CAP` are
-each placed against a measured crossover; the other two are judgement, and all
+`LETTER_FLOOR = 16`, `CONFIDENCE_FLOOR = 0.20`, `WINDOW_MESSAGES = 8`,
+`WINDOW_HALF_LIFE = 3.0` and
+`SHIFT_RATIO = 0.5` are starting values. `SHIFT_RATIO` and `CONFIDENCE_FLOOR`
+are each placed against a measured gap; the other two are judgement, and all
 four are tuned against runs where the switch was on rather than fixed here.
 
 ## Failure handling
