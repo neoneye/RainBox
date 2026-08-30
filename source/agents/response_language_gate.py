@@ -511,7 +511,11 @@ TRIGGER_DETECTOR_ERROR = "detector_error"
 TRIGGER_REUSE = "reuse"
 TRIGGER_FIRST_MESSAGE_UNMATCHED = "first_message_unmatched"
 TRIGGER_OUTSIDE_SLOTS = "outside_slots"
+TRIGGER_UNDETECTED = "undetected"
 TRIGGER_DETECTORS_DISAGREE = "detectors_disagree"
+#: The restricted detector had nothing to say at all -- distinct from
+#: `TRIGGER_DETECTORS_DISAGREE`, where it did answer and the two disagreed.
+TRIGGER_RESTRICTED_UNDECIDED = "restricted_undecided"
 TRIGGER_RESOLVED = "resolved"
 
 
@@ -742,6 +746,14 @@ def resolve(
     wrong resolution costs one reply in the wrong language, which is visible and
     corrects on the next turn.
 
+    `language_poor` and `undetected` resolve differently, matching the
+    distinction `Detection` documents: a language-poor request has too little
+    language in it to classify, so there is nothing for a model to decide
+    between either -- it resolves from the conversation, or the fallback, like
+    any other case with nothing to read. An undetected request was put to the
+    detector and it found nothing among languages it does know -- that is a
+    real message worth a model call, not a short one.
+
     The whole body runs under one broad `except Exception`. This is not
     sloppiness to be narrowed later -- it is the fail-open guarantee itself:
     whatever goes wrong here, from a detector crash to a future bug in this
@@ -767,31 +779,45 @@ def resolve(
         slots = language_slots(history, pinned)
         detection = detect(request)
 
-        if detection.language_poor or detection.undetected:
-            # Nothing in the request to read. Keep the conversation if there is
-            # one, and otherwise take the fallback -- there is nothing here for
-            # a model to decide between either.
+        if detection.language_poor:
+            # Too little language in the request to classify. Keep the
+            # conversation if there is one, and otherwise take the fallback --
+            # there is nothing here for a model to decide between either.
             language = dominant_language(history, slots) or fallback
             return Resolution(
                 ask=False, trigger=TRIGGER_RESOLVED, language=language,
                 slots=slots, detector_ms=elapsed())
+
+        if detection.undetected:
+            # The detector was asked and found nothing, unlike `language_poor`
+            # -- there is a genuine message here, just not one that matches a
+            # language the detector knows. That is worth a model call.
+            return Resolution(
+                ask=True, trigger=TRIGGER_UNDETECTED, slots=slots,
+                detector_ms=elapsed())
 
         if detection.top not in slots:
             # The unrestricted detector says this is not one of the room's
             # languages. Restricted detection would force-fit it to one, so the
             # model decides -- and on a first message that is also the only way
             # to tell a foreign language from nonsense.
-            trigger = (TRIGGER_FIRST_MESSAGE_UNMATCHED if not slots
-                       or not history else TRIGGER_OUTSIDE_SLOTS)
+            trigger = (TRIGGER_FIRST_MESSAGE_UNMATCHED if not history
+                       else TRIGGER_OUTSIDE_SLOTS)
             return Resolution(
                 ask=True, trigger=trigger, slots=slots,
                 detector_ms=elapsed())
 
         within = detect_within(request, slots)
-        if within is None or within != detection.top:
-            # The two instruments disagree about which of the room's languages
-            # this is -- or the restricted one could not decide at all.
-            # Neither is authoritative over the other, so the model settles it.
+        if within is None:
+            # The restricted detector could not decide at all -- there is no
+            # second opinion here for the model to weigh, only an absence.
+            return Resolution(
+                ask=True, trigger=TRIGGER_RESTRICTED_UNDECIDED, slots=slots,
+                detector_ms=elapsed())
+        if within != detection.top:
+            # The two instruments disagree about which of the room's
+            # languages this is. Neither is authoritative over the other, so
+            # the model settles it.
             return Resolution(
                 ask=True, trigger=TRIGGER_DETECTORS_DISAGREE, slots=slots,
                 detector_ms=elapsed())

@@ -22,8 +22,10 @@ from agents.response_language_gate import (
     TRIGGER_OUTSIDE_SLOTS,
     TRIGGER_PROFILE_CHANGED,
     TRIGGER_RESOLVED,
+    TRIGGER_RESTRICTED_UNDECIDED,
     TRIGGER_REUSE,
     TRIGGER_SHIFT,
+    TRIGGER_UNDETECTED,
     WINDOW_MESSAGES,
     Resolution,
     decide,
@@ -742,6 +744,17 @@ def test_a_first_message_matching_no_declared_language_asks():
     assert r.trigger == TRIGGER_FIRST_MESSAGE_UNMATCHED
 
 
+def test_a_conversation_of_only_short_messages_is_not_a_first_message():
+    """`slots` can be empty in the middle of a conversation -- nothing pinned
+    and every earlier message too short to claim a slot -- and that must not
+    be read as a first message. The trigger is what a run says about itself,
+    so it has to say `outside_slots`, not `first_message_unmatched`, for a
+    request that plainly has history behind it."""
+    r = _resolve(["ok", "sure"], FI_PROSE, pinned=())
+    assert r.ask is True
+    assert r.trigger == TRIGGER_OUTSIDE_SLOTS
+
+
 def test_a_first_message_in_a_declared_language_resolves():
     """The annoyance this design exists to remove: waiting on a model to be
     told yes, this is English."""
@@ -763,6 +776,52 @@ def test_a_language_poor_request_keeps_the_conversation():
     r = _resolve(EN_HISTORY, "ok")
     assert r.ask is False
     assert r.language == "en"
+
+
+def test_an_undetected_request_asks():
+    """`language_poor` and `undetected` are deliberately separate: the first
+    means the message is too short to be worth classifying, the second means
+    the detector was asked and genuinely found nothing. Only the second is a
+    real message the model should be given -- `detect` is memoised, so this
+    drives it the same way the raising-detector test above does, by
+    monkeypatching the module-level name rather than the real detector."""
+    import agents.response_language_gate as gate
+
+    undetected = Detection(
+        letters=20, language_poor=False, undetected=True, top=None)
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(gate, "detect", lambda _text: undetected)
+    try:
+        r = _resolve(EN_HISTORY, "xzq wvbt qplk fjhr mnop")
+    finally:
+        monkeypatch.undo()
+    assert r.ask is True
+    assert r.trigger == TRIGGER_UNDETECTED
+
+
+def test_the_two_detectors_disagreeing_asks(monkeypatch):
+    """The unrestricted detector already places this message in a slot
+    language; monkeypatching `detect_within` makes the restricted detector
+    name a different one. Neither detector is authoritative over the other,
+    so the model settles it."""
+    import agents.response_language_gate as gate
+
+    monkeypatch.setattr(gate, "detect_within", lambda _text, _slots: "da")
+    r = _resolve(EN_HISTORY, "what do I do for work")
+    assert r.ask is True
+    assert r.trigger == TRIGGER_DETECTORS_DISAGREE
+
+
+def test_the_restricted_detector_failing_to_decide_asks(monkeypatch):
+    """Distinct from disagreement: here the restricted detector answers
+    nothing at all, rather than answering with a different language, so there
+    is no second opinion for the model to weigh -- only an absence."""
+    import agents.response_language_gate as gate
+
+    monkeypatch.setattr(gate, "detect_within", lambda _text, _slots: None)
+    r = _resolve(EN_HISTORY, "what do I do for work")
+    assert r.ask is True
+    assert r.trigger == TRIGGER_RESTRICTED_UNDECIDED
 
 
 def test_a_raising_detector_asks_when_resolving():
