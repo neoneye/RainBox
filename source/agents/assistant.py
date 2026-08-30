@@ -3475,9 +3475,9 @@ class AssistantAgent(ModelGroupAgent):
     RECALL_FILTER_ACTION: str = "recall_filter"
     RESPONSE_LANGUAGE_CLASSIFIER_ACTION: str = "response_language_classifier"
     # The `args` key under which an observed classifier row snapshots the
-    # profile's declared language codes at the moment it was resolved (see
-    # `_profile_languages_changed`) -- a sibling of the `"gate"` key in the
-    # same dict, written only on the observed path.
+    # profile's declared language codes at the moment it was resolved -- a
+    # sibling of the `"gate"` key in the same dict, written only on the
+    # observed path.
     PROFILE_DECLARED_LANGUAGE_CODES_ARG: str = "profile_declared_language_codes"
 
     # No /agentmodel row of its own: this agent's models come from the
@@ -5397,158 +5397,6 @@ class AssistantAgent(ModelGroupAgent):
         })
         return classification
 
-    def _previous_room_classification(
-        self, room_uuid: UUID
-    ) -> tuple[ResponseLanguageClassification, frozenset[str] | None] | None:
-        """The last language this room resolved, read back from the trace,
-        paired with the profile's declared codes as they stood at that
-        moment.
-
-        This is what a skipped turn reuses. It is a read rather than stored
-        state on purpose: the resolved language is already recorded on the
-        classifier's step row, and a second copy would be a second source of
-        truth for the same fact. The declared-codes snapshot rides along on
-        the same row (see `_run_response_language_classifier`), so returning
-        both here costs the one query this method already makes rather than a
-        second one on the turn's critical path.
-
-        Only an `observed` row counts. A skipped or failed classifier produced
-        no resolution, and reusing one would reply in whatever language a
-        broken call happened to leave behind. A row that cannot be parsed back
-        into the schema is treated as absent, which asks.
-
-        The snapshot is `None` when the row predates this mechanism and never
-        recorded one. `_profile_languages_changed` reads that as "changed" --
-        the honest answer when there is nothing to compare against -- so the
-        room asks once and every row after that carries a snapshot to compare
-        exactly.
-        """
-        try:
-            row = (
-                db.session.query(db.AssistantStep)
-                .join(db.AssistantRun,
-                      db.AssistantStep.run_uuid == db.AssistantRun.uuid)
-                .filter(db.AssistantRun.room_uuid == room_uuid)
-                .filter(db.AssistantStep.action
-                        == self.RESPONSE_LANGUAGE_CLASSIFIER_ACTION)
-                .filter(db.AssistantStep.phase == "observed")
-                .filter(db.AssistantStep.observation_preview.isnot(None))
-                .order_by(db.AssistantStep.id.desc())
-                .first()
-            )
-        except Exception:
-            logger.warning(
-                "assistant: previous response-language read failed",
-                exc_info=True)
-            return None
-        if row is None:
-            return None
-        try:
-            classification = ResponseLanguageClassification.model_validate_json(
-                row.observation_preview)
-        except Exception:
-            logger.warning(
-                "assistant: previous response-language row did not parse",
-                exc_info=True)
-            return None
-        args = row.args if isinstance(row.args, dict) else {}
-        snapshot = args.get(self.PROFILE_DECLARED_LANGUAGE_CODES_ARG)
-        declared_snapshot = (
-            frozenset(str(code) for code in snapshot)
-            if isinstance(snapshot, list) else None)
-        return classification, declared_snapshot
-
-    @staticmethod
-    def _profile_languages_changed(
-        profile: dict[str, Any] | None,
-        declared_snapshot: frozenset[str] | None,
-    ) -> bool:
-        """Has the profile's declared reply languages changed since the
-        reused classification was resolved?
-
-        `declared_snapshot` is the profile's declared codes as they stood at
-        that moment, recorded onto the classifier's step row when it was
-        written (`_run_response_language_classifier`) rather than inferred
-        from the classification's own codes -- the classifier's result mixes
-        declared codes with whatever the request itself required, and cannot
-        be trusted to carry every declared code either: the round trip
-        through the model is not guaranteed, and
-        `_reconcile_response_language_profile_variants` already exists
-        because it sometimes fails. Comparing against a snapshot taken at
-        write time is exact regardless of what the model did with the prompt.
-
-        The comparison is symmetric: an added, removed or retagged declared
-        code all trigger, because all three mean the reused classification no
-        longer describes what the profile currently declares.
-
-        `None` means the row predates this snapshot and never recorded one --
-        read as changed, so the room asks once to establish a snapshot and
-        every comparison after that is exact.
-        """
-        if declared_snapshot is None:
-            return True
-        declared_codes = frozenset(
-            str(candidate["code"])
-            for candidate in user_profile.declared_language_candidates(profile)
-        )
-        return declared_codes != declared_snapshot
-
-    def _response_language_gate_decision(
-        self,
-        messages: list[dict[str, Any]],
-        room_uuid: "UUID",
-        profile: dict[str, Any] | None,
-    ) -> tuple[
-        response_language_gate.GateDecision,
-        ResponseLanguageClassification | None,
-    ] | None:
-        """The superseded shift gate's verdict for this turn and what a skip
-        would reuse, or None when the gate does not apply.
-
-        Superseded: the live turn decides through `_resolve_response_language`
-        instead (see `_run_response_language_classifier`). Kept for its own
-        test coverage.
-
-        The previous classification is returned alongside the verdict because
-        the verdict depends on whether one exists: reading it twice would put
-        two queries on the turn's critical path to answer one question.
-
-        None means "run the classifier as always": the switch is off, or the
-        turn has no room to read a previous resolution from. The gate itself
-        never returns None — it always has a verdict, and every uncertainty in
-        it resolves towards asking.
-
-        The window is the operator's earlier messages only. The final human
-        message is the request being judged, so it is excluded from the window
-        it is compared against; assistant replies are excluded because they are
-        written in whatever language a previous resolution chose, and letting
-        them vote would let one wrong resolution justify itself forever.
-
-        `profile` is consulted only here, never inside the gate module: the
-        gate stays a pure function of message text, and the profile
-        comparison is done in this method and passed in as a bool.
-        """
-        if not self._response_language_gate_enabled():
-            return None
-        human_texts = [
-            str(m.get("text") or "")
-            for m in messages
-            if self._message_role(m) == "user"
-        ]
-        if not human_texts:
-            return None
-        result = self._previous_room_classification(room_uuid)
-        previous, declared_snapshot = result if result is not None else (
-            None, None)
-        decision = response_language_gate.decide(
-            window_texts=human_texts[:-1],
-            request_text=human_texts[-1],
-            has_previous=previous is not None,
-            profile_languages_changed=self._profile_languages_changed(
-                profile, declared_snapshot),
-        )
-        return decision, previous
-
     def _resolve_response_language(
         self, messages: list[dict[str, Any]], profile: dict[str, Any] | None,
     ) -> "response_language_gate.Resolution | None":
@@ -5704,12 +5552,9 @@ class AssistantAgent(ModelGroupAgent):
         self._response_language_classification = classification
         self._reply_language_markdown = (
             self._format_reply_language_markdown(classification))
-        # Snapshot the profile's declared codes onto this observed row, so a
-        # later turn's `_profile_languages_changed` compares against what was
-        # actually declared here rather than inferring it from the
-        # classification's own codes (see that method's docstring). Only the
-        # observed path needs this -- `_previous_room_classification` reads
-        # only observed rows.
+        # Snapshot the profile's declared codes onto this observed row, so
+        # the trace records what the profile declared at the moment this
+        # classification was made.
         self._response_language_gate_args = {
             **(self._response_language_gate_args or {}),
             self.PROFILE_DECLARED_LANGUAGE_CODES_ARG: sorted({

@@ -1,16 +1,16 @@
-"""Deterministic gate in front of the response-language classifier.
+"""Deterministic reply-language resolution in front of the response-language
+classifier.
 
 The classifier is the assistant's first model call on every turn, and on most
-turns it re-confirms the language the previous turn already established. This
-module answers the cheaper question — *has anything changed enough to be worth
-asking* — from the messages alone.
+turns it re-confirms the language the conversation is already running in.
+This module answers that from the messages alone — which language a reply
+should be in, or that only a model can decide — without a model call.
 
 It reads no settings and touches no database, so it is a pure function of its
-input and testable without either. It also never decides which language to use:
-that answer is the classifier's, and on a skip the caller reuses the room's
-previous classification. A detector asked "what language is this" answers the
-wrong question confidently on a request like `translate to english: <Danish>`;
-asked "has this changed", it is well posed.
+input and testable without either. A detector asked "what language is this"
+answers the wrong question confidently on a request like `translate to
+english: <Danish>`; the checks here are built around questions it can answer
+honestly instead.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 #: Below this many letters a Latin-script message carries no usable language
 #: signal. Measured, `ok` tops out at `zu` 0.06 and `tak` at `mi` 0.08 -- noise
-#: at noise-level confidence, which would read as a shift away from any window.
+#: at noise-level confidence, indistinguishable from a genuine short message.
 LETTER_FLOOR = 16
 #: The other way a message proves it carries language: the detector is sure of
 #: it. A character count is a proxy for information content, and the proxy only
@@ -42,22 +42,10 @@ CONFIDENCE_FLOOR = 0.20
 #: 0.98 against two languages, 0.94 against four, 0.72 against eight and 0.42
 #: against twelve, against 0.25 unrestricted. Four is at the knee.
 LANGUAGE_SLOTS = 4
-#: How many qualifying operator messages define "the conversation's language".
-WINDOW_MESSAGES = 8
 #: How many messages back a vote is worth half of the newest one. The window
 #: answers what language the conversation is running in *now*, so a message the
 #: operator has already moved on from fades rather than counting forever.
 WINDOW_HALF_LIFE = 3.0
-#: The window's language must hold at least this fraction of the request's own
-#: strongest candidate. A ratio rather than an absolute share, because absolute
-#: confidence is not comparable across messages: short Latin text spreads
-#: thinly over the languages sharing its script, so `what do I do for work`
-#: scores only 0.106 for English and `kan du hjaelpe mig med det her` only
-#: 0.106 for Danish -- in both the window's own language is still the top
-#: candidate, and an absolute floor would call an unchanged conversation a
-#: shift. Measured, a request in the window's language scores 1.00 on this
-#: ratio every time, while a genuine change tops out at 0.311.
-SHIFT_RATIO = 0.5
 #: Shorter tokens are not put to the CLDR name lookup -- `the`, `a` and `to`
 #: all resolve to obscure language codes. This is the floor for a code that
 #: itself has a two-letter ISO 639-1 tag; a three-letter code needs
@@ -132,13 +120,6 @@ class Detection:
     top: str | None
     confidence: dict[str, float] = field(default_factory=dict)
 
-    def share(self, code: str | None) -> float:
-        """This message's confidence in `code` -- the number the shift test
-        compares. Absent means zero, which is the honest reading."""
-        if not code:
-            return 0.0
-        return self.confidence.get(code, 0.0)
-
 
 @functools.lru_cache(maxsize=1)
 def _detector():
@@ -146,15 +127,16 @@ def _detector():
 
     Unrestricted on purpose. Restricting to the operator's declared languages
     is faster, but then a language nobody declared force-fits to one that is
-    declared, and the gate skips a genuine shift. Unrestricted, an undeclared
-    language scores near zero against any window and asks. Models load lazily,
-    so resident memory settles around 141 MB rather than the gigabytes an eager
-    build would cost.
+    declared, hiding a genuine switch to something new. Unrestricted, an
+    undeclared language scores near zero against any set of slots and is
+    asked about instead. Models load lazily, so resident memory settles
+    around 141 MB rather than the gigabytes an eager build would cost.
 
-    Importing lingua costs ~2.4s, and the gate ships switched off, so the
-    import is here rather than at module level: an operator who never enables
-    the gate never pays it, and the one who does pays it on the first gated
-    turn -- a fifth of the call it replaces.
+    Importing lingua costs ~2.4s, and the switch this module serves ships
+    off by default, so the import is here rather than at module level: an
+    operator who never enables it never pays the cost, and the one who does
+    pays it on the first resolved turn -- a fifth of the model call it
+    replaces.
     """
     from lingua import LanguageDetectorBuilder
 
@@ -163,11 +145,10 @@ def _detector():
 
 @functools.lru_cache(maxsize=512)
 def _detect_cached(text: str) -> Detection:
-    """Memoised because the room's slots and window re-read the same history
+    """Memoised because the room's slots and history re-read the same messages
     every turn, and a message's language cannot change after it is written.
     Without this a turn spends as many detections as its largest caller's scan
-    x ~10ms redetecting settled messages -- WINDOW_MESSAGES, since
-    `window_dominant` walks further back than `language_slots` ever needs to.
+    x ~10ms redetecting settled messages.
 
     Keyed on the message text, so the cache holds the text as well as the
     result. That is bounded in count but not in size; measured against real
@@ -344,58 +325,6 @@ def dominant_language(
     return min(totals, key=lambda code: (-totals[code], code))
 
 
-def window_dominant(texts: Sequence[str]) -> tuple[str | None, int]:
-    """The language the recent conversation has been running in.
-
-    `texts` are the operator's messages, oldest first; the most recent
-    WINDOW_MESSAGES qualifying ones are taken. Each contributes its whole
-    confidence distribution rather than only its winning label, so a message
-    split between two languages votes for both in proportion -- which is what
-    keeps a Danish conversation reading as Danish when individual messages
-    tip towards Norwegian.
-
-    Every message casts one vote, its shares scaled to its own strongest
-    candidate. Neither raw confidence nor length compares across messages:
-    Danish detects at 1.00 where an equally clear English sentence reaches
-    0.375, because English shares its script and vocabulary with more of the
-    field, and a long quoted passage is not better evidence of what the
-    conversation is running in than the sentence the operator just wrote.
-    Scoring by confidence times length let one long Danish message outvote the
-    three English ones after it, so the window kept answering Danish for a
-    conversation that had already switched.
-
-    Votes decay with age at WINDOW_HALF_LIFE, because the question is which
-    language the conversation is running in now, not which it has used most.
-
-    Returns (dominant base subtag, qualifying message count). A count of zero
-    means the window said nothing -- distinct from a window that chose a
-    language.
-    """
-    window: list[Detection] = []
-    for text in reversed(list(texts)):
-        detection = detect(text)
-        if detection.language_poor or detection.undetected:
-            continue
-        window.append(detection)
-        if len(window) >= WINDOW_MESSAGES:
-            break
-    if not window:
-        return None, 0
-    totals: dict[str, float] = {}
-    for age, detection in enumerate(window):
-        strongest = max(detection.confidence.values())
-        if not strongest:
-            continue
-        weight = 0.5 ** (age / WINDOW_HALF_LIFE)
-        for code, value in detection.confidence.items():
-            totals[code] = totals.get(code, 0.0) + (value / strongest) * weight
-    # Ties break on the code itself, so the answer never depends on dict
-    # insertion order -- which is the window's own ordering, and incidental to
-    # what "the conversation's language" means.
-    dominant = min(totals, key=lambda code: (-totals[code], code))
-    return dominant, len(window)
-
-
 def _writes_a_morpheme_per_character(token: str) -> bool:
     """Whether `token` is in a script the length minimums do not apply to."""
     return any(
@@ -491,8 +420,8 @@ def names_a_language(text: str) -> tuple[str, str] | None:
     """The first language `text` names, as (matched token, code).
 
     This is the one signal that sees an instruction like "answer in Danish
-    from now on" -- written in the conversation's current language, so the
-    detector reads no shift and the window reads no change.
+    from now on" -- written in the conversation's current language, so
+    nothing else in this module can catch it.
     """
     for token in _WORD_RE.findall(text or ""):
         for candidate in _name_candidates(token):
@@ -502,13 +431,8 @@ def names_a_language(text: str) -> tuple[str, str] | None:
     return None
 
 
-TRIGGER_NO_PREVIOUS = "no_previous"
 TRIGGER_NAMED_LANGUAGE = "named_language"
-TRIGGER_PROFILE_CHANGED = "profile_changed"
-TRIGGER_SHIFT = "shift"
-TRIGGER_EMPTY_WINDOW = "empty_window"
 TRIGGER_DETECTOR_ERROR = "detector_error"
-TRIGGER_REUSE = "reuse"
 TRIGGER_FIRST_MESSAGE_UNMATCHED = "first_message_unmatched"
 TRIGGER_OUTSIDE_SLOTS = "outside_slots"
 TRIGGER_UNDETECTED = "undetected"
@@ -517,184 +441,6 @@ TRIGGER_DETECTORS_DISAGREE = "detectors_disagree"
 #: `TRIGGER_DETECTORS_DISAGREE`, where it did answer and the two disagreed.
 TRIGGER_RESTRICTED_UNDECIDED = "restricted_undecided"
 TRIGGER_RESOLVED = "resolved"
-
-
-@dataclass(frozen=True)
-class GateDecision:
-    """Why the classifier is about to run, or not.
-
-    Recorded whole on the step row: a run that skipped its most expensive call
-    has to say what it read and what it concluded, or the operator is left
-    guessing at a reply in the wrong language.
-    """
-
-    should_ask: bool
-    trigger: str
-    window_dominant: str | None = None
-    window_size: int = 0
-    window_share: float | None = None
-    #: `window_share` as a fraction of the request's strongest candidate --
-    #: the number the shift test actually compares, so the threshold can be
-    #: retuned from recorded rows.
-    window_share_ratio: float | None = None
-    request_top: str | None = None
-    request_letters: int = 0
-    named_language: str | None = None
-    detector_ms: int = 0
-    #: Set only on the fail-open path, so a run says what broke rather than
-    #: silently looking like an ordinary ask.
-    error: str | None = None
-
-    def as_args(self) -> dict:
-        args = {
-            "should_ask": self.should_ask,
-            "trigger": self.trigger,
-            "window_dominant": self.window_dominant,
-            "window_size": self.window_size,
-            "window_share": self.window_share,
-            "window_share_ratio": self.window_share_ratio,
-            "request_top": self.request_top,
-            "request_letters": self.request_letters,
-            "named_language": self.named_language,
-            "detector_ms": self.detector_ms,
-        }
-        if self.error:
-            args["error"] = self.error
-        return args
-
-
-def decide(
-    *,
-    window_texts: Sequence[str],
-    request_text: str,
-    has_previous: bool,
-    profile_languages_changed: bool,
-) -> GateDecision:
-    """Should the response-language classifier run this turn?
-
-    Every uncertainty resolves towards asking. A false ask costs one classifier
-    call -- latency, never correctness. A false skip replies in the
-    conversation's established language, which is degraded and visible rather
-    than a hard error. Most of the time it also repairs itself on the next
-    turn: the operator either writes in the other language, which is a shift,
-    or names it, which is the name check. A `/profile` language edit is the one
-    path that does not repair itself that way -- the operator can keep writing
-    in the language they always have, leaving nothing for the shift test or
-    the name check to see -- which is what `profile_languages_changed` exists
-    to catch.
-
-    `profile_languages_changed` is the one signal this module cannot compute
-    itself, because it is not a function of the messages: the caller snapshots
-    the operator's declared profile languages onto the classification a skip
-    would reuse, and compares that snapshot against what is currently
-    declared, passing only the verdict of that comparison. This keeps the
-    module a pure function of `window_texts` and `request_text` -- it does not
-    need to know what a profile is.
-
-    The whole body runs under one broad `except Exception`. This is not
-    sloppiness to be narrowed later -- it is the fail-open guarantee itself:
-    whatever goes wrong here, from a detector crash to a future bug in this
-    function, must resolve to "ask the classifier", never to a raised
-    exception that breaks the turn. Narrowing it would silently drop that
-    guarantee for every failure mode this function's author did not think of.
-    """
-    started = time.perf_counter()
-
-    def elapsed() -> int:
-        return int((time.perf_counter() - started) * 1000)
-
-    try:
-        # Cheapest first, and independent of everything else: an instruction
-        # naming a language is invisible to both the detector and the window,
-        # because it is written in the conversation's current language. The
-        # matched token is what goes on the trace -- `named_language` records
-        # a name, not a code, so a three-letter CLDR code (Cherokee's `chr`)
-        # is never mistaken for the two-letter codes lingua deals in.
-        named = names_a_language(request_text)
-        if named:
-            return GateDecision(
-                should_ask=True,
-                trigger=TRIGGER_NAMED_LANGUAGE,
-                named_language=named[0],
-                detector_ms=elapsed(),
-            )
-        if not has_previous:
-            return GateDecision(
-                should_ask=True,
-                trigger=TRIGGER_NO_PREVIOUS,
-                detector_ms=elapsed(),
-            )
-        if profile_languages_changed:
-            # The one ask-trigger that is not a function of the messages at
-            # all: the operator changed their declared reply languages on
-            # `/profile` without writing anything that looks like a shift or
-            # naming a language, so neither of the checks above can see it.
-            # Checked before the shift test so a profile change is never
-            # masked by a window that still reads as unchanged.
-            return GateDecision(
-                should_ask=True,
-                trigger=TRIGGER_PROFILE_CHANGED,
-                detector_ms=elapsed(),
-            )
-        request = detect(request_text)
-        dominant, size = window_dominant(window_texts)
-        if dominant is None:
-            return GateDecision(
-                should_ask=True,
-                trigger=TRIGGER_EMPTY_WINDOW,
-                window_size=size,
-                request_top=request.top,
-                request_letters=request.letters,
-                detector_ms=elapsed(),
-            )
-        if request.language_poor:
-            # Too short to classify is not the same as unclassifiable. There is
-            # nothing here to shift, and the previous resolution is the
-            # deterministic answer.
-            return GateDecision(
-                should_ask=False,
-                trigger=TRIGGER_REUSE,
-                window_dominant=dominant,
-                window_size=size,
-                request_letters=request.letters,
-                detector_ms=elapsed(),
-            )
-        if request.undetected:
-            return GateDecision(
-                should_ask=True,
-                trigger=TRIGGER_SHIFT,
-                window_dominant=dominant,
-                window_size=size,
-                window_share=0.0,
-                window_share_ratio=0.0,
-                request_letters=request.letters,
-                detector_ms=elapsed(),
-            )
-        share = request.share(dominant)
-        # Scale-free: how much of its own best guess the request gives to the
-        # window's language, not how much it gives in absolute terms.
-        strongest = max(request.confidence.values())
-        shifted = share < SHIFT_RATIO * strongest
-        return GateDecision(
-            should_ask=shifted,
-            trigger=TRIGGER_SHIFT if shifted else TRIGGER_REUSE,
-            window_dominant=dominant,
-            window_size=size,
-            window_share=share,
-            window_share_ratio=(share / strongest) if strongest else 0.0,
-            request_top=request.top,
-            request_letters=request.letters,
-            detector_ms=elapsed(),
-        )
-    except Exception as exc:
-        logger.warning(
-            "response-language gate failed open", exc_info=True)
-        return GateDecision(
-            should_ask=True,
-            trigger=TRIGGER_DETECTOR_ERROR,
-            detector_ms=elapsed(),
-            error=f"{type(exc).__name__}: {exc}",
-        )
 
 
 @dataclass(frozen=True)

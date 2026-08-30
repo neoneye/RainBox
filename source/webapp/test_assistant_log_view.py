@@ -10,7 +10,6 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
-from agents.response_language_gate import GateDecision
 from webapp.assistant_log_view import log_view
 
 T0 = datetime(2026, 8, 24, 20, 30, tzinfo=UTC)
@@ -205,10 +204,15 @@ def test_a_gate_skip_carries_its_decision_and_duration():
     step.phase = "skipped"
     step.reason = ("the conversation's language has not changed; reusing "
                    "this room's last classification")
-    decision = GateDecision(should_ask=False, trigger="reuse",
-                            window_dominant="da", window_size=3,
-                            window_share=0.62, detector_ms=4)
-    step.args = {"gate": decision.as_args(), "gate_replaced_call": True}
+    # A historical row's shape -- an older run recorded a decision with these
+    # keys, and the log view has to keep rendering it correctly.
+    decision_args = {
+        "should_ask": False, "trigger": "reuse", "window_dominant": "da",
+        "window_size": 3, "window_share": 0.62, "window_share_ratio": None,
+        "request_top": None, "request_letters": 0, "named_language": None,
+        "detector_ms": 4,
+    }
+    step.args = {"gate": decision_args, "gate_replaced_call": True}
     step.observation_preview = (
         '{\n "reason": "Danish conversation.",\n "languages": [\n  {\n'
         '   "code": "da",\n   "score": 5\n  }\n ]\n}')
