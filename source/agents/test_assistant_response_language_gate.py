@@ -1,5 +1,6 @@
 """Tests for the assistant's side of the response-language gate: the switch,
-the previous-classification read, and the skipped step row.
+the superseded shift gate kept for its own coverage, the resolver that
+decides a turn from message text alone, and the resolved step row it writes.
 """
 
 from uuid import uuid4
@@ -7,7 +8,6 @@ from uuid import uuid4
 import pytest
 
 import db
-import user_profile
 from agents.assistant import (
     AssistantAgent,
     ResponseLanguageClassification,
@@ -574,7 +574,6 @@ _DA_EN_PROFILE = {"data": {"languages": {"rows": [
     {"tag": "en-US", "level": "native", "stance": "prefer", "note": ""},
     {"tag": "da", "level": "native", "stance": "neutral", "note": ""},
 ]}}}
-_DA_EN_CONTEXT = user_profile.ProfileContext(profile=_DA_EN_PROFILE)
 
 
 def test_the_resolver_is_not_consulted_when_the_switch_is_off(room, monkeypatch):
@@ -589,7 +588,16 @@ def test_the_resolver_is_not_consulted_when_the_switch_is_off(room, monkeypatch)
 
 def test_only_the_operator_s_messages_are_read(room):
     """A reply is written in whatever language a previous decision chose, so
-    letting replies vote would let one wrong decision justify itself."""
+    letting replies vote would let one wrong decision justify itself.
+
+    `profile=None` is deliberate: with a profile pinning both languages
+    already present, the slot set is full either way and including or
+    excluding the agent's reply produces the same outcome (measured: both
+    read `ask=False trigger='resolved' language='da' slots=('en','da')`),
+    so that combination cannot prove the filter does anything. With no
+    pinned languages the slots are built from history alone, and the
+    agent's English reply becomes observable the moment it is allowed to
+    vote."""
     db.set_setting("assistant.response_language_gate", True)
     messages = [
         {"sender_type": "human", "text": DA_PROSE_TEXT},
@@ -598,20 +606,33 @@ def test_only_the_operator_s_messages_are_read(room):
                  "language the operator is writing in at all."},
         {"sender_type": "human", "text": "det virker ikke rigtigt"},
     ]
-    r = _agent()._resolve_response_language(messages, _DA_EN_PROFILE)
+    r = _agent()._resolve_response_language(messages, None)
     assert r is not None
-    assert r.language == "da"
+    assert r.slots == ("da",)
 
 
 def test_the_request_is_not_part_of_its_own_history(room):
+    """The last message is the request being judged, so it must not also
+    count as history the request is compared against.
+
+    `profile=None` is deliberate: with `_DA_EN_PROFILE` pinning `en` and
+    `da`, the English request lands inside the slot set whether or not it
+    was folded into its own history (measured: both read `ask=False
+    trigger='resolved' language='en'`), so that combination cannot prove
+    the exclusion does anything. With no pinned languages, excluding the
+    request leaves a Danish-only slot set the English request falls
+    outside of (`ask=True trigger='outside_slots'`); including it lets the
+    request vote itself into the slots and then match them
+    (`ask=False trigger='resolved'`)."""
     db.set_setting("assistant.response_language_gate", True)
     messages = [
         {"sender_type": "human", "text": "det virker ikke rigtigt her"},
         {"sender_type": "human", "text": "can you say something funny about AI"},
     ]
-    r = _agent()._resolve_response_language(messages, _DA_EN_PROFILE)
+    r = _agent()._resolve_response_language(messages, None)
     assert r is not None
-    assert r.ask is False
+    assert r.ask is True
+    assert r.trigger == "outside_slots"
 
 
 def test_an_ordinary_turn_records_a_resolved_row(room, monkeypatch):
@@ -627,8 +648,6 @@ def test_an_ordinary_turn_records_a_resolved_row(room, monkeypatch):
 
     monkeypatch.setattr(
         agent, "_request_response_language_classification", fail)
-    monkeypatch.setattr(
-        agent, "_capture_profile_context", lambda: _DA_EN_CONTEXT)
 
     agent._run_response_language_classifier(
         step_index=0, messages=EN_MESSAGES, profile=_DA_EN_PROFILE)
@@ -638,9 +657,27 @@ def test_an_ordinary_turn_records_a_resolved_row(room, monkeypatch):
            .filter(db.AssistantStep.run_uuid == agent._run.uuid)
            .order_by(db.AssistantStep.id.desc()).first())
     assert row.phase == "skipped"
+    assert row.action == "response_language_classifier"
     assert row.args["gate"]["trigger"] == "resolved"
     assert row.args["gate"]["language"] == "en-US"
+    # The marker the renderers key on: without it a resolved row renders as
+    # a call that was never made.
+    assert row.args["gate_replaced_call"] is True
     assert row.system_prompt is None and row.user_prompt is None
     assert row.duration_ms is not None and row.duration_ms < 1000
+    # No model was recorded on a row that had no call.
+    assert row.model_uuid is None
+    # The language it proceeded in, not merely that it declined to ask.
+    assert "en-US" in (row.observation_preview or "")
     assert agent._response_language_classification is not None
+    assert agent._response_language_classification.languages[0].code == "en-US"
     assert "en-US" in agent._reply_language_markdown
+
+    from webapp.assistant_log_view import log_view
+
+    view = log_view(agent._run, [row])
+    event = next(e for e in view["events"] if e["kind"] == "skipped")
+    # This is the gate's row, not the "never made" shape it shares a phase
+    # with -- a resolved row that lost the marker would render as the
+    # opposite of what actually happened.
+    assert "never made" not in event["detail_html"]

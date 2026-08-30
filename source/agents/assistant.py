@@ -5489,11 +5489,9 @@ class AssistantAgent(ModelGroupAgent):
         """The superseded shift gate's verdict for this turn and what a skip
         would reuse, or None when the gate does not apply.
 
-        Kept for its own test coverage; the live turn now decides through
-        `_resolve_response_language` instead (see `_run_response_language_classifier`).
-        This method and the mechanism it wraps (`decide`, `GateDecision`,
-        `_previous_room_classification`, `_profile_languages_changed`) are
-        removed together, once nothing calls any of it.
+        Superseded: the live turn decides through `_resolve_response_language`
+        instead (see `_run_response_language_classifier`). Kept for its own
+        test coverage.
 
         The previous classification is returned alongside the verdict because
         the verdict depends on whether one exists: reading it twice would put
@@ -5569,7 +5567,7 @@ class AssistantAgent(ModelGroupAgent):
         pinned = tuple(
             code.split("-")[0].lower()
             for code in (primary, secondary) if code)
-        fallback = primary or DEFAULT_REPLY_LANGUAGE
+        fallback = primary.split("-")[0] if primary else DEFAULT_REPLY_LANGUAGE
         return response_language_gate.resolve(
             history=human_texts[:-1],
             request=human_texts[-1],
