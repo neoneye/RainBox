@@ -245,13 +245,15 @@ def valid_profile_languages(profile: dict[str, Any]) -> tuple[str | None, str | 
 
 def format_formatting_guide(profile: dict[str, Any],
                             now: datetime | None = None, *,
-                            has_history: bool = True) -> str:
+                            mirror_conversation: bool = True) -> str:
     """Render one profile's locale fields as the formatting-guide body
     (deterministic; no DB access). Returns "" when no directive is usable.
     `now` is the injectable clock for the timezone offset; tests pin it on
-    both sides of a DST boundary. `has_history` says whether the turn has a
-    conversation before its current message; see the language block below
-    for why that gates one line rather than nothing."""
+    both sides of a DST boundary. `mirror_conversation` says whether the
+    Language line may state "reply in the language of the current message;
+    never switch on your own" — see the language block below for why only
+    that one clause is conditional, and why the default renders it. The
+    caller computes this: it is not a setting, so nothing here reads one."""
     data = profile.get("data") or {}
     if now is None:
         now = datetime.now(UTC)
@@ -325,20 +327,19 @@ def format_formatting_guide(profile: dict[str, Any],
                      "with a supplied or freshly retrieved rate.")
 
     language, secondary_language = valid_profile_languages(profile)
-    if language is not None and has_history:
+    if language is not None:
         # The preferred language is NOT the output language: replies mirror
         # the conversation. Small models read a bare "prefer da" as a
         # directive to switch, so the rule is spelled out as absolute and
         # the profile languages are demoted to explicit-request-only.
         #
-        # Dropped outright with no history: a room's first message has no
-        # conversation to mirror, so "reply in the language of the current
-        # message" points at nothing the turn can read yet. Printing it
-        # anyway would forbid exactly what the resolver does for such a
-        # turn when the message itself is too short or ambiguous to
-        # classify -- it falls back to the profile's preferred language with
-        # no explicit request behind it, which is what this line's "only
-        # when the message asks for it" rules out.
+        # Only the mirroring sentence is conditional on `mirror_conversation`.
+        # A room's first message has no conversation to mirror, so "reply in
+        # the language of the current message" points at nothing the turn
+        # can read yet -- the caller passes False there. The explicit-request
+        # clause and the variant clause need no conversation to be true: an
+        # explicit request and a declared variant are both well-defined with
+        # no history at all, so they render regardless.
         known = (
             f"{language} or {secondary_language}"
             if secondary_language else language)
@@ -347,8 +348,9 @@ def format_formatting_guide(profile: dict[str, Any],
         variant = next(
             (c for c in (_variant_clause(language),
                          _variant_clause(secondary_language)) if c), "")
-        lines.append("- Language: reply in the language of the current "
-                     "message; never switch on your own. Use "
+        mirror = ("reply in the language of the current message; never "
+                  "switch on your own. " if mirror_conversation else "")
+        lines.append(f"- Language: {mirror}Use "
                      f"{known} only when the message asks for it; an "
                      f"explicit request always wins.{variant}")
 

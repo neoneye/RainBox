@@ -112,11 +112,10 @@ def _build_case_prompts(
     message = str(case_input.get("message") or "")
     messages: list[dict[str, Any]] = []
     # Most cases are a room's first turn: no prior message, no history. The
-    # language family carries an explicit `prior_message` because
-    # build_turn_prompts now derives has_history from these messages exactly
-    # as production does, and the formatting guide's language line only
-    # renders with history behind the current one (format_formatting_guide's
-    # docstring) — those cases exist to measure that line.
+    # language family carries an explicit `prior_message` to exercise the
+    # cases against a realistic multi-turn room rather than a bare first
+    # message, matching the shape of conversation the mirroring rule the
+    # cases measure is meant for.
     prior = str(case_input.get("prior_message") or "").strip()
     if prior:
         messages.append({"sender_type": "human", "text": prior,
@@ -748,13 +747,12 @@ def _seed_specs() -> list[dict[str, Any]]:
         # HERE, in scoring data, and never in a prompt — a contrastive
         # example in a prompt gets parroted into unrelated replies.
         #
-        # Every case here carries `prior_message`: the formatting guide's
-        # language line — the mechanism these cases exist to measure — only
-        # renders when the turn has history (format_formatting_guide's
-        # docstring), and a bare `message` is a room's first turn, which has
-        # none. The filler is topic-neutral English so it exercises the
-        # "history exists" gate without itself carrying a language cue the
-        # case's own message doesn't.
+        # Every case here carries `prior_message`: a room with a message
+        # before the current one, matching the ordinary shape of the
+        # conversation the mirroring rule these cases measure is meant for,
+        # rather than a bare first message. The filler is topic-neutral
+        # English so it exercises that shape without itself carrying a
+        # language cue the case's own message doesn't.
         {"name": "pg language: ambiguous conversion uses metric default",
          "family": "language", "seed_id": "language.metric_default",
          "input": {"prior_message": _LANGUAGE_PRIOR_MESSAGE,

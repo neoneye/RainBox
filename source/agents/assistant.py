@@ -3556,7 +3556,7 @@ class AssistantAgent(ModelGroupAgent):
         # classifier ran or did not. `gate_replaced_call` is added only when
         # the gate's verdict was acted on — the classifier's model call never
         # went out because the gate answered in its place — which is the one
-        # bit downstream renderers must not infer from `should_ask` alone: an
+        # bit downstream renderers must not infer from `ask` alone: an
         # ask that then finds no model group bound also carries a decision
         # here, but the call there was attempted, not replaced. None before
         # the gate has run this turn, or when the gate does not apply (switch
@@ -3737,6 +3737,7 @@ class AssistantAgent(ModelGroupAgent):
             # troubleshoot. The switches are read once here so the same values
             # feed both the log and the block builders below.
             formatting_on, calibration_on = self._declared_block_switches()
+            gate_on = self._response_language_gate_enabled()
             # The room's persona, read fresh: an edit on /persona reaches the
             # next reply. Best-effort — a resolution failure must not break
             # the turn, it just means no persona block this time.
@@ -3749,8 +3750,7 @@ class AssistantAgent(ModelGroupAgent):
                 self._persona = None
             self._persona_block = self._persona.text if self._persona else ""
             self._turn_log = self._build_turn_log(
-                context, formatting_on, calibration_on, self._persona,
-                self._response_language_gate_enabled())
+                context, formatting_on, calibration_on, self._persona, gate_on)
             # A request too long to travel whole reaches every prompt with its
             # middle dropped, so the description of what was dropped has to
             # exist before the first of them is built — including the
@@ -3789,7 +3789,8 @@ class AssistantAgent(ModelGroupAgent):
                     context.profile,
                     formatting_enabled=formatting_on,
                     calibration_enabled=calibration_on,
-                    has_history=self._has_history(messages))
+                    has_history=self._has_history(messages),
+                    response_language_gate_enabled=gate_on)
             )
             self._profile_block = self._build_profile_block(journal_id, room_uuid)
             # The acceptance-criteria step 0: code-driven (the model cannot
@@ -4481,6 +4482,7 @@ class AssistantAgent(ModelGroupAgent):
         formatting_enabled: bool | None = None,
         calibration_enabled: bool | None = None,
         has_history: bool = True,
+        response_language_gate_enabled: bool = False,
     ) -> tuple[str, str, str]:
         """(identity, formatting, calibration) bodies rendered from the turn's
         snapshot profile. The formatters fail independently: a failure logs
@@ -4496,11 +4498,17 @@ class AssistantAgent(ModelGroupAgent):
         path); the eval harness passes explicit booleans so its variants
         never depend on production state. The identity block is not gated.
 
-        `has_history` reaches `format_formatting_guide` unchanged — it decides
-        whether that guide's language line is printable at all, see its own
-        docstring. Every caller, including the eval harness, derives it from
-        its own `messages` via `_has_history`; the True default here only
-        covers a caller with no messages to derive it from."""
+        `has_history` and `response_language_gate_enabled` together decide
+        `format_formatting_guide`'s `mirror_conversation`: the guide's
+        mirroring clause is suppressed only when the gate switch is on AND
+        the turn has no history, because only then does "reply in the
+        language of the current message" point at nothing the turn can
+        read yet — see that function's docstring. Every production caller
+        derives `has_history` from its own `messages` via `_has_history` and
+        `response_language_gate_enabled` from
+        `_response_language_gate_enabled()`; the eval harness, which never
+        depends on a live production switch, keeps both defaults — `False`
+        never suppresses the clause, reproducing today's guide unchanged."""
         if profile is None:
             return "", "", ""
         if formatting_enabled is None or calibration_enabled is None:
@@ -4519,7 +4527,9 @@ class AssistantAgent(ModelGroupAgent):
         if formatting_enabled:
             try:
                 formatting = user_profile.format_formatting_guide(
-                    profile, has_history=has_history)
+                    profile,
+                    mirror_conversation=not (
+                        response_language_gate_enabled and not has_history))
             except Exception:
                 logger.warning("assistant: formatting guide failed",
                                exc_info=True)
@@ -4576,10 +4586,11 @@ class AssistantAgent(ModelGroupAgent):
         skipped."""
         # Derived from THESE messages, the same way every production call
         # site does — a case with no prior message renders exactly what a
-        # room's first turn renders (the guide's language line dropped; see
-        # format_formatting_guide's docstring). The profile_guidance
-        # "language" family cases carry a prior message for exactly this
-        # reason, so they remain the cases that exercise that line.
+        # room's first turn renders. `response_language_gate_enabled` is left
+        # at its default (False), the same eval-only override every other
+        # switch here gets: the harness never depends on the live
+        # `assistant.response_language_gate` setting, so the guide's
+        # mirroring clause always renders here regardless of `has_history`.
         identity, formatting, calibration = (
             self._build_declared_profile_blocks(
                 profile, formatting_enabled=True, calibration_enabled=True,
@@ -6012,7 +6023,8 @@ class AssistantAgent(ModelGroupAgent):
         # rather than going through _append_static_head's generic
         # "formatting" block.
         guide = self._criteria_formatting_guide(
-            has_history=self._has_history(messages))
+            has_history=self._has_history(messages),
+            response_language_gate_enabled=self._response_language_gate_enabled())
         if guide:
             prompt.append_text("formatting_guide", guide)
         prompt.append_turn_instructions(ACCEPTANCE_CRITERIA_TURN_INSTRUCTIONS)
@@ -6043,7 +6055,10 @@ class AssistantAgent(ModelGroupAgent):
             "criteria the reply to that request must satisfy.")
         return prompt.render()
 
-    def _criteria_formatting_guide(self, *, has_history: bool = True) -> str:
+    def _criteria_formatting_guide(
+        self, *, has_history: bool = True,
+        response_language_gate_enabled: bool = False,
+    ) -> str:
         """The formatting guide as a criteria-call INPUT, rendered from the
         criteria snapshot profile regardless of the assistant.formatting_guide
         switch — that switch gates only the decide-prompt injection, and the
@@ -6051,15 +6066,19 @@ class AssistantAgent(ModelGroupAgent):
         temperature, separators) even while the injected block is still
         gated off. Deterministic, no DB access; best-effort.
 
-        `has_history` reaches `format_formatting_guide` unchanged, from the
+        `has_history` and `response_language_gate_enabled` reach
+        `format_formatting_guide`'s `mirror_conversation` unchanged, from the
         same turn the criteria call is establishing — its own caller reads
         `messages` to say whether the room has anything before the current
-        request."""
+        request, and reads the gate switch the same way the decide-prompt
+        injection does."""
         if not self._criteria_profile:
             return ""
         try:
             return user_profile.format_formatting_guide(
-                self._criteria_profile, has_history=has_history)
+                self._criteria_profile,
+                mirror_conversation=not (
+                    response_language_gate_enabled and not has_history))
         except Exception:
             logger.warning("assistant: criteria formatting guide failed",
                            exc_info=True)
@@ -6241,14 +6260,15 @@ class AssistantAgent(ModelGroupAgent):
         the next turn exactly as before."""
         context = self._capture_profile_context()
         formatting_on, calibration_on = self._declared_block_switches()
+        gate_on = self._response_language_gate_enabled()
         self._turn_log = self._build_turn_log(
-            context, formatting_on, calibration_on, self._persona,
-            self._response_language_gate_enabled())
+            context, formatting_on, calibration_on, self._persona, gate_on)
         self._identity_block, self._formatting_block, self._calibration_block = (
             self._build_declared_profile_blocks(
                 context.profile, formatting_enabled=formatting_on,
                 calibration_enabled=calibration_on,
-                has_history=self._has_history(messages)))
+                has_history=self._has_history(messages),
+                response_language_gate_enabled=gate_on))
         self._criteria_profile = context.profile
         self._run_acceptance_criteria_call(
             step_index=step_index, messages=messages, scratchpad=scratchpad,
