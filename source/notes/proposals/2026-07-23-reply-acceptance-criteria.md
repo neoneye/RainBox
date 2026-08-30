@@ -5,8 +5,8 @@ switch this proposal introduced has been removed, because with the criteria
 off a small model decides the reply's shape for itself and guesses wrong
 (imperial units for a metric operator). The `1_specification` reply argument has been removed and
 the reply args shrunk to `{"1_message", "2_audit"}` (see "Relationship to the
-existing reply args"). Response language was removed from this contract after
-the dedicated classifier superseded it.
+existing reply args"). The dedicated classifier owns the response-language
+DECISION; the criteria are shown it and restate it in `formatting`.
 **Date:** 2026-07-23
 
 ## Naming
@@ -58,8 +58,11 @@ this request:
    result** — separators, date format, temperature unit, spelling.
 
 Response language is established by the independent
-`response_language_classifier` and injected directly into downstream prompts.
-The acceptance-criteria step does not reinterpret it.
+`response_language_classifier` and injected into every later prompt of the turn,
+this step's among them. This step restates it and is instructed never to
+re-derive one: criteria silent on language do not stay neutral, they get
+filled in from the transcript and the settings block, and the criteria are
+what the audit and second opinion check the reply against.
 
 ## Scope: the reply contract first
 
@@ -286,7 +289,8 @@ House pattern — ship dark, gate, enable:
    `db/settings.py`.
 2. Unit tests: the criteria call is made once per run before step 0; the
    section renders after `current_request`; a failed call is fail-open;
-   the schema and prompt omit response language; a revision call's prompt
+   the schema omits response language while the prompt carries the
+   classifier's projection; a revision call's prompt
    carries the prior criteria and the run's observations (and a scripted
    revision with identical inputs is detectable as the no-op it would be);
    step 0 and code-driven refreshes consume none of `step_limit` (a run can

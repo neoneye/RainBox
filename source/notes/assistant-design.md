@@ -482,9 +482,10 @@ One structured call returns an `AcceptanceCriteria`:
 - `processing` — preferences that steer the WORK (the target unit for an
   ambiguous conversion, the timezone for a reminder).
 - `formatting` — preferences that steer the FINAL message (separators, date
-  format, temperature unit, spelling). The system prompt directs the call
-  through the formatting guide line by line: the criteria are what the reply
-  is checked against, so a preference omitted here is one nobody verifies.
+  format, temperature unit, spelling, and the reply language the turn already
+  resolved — restated here, never decided here). The system prompt directs the
+  call through the formatting guide line by line: the criteria are what the
+  reply is checked against, so a preference omitted here is one nobody verifies.
 - `assumptions` — every ambiguity resolved by a settings-based assumption,
   stated so the operator can spot a wrong one. Assumptions are made only
   where the settings provide a default; otherwise the ambiguity is recorded
@@ -516,13 +517,15 @@ outranks nothing and beats everything: the criteria are rank 4 in the shared
 naming a language wins over an ordered list at the calls that read both, and
 the audit passes the reply while narrating the override.
 
-The call has its own small persona prompt
-(`ACCEPTANCE_CRITERIA_SYSTEM_PROMPT`, not the assistant's working prompt);
-Inputs: the current request, the last few messages of either role
-(`ACCEPTANCE_CRITERIA_MAX_MESSAGES = 6`) — how the assistant has been
+The call carries `ASSISTANT_SHARED_SYSTEM_PROMPT` like every other assistant
+call, with its own job description in `<turn_instructions>` — that is what
+lets it share a cached prefix with them. Inputs: the current request and the
+turn's conversation history of either role, both at the shared window
+(`MAX_RECENT_MESSAGES = 30`, owned by `AssistantPromptBuilder` so tier 0 is
+byte-identical across the turn's calls) — how the assistant has been
 formatting and phrasing its replies is exactly the continuity these criteria
-establish — plus `user_settings_json` and the formatting
-guide rendered from the criteria snapshot profile regardless of the
+establish — plus `user_settings_json`, `reply_language_markdown`, and the
+formatting guide rendered from the criteria snapshot profile regardless of the
 `assistant.formatting_guide` switch (which gates only the decide-prompt
 injection). NOT the action catalog — the call plans constraints, not actions.
 

@@ -60,7 +60,9 @@ fallback.
   Every run starts with an `acceptance_criteria` step establishing the reply's
   work-steering preferences, formatting, and disclosed assumptions before any
   work — inspect its `assumptions` there to spot a wrong guess at a glance.
-  Response language is handled by the separate classifier step; see
+  Its `formatting` names the reply language too, but does not choose it: the
+  separate classifier step decides, and the criteria restate. A language named
+  here that disagrees with that step is the defect, not the decision; see
   `notes/assistant-design.md` §Acceptance criteria.
 
   Reading a run: the **Model calls** card is where the time went — one bar per
