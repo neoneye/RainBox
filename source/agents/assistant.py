@@ -5219,6 +5219,47 @@ class AssistantAgent(ModelGroupAgent):
         ]
         return "\n".join(lines)
 
+    def _constructed_classification(
+        self, language: str, profile: dict[str, Any] | None,
+    ) -> ResponseLanguageClassification:
+        """The turn's language decision, built rather than asked for.
+
+        `language` is a base subtag from detection; the profile's declared tag
+        for it wins, so a detected `en` becomes the declared `en-US` rather than
+        losing the variant. The resolved language ranks first and the profile's
+        other declared languages follow in their own preference order, which is
+        the shape `_format_reply_language_markdown` reads.
+
+        The scores here exist only to carry that order -- the Markdown
+        projection is score-free, so no number reaches a prompt, and none is
+        invented for one. The reason says the decision was made by detection so
+        that neither a reader nor a later model mistakes it for a verdict.
+        """
+        declared = user_profile.declared_language_candidates(profile)
+        codes: list[str] = []
+        for row in declared:
+            code = str(row.get("code") or "")
+            if code and code.split("-")[0].lower() == language.lower():
+                codes.append(code)
+        if not codes:
+            codes.append(language)
+        for row in declared:
+            code = str(row.get("code") or "")
+            if code and code not in codes:
+                codes.append(code)
+        top = max(2, min(5, len(codes)))
+        return ResponseLanguageClassification(
+            reason=(
+                f"Resolved by detection: the request is in {codes[0]}, which "
+                "the conversation or the profile already establishes. No model "
+                "was asked."
+            ),
+            languages=[
+                ResponseLanguageItem(code=code, score=max(1, top - index))
+                for index, code in enumerate(codes)
+            ],
+        )
+
     def _build_response_language_classifier_prompt(
         self,
         messages: list[dict[str, Any]],

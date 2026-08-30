@@ -602,3 +602,36 @@ def test_an_asked_turn_with_no_model_group_bound_is_not_read_as_a_gate_skip(
     assert event["duration_ms"] is None
     assert "never made" in event["detail_html"]
     assert "no model group is bound" in event["detail_html"]
+
+
+def test_a_constructed_classification_ranks_the_resolved_language_first():
+    """The resolved language leads; the profile's other declared languages
+    follow in their own preference order."""
+    agent = _agent()
+    profile = {"data": {"languages": {"rows": [
+        {"tag": "en-US", "level": "native", "stance": "prefer", "note": ""},
+        {"tag": "da", "level": "native", "stance": "neutral", "note": ""},
+    ]}}}
+    result = agent._constructed_classification("da", profile)
+    assert [item.code for item in result.languages] == ["da", "en-US"]
+    assert "da" in agent._format_reply_language_markdown(result)
+
+
+def test_a_constructed_classification_uses_the_declared_variant():
+    """A base subtag from the detector becomes the profile's exact declared tag,
+    so `en` resolves to `en-US` rather than losing the variant."""
+    agent = _agent()
+    profile = {"data": {"languages": {"rows": [
+        {"tag": "en-US", "level": "native", "stance": "prefer", "note": ""},
+    ]}}}
+    result = agent._constructed_classification("en", profile)
+    assert result.languages[0].code == "en-US"
+
+
+def test_a_constructed_classification_says_it_was_not_a_model():
+    """The reason travels into the prompt and onto the trace; it must not read
+    as a model's verdict."""
+    agent = _agent()
+    result = agent._constructed_classification("en", None)
+    assert result.languages[0].code == "en"
+    assert "detect" in result.reason.lower()
