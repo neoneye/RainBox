@@ -176,14 +176,24 @@ in a language the room does not speak, and the classifier decides. Removing the
 unrestricted detector as redundant would make every unknown language read as a
 known one; it is load-bearing, not defensive.
 
-## Recency
+## Recency, and how the slots are filled
 
-Each qualifying message votes for its language, and votes decay with age, so the
-most recent message weighs most and older ones fade. This is carried over from
-the superseded design and is the mechanism that answers a question the operator
-raised and did not need to settle by hand: a single foreign sentence inside a
+One backward scan over the room's operator messages does both jobs. Walking from
+the newest message back, each qualifying message is detected and its language
+noted; the scan stops once four distinct languages have been seen or the scan
+bound is reached. That ordering *is* the LRU: the languages, most recently used
+first, are the room's slots.
+
+The same scan answers what the conversation is currently running in. Each message
+votes for its language and votes decay with age, so the most recent message
+weighs most. This is the mechanism that settles a question the operator raised
+and did not need to decide by hand: a single foreign sentence inside a
 conversation does not move it, while a sustained switch does. The half-life is
 the only knob controlling how many messages make a switch real.
+
+The superseded design ran a fixed-size window for the second job alone and had
+no notion of slots. Here they are one traversal, which is why the window does
+not survive as a separate thing.
 
 It is also why the three "English sentence in a Danish conversation" exceptions
 resolve the way the model resolved them: one English message does not outweigh
@@ -353,12 +363,18 @@ comparing languages across a wide field:
 - the language-name check exempts scripts that write a morpheme per character
   from its length minimums, and scans inside tokens for scripts that write
   without spaces;
-The profile-change snapshot is **not** carried over: nothing is reused, so
-nothing can go stale.
+- the recency decay over a backward scan, which now fills the slots as well as
+  weighing the conversation.
 
-**Dissolved**, because the restricted detector removes the problem they solve:
-the fixed-size message window, the shift ratio against the request's strongest
-candidate, and the per-message confidence normalisation.
+**Dissolved:**
+
+- the **shift ratio** against the request's strongest candidate, and the
+  **per-message confidence normalisation** beneath it. Both exist to compare
+  confidences that are not comparable across seventy-five languages; against
+  four they are, so the machinery has nothing left to correct.
+- the **fixed-size window** as a separate construct — it is subsumed by the
+  backward scan that fills the slots.
+- the **profile-change snapshot**: nothing is reused, so nothing can go stale.
 
 ## Traps
 
