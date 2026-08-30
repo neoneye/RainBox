@@ -46,6 +46,16 @@ LANGUAGE_SLOTS = 4
 #: answers what language the conversation is running in *now*, so a message the
 #: operator has already moved on from fades rather than counting forever.
 WINDOW_HALF_LIFE = 3.0
+#: The furthest back either backward scan reads, whatever the history's
+#: actual length. At WINDOW_HALF_LIFE=3.0 a message this far back has decayed
+#: to 0.5 ** (60 / 3.0), on the order of 1e-6 of the newest message's vote --
+#: reading further back could not change which language wins, only cost a
+#: detection on a message that no longer matters. Unbounded, `language_slots`
+#: walks the whole history whenever a monolingual room never fills its four
+#: slots, and `dominant_language` always does; both cost real time (500
+#: messages, 0.4s cold) and can thrash `_detect_cached`'s bounded cache in an
+#: install with several long rooms.
+SCAN_HORIZON_MESSAGES = 60
 #: Shorter tokens are not put to the CLDR name lookup -- `the`, `a` and `to`
 #: all resolve to obscure language codes. This is the floor for a code that
 #: itself has a two-letter ISO 639-1 tag; a three-letter code needs
@@ -236,10 +246,14 @@ def language_slots(
     only primary and secondary are ever pinned today, so this is a defensive
     edge rather than a live path, but a caller passing more than four pinned
     codes gets the first four rather than all of them.
+
+    The scan also stops at SCAN_HORIZON_MESSAGES messages back, whether or not
+    the slots have filled -- a monolingual room never fills its four slots, so
+    without this bound every turn would walk the room's entire history.
     """
     slots: list[str] = list(dict.fromkeys(code for code in pinned if code))
-    for text in reversed(list(texts)):
-        if len(slots) >= LANGUAGE_SLOTS:
+    for age, text in enumerate(reversed(list(texts))):
+        if age >= SCAN_HORIZON_MESSAGES or len(slots) >= LANGUAGE_SLOTS:
             break
         detection = detect(text)
         if detection.language_poor or detection.undetected or not detection.top:
@@ -308,11 +322,24 @@ def dominant_language(
     compares between messages: a Danish sentence detects far higher than an
     equally clear English one, and a long quoted passage is not better evidence
     of what the operator is writing in than the sentence they just typed.
+
+    The scan stops at SCAN_HORIZON_MESSAGES messages back: past that a vote
+    has decayed to numerical irrelevance (see that constant), so reading
+    further back could only cost a detection, never change the answer.
     """
     totals: dict[str, float] = {}
     for age, text in enumerate(reversed(list(texts))):
+        if age >= SCAN_HORIZON_MESSAGES:
+            break
         detection = detect(text)
         if detection.language_poor or detection.undetected:
+            continue
+        if detection.top not in slots:
+            # Restricted detection force-fits anything outside `slots` to one
+            # of them -- a German message would confidently read as Danish
+            # against a Danish slot. A message in a language the room no
+            # longer has a slot for is evidence about nothing the slots can
+            # express, so it casts no vote rather than an invented one.
             continue
         code = detect_within(text, slots)
         if code is None:

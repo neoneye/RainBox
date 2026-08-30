@@ -7,10 +7,12 @@ It reads no settings and no database, so these tests need neither.
 
 import pytest
 
+import agents.response_language_gate as response_language_gate
 from agents.response_language_gate import (
     Detection,
     LANGUAGE_SLOTS,
     LETTER_FLOOR,
+    SCAN_HORIZON_MESSAGES,
     TRIGGER_DETECTOR_ERROR,
     TRIGGER_DETECTORS_DISAGREE,
     TRIGGER_FIRST_MESSAGE_UNMATCHED,
@@ -230,6 +232,24 @@ def test_language_poor_messages_do_not_claim_a_slot():
     assert language_slots(["ok", "tak", EN_PROSE], pinned=()) == ("en",)
 
 
+def test_the_scan_does_not_read_past_the_horizon(monkeypatch):
+    """A monolingual room never fills its four slots, so unbounded the scan
+    would walk the whole history on every turn -- 500 messages cost 0.4s
+    cold, against the 11s call this design replaces, but it is still
+    unbounded cost with no reason to pay it."""
+    calls: list[str] = []
+    real_detect = response_language_gate.detect
+
+    def spy(text):
+        calls.append(text)
+        return real_detect(text)
+
+    monkeypatch.setattr(response_language_gate, "detect", spy)
+    texts = ["ok"] * 500 + [EN_PROSE]
+    language_slots(texts, pinned=())
+    assert len(calls) <= SCAN_HORIZON_MESSAGES
+
+
 def test_pinned_languages_survive_an_empty_room():
     assert language_slots([], pinned=("en", "da")) == ("en", "da")
 
@@ -279,6 +299,71 @@ def test_one_foreign_sentence_does_not_move_the_conversation():
     texts = [DA_PROSE, "det virker ikke rigtigt", "hvad er klokken",
              "Proceed with 5W1H"]
     assert dominant_language(texts, ("en", "da")) == "da"
+
+
+def test_a_very_long_history_gives_the_same_answer_as_the_recent_tail():
+    """Prepending hundreds of messages far beyond WINDOW_HALF_LIFE's reach
+    must not change what the room resolves to -- the scan bound and the
+    decay agree on what no longer matters."""
+    tail = [
+        "du skrev en meget lang joke paa dansk om skelettet der ikke ville "
+        "slaas med nogen som helst, og jeg forstod den simpelthen ikke",
+        "can you say something funny about AI and testing",
+        "explain the joke",
+        "explain the joke, I meant the one about the skeleton",
+    ]
+    long_history = ["ok"] * 500 + tail
+    assert (dominant_language(long_history, ("en", "da"))
+            == dominant_language(tail, ("en", "da")) == "en")
+
+
+def test_dominant_language_does_not_read_past_the_horizon(monkeypatch):
+    """`dominant_language` always scans -- unlike `language_slots` it never
+    stops early when slots fill -- so an unbounded scan costs a detection on
+    every message in a room's history, every turn."""
+    calls: list[str] = []
+    real_detect = response_language_gate.detect
+
+    def spy(text):
+        calls.append(text)
+        return real_detect(text)
+
+    monkeypatch.setattr(response_language_gate, "detect", spy)
+    texts = ["ok"] * 500 + [EN_PROSE]
+    dominant_language(texts, ("en", "da"))
+    assert len(calls) <= SCAN_HORIZON_MESSAGES
+
+
+def test_a_language_evicted_from_the_slots_casts_no_vote():
+    """Four German messages, then Spanish and French evict German from the
+    room's four slots. Restricted detection force-fits anything outside the
+    slots to one of them -- unguarded, the German messages would each read as
+    confident Danish votes and outnumber the French message that is actually
+    in the slots. A message in a language the slots can no longer express is
+    evidence about nothing the slots can express, so it must cast no vote
+    rather than an invented one."""
+    de_messages = [
+        "Ich wollte nur kurz fragen, ob das System schon bereit ist fuer "
+        "den naechsten Schritt.",
+        "Koenntest du bitte noch einmal ueberpruefen, warum der Test "
+        "fehlschlaegt.",
+        "Das ist wirklich frustrierend, weil es gestern noch funktioniert "
+        "hat.",
+        "Ich denke, wir sollten das Problem heute noch loesen, bevor es "
+        "schlimmer wird.",
+    ]
+    es_message = (
+        "Quiero saber si el sistema ya esta listo para el siguiente paso, "
+        "por favor."
+    )
+    fr_message = (
+        "Je voudrais savoir si tu peux verifier pourquoi le test echoue "
+        "maintenant."
+    )
+    texts = de_messages + [es_message, fr_message]
+    slots = language_slots(texts, pinned=("en", "da"))
+    assert "de" not in slots
+    assert dominant_language(texts, slots) not in (None, "da")
 
 
 def test_a_room_with_nothing_to_weigh_is_undecided():
