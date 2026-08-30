@@ -175,8 +175,32 @@ source rank 3, `formatting_guide` rank 4), so this is for clarity rather than
 correctness: a rank-4 instruction contradicting rank 3 is how small models are
 made to wobble.
 
-A profile that declares no languages at all is the one case with nothing to go
-on. It asks.
+A profile that declares no languages at all still does not ask. Being made to
+wait on a model for a question the model cannot answer any better than the code
+can — there is no history and no language in the request, so it would be
+guessing from the same nothing — is a poor trade for a case that is pure
+guesswork either way.
+
+The fallback is CLDR's likely language for whatever locale the profile does
+carry. A profile with no languages but a country gets that country's language:
+
+| profile locale | resolved |
+|---|---|
+| `DK` | `da` |
+| `JP` | `ja` |
+| `BR` | `pt` |
+| `IN` | `hi` |
+| nothing at all | `en` |
+
+The last row is not a hardcoded English default. `Language.get("und").maximize()`
+returns `en-Latn-US` — asked with no information, the Unicode consortium's own
+data answers English. Reaching that answer through CLDR rather than through a
+literal in our source keeps the rule the same shape as every other language
+decision here, and means a profile that says anything at all about where its
+owner is gets a better answer than English automatically.
+
+This restores the `langcodes` dependency, which was dropped as unused during an
+earlier cleanup; `language_data` alone does not carry likely-subtags.
 
 This rule and trigger 3 divide the first turn between them, and the division is
 worth stating because both could be read as owning it. A first request that
@@ -243,7 +267,12 @@ candidate, and the per-message confidence normalisation.
 3. **Storing the room's language set.** It is derivable from two existing
    sources. A stored copy is a second source of truth that will drift from the
    messages, and the operator explicitly asked for it to stay internal.
-4. **Assuming a room has one language, or two.** A room may have several
+4. **Reading the `en` fallback as an anglocentric default.** It is CLDR's
+   answer for an unknown locale, not a choice made here, and it is reached only
+   after the profile's declared languages and its locale have both said nothing.
+   Replacing it with a literal would look identical in the common case and
+   would stop a Danish or Japanese profile getting its own language.
+5. **Assuming a room has one language, or two.** A room may have several
    members with disjoint languages. Nothing in the mechanism may assume a
    particular language, count, or script.
 
