@@ -101,6 +101,39 @@ Both sources are already in the database. This design adds no table, no
 setting, and no operator-facing surface. It also names no language in shipped
 code: the set is whatever those two sources contain.
 
+### The set is capped at the four most recently used
+
+A room keeps its **four most recently used languages**. Writing in a fifth
+discards the oldest.
+
+The cap is not tidiness; it is what keeps the restricted detector sharp. The
+sharpening this design rests on decays steadily as the candidate set grows:
+
+| candidate set | `hvor bor jeg?` | `explain the joke` | `the test fails with a KeyError` |
+|---|---|---|---|
+| 2 | 0.98 | 0.96 | 0.71 |
+| **4** | **0.94** | **0.94** | **0.65** |
+| 6 | 0.82 | 0.88 | 0.36 |
+| 8 | 0.72 | 0.80 | 0.27 |
+| 12 | 0.42 | 0.73 | 0.23 |
+| 75 (all) | 0.25 | 0.29 | 0.13 |
+
+The winning language stays correct throughout; what degrades is the confidence
+the thresholds read. Four is at the knee — a room that accumulated a dozen
+languages would be detecting at 0.42 where it could be detecting at 0.94, which
+is most of the way back to the unrestricted numbers the restriction exists to
+escape.
+
+It also answers what a language used once by accident costs: it occupies a slot
+until four more recent ones push it out, and nothing else.
+
+**Declared languages are not evicted.** The cap applies to languages the room
+merely *used*; a language the profile declares is a standing statement of intent
+and stays a candidate whether or not it was used lately. A room whose members
+declare more than four languages keeps them all — the operator's declaration
+outranks a number chosen here — and pays for it in sharpness, which is a
+consequence worth knowing rather than a case to prevent.
+
 ## Two detectors, two questions
 
 Restricting a detector to a candidate set makes it certain — including certain
@@ -345,10 +378,6 @@ candidate, and the per-message confidence normalisation.
   It lists the resolved language first and the profile's remaining declared
   languages after it, mirroring what the classifier returns. Whether anything
   downstream reads past the first entry is unverified.
-- **Do the room's resolved languages need a floor?** One accidental message in a
-  language currently adds it to the candidate set permanently. Recency weighting
-  makes it harmless for the *window*, but it also widens the restricted
-  detector. Whether that matters is a measurement nobody has taken.
 - **Where does the deterministic resolution get recorded?** It should appear on
   the classifier's step row like a skip does, so a run says how the language was
   decided. The row shape from the superseded design fits; the trigger vocabulary
