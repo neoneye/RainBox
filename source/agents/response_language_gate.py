@@ -163,9 +163,11 @@ def _detector():
 
 @functools.lru_cache(maxsize=512)
 def _detect_cached(text: str) -> Detection:
-    """Memoised because the room's slots re-read the same history every turn,
-    and a message's language cannot change after it is written. Without this a
-    turn spends LANGUAGE_SLOTS x ~10ms redetecting settled messages.
+    """Memoised because the room's slots and window re-read the same history
+    every turn, and a message's language cannot change after it is written.
+    Without this a turn spends as many detections as its largest caller's scan
+    x ~10ms redetecting settled messages -- WINDOW_MESSAGES, since
+    `window_dominant` walks further back than `language_slots` ever needs to.
 
     Keyed on the message text, so the cache holds the text as well as the
     result. That is bounded in count but not in size; measured against real
@@ -226,24 +228,35 @@ def detect(text: str) -> Detection:
 def language_slots(
     texts: Sequence[str], pinned: Sequence[str],
 ) -> tuple[str, ...]:
-    """The room's candidate languages, most recently used first.
+    """The room's candidate languages: pinned languages first, then the rest
+    newest to oldest.
 
     `texts` are the operator's messages, oldest last is not assumed -- they
     arrive oldest first and are walked backwards, so the first language found is
     the most recent. That ordering is the eviction order: a fifth language
-    displaces the least recently used one.
+    displaces the least recently used one. Pinned languages sit ahead of that
+    order regardless of how recently they were used -- a pinned language used
+    fifty messages ago still comes back before an unpinned language used one
+    message ago, so `slots[0]` is not necessarily the room's most recent
+    language.
 
     `pinned` are the profile's primary and secondary languages. They are
     candidates whether or not they were used lately, because a declaration is a
     standing statement of intent rather than an observation. Only two are
     pinned, not every declared language: a profile may declare more languages
     than there are slots, and holding them all would give back the sharpness the
-    cap exists to protect.
+    cap exists to protect. Duplicate pinned codes collapse to one -- a repeated
+    code would otherwise spend a second slot on a language already held.
 
     Language-poor messages claim no slot -- an acknowledgement is not evidence
     that a language belongs to the room.
+
+    The result is capped at LANGUAGE_SLOTS even if `pinned` alone exceeds it --
+    only primary and secondary are ever pinned today, so this is a defensive
+    edge rather than a live path, but a caller passing more than four pinned
+    codes gets the first four rather than all of them.
     """
-    slots: list[str] = [code for code in pinned if code]
+    slots: list[str] = list(dict.fromkeys(code for code in pinned if code))
     for text in reversed(list(texts)):
         if len(slots) >= LANGUAGE_SLOTS:
             break

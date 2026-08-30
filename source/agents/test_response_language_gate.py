@@ -209,6 +209,16 @@ def test_pinned_languages_are_always_present():
     assert "da" in slots
 
 
+def test_duplicate_pinned_codes_do_not_double_book_a_slot():
+    """A repeated pinned code must collapse to one slot, not two -- a doubled
+    entry would otherwise waste a slot on a language the room already holds,
+    and a wasted slot is a language the room can no longer detect against.
+    The cap is what keeps detection sharp, so a bookkeeping duplicate must not
+    be allowed to spend it."""
+    slots = language_slots([], pinned=("en", "en"))
+    assert slots == ("en",)
+
+
 def test_the_set_is_capped_and_evicts_the_oldest_unpinned():
     """Four is the cap because the detector's sharpness decays with the size of
     the set; a fifth language pushes out the least recently used one that is
