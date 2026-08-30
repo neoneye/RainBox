@@ -1,6 +1,9 @@
 # Resolving the response language without a model
 
-**Status:** Design. Nothing implemented.
+**Status:** Implemented, in `source/agents/response_language_gate.py` and
+`source/agents/assistant.py` (`_resolve_response_language`,
+`_constructed_classification`). Ships behind the same switch as the design it
+supersedes, `assistant.response_language_gate` (default off).
 **Date:** 2026-08-30
 **Supersedes:** `2026-08-27-response-language-shift-gate-design.md`. That design
 gates a model call on a detected language *shift*; this one resolves the reply
@@ -267,13 +270,15 @@ source rank 3, `formatting_guide` rank 4), so this is for clarity rather than
 correctness: a rank-4 instruction contradicting rank 3 is how small models are
 made to wobble.
 
-A profile that declares no languages at all resolves to **English**, and does
-not ask. This is the one first-message case that stays out of the model's
-hands, and the reason is that there is nothing for the model to decide between:
-with no declared language, "which of the operator's languages is this?" has an
-empty answer set whatever the message says. Where the profile does declare
-languages and the message matches none of them, the model is asked — see
-trigger 2.
+A profile that declares no languages at all resolves to **English** without
+asking only when the first message is itself language-poor — an `ok`, a bare
+URL — because there is nothing there for a model to decide between either. A
+first message that carries a real language still asks, exactly as it would
+with a mismatched declared profile: the code has no separate branch for "no
+declared language" versus "declared, but none of them match" — both leave the
+room's candidate slots without a match for the detected language, and both hit
+trigger 2 below. What stays out of the model's hands is narrower than a blank
+profile: it is any first message with no language in it to weigh.
 
 Inferring a language from the profile's country was considered and rejected.
 CLDR will happily answer it — `und-DK` maximises to `da`, `und-JP` to `ja` — but
@@ -314,25 +319,28 @@ one clear language, and starting a room with nonsense is not something they do. 
 language still resolves deterministically, which is the common case by a wide
 margin.
 
-This rule and trigger 3 divide the first turn between them, and the division is
-worth stating because both could be read as owning it. A first request that
-*carries* a language resolves to that language and asks, because there is no
-classification yet to reuse. A first request that carries *no* language — an
-`ok`, a bare URL, a stack trace — has nothing to resolve from and takes the
-preferred language without asking. The distinction is whether the request says
-anything about its own language, not whether the room is new.
+This rule and the cold-start fallback divide the first turn between them, and
+the division is worth stating because both could be read as owning it. A first
+request that *carries* a language and does not match a candidate slot asks
+(trigger 2), because there is no classification yet to reuse. A first request
+that carries *no* language — an `ok`, a bare URL, a stack trace — has nothing
+to resolve from and takes the preferred language without asking; this is not a
+trigger at all, since it never reaches the slot-matching check. The distinction
+is whether the request says anything about its own language, not whether the
+room is new.
 
 ## The rule, assembled
 
 Run `response_language_classifier` when **any** of:
 
 1. the request names a language (CLDR names and endonyms, unchanged);
-2. the room has no usable history and the request matches none of the
-   profile's declared languages, *and the profile declares at least one* — the
-   one case where detection cannot distinguish nonsense from a language nobody
-   declared, and the model can. A profile declaring nothing has nothing to
-   match against and takes English instead, below;
-3. the unrestricted detector's top language is outside the room's candidate set;
+2. the room has no usable history and the request's language matches none of
+   the room's candidate slots — which on a first message hold only the
+   profile's pinned languages, so this also fires when the profile declares
+   none at all. It is the one case where detection cannot distinguish nonsense
+   from a language nobody declared, and the model can;
+3. the same check with history in play — the unrestricted detector's top
+   language is outside the room's candidate set;
 4. the detector was asked and found no language — distinct from a request
    carrying too little language to be worth asking about, which resolves;
 5. the two detectors disagree about which candidate language it is, or the
@@ -402,13 +410,15 @@ comparing languages across a wide field:
 
 - The measured cases above, as fixtures: the restricted/unrestricted split, the
   mixed instruction-plus-error message, and the four recorded disagreements.
-- Per-language reuse: switching back to a language the room has resolved before
-  makes no model call, and reuses that language's answer rather than the most
-  recent one.
+- Returning: switching back to a language the room used earlier and still
+  holds a slot for makes no model call — nothing is cached per language, so
+  this exercises the slots and the recency vote, not a stored answer.
 - Force-fit: a request in a language outside the candidate set asks, and does
   not resolve to a candidate.
-- Cold start: no history and an unclear request resolves to the preferred
-  profile language; a profile declaring no languages asks.
+- Cold start: no history and a language-poor request resolves to the preferred
+  profile language, or English when none is declared; a language-bearing first
+  message that matches no candidate slot asks, whether or not the profile
+  declares anything.
 - Scoping: once a conversation exists, the preferred language does not override
   what the conversation is in.
 - Fixtures use whichever languages a case is about, and at least one case uses a
@@ -421,7 +431,8 @@ comparing languages across a wide field:
   It lists the resolved language first and the profile's remaining declared
   languages after it, mirroring what the classifier returns. Whether anything
   downstream reads past the first entry is unverified.
-- **Where does the deterministic resolution get recorded?** It should appear on
-  the classifier's step row like a skip does, so a run says how the language was
-  decided. The row shape from the superseded design fits; the trigger vocabulary
-  needs extending.
+- ~~**Where does the deterministic resolution get recorded?**~~ Resolved: it
+  appears on the classifier's step row as a `phase="skipped"` observation, with
+  the resolution's `trigger`, `slots` and `named_language` in `args` and a
+  `gate_replaced_call` marker distinguishing it from the pre-existing
+  no-model-group skip. See `_run_response_language_classifier`.

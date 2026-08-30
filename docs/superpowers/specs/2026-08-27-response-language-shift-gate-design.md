@@ -2,6 +2,10 @@
 
 **Status:** Implemented. Ships behind `assistant.response_language_gate`,
 default off.
+**Superseded by:** `2026-08-30-response-language-resolution-design.md`, which
+resolves the reply language outright instead of gating on a detected shift.
+This document's measurements are kept — they are the reasoning behind
+constants the later design still uses.
 **Date:** 2026-08-27
 **Extends:** `source/notes/proposals/2026-08-17-gating-the-response-language-classifier.md`,
 which established that a cheap detector may decide *whether to ask* the
