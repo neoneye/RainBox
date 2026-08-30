@@ -103,8 +103,9 @@ code: the set is whatever those two sources contain.
 
 ### The set is capped at the four most recently used
 
-A room keeps its **four most recently used languages**. Writing in a fifth
-discards the oldest.
+A room keeps **four languages**: the profile's primary and secondary, plus the
+two most recently used others. Writing in a fifth discards the oldest of those
+two.
 
 The cap is not tidiness; it is what keeps the restricted detector sharp. The
 sharpening this design rests on decays steadily as the candidate set grows:
@@ -127,12 +128,35 @@ escape.
 It also answers what a language used once by accident costs: it occupies a slot
 until four more recent ones push it out, and nothing else.
 
-**Declared languages are not evicted.** The cap applies to languages the room
-merely *used*; a language the profile declares is a standing statement of intent
-and stays a candidate whether or not it was used lately. A room whose members
-declare more than four languages keeps them all — the operator's declaration
-outranks a number chosen here — and pays for it in sharpness, which is a
-consequence worth knowing rather than a case to prevent.
+**Two of the four slots are pinned to the profile's primary and secondary
+languages**, which stay candidates whether or not they were used lately. The
+remaining two hold the most recently used other languages, evicted oldest-first.
+
+Pinning only two, rather than every declared language, is what keeps the cap a
+cap. A profile may declare more languages than the detector has slots — the
+table above is why it must not simply hold them all — and `primary` and
+`secondary` are already a defined pair in this codebase:
+`valid_profile_languages()` returns exactly that, a `prefer` row first and
+declaration order settling the rest. No new notion of precedence is introduced.
+
+**The languages that do not fit go to the model, not to the detector.** When
+detection finds no match among the four slots, the classifier runs, and it
+already sees every declared language: `user_settings_languages_json` is built
+from `declared_language_candidates(profile)`, which returns all rows. So the
+detector works over four languages and the model over all of them, each at the
+size it is good at. That division needs no new plumbing — it is what the
+existing prompt already carries.
+
+### The profile's language list is capped at six
+
+`MAX_LANGUAGE_ROWS` in `source/db/profile_languages.py` is currently 100. It
+becomes **6**. A list long enough to be worth paging through is a list nobody
+curates, and the design has no use for an unbounded one: four reach the
+detector, and the rest exist only to inform the model on the rare turn it runs.
+
+No stored profile is affected — the two that exist declare two languages each —
+so this tightens a bound rather than invalidating data. It is a validation
+limit, so the check belongs where the other language-row limits already live.
 
 ## Two detectors, two questions
 
