@@ -333,8 +333,11 @@ Run `response_language_classifier` when **any** of:
    declared, and the model can. A profile declaring nothing has nothing to
    match against and takes English instead, below;
 3. the unrestricted detector's top language is outside the room's candidate set;
-4. the two detectors disagree about which candidate language it is;
-5. detection raised.
+4. the detector was asked and found no language — distinct from a request
+   carrying too little language to be worth asking about, which resolves;
+5. the two detectors disagree about which candidate language it is, or the
+   restricted one cannot decide between them;
+6. detection raised.
 
 Otherwise resolve deterministically, by one mechanism rather than three
 cases: **the recency-weighted dominant language over the room's messages,
