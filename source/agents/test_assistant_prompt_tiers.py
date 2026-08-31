@@ -739,8 +739,10 @@ def test_criteria_and_decide_prompts_share_the_head_through_the_guide(
     call can share — criteria's head ends there while decide's continues
     into assistant_persona — so the guide only pays off as shared prefix
     while both render its tag identically. An attribute on one side and not
-    the other cuts the shared run at the opening tag and makes decide
-    re-prefill the whole guide.
+    the other cuts the shared run at the opening tag. What a runtime does
+    with that shared run is its own business — a sliding-window model
+    re-processes a diverging prompt whole and reuses none of it — so this
+    asserts the property rainbox owns, not a prefill saving.
 
     The fixture populates the two guides from different sources
     (_formatting_block vs the criteria snapshot profile), so the test points

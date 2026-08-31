@@ -6491,7 +6491,10 @@ class AssistantAgent(ModelGroupAgent):
         the same text as material to restate, the decide call as the
         defaults its reply follows. A bare tag also keeps the guide inside
         the prefix those two calls share, which an attribute one of them
-        carries and the other does not would cut."""
+        carries and the other does not would cut — worth keeping, though it
+        buys no prefill on a sliding-window model, where a prompt that shares
+        a head and then diverges is re-processed whole (see
+        notes/proposals/2026-08-31-turn-latency-and-prompt-redundancy.md)."""
         unknown = set(blocks) - set(self._ALL_STATIC_BLOCKS)
         if unknown:
             raise ValueError(f"unknown static block(s): {sorted(unknown)}")
