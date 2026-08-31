@@ -132,6 +132,25 @@ def pick_bucket_seconds(span_seconds: float) -> int:
     return _NICE_BUCKETS[-1]
 
 
+# Monday 1970-01-05 00:00 UTC, in epoch seconds. Quantizing against this
+# anchor instead of the epoch itself makes week-wide buckets start on Monday
+# — the page's calendar weeks already do — and it is a whole number of every
+# narrower width in `_NICE_BUCKETS`, so for those the anchor changes nothing.
+_MONDAY_EPOCH = 4 * 86400
+
+
+def quantize_start(start: datetime, bucket_seconds: int) -> datetime:
+    """`start` snapped down onto the bucket grid.
+
+    A rolling window's raw start is `now` minus the span, so it drifts with
+    every reload — and with it every bucket boundary, making calls near a
+    boundary hop between bars and the whole chart jitter. Snapping the start
+    to a fixed grid keeps each call in the same bar across reloads; the
+    window grows by at most one bucket width at the old end."""
+    overshoot = (start.timestamp() - _MONDAY_EPOCH) % bucket_seconds
+    return start - timedelta(seconds=overshoot)
+
+
 # --- Formatting -------------------------------------------------------------
 
 
@@ -402,6 +421,11 @@ def build_context(args: Any, now: datetime) -> dict:
 
     start, end, range_label = resolve_range(range_key, now)
     bucket_seconds = pick_bucket_seconds((end - start).total_seconds())
+    # Quantized before ANY query, not just the chart's, so the summary tiles
+    # and the rollup tables total the same window the bars draw. Calendar
+    # ranges start on midnight, which is already on the grid for every width
+    # they can pick, so for them this is a no-op.
+    start = quantize_start(start, bucket_seconds)
 
     summary = db.activity_summary(start, end)
     buckets = db.activity_series(start, end, bucket_seconds)

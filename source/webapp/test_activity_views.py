@@ -18,6 +18,7 @@ from webapp.activity_views import (
     cache_reading,
     exact,
     pick_bucket_seconds,
+    quantize_start,
     resolve_range,
     si,
 )
@@ -342,6 +343,32 @@ class TestBucketChoice:
         span = timedelta(hours=24).total_seconds()
         bars = span / pick_bucket_seconds(span)
         assert 10 <= bars <= 60
+
+
+class TestBucketAlignment:
+    """Bucket boundaries must not move between reloads. A rolling window's
+    start is quantized to the bucket grid so a call keeps its bar even though
+    `now` — and with it the raw window start — drifts by a few seconds."""
+
+    def test_start_snaps_down_to_a_bucket_boundary(self):
+        raw = datetime(2026, 8, 10, 15, 33, 27, tzinfo=UTC)
+        start = quantize_start(raw, 300)
+        assert start == datetime(2026, 8, 10, 15, 30, tzinfo=UTC)
+
+    def test_reloads_seconds_apart_share_the_same_grid(self):
+        a = quantize_start(datetime(2026, 8, 10, 15, 33, 27, tzinfo=UTC), 1800)
+        b = quantize_start(datetime(2026, 8, 10, 15, 33, 41, tzinfo=UTC), 1800)
+        assert a == b
+
+    def test_an_aligned_start_is_untouched(self):
+        midnight = datetime(2026, 8, 10, 0, 0, tzinfo=UTC)
+        assert quantize_start(midnight, 86400) == midnight
+
+    def test_week_buckets_start_on_monday(self):
+        raw = datetime(2026, 8, 13, 9, 0, tzinfo=UTC)  # a Thursday
+        start = quantize_start(raw, 604800)
+        assert start.weekday() == 0
+        assert start == datetime(2026, 8, 10, 0, 0, tzinfo=UTC)
 
 
 class TestChartGeometry:

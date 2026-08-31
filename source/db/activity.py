@@ -249,8 +249,10 @@ def activity_series(
     Empty buckets are emitted deliberately: a quiet period should render as a
     gap in the chart, not close up and put Monday next to Wednesday.
 
-    Buckets are aligned to `start` rather than to the epoch, so the last
-    bucket always ends at `end` and "past 3 hours" means exactly that.
+    Buckets are aligned to `start`. Callers who re-query a moving window are
+    expected to pass a `start` already snapped to the bucket grid (the
+    /activity page does, via `quantize_start`) so the same call lands in the
+    same bucket across reloads.
     """
     if bucket_seconds <= 0:
         raise ValueError("bucket_seconds must be positive")
