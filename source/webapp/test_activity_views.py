@@ -423,6 +423,36 @@ class TestChartGeometry:
         assert chart["stacked"] is False
         assert chart["bars"][0]["upper_h"] == 0
 
+    def test_a_tiny_cached_share_is_still_visible(self):
+        """32 cached among 11k uncached is ~0.07px to scale — but 'a little
+        cached' and 'nothing cached' must be distinguishable at a glance."""
+        buckets = self._buckets([11_132, 100_000])
+        buckets[0]["cached_tokens"] = 32
+        buckets[0]["uncached_tokens"] = 11_100
+        chart = build_chart(buckets, "cached_tokens", 3600)
+        assert chart["bars"][0]["upper_h"] >= 2
+
+    def test_zero_cached_draws_no_orange_at_all(self):
+        buckets = self._buckets([11_132, 100_000])
+        buckets[0]["cached_tokens"] = 0
+        buckets[0]["uncached_tokens"] = 11_132
+        chart = build_chart(buckets, "cached_tokens", 3600)
+        assert chart["bars"][0]["upper_h"] == 0
+
+    def test_a_tiny_plain_bar_is_still_visible(self):
+        chart = build_chart(self._buckets([1, 100_000]), "prompt_tokens", 3600)
+        assert chart["bars"][0]["lower_h"] >= 2
+
+    def test_a_full_height_bar_with_a_tiny_segment_stays_in_the_plot(self):
+        buckets = self._buckets([100_000])
+        buckets[0]["cached_tokens"] = 32
+        buckets[0]["uncached_tokens"] = 99_968
+        chart = build_chart(buckets, "cached_tokens", 3600)
+        bar = chart["bars"][0]
+        assert bar["upper_h"] >= 2
+        assert bar["upper_y"] >= 16  # _PAD_TOP: the bar must not enter the top padding
+        assert bar["upper_y"] + bar["upper_h"] == pytest.approx(bar["lower_y"], abs=0.05)
+
     def test_gridline_labels_use_the_metrics_own_units(self):
         chart = build_chart(self._buckets([1000]), "p50_latency_ms", 3600)
         assert any("ms" in g["label"] or "s" in g["label"]

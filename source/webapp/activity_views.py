@@ -299,6 +299,7 @@ _PAD_LEFT = 64
 _PAD_RIGHT = 12
 _PAD_TOP = 16
 _PLOT_H = 232  # leaves room under the axis for x labels
+_MIN_SEGMENT_H = 2.0  # the smallest height a nonzero value may draw at
 
 
 def build_chart(buckets: list[dict], metric: str, bucket_seconds: int) -> dict:
@@ -322,7 +323,12 @@ def build_chart(buckets: list[dict], metric: str, bucket_seconds: int) -> dict:
     baseline = _PAD_TOP + _PLOT_H
 
     def height(value: float) -> float:
-        return 0.0 if peak <= 0 else (value / peak) * _PLOT_H
+        """To-scale height, except that a nonzero value never disappears:
+        32 cached tokens under a 100k peak is 0.07px to scale, and the whole
+        point of the orange band is telling "a little" apart from "none"."""
+        if peak <= 0 or value <= 0:
+            return 0.0
+        return min(_PLOT_H, max(_MIN_SEGMENT_H, (value / peak) * _PLOT_H))
 
     bars = []
     for i, bucket in enumerate(buckets):
@@ -330,6 +336,15 @@ def build_chart(buckets: list[dict], metric: str, bucket_seconds: int) -> dict:
         if stacked:
             lower = height(bucket["uncached_tokens"])
             upper = height(bucket["cached_tokens"])
+            # A bumped-up sliver on top of a near-peak bar would poke into
+            # the top padding. Shave the excess off the taller segment,
+            # where a couple of pixels is imperceptible.
+            excess = lower + upper - _PLOT_H
+            if excess > 0:
+                if lower >= upper:
+                    lower -= excess
+                else:
+                    upper -= excess
         else:
             lower, upper = height(bucket.get(field) or 0), 0.0
         bars.append(
