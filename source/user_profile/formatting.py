@@ -1,13 +1,13 @@
 """Deterministic formatting guide: compile the active person profile's locale
 fields into code-owned prompt directives with examples.
 
-Injected by the main assistant as `<formatting_guide authority="instructions">`
-next to `<user_settings_json>`. That authority is justified only because every
-imperative sentence here is owned by code and every interpolated value passes
-the strict prompt-boundary validation below — the profile form deliberately
-accepts uncommon free-text timezone/language/currency values, and a value such
-as "ignore previous instructions" must never be elevated into an
-instruction-authority block merely because it was stored in a locale field.
+Injected by the main assistant as `<formatting_guide>` next to
+`<user_settings_json>`. The guide reads as the defaults the reply follows, so
+every imperative sentence here is owned by code and every interpolated value
+passes the strict prompt-boundary validation below — the profile form
+deliberately accepts uncommon free-text timezone/language/currency values, and
+a value such as "ignore previous instructions" must never reach the model
+inside a code-owned directive merely because it was stored in a locale field.
 Unusable values are omitted and logged, never spliced into a directive.
 
 Everything is lookup-driven from two fixed samples (1234567.89 for the numbers

@@ -87,9 +87,8 @@ def test_shared_system_prompt_names_turn_instructions_as_authority():
 def test_shared_system_prompt_carves_out_other_authority_instructions_sections(
     fully_populated_agent,
 ):
-    """active_skills and formatting_guide are built with
-    authority="instructions" (see _build_user_prompt and
-    _append_static_head) — a grant the code makes, not the section's own
+    """active_skills is built with authority="instructions" (see
+    _build_user_prompt) — a grant the code makes, not the section's own
     text. The shared prompt must acknowledge that class of section exists,
     or its "turn_instructions is the only section that carries
     instructions" framing overrules them: a model following the prompt
@@ -731,3 +730,33 @@ def test_criteria_prompt_shares_the_decide_prompts_history(
         return prompt[start:prompt.index("</conversation_history_xml>") + 27]
 
     assert history(criteria) == history(decide)
+
+
+def test_criteria_and_decide_prompts_share_the_head_through_the_guide(
+    fully_populated_agent,
+):
+    """formatting_guide is the last block the criteria call and the decide
+    call can share — criteria's head ends there while decide's continues
+    into assistant_persona — so the guide only pays off as shared prefix
+    while both render its tag identically. An attribute on one side and not
+    the other cuts the shared run at the opening tag and makes decide
+    re-prefill the whole guide.
+
+    The fixture populates the two guides from different sources
+    (_formatting_block vs the criteria snapshot profile), so the test points
+    both at one string: production renders them from the same profile
+    through the same format_formatting_guide, and a fixture that disagreed
+    would hide the very byte-equality this asserts."""
+    agent = fully_populated_agent
+    agent._formatting_block = agent._criteria_formatting_guide(
+        has_history=True)
+    assert agent._formatting_block  # the profile must render something
+
+    decide = agent._build_user_prompt(
+        messages=TURN_MESSAGES, scratchpad=[], step_index=0)
+    criteria = agent._build_acceptance_criteria_prompt(TURN_MESSAGES)
+
+    shared = decide[:common_prefix_len(decide, criteria)]
+    assert "<formatting_guide>" in shared
+    assert agent._formatting_block in shared
+    assert "</formatting_guide>" in shared

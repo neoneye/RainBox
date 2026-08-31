@@ -3592,7 +3592,7 @@ class AssistantAgent(ModelGroupAgent):
         # before the self-model digest.
         self._identity_block: str = ""
         # The deterministic formatting guide compiled from the same profile,
-        # injected (authority=instructions) right after the identity block.
+        # injected right after the identity block.
         self._formatting_block: str = ""
         # The self-declared knowledge-calibration rows (authority=context),
         # injected after the formatting guide.
@@ -6485,10 +6485,13 @@ class AssistantAgent(ModelGroupAgent):
         head. Keep the per-call sets nested (see the order above): a call
         that takes a block another call skips ends the shared prefix there.
 
-        formatting_guide is the one profile-derived block with instruction
-        authority — justified because every imperative sentence in it is
-        code-owned and every interpolated value passed the strict
-        prompt-boundary validation in user_profile.formatting."""
+        Every block here renders as a bare tag, formatting_guide included:
+        the guide states the profile's defaults, and what the call must do
+        with them is turn_instructions' job to say — the criteria call reads
+        the same text as material to restate, the decide call as the
+        defaults its reply follows. A bare tag also keeps the guide inside
+        the prefix those two calls share, which an attribute one of them
+        carries and the other does not would cut."""
         unknown = set(blocks) - set(self._ALL_STATIC_BLOCKS)
         if unknown:
             raise ValueError(f"unknown static block(s): {sorted(unknown)}")
@@ -6496,8 +6499,7 @@ class AssistantAgent(ModelGroupAgent):
             ET.SubElement(root, "user_settings_json").text = self._identity_block
         if "formatting" in blocks and self._formatting_block:
             ET.SubElement(
-                root, "formatting_guide", {"authority": "instructions"}
-            ).text = self._formatting_block
+                root, "formatting_guide").text = self._formatting_block
         if "profile" in blocks and self._profile_block:
             ET.SubElement(
                 root, "user_profile", {"authority": "context"}
@@ -6514,9 +6516,9 @@ class AssistantAgent(ModelGroupAgent):
         """Append the call's job description — tier 2.
 
         No authority attribute: the shared system prompt names this tag as the
-        one that states the job, so the marking every other instruction-bearing
-        section needs (formatting_guide, active_skills) would only repeat what
-        the system prompt already says, on every call. The tag cannot be forged
+        one that states the job, so the marking the one other
+        instruction-bearing section needs (active_skills) would only repeat
+        what the system prompt already says, on every call. The tag cannot be forged
         from data — every other section is ElementTree-escaped, so untrusted
         text renders as &lt;turn_instructions&gt;, never as a section.
 

@@ -88,7 +88,7 @@ def test_formatting_guide_injected_after_identity(room):
     db.set_current_profile(_germany_uuid())
     prompt = _run_capture(room)["user_prompt"]
     assert "<user_settings_json>" in prompt
-    assert '<formatting_guide authority="instructions">' in prompt
+    assert "<formatting_guide>" in prompt
     assert "Use these defaults unless the current request" in prompt
     assert "- Numbers: decimal comma with point grouping" in prompt
     assert prompt.index("<user_settings_json") < prompt.index("<formatting_guide")
