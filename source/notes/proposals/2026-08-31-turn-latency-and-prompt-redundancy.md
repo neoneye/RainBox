@@ -2,8 +2,8 @@
 
 **Status:** Proposal. One part of it — rendering `formatting_guide` as a bare
 tag so every call of the turn spells it the same way — is already the current
-state. Finding 1's fix is a one-line environment change that has been measured
-on a scratch server but not yet applied to the live one. The rest is unbuilt.
+state, and Finding 1's fix (`LLAMA_ARG_SWA_FULL=1`) is applied and measured on
+the live server. The rest is unbuilt.
 **Date:** 2026-08-31
 **Related:** `2026-07-23-reply-acceptance-criteria.md` (why the criteria call
 exists), `2026-08-17-gating-the-response-language-classifier.md` (the same
@@ -147,28 +147,45 @@ roughly 60 MiB x (102400/1536) ~ 4 GiB at `num_ctx=100k`. This machine is an
 M1 Max with 64 GiB, Metal reporting 47.5 GiB available, against 1.66 GiB of KV
 cache today. Affordable here; it would not be on a small Mac.
 
-### Reaching it through ollama
+### Reaching it through ollama — applied 2026-09-01
 
 Ollama never passes `--swa-full` and has no setting for it, but the flag
-carries an environment variable — `LLAMA_ARG_SWA_FULL` — and ollama documents
-passing `LLAMA_ARG_*` through to llama-server (`LLAMA_ARG_FIT`,
-`LLAMA_ARG_FIT_TARGET` appear in `ollama serve --help`). The binary honors it:
-started with `LLAMA_ARG_SWA_FULL=1` it logs `llama_kv_cache_iswa: using
-full-size SWA cache`.
-
-What is **not** yet verified is that ollama's spawned subprocess inherits it.
-One restart settles that:
+carries an environment variable, `LLAMA_ARG_SWA_FULL`, and ollama passes
+`LLAMA_ARG_*` through to llama-server (`LLAMA_ARG_FIT`, `LLAMA_ARG_FIT_TARGET`
+appear in `ollama serve --help`).
 
 ```
 launchctl setenv LLAMA_ARG_SWA_FULL 1
 ```
 
-then quit and reopen Ollama and check `~/.ollama/logs/server.log`: `using
-full-size SWA cache` means it worked, `SWA KV cache, size = 1536 cells` means
-the variable never reached the subprocess. If it does not, the fallback is
-running llama-server directly with the flag and pointing a provider at its
-OpenAI-compatible endpoint — `providers/` already carries three
-OpenAI-compatible providers to model one on.
+then quit and reopen Ollama. The server log confirms it at the next model
+load:
+
+```
+llama_kv_cache_iswa: using full-size SWA cache
+llama_kv_cache_iswa: creating non-SWA KV cache, size = 100096 cells
+llama_kv_cache_iswa: creating     SWA KV cache, size = 100096 cells
+```
+
+The window went from 1536 cells to the full context. KV memory went from 1.66
+GiB to 5.4 GiB (the SWA half is now 3910 MiB across 20 layers), against 47.5
+GiB available.
+
+Replaying the measured run's three big prompts in production order against the
+live server afterwards:
+
+| call | prefill, flag off | prefill, flag on | prompt |
+|---|---|---|---|
+| acceptance_criteria | 12.9s | 2.1s | 8690 |
+| decide | 21.8s | **10.3s** | 13650 |
+| reply_audit | 14.6s | **2.9s** | 9495 |
+
+Read the decide and audit rows as real: each ran directly behind the call it
+follows in production, which is exactly the cache state a live turn presents.
+**Do not** read the criteria row that way — in a live turn it is the first
+call and inherits whatever the previous turn left, whereas in the replay it
+followed a decide prompt it shares 6859 tokens with. A live turn should expect
+roughly 49s of prefill falling to the mid-20s, not to 15s.
 
 ### What it costs while the flag is off
 
