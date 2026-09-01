@@ -426,24 +426,48 @@ def test_query_memory_surfaces_dynamic_handler_answer(app_ctx):
 def test_query_memory_loads_seed_kb_before_retrieval(app_ctx, monkeypatch):
     """Regression: the assistant loop never loads the seed KB the way the chat
     route does, so `_entries_by_id` stayed empty and seed Q&A (e.g. family facts)
-    silently returned nothing. The action must trigger `_load_kb()` +
-    `_ensure_populated()` before seed retrieval, as the old query_qa action did."""
+    silently returned nothing. The action must trigger `_load_kb()` before seed
+    retrieval."""
     from memory import seed_memory as qkb
     calls = []
     monkeypatch.setattr(qkb, "_load_kb", lambda: calls.append("load_kb"))
     monkeypatch.setattr(qkb, "_vector_store", lambda: "VS")
-    monkeypatch.setattr(qkb, "_ensure_populated", lambda vs: calls.append(("ensure", vs)))
     monkeypatch.setattr(qkb, "retrieve_seed_answers", lambda q, *, qctx: [])
     _action_query_memory(_ctx(), {"query": "who is Robin"})
     assert "load_kb" in calls              # KB registry loaded
-    assert ("ensure", "VS") in calls       # pgvector table ensured populated
+
+
+def test_query_memory_never_reconciles_the_vector_table(app_ctx, monkeypatch):
+    """The loop reads the seed index; it does not rebuild it.
+
+    A reconcile embeds one call per changed row, so leaving it in the loop
+    makes a turn's latency a function of how much the operator last edited —
+    an edit of fifty entries stalls the next question behind fifty embeds it
+    has no use for. Syncing belongs to /settings, where the person who pressed
+    the button is the person who waits.
+
+    Asserted on the seam rather than on a timing: `_ensure_populated` is the
+    only way the JSONL reaches the embedder from here, so a call to it is the
+    stall, and a test that lets it through would only fail on a machine slow
+    enough to notice.
+
+    Recorded rather than raised — the action swallows every exception out of
+    the seed block, so a sentinel that raises would be caught and the test
+    would pass on the very code it exists to reject."""
+    from memory import seed_memory as qkb
+    reconciles = []
+    monkeypatch.setattr(qkb, "_load_kb", lambda: None)
+    monkeypatch.setattr(qkb, "_vector_store", lambda: "VS")
+    monkeypatch.setattr(qkb, "_ensure_populated", lambda vs: reconciles.append(vs))
+    monkeypatch.setattr(qkb, "retrieve_seed_answers", lambda q, *, qctx: [])
+    _action_query_memory(_ctx(), {"query": "who is Robin"})
+    assert reconciles == []
 
 
 def _stub_seed_kb(monkeypatch, qkb):
-    """Neutralize the seed KB's load/populate plumbing for hermetic tests."""
+    """Neutralize the seed KB's load plumbing for hermetic tests."""
     monkeypatch.setattr(qkb, "_load_kb", lambda: None)
     monkeypatch.setattr(qkb, "_vector_store", lambda: "VS")
-    monkeypatch.setattr(qkb, "_ensure_populated", lambda vs: None)
 
 
 def _bind_model_group(monkeypatch):

@@ -97,7 +97,6 @@ def test_measured_route_returns_every_member(registry, app_ctx, monkeypatch):
         kb, "_semantic_ranked",
         lambda q, vs, **_: [kb.Match(qa_id=rid, method="semantic", score=0.9)])
     monkeypatch.setattr(kb, "_vector_store", lambda: object())
-    monkeypatch.setattr(kb, "_ensure_populated", lambda vs: None)
     # Force the recall-filter path to fall back, exercising retrieve_seed_answers.
     monkeypatch.setattr("agents.assistant._filter_recalled_candidates",
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no filter")))
@@ -131,7 +130,6 @@ def test_measured_route_through_the_recall_filter(registry, app_ctx, monkeypatch
 
     monkeypatch.setattr("agents.assistant._filter_recalled_candidates", fake_filter)
     monkeypatch.setattr(kb, "_vector_store", lambda: object())
-    monkeypatch.setattr(kb, "_ensure_populated", lambda vs: None)
 
     obs = _action_query_memory(_ctx(), {"query": QUESTION})
     assert called == [QUESTION], "the recall filter was never reached"
@@ -161,7 +159,6 @@ def test_every_printed_member_id_is_readable_in_full(registry, app_ctx, monkeypa
     assert len(printed) == 6
 
     monkeypatch.setattr(kb, "_vector_store", lambda: object())
-    monkeypatch.setattr(kb, "_ensure_populated", lambda vs: None)
     for qa_id in printed:
         obs = _action_query_memory(_ctx(), {"uuid": qa_id})
         assert obs.ok, f"{qa_id} did not resolve"

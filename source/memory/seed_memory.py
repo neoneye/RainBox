@@ -826,7 +826,12 @@ def _ensure_populated(vs: PGVectorStore) -> None:
     still forces a TRUNCATE + full re-embed on the first call. A sync failure
     (e.g. Ollama down) is fatal only when it leaves the table empty; with
     existing rows it is logged and retried on the next call, and retrieval
-    keeps serving the intact rows."""
+    keeps serving the intact rows.
+
+    Called by the chat-route agents and by /memory/developer. The assistant's
+    ReAct loop is NOT among them: an inline reconcile costs one embed call per
+    changed row, so it would make a turn's latency a function of how much the
+    operator last edited. That surface syncs only from /settings."""
     global _populated, _sync_snapshot
     with _lock:
         if not _populated and os.environ.get(REBUILD_ENV) == "1":

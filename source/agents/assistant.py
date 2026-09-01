@@ -1757,6 +1757,10 @@ def _action_query_memory(
     then upstream seed, then claims. Secrets are never returned
     (include_secret stays False).
 
+    The seed KB's vector table is read exactly as it stands. Reconciling it
+    with the JSONL is the operator's action on /settings, never this action's
+    — see the `seed KB load` phase for why a loop step must not embed.
+
     A long fact has its MIDDLE dropped to fit the rendered per-fact cap, both
     ends kept (tagged `truncateN`). Facts are then admitted in rank order while
     they fit the payload budget — except the first, which is admitted whatever
@@ -1805,22 +1809,34 @@ def _action_query_memory(
         recall_filter_debug: dict[str, Any] = {}
         try:
             # The assistant loop, unlike the chat route's query_filter_router.handle(),
-            # never loads the seed KB — so load the registry (_entries_by_id) and ensure
-            # the pgvector table is populated before retrieving, or every seed match is
-            # dropped. Skip when a retriever is injected (tests stay hermetic).
+            # never loads the seed KB — so load the registry (_entries_by_id), or
+            # every seed match is dropped. Skip when a retriever is injected
+            # (tests stay hermetic).
             if _seed_retriever is not None:
                 with timer.phase("seed retrieval"):
                     seeds = _seed_retriever(query, qctx=qctx)
             else:
                 with timer.phase("seed KB load") as phase:
+                    # The registry, and ONLY the registry. The loop does not
+                    # reconcile the pgvector table (`qkb._ensure_populated`): a
+                    # reconcile embeds every changed entry inline, so a single
+                    # JSONL edit turns the next turn into a stall whose length
+                    # is set by how much the operator edited — fifty changed
+                    # rows is fifty embed calls the person is waiting on, in a
+                    # step whose cost has nothing to do with what they asked.
+                    # A loop step must be bounded by the question it is
+                    # answering. Syncing is the operator's own action on
+                    # /settings ("Repopulate Q&A memory"), where the wait
+                    # belongs to whoever pressed the button.
+                    #
+                    # Until they press it an edited entry is still reachable by
+                    # full text — `_fulltext_ranked` reads this registry, not
+                    # the table — and unreachable by vector search. A stale
+                    # index, not a broken one.
                     qkb._load_kb()
-                    qkb._ensure_populated(qkb._vector_store())
                     # What the load left behind. This phase retrieves nothing
-                    # for the query — it builds the registry and reconciles
-                    # the vector table — so the honest answer to "what came
-                    # back" is how much is now loadable, and a phase that ran
-                    # long with an unchanged registry says the cost was the
-                    # sync rather than the size.
+                    # for the query — it builds the registry — so the honest
+                    # answer to "what came back" is how much is now loadable.
                     phase.found({"seed entries": len(qkb._entries_by_id),
                                  "aliases": len(qkb._alias_table)})
                 filtered = None
