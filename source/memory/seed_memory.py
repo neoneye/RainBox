@@ -1136,10 +1136,16 @@ def _stamp_facts_if_changed(counts: dict[str, int]) -> None:
     """Post the one-time re-check-facts signal, but only when the sync actually
     changed something — a clean reconcile stays silent.
 
-    The cause recorded is "qa_sync" for both callers of this function: the
-    automatic reconcile in _ensure_populated and the Settings 'Repopulate'
-    button do the same thing for the same reason — a source file on disk no
-    longer matches the table — and the notice reads the same either way."""
+    The cause recorded is "qa_sync" for both callers of this function:
+    `sync_kb` (the Settings 'Repopulate' button) and `_ensure_populated` do the
+    same thing for the same reason — a source file on disk no longer matches
+    the table — and the notice reads the same either way.
+
+    The stamp is global; acknowledging it is per room (see the assistant's
+    `_maybe_post_context_marker`). A room that has not run since the sync is
+    told the next time it does, however long that is — which is the point: the
+    room whose transcript holds the stale answer is the room that has to hear
+    about it."""
     if not (counts["updated"] or counts["embedded"] or counts["deleted"]):
         return
     try:
