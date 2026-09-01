@@ -126,6 +126,16 @@ class TestArtifacts:
         assert "copy failed" in body
         assert "legacyCopy" in body
 
+    def test_a_claimed_copy_is_not_a_copy(self, client):
+        """document.execCommand can be proxied by an extension that returns
+        true and copies nothing (uBlock Origin's ClickFix guard does this), so
+        the button reads the browser's own `copy` event instead — it fires only
+        when the copy really happens."""
+        body = client.get("/benchmark_story").get_data(as_text=True)
+        assert "document.addEventListener('copy', witness, true);" in body
+        assert "return claimed ? 'blocked' : 'unavailable';" in body
+        assert "const status = legacyCopy(text);" in body
+
     def test_the_inline_script_survived_python_string_escaping(self, client):
         """BENCHMARK_TEMPLATE is a plain, non-raw Python string, so a
         backslash escape in the JS would be eaten before the browser saw it."""

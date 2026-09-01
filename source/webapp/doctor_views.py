@@ -62,12 +62,52 @@ DOCTOR_TEMPLATE = """
   <pre id="pp-doctor-report">{{ report }}</pre>
 </main>
 <script>
+  // document.execCommand returning true is not proof of a copy: the call can be
+  // proxied by an extension that returns true and copies nothing. The browser's
+  // own `copy` event fires only on a real copy, so that is what is watched for.
+  // Returns 'ok', 'blocked', or 'unavailable' (no execCommand, no focus, or no
+  // user gesture left).
+  function ppVerifiedCopy(text) {
+    if (!document.execCommand) { return 'unavailable'; }
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    var previous = document.activeElement;
+    ta.select();
+    var copied = false;
+    var witness = function () { copied = true; };
+    document.addEventListener('copy', witness, true);
+    var claimed = false;
+    try { claimed = document.execCommand('copy'); } catch (e) { claimed = false; }
+    document.removeEventListener('copy', witness, true);
+    document.body.removeChild(ta);
+    if (previous && previous.focus) { previous.focus(); }
+    if (claimed && copied) { return 'ok'; }
+    return claimed ? 'blocked' : 'unavailable';
+  }
+  // The label says what happened. A button that says "Copied" over a clipboard
+  // that was never written pastes the previous report into a bug thread as if
+  // it were this one.
   function ppCopyDoctor(btn) {
     var t = document.getElementById('pp-doctor-report').innerText;
-    navigator.clipboard.writeText(t).then(function () {
-      var old = btn.textContent; btn.textContent = 'Copied';
+    var old = btn.textContent;
+    var say = function (ok) {
+      btn.textContent = ok ? 'Copied' : 'Copy failed';
       setTimeout(function () { btn.textContent = old; }, 1200);
-    });
+    };
+    // The verified path first: the Clipboard API resolves the same whether the
+    // write landed or was intercepted, so it cannot confirm anything.
+    var status = ppVerifiedCopy(t);
+    if (status !== 'unavailable') { say(status === 'ok'); return; }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(t).then(
+        function () { say(true); }, function () { say(false); });
+    } else {
+      say(false);
+    }
   }
 </script>
 """

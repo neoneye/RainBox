@@ -800,16 +800,34 @@ function renderMarkdown(src){
   return tmp.innerHTML;
 }
 
-function fallbackCopy(text, done){
+// Copy through the legacy selection path, and report whether the browser
+// actually did it. A `true` from document.execCommand is not proof of a copy:
+// the call can be proxied by an extension that returns true and never touches
+// the clipboard. The browser's own `copy` event is the proof — it fires only
+// when the copy really happens — so this listens for it and reports what it
+// saw. Returns 'ok', 'blocked' (claimed success, nothing copied), or
+// 'unavailable' (the path cannot run here: no execCommand, no focus, or no
+// user gesture left after an awaited fetch).
+function verifiedCopy(text){
+  if (!document.execCommand) return 'unavailable';
   const ta = document.createElement('textarea');
   ta.value = text;
+  ta.setAttribute('readonly', '');
   ta.style.position = 'fixed';
   ta.style.opacity = '0';
   document.body.appendChild(ta);
+  const previous = document.activeElement;
   ta.select();
-  try { document.execCommand('copy'); } catch (e) { /* ignore */ }
+  let copied = false;
+  const witness = () => { copied = true; };
+  document.addEventListener('copy', witness, true);
+  let claimed = false;
+  try { claimed = document.execCommand('copy'); } catch (e) { claimed = false; }
+  document.removeEventListener('copy', witness, true);
   document.body.removeChild(ta);
-  done();
+  if (previous && previous.focus) previous.focus();
+  if (claimed && copied) return 'ok';
+  return claimed ? 'blocked' : 'unavailable';
 }
 
 // Copy to the clipboard and confirm via the bottom-right toast. The
@@ -817,18 +835,31 @@ function fallbackCopy(text, done){
 // its own label to "Copied" changes width/height, which reflows the message log
 // and scrolls it under the reader.
 // `message` overrides the default toast text; `onCopied` runs once the text is
-// on the clipboard (used to flash the checkmark).
+// on the clipboard (used to flash the checkmark) — on success only, so a copy
+// that did not happen leaves no checkmark claiming it did.
+// The verified path is tried first because it is the only one whose outcome the
+// browser confirms. navigator.clipboard.writeText resolves identically whether
+// the write happened or was intercepted, so "Copied" on that path is a claim
+// rather than a fact — and claiming a copy that did not happen is the worst
+// outcome available: the reader pastes what was on the clipboard before and
+// reads a stale answer as this one, never told that anything failed.
 function copyText(text, message, onCopied){
-  const done = () => {
-    chatToast(message || 'Copied to clipboard');
-    if (onCopied) onCopied();
+  const report = (ok) => {
+    if (ok){
+      chatToast(message || 'Copied to clipboard');
+      if (onCopied) onCopied();
+      return;
+    }
+    chatToast('Could not copy — select the text and copy it manually');
   };
   const doCopy = (t) => {
     t = (t == null) ? '' : String(t);
+    const status = verifiedCopy(t);
+    if (status !== 'unavailable'){ report(status === 'ok'); return; }
     if (navigator.clipboard && navigator.clipboard.writeText){
-      navigator.clipboard.writeText(t).then(done).catch(() => fallbackCopy(t, done));
+      navigator.clipboard.writeText(t).then(() => report(true), () => report(false));
     } else {
-      fallbackCopy(t, done);
+      report(false);
     }
   };
   // `text` may be a string, or a function returning a string/Promise (used by

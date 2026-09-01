@@ -299,18 +299,55 @@ response. Nothing is saved.</p>
 // you run the same files against several models to compare.
 let ppModelId = {{ model_id | tojson }};
 
+// document.execCommand returning true is not proof of a copy: the call can be
+// proxied by an extension that returns true and copies nothing. The browser's
+// own `copy` event fires only on a real copy, so that is what is watched for.
+// Returns 'ok', 'blocked', or 'unavailable' (no execCommand, no focus, or no
+// user gesture left).
+function ppVerifiedCopy(text) {
+  if (!document.execCommand) { return 'unavailable'; }
+  var ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  var previous = document.activeElement;
+  ta.select();
+  var copied = false;
+  var witness = function () { copied = true; };
+  document.addEventListener('copy', witness, true);
+  var claimed = false;
+  try { claimed = document.execCommand('copy'); } catch (e) { claimed = false; }
+  document.removeEventListener('copy', witness, true);
+  document.body.removeChild(ta);
+  if (previous && previous.focus) { previous.focus(); }
+  if (claimed && copied) { return 'ok'; }
+  return claimed ? 'blocked' : 'unavailable';
+}
+
 // Copy the text of a textarea (.value) or a display div (.textContent) to the
-// clipboard, flashing "Copied!" on the button that triggered it.
+// clipboard, flashing the outcome on the button that triggered it.
 function ppCopy(btn, targetId) {
   const el = document.getElementById(targetId);
   if (!el) return;
   const text = el.tagName === 'TEXTAREA' ? el.value : el.textContent;
-  navigator.clipboard.writeText(text).then(function() {
-    const old = btn.textContent;
-    btn.textContent = 'Copied!';
+  const old = btn.textContent;
+  const say = function (ok) {
+    btn.textContent = ok ? 'Copied!' : 'Copy failed';
     btn.disabled = true;
     setTimeout(function() { btn.textContent = old; btn.disabled = false; }, 1200);
-  });
+  };
+  // Verified path first — the Clipboard API resolves the same way whether the
+  // write landed or was intercepted, so "Copied!" on that path is a claim.
+  const status = ppVerifiedCopy(text);
+  if (status !== 'unavailable') { say(status === 'ok'); return; }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(
+      function () { say(true); }, function () { say(false); });
+  } else {
+    say(false);
+  }
 }
 
 function ppSelectModel(event, el) {

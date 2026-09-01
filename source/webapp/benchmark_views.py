@@ -262,21 +262,32 @@ function benchStories(b, ti, bi) {
   return `<div class="stories">trial: ${buttons}</div>`;
 }
 
-// Copy via a hidden textarea when the async Clipboard API is unavailable or
-// refuses (it rejects on an unfocused document, and is absent entirely over
-// plain http to a non-localhost host).
+// Copy via a hidden textarea, reporting what actually happened: 'ok',
+// 'blocked' (execCommand claimed success but nothing was copied — the call can
+// be proxied by an extension that returns true and copies nothing), or
+// 'unavailable' (the path cannot run here: no execCommand, no focus, or no user
+// gesture left). The browser's own `copy` event is what separates the first two
+// — it fires only on a real copy.
 function legacyCopy(text) {
+  if (!document.execCommand) { return 'unavailable'; }
   const ta = document.createElement('textarea');
   ta.value = text;
   ta.setAttribute('readonly', '');
   ta.style.position = 'fixed';
   ta.style.opacity = '0';
   document.body.appendChild(ta);
+  const previous = document.activeElement;
   ta.select();
-  let ok = false;
-  try { ok = document.execCommand('copy'); } catch (err) { ok = false; }
+  let copied = false;
+  const witness = function () { copied = true; };
+  document.addEventListener('copy', witness, true);
+  let claimed = false;
+  try { claimed = document.execCommand('copy'); } catch (err) { claimed = false; }
+  document.removeEventListener('copy', witness, true);
   document.body.removeChild(ta);
-  return ok;
+  if (previous && previous.focus) { previous.focus(); }
+  if (claimed && copied) { return 'ok'; }
+  return claimed ? 'blocked' : 'unavailable';
 }
 
 // One delegated listener, so buttons rebuilt by polling keep working.
@@ -301,15 +312,21 @@ document.addEventListener('click', async function (e) {
   }
   // Always report the outcome: a silent no-op leaves the operator pasting
   // whatever was on the clipboard before, which looks like the wrong story
-  // rather than like a failure.
-  const api = navigator.clipboard && navigator.clipboard.writeText;
-  if (api) {
+  // rather than like a failure. The verified path goes first, since the
+  // Clipboard API resolves the same way whether the write landed or was
+  // intercepted. This button fetches the story before copying, so the user
+  // gesture is usually spent by now and the verified path reports
+  // 'unavailable' — the fallback is then a best effort that cannot be checked.
+  const status = legacyCopy(text);
+  if (status !== 'unavailable') {
+    say(status === 'ok' ? 'copied' : 'copy failed');
+  } else if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text).then(
       function () { say('copied'); },
-      function () { say(legacyCopy(text) ? 'copied' : 'copy failed'); }
+      function () { say('copy failed'); }
     );
   } else {
-    say(legacyCopy(text) ? 'copied' : 'copy failed');
+    say('copy failed');
   }
 });
 

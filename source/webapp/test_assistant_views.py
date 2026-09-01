@@ -1235,12 +1235,34 @@ def test_a_copy_that_did_nothing_says_so(app_ctx, client):
     try:
         body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
         assert "navigator.clipboard && navigator.clipboard.writeText" in body
-        assert "ppFallbackCopy(t, done)" in body
         assert "document.execCommand('copy')" in body
         assert "Could not copy" in body
         # Confirmed by the toast rather than by the button relabelling itself:
         # a button that changes width reflows the block under the reader.
         assert "asToast(ok === false" in body
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
+def test_a_copy_is_reported_from_what_the_browser_did(app_ctx, client):
+    """A `true` from document.execCommand is a return value, not evidence: the
+    call can be proxied by an extension that returns true and copies nothing
+    (uBlock Origin's ClickFix guard does exactly that). The browser's own
+    `copy` event fires only on a real copy, so the outcome is read from the
+    event, and a claimed-but-absent copy reports failure."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        assert "document.addEventListener('copy', witness, true)" in body
+        assert "if (claimed && copied) { return 'ok'; }" in body
+        assert "return claimed ? 'blocked' : 'unavailable';" in body
+        # The verified path runs BEFORE the Clipboard API, which is the whole
+        # point: writeText resolves the same way whether the write landed or
+        # was intercepted, so a success on that path is a claim, not a fact.
+        assert (body.index("var status = ppVerifiedCopy(t);")
+                < body.index("navigator.clipboard.writeText(t)"))
     finally:
         _cleanup(run.uuid, room.uuid)
 

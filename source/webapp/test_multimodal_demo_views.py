@@ -197,6 +197,22 @@ def test_page_renders_with_model_name(seeded_model):
     assert "ppSelectModel(event, this)" in body
 
 
+def test_a_copy_is_reported_from_what_the_browser_did(seeded_model):
+    """"Copied!" is a claim about the clipboard. document.execCommand's return
+    value does not support it — the call can be proxied by an extension that
+    returns true and copies nothing — but the browser's `copy` event fires only
+    on a real copy, so the label is read from that. The Clipboard API goes
+    second: its promise resolves the same way whether the write landed or was
+    intercepted."""
+    client = app.test_client()
+    body = client.get(f"/demo/multimodal?id={seeded_model}").get_data(as_text=True)
+    assert "document.addEventListener('copy', witness, true);" in body
+    assert "return claimed ? 'blocked' : 'unavailable';" in body
+    assert "'Copy failed'" in body
+    assert (body.index("const status = ppVerifiedCopy(text);")
+            < body.index("navigator.clipboard.writeText(text)"))
+
+
 def test_page_renders_not_found_for_unknown_id():
     client = app.test_client()
     # A well-formed but absent UUID.

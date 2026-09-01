@@ -143,6 +143,27 @@ def test_export_sidebar():
     assert "Download" in body
 
 
+def test_a_copy_is_reported_from_what_the_browser_did():
+    """The toast and the checkmark are claims about the clipboard, so they are
+    made from evidence. A `true` from document.execCommand is not evidence —
+    the call can be proxied by an extension that returns true and copies
+    nothing (uBlock Origin's ClickFix guard does exactly that) — but the
+    browser's own `copy` event fires only on a real copy. The verified path
+    therefore runs before the Clipboard API, whose promise resolves the same
+    way whether the write landed or was intercepted."""
+    body = _body()
+    assert "function verifiedCopy(text){" in body
+    assert "document.addEventListener('copy', witness, true);" in body
+    assert "if (claimed && copied) return 'ok';" in body
+    assert "return claimed ? 'blocked' : 'unavailable';" in body
+    assert (body.index("const status = verifiedCopy(t);")
+            < body.index("navigator.clipboard.writeText(t)"))
+    # A copy that did not happen says so, and leaves no checkmark behind
+    # claiming it did: onCopied is on the success branch only.
+    assert "chatToast('Could not copy — select the text and copy it manually');" in body
+    assert "if (onCopied) onCopied();\n      return;" in body
+
+
 def test_room_rename_goes_through_confirm_modal():
     """The room title is a click-to-rename control; renaming happens in a
     modal (notes/ui-modal-rename.md), so a typed-but-unconfirmed name can't be

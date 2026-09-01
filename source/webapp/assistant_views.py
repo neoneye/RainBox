@@ -744,23 +744,38 @@ var asSelectEvent = null;
     if (f) asToast(f);
   })();
   function ppConfirmAct(url, msg) { if (window.confirm(msg)) ppAct(url); }
-  // Copy, confirm, and degrade. `navigator.clipboard` is unavailable outside a
-  // secure context and can reject (a denied permission, a page that is not
-  // focused), and a copy that silently did nothing is worse than no button —
-  // the reader pastes whatever was on the clipboard before and gets the wrong
-  // story. The toast is the confirmation rather than the button relabelling
-  // itself: a button that changes width reflows the block under the reader.
-  function ppFallbackCopy(text, done) {
+  // Copy, confirm, and degrade. A copy that silently did nothing is worse
+  // than no button — the reader pastes whatever was on the clipboard before
+  // and gets the wrong story — so the outcome is established, not assumed.
+  // document.execCommand returning true is not establishment: the call can be
+  // proxied by an extension that returns true and copies nothing. The `copy`
+  // event fires only on a real copy, so that is what is watched for. The
+  // Clipboard API is the fallback and cannot be checked this way — it resolves
+  // the same whether the write landed or was intercepted — so it is used only
+  // where the verified path cannot run (no execCommand, no focus, or no user
+  // gesture left after an awaited fetch).
+  // The toast is the confirmation rather than the button relabelling itself:
+  // a button that changes width reflows the block under the reader.
+  function ppVerifiedCopy(text) {
+    if (!document.execCommand) { return 'unavailable'; }
     var ta = document.createElement('textarea');
     ta.value = text;
+    ta.setAttribute('readonly', '');
     ta.style.position = 'fixed';
     ta.style.opacity = '0';
     document.body.appendChild(ta);
+    var previous = document.activeElement;
     ta.select();
-    var ok = false;
-    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    var copied = false;
+    var witness = function () { copied = true; };
+    document.addEventListener('copy', witness, true);
+    var claimed = false;
+    try { claimed = document.execCommand('copy'); } catch (e) { claimed = false; }
+    document.removeEventListener('copy', witness, true);
     document.body.removeChild(ta);
-    done(ok);
+    if (previous && previous.focus) { previous.focus(); }
+    if (claimed && copied) { return 'ok'; }
+    return claimed ? 'blocked' : 'unavailable';
   }
   function ppCopyText(text, what) {
     var t = (text == null) ? '' : String(text);
@@ -768,12 +783,14 @@ var asSelectEvent = null;
       asToast(ok === false ? 'Could not copy — select the text instead'
                            : 'Copied ' + (what || 'to the clipboard'));
     };
+    var status = ppVerifiedCopy(t);
+    if (status !== 'unavailable') { done(status === 'ok'); return; }
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(t).then(
         function () { done(true); },
-        function () { ppFallbackCopy(t, done); });
+        function () { done(false); });
     } else {
-      ppFallbackCopy(t, done);
+      done(false);
     }
   }
 
