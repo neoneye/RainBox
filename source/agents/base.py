@@ -229,10 +229,10 @@ class Agent:
         """Process one inbox item; return a JSON-serializable result dict.
 
         INTENTIONAL TEST STUB — do NOT make this abstract / raise
-        NotImplementedError. This functional default is what lets the no-LLM
-        pipeline run end-to-end: ModelGroupAgent (below) inherits and extends it,
-        and roles with no specialized class (dreamer/critic/verifier — not in
-        agents/__main__.py's agent_classes dict) dispatch straight to that default.
+        NotImplementedError. This functional default is what lets a role with
+        no specialized class run end-to-end: ModelGroupAgent (below) inherits
+        and extends it, and any kind absent from AGENT_CLASS_PATHS dispatches
+        straight to that default.
         """
         time.sleep(1)  # stub: stand-in for real work, exercises the drain loop
         return {"ok": True}
@@ -444,9 +444,9 @@ class ModelGroupAgent(Agent):
 
     def handle(self, journal_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
         # INTENTIONAL STUB — keep functional, do NOT make abstract. This is the
-        # *default* dispatch for any role without a specialized class, including
-        # the dreamer/critic/verifier demo pipeline; raising here would break
-        # them. It isn't a pure mock either — it resolves and reports the real
+        # *default* dispatch for any role without a specialized class; raising
+        # here would break them. It isn't a pure mock either — it resolves and
+        # reports the real
         # model-group candidates (set in setup), so binding can be verified
         # without an LLM. Real subclasses (StructuredLLMAgent, the chat agents)
         # override this with the actual call.

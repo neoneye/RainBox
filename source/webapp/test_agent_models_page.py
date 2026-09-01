@@ -24,10 +24,10 @@ def test_uses_model_group_flags():
 
     assert Agent.uses_model_group is True
     assert ModelGroupAgent.uses_model_group is True
-    for kind in ("direct_chat", "workspace_shell", "query"):
+    for kind in ("direct_chat", "workspace_shell"):
         assert resolve_agent_class(kind).uses_model_group is False, kind
     # A kind not in the class table falls back to ModelGroupAgent -> True.
-    assert resolve_agent_class("dreamer").uses_model_group is True
+    assert resolve_agent_class("nosuchkind").uses_model_group is True
 
 
 def test_legacy_snake_case_path_redirects(client):
@@ -49,10 +49,8 @@ def test_page_hides_agents_that_dont_use_model_groups(client):
     # for the agent itself would be a control nothing reads.
     for hidden in ("direct_chat", "workspace_shell", "assistant"):
         assert str(agent_config[hidden]["uuid"]) not in body, hidden
-    assert str(agent_config["query"]["uuid"]) not in body
-    # Model-group consumers are still there (query_router also guards against
-    # an over-eager 'query' substring filter).
-    for shown in ("dreamer", "router", "assistant.decide", "query_router"):
+    # Model-group consumers are still there.
+    for shown in ("router", "assistant.decide", "chat_structured"):
         assert str(agent_config[shown]["uuid"]) in body, shown
 
 
@@ -92,7 +90,7 @@ def test_the_default_row_inherits_from_nothing(client):
 
     assert _fallback_name("assistant.default") == ""
     assert _fallback_name("assistant.decide") == "assistant.default"
-    assert _fallback_name("dreamer") == ""
+    assert _fallback_name("router") == ""
     # A dotted name whose family has no default inherits nothing rather than
     # naming a row that does not exist.
     assert _fallback_name("nosuchfamily.step") == ""

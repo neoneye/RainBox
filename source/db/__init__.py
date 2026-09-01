@@ -5,7 +5,7 @@ db.assistant, db.memory, db.feedback, db.eval, db.cron,
 db.kanban, db.settings. This `__init__` is the facade that re-exports their
 public names
 so callers can simply `import db`; it also owns the app/db lifecycle
-(make_app, init_db, reset_demo_data).
+(make_app, init_db).
 """
 import logging
 import os
@@ -657,9 +657,3 @@ def init_db(app: Flask) -> None:
         seed_cron_defaults()
         reconcile_app_settings()
 
-
-def reset_demo_data() -> None:
-    """Wipe inbox and journal — useful between demo runs."""
-    db.session.execute(sa.delete(Inbox))
-    db.session.execute(sa.delete(Journal))
-    db.session.commit()

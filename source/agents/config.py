@@ -47,14 +47,10 @@ AGENT_CLASS_PATHS: dict[str, str] = {
     "edit_document_v4": "agents.edit_document_v4:EditDocumentAgentV4",
     "edit_document_v5": "agents.edit_document_v5:EditDocumentAgentV5",
     "edit_document_v6": "agents.edit_document_v6:EditDocumentAgentV6",
-    "followup": "agents.followup:FollowUpClassifierAgent",
     "kanban_worker": "agents.kanban_worker:KanbanWorkerAgent",
     "tool_demo": "agents.tool_demo:ToolDemoAgent",
     "workspace_shell": "tools.workspace_shell_chat:WorkspaceShellChatAgent",
     "router": "agents.router:RouterAgent",
-    "query": "agents.query:QueryAgent",
-    "query_router": "agents.query_router:QueryRouterAgent",
-    "query_filter_router": "agents.query_filter_router:QueryFilterRouterAgent",
     "mcp": "agents.mcp:MCPAgent",
 }
 
@@ -76,19 +72,12 @@ def resolve_agent_class(kind: str):  # -> type[agents.base.Agent]
     return getattr(importlib.import_module(module_name), class_name)
 
 
-DREAMER_UUID: UUID = UUID("f320e597-c571-411b-994d-65c24b62f972")
-CRITIC_UUID: UUID = UUID("40c3b4b4-d883-42a9-bacf-6f77a4cd5f94")
-VERIFIER_UUID: UUID = UUID("e9999acb-324b-40c1-9ec6-9047e2fb1935")
-FOLLOWUP_UUID: UUID = UUID("25aaf4e9-18f2-41a2-979a-1d30d7844c5a")
 CHAT_STRUCTURED_UUID: UUID = UUID("392119a9-2555-42d8-82a2-aa69931882ac")
 CHAT_UNSTRUCTURED_UUID: UUID = UUID("6f8b1c0a-9d3e-4a72-bd41-2c7e5f0a9b84")
 TOOL_DEMO_UUID: UUID = UUID("953cc2d8-3aa3-4ffe-afc2-99f1c18ebea4")
 WORKSPACE_SHELL_UUID: UUID = UUID("672547eb-7ef1-4d72-a0ed-1c17fee80b6e")
 KANBAN_WORKER_UUID: UUID = UUID("3e8d2c41-9b7a-4f06-8c52-d14a90b7e6f3")
 ROUTER_UUID: UUID = UUID("04707c68-cda4-46e4-929a-48b3f53f7270")
-QUERY_UUID: UUID = UUID("cb4a4715-2b57-49fd-802c-0a05818f8b1c")
-QUERY_ROUTER_UUID: UUID = UUID("c973bca3-aa92-4a12-af20-d3f1087cac5e")
-QUERY_FILTER_ROUTER_UUID: UUID = UUID("218bb954-da6b-4712-9206-4f0f72eafcc0")
 EDIT_DOCUMENT_V1_UUID: UUID = UUID("9f3b1a8e-2c5d-4d7a-9e3b-5f8a1c2d4e7b")
 EDIT_DOCUMENT_V2_UUID: UUID = UUID("d2a7c5e1-6b3f-4e9a-9c1d-7e4b8f2a3c5d")
 EDIT_DOCUMENT_V3_UUID: UUID = UUID("8f4d9b2a-7e3c-4a5b-9c8d-1f6e7d2c4b3a")
@@ -134,15 +123,6 @@ ASSISTANT_RUN_SUMMARIZER_UUID: UUID = UUID("5d9a8c74-1e2b-4f3a-bc6d-7a0e9f481c25
 ASSISTANT_WORKING_NOTICE: str = ""
 
 agent_config: dict[str, AgentConfigEntry] = {
-    "dreamer": {"uuid": DREAMER_UUID, "description": "generates ideas", "next": CRITIC_UUID},
-    "critic": {"uuid": CRITIC_UUID, "description": "evaluates ideas", "next": VERIFIER_UUID},
-    "verifier": {"uuid": VERIFIER_UUID, "description": "confirms correctness", "next": None},
-    "followup": {
-        "uuid": FOLLOWUP_UUID,
-        "requires_structured_output": True,
-        "description": "classifies whether a chat message needs a follow-up",
-        "next": None,
-    },
     "chat_structured": {
         "uuid": CHAT_STRUCTURED_UUID,
         "requires_structured_output": True,
@@ -179,23 +159,6 @@ agent_config: dict[str, AgentConfigEntry] = {
         "uuid": ROUTER_UUID,
         "requires_structured_output": True,
         "description": "triages a chat message via structured output: a subject summary + whether it needs an action (no LLM tools)",
-        "next": None,
-    },
-    "query": {
-        "uuid": QUERY_UUID,
-        "description": "answers chat questions from data/question_answer.jsonl via pgvector similarity (no LLM completion, only embeddings)",
-        "next": None,
-    },
-    "query_router": {
-        "uuid": QUERY_ROUTER_UUID,
-        "requires_structured_output": True,
-        "description": "crossover of QueryAgent + RouterAgent: exact alias hits skip the LLM; otherwise the top semantic candidate (with handler output) is fed to the router LLM as a hint",
-        "next": None,
-    },
-    "query_filter_router": {
-        "uuid": QUERY_FILTER_ROUTER_UUID,
-        "requires_structured_output": True,
-        "description": "two-stage LLM: filter top-K candidates for relevance, then a simpler router LLM produces the reply using only the kept candidates",
         "next": None,
     },
     "edit_document_v1": {

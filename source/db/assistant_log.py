@@ -1267,7 +1267,7 @@ def _summarizer_group_uuid(started_at) -> str | None:
     row already shows.
     """
     from agents.config import ASSISTANT_DEFAULT_UUID, ASSISTANT_RUN_SUMMARIZER_UUID
-    from agents.query_filter_router import resolve_assistant_model_group
+    from agents.model_groups import resolve_assistant_model_group
 
     if started_at is None:
         return None

@@ -1,22 +1,15 @@
-"""The /memory/developer page: side-by-side retrieval inspection.
+"""The /memory/developer page: retrieval inspection.
 
-Type a query and see what each of the two retrieval pipelines returns for it:
+Type a query and see what the assistant's `memory_query` action
+(`agents.assistant._action_query_memory`) returns for it: LLM-filtered seed
+answers (degrading to the MIN_SCORE-gated retrieval when the assistant has no
+model group or the filter LLM fails) + hybrid claim retrieval, rendered as the
+exact observation text the assistant model would receive.
 
-- **assistant memory_query** — the assistant's `memory_query` action
-  (`agents.assistant._action_query_memory`): LLM-filtered seed answers
-  (degrading to the MIN_SCORE-gated retrieval when the assistant has no model
-  group or the filter LLM fails) + hybrid claim retrieval, rendered as the
-  exact observation text the assistant model would receive.
-- **query_filter_router** — the chat route's pipeline
-  (`agents.query_filter_router`), run stage by stage: exact alias → top-K
-  semantic candidates → LLM relevance filter → resolve kept candidates →
-  route LLM reply. Intermediate stages are all returned, so the operator can
-  see *why* a reply came out.
-
-Both run read-only: no chat messages are posted, no RetrievalEvents are
-recorded, and memory commands ("remember …") are detected but never executed.
-There is no chatroom context, so room-scoped claims are excluded and dynamic
-seed handlers that need a room degrade to an error string.
+It runs read-only: no chat messages are posted and no RetrievalEvents are
+recorded. There is no chatroom context unless one is selected, so room-scoped
+claims are excluded and dynamic seed handlers that need a room degrade to an
+error string.
 
 HTML shell + CSS live here; logic lives in static/memory_developer.js. The API
 is `POST /memory/api/developer/query`. Tuning parameters (top-K, limits,
@@ -87,32 +80,21 @@ def _group_info(group_uuid, label: str | None) -> dict[str, Any]:
 
 
 def _models_overview() -> dict[str, Any]:
-    """What models each pipeline stage runs on, so a comparison on this page is
-    apples-to-apples: the embedding models (seed questions vs claims), the
-    relevance scorer as each panel resolves it (the two panels resolve it
-    separately — the router on its own binding, the assistant on
-    assistant.memory_filter), and the router's reply group. Members list
-    provider/model plus override name and overridden argument keys."""
-    import db
-    from agents.config import ASSISTANT_MEMORY_FILTER_UUID, QUERY_FILTER_ROUTER_UUID
-    from agents.query_filter_router import (
-        resolve_assistant_model_group, resolve_model_group,
-    )
+    """What models the pipeline's stages run on: the embedding models (seed
+    questions vs claims, which are separate models and can disagree) and the
+    relevance scorer the assistant resolves through assistant.memory_filter.
+    Members list provider/model plus override name and overridden argument
+    keys."""
+    from agents.config import ASSISTANT_MEMORY_FILTER_UUID
+    from agents.model_groups import resolve_assistant_model_group
     from memory.embeddings import EMBED_MODEL_NAME as CLAIMS_EMBED
     from memory.seed_memory import EMBED_MODEL_NAME as SEED_EMBED, OLLAMA_BASE
 
-    router_binding = db.get_agent_model_binding(QUERY_FILTER_ROUTER_UUID)
-    route_group_uuid = (router_binding.model_group_uuid
-                        if router_binding is not None else None)
-    filter_router = resolve_model_group([(QUERY_FILTER_ROUTER_UUID, "own")])
-    filter_assistant = resolve_assistant_model_group(
-        ASSISTANT_MEMORY_FILTER_UUID)
     return {
         "embedding_seed": {"model": SEED_EMBED, "base": OLLAMA_BASE},
         "embedding_claims": {"model": CLAIMS_EMBED},
-        "filter_router_panel": _group_info(*filter_router),
-        "filter_assistant_panel": _group_info(*filter_assistant),
-        "route": _group_info(route_group_uuid, "query_filter_router"),
+        "filter_assistant_panel": _group_info(
+            *resolve_assistant_model_group(ASSISTANT_MEMORY_FILTER_UUID)),
     }
 
 
@@ -144,181 +126,6 @@ def _run_assistant_memory_query(query: str, top_k_vector: int,
         out.update(ok=obs.ok, text=obs.text, data=obs.data or {})
     except Exception as e:
         logger.warning("memory developer: assistant memory_query failed", exc_info=True)
-        out["error"] = f"{type(e).__name__}: {e}"
-    out["elapsed_ms"] = round((time.monotonic() - started) * 1000)
-    return out
-
-
-def _run_query_filter_router(query: str, top_k_vector: int,
-                             top_k_fulltext: int, room_uuid) -> dict[str, Any]:
-    """The query_filter_router pipeline, stage by stage, read-only.
-
-    Mirrors QueryFilterRouterAgent.handle() minus its side effects: nothing is
-    posted to a chatroom, no RetrievalEvents are written, and a query that
-    parses as a memory command is only *reported* (running it would mutate the
-    memory store). `room_uuid` (None = no room) lets room-dependent handlers
-    resolve. The route stage uses a synthetic one-message transcript rather
-    than the room's history, so its reply shows how the router answers the
-    query cold."""
-    from agents.config import QUERY_FILTER_ROUTER_UUID
-    from agents.query_filter_router import (
-        FILTER_SYSTEM_PROMPT,
-        QUERY_FILTER_ROUTER_SYSTEM_PROMPT,
-        FilterDecision,
-        QueryFilterRouterAgent,
-        apply_filter_scores,
-        build_filter_prompt,
-        resolve_model_uuids,
-        structured_llm_call,
-    )
-    from agents.query_handlers import QueryContext
-    from agents.router import RouterResponse
-    from chat.transcript import format_history
-    from memory import seed_memory as qkb
-    from memory.ops import parse_memory_command
-
-    started = time.monotonic()
-    out: dict[str, Any] = {
-        "memory_command": None,
-        "exact": None,
-        "candidates": [],
-        "filter_kept": [],
-        "filter_group": None,
-        "filter_reasoning": None,
-        "filter_error": None,
-        "resolved": {},
-        "route": None,
-        "route_error": None,
-        "error": None,
-    }
-    try:
-        cmd = parse_memory_command(query)
-        if cmd is not None:
-            # The real agent dispatches this and returns without touching the
-            # Q&A KB. Report it, then run the Q&A stages anyway so the operator
-            # still sees what retrieval would have surfaced.
-            out["memory_command"] = cmd.kind
-
-        qkb._load_kb()
-        vs = qkb._vector_store()
-        qkb._ensure_populated(vs)
-
-        qctx = QueryContext(
-            room_uuid=room_uuid,  # type: ignore[arg-type]  — None = no room
-            query=query,
-            payload={},
-            agent_uuid=QUERY_FILTER_ROUTER_UUID,
-        )
-
-        exact = qkb._exact_match(query)
-        if exact is not None:
-            out["exact"] = {
-                "qa_id": exact.qa_id,
-                "score": qkb.score_permille(exact.score),
-                "matched_question": exact.matched_question,
-                "reply": qkb._resolve_match(exact, qctx),
-            }
-            # The real agent answers from the exact hit alone — no LLM stages.
-            out["elapsed_ms"] = round((time.monotonic() - started) * 1000)
-            return out
-
-        candidates = qkb._hybrid_seed_ranked(
-            query, vs, top_k_vector=top_k_vector, top_k_fulltext=top_k_fulltext)
-        for c in candidates:
-            entry = qkb.get_entry(c.qa_id) or {}
-            kind = str(entry.get("kind", "?"))
-            row: dict[str, Any] = {
-                "qa_id": c.qa_id,
-                "path": str(entry.get("path", "")),
-                "kind": kind,
-                "score": qkb.score_permille(c.score),
-                "signals": c.method,
-                "matched_question": c.matched_question,
-            }
-            if kind == "static":
-                row["answer_preview"] = _preview(str(entry.get("answer", "")))
-            elif kind == "dynamic":
-                row["handler"] = str(entry.get("handler", ""))
-            out["candidates"].append(row)
-
-        agent = QueryFilterRouterAgent(
-            agent_uuid=QUERY_FILTER_ROUTER_UUID,
-            name="query_filter_router",
-            send=lambda _msg: None,
-        )
-        agent.setup()
-
-        relevant_qa_ids: list[str] = []
-        if candidates:
-            try:
-                filter_prompt = build_filter_prompt(query, candidates)
-                # Same scorer resolution as the live router pipeline: its own
-                # group. (The assistant panel resolves its scorer separately,
-                # through assistant.memory_filter.)
-                scorer_uuids, scorer_src = resolve_model_uuids(
-                    [(QUERY_FILTER_ROUTER_UUID, "own")])
-                out["filter_group"] = scorer_src
-                decision, scorer_model_uuid = structured_llm_call(
-                    "memory_developer.filter", scorer_uuids or [],
-                    FILTER_SYSTEM_PROMPT, filter_prompt, FilterDecision,
-                )
-                out["filter_model"] = _member_row(scorer_model_uuid).get("model_name")
-                out["filter_reasoning"] = decision.reasoning
-                # LLM scores → code-side keep/drop; merge each candidate's
-                # scores into its table row so the page can show why.
-                scored = apply_filter_scores(decision, candidates)
-                relevant_qa_ids = [s.qa_id for s in scored if s.kept]
-                out["filter_kept"] = relevant_qa_ids
-                by_qa_id = {s.qa_id: s for s in scored}
-                for row in out["candidates"]:
-                    s = by_qa_id.get(row["qa_id"])
-                    if s is not None:
-                        row.update(direct=s.direct, indirect=s.indirect,
-                                   relevancy=s.relevancy)
-            except Exception as e:
-                logger.warning(
-                    "memory developer: filter LLM failed", exc_info=True
-                )
-                out["filter_error"] = f"{type(e).__name__}: {e}"
-
-        for qa_id in relevant_qa_ids:
-            cand = next((c for c in candidates if c.qa_id == qa_id), None)
-            if cand is not None:
-                out["resolved"][qa_id] = qkb._resolve_match(cand, qctx)
-
-        if out["filter_error"] is None:
-            try:
-                transcript = format_history(
-                    [{"sender_name": "user", "text": query}]
-                )
-                if relevant_qa_ids:
-                    lines = ["", "Relevant candidates:"]
-                    for qa_id in relevant_qa_ids:
-                        lines.append(f"  - qa_id: {qa_id}")
-                        lines.append(f"    reply: {out['resolved'].get(qa_id, '')!r}")
-                    route_prompt = transcript + "\n" + "\n".join(lines)
-                else:
-                    route_prompt = transcript + "\n\nRelevant candidates: (none)"
-                route = agent._llm_structured(
-                    QUERY_FILTER_ROUTER_SYSTEM_PROMPT, route_prompt, RouterResponse
-                )
-                route_model = None
-                if agent._active_model_uuid is not None:
-                    route_model = _member_row(agent._active_model_uuid).get("model_name")
-                out["route"] = {
-                    "subject": route.subject,
-                    "action": route.action,
-                    "reply": route.reply,
-                    "model": route_model,
-                }
-            except Exception as e:
-                logger.warning(
-                    "memory developer: route LLM failed", exc_info=True
-                )
-                out["route_error"] = f"{type(e).__name__}: {e}"
-    except Exception as e:
-        logger.warning("memory developer: query_filter_router side failed",
-                       exc_info=True)
         out["error"] = f"{type(e).__name__}: {e}"
     out["elapsed_ms"] = round((time.monotonic() - started) * 1000)
     return out
@@ -393,8 +200,6 @@ def memory_developer_query() -> Response | tuple[Response, int]:
         "models": models,
         "assistant": _run_assistant_memory_query(
             query, top_k_vector, top_k_fulltext, room_uuid, all_rooms),
-        "filter_router": _run_query_filter_router(
-            query, top_k_vector, top_k_fulltext, room_uuid),
     })
 
 
@@ -483,12 +288,6 @@ MEMORY_DEVELOPER_TEMPLATE = """
       <p class="muted sub">LLM-filtered seed answers (gated fallback) + hybrid claim
       retrieval, as the observation text the assistant model receives</p>
       <div id="memdev-assistant-out"><p class="memdev-empty">No query run yet.</p></div>
-    </section>
-    <section class="memdev-panel" id="memdev-router">
-      <h2>query_filter_router</h2>
-      <p class="muted sub">exact alias &rarr; top-K semantic candidates &rarr; LLM filter
-      &rarr; resolve &rarr; route LLM reply</p>
-      <div id="memdev-router-out"><p class="memdev-empty">No query run yet.</p></div>
     </section>
   </div>
 </div>

@@ -5,7 +5,7 @@ dispatches and carries the verdict in observation.data.
 
 Deterministic: the decide seam is scripted (`scripted_decisions`), the review
 seam is either monkeypatched at the agent method (loop tests) or exercised for
-real with `agents.query_filter_router.structured_llm_call` monkeypatched
+real with `agents.model_groups.structured_llm_call` monkeypatched
 (unit tests), and the Python sandbox is replaced with a recording fake.
 """
 
@@ -419,13 +419,13 @@ def _review(monkeypatch, *, verdict=None, error=None, no_group=False):
     """Run _second_opinion with the model-group resolver and the structured
     call monkeypatched; returns (approved, review, prompts) where `prompts`
     captures the (system, user) pair the reviewer model was given."""
-    import agents.query_filter_router as qfr
+    import agents.model_groups as mg
 
     prompts: list[tuple[str, str]] = []
     resolved = ((None, None) if no_group
                 else ([uuid4()], "assistant.second_opinion"))
     monkeypatch.setattr(
-        qfr, "resolve_assistant_model_uuids", lambda _slot: resolved
+        mg, "resolve_assistant_model_uuids", lambda _slot: resolved
     )
 
     def fake_call(agent_name, model_uuids, system_prompt, user_prompt, model,
@@ -437,7 +437,7 @@ def _review(monkeypatch, *, verdict=None, error=None, no_group=False):
             raise error
         return verdict, model_uuids[0]
 
-    monkeypatch.setattr(qfr, "structured_llm_call", fake_call)
+    monkeypatch.setattr(mg, "structured_llm_call", fake_call)
     agent = _agent()
     agent._identity_block = '{"name": "Otto", "country": "Denmark"}'
     agent._profile_block = "prefers metric units"
@@ -551,7 +551,7 @@ def test_reviewer_chain_ignores_the_memory_filter_binding(monkeypatch):
     reviewer model (seen live as group_from="memory_filter"). Each slot
     consults only itself and assistant.default — a bound
     assistant.memory_filter never reaches the reviewer."""
-    import agents.query_filter_router as qfr
+    import agents.model_groups as mg
     from agents.config import (
         ASSISTANT_MEMORY_FILTER_UUID, ASSISTANT_SECOND_OPINION_UUID,
     )
@@ -562,11 +562,11 @@ def test_reviewer_chain_ignores_the_memory_filter_binding(monkeypatch):
     def only_memory_filter_bound(agent_uuid):
         return Binding() if agent_uuid == ASSISTANT_MEMORY_FILTER_UUID else None
 
-    monkeypatch.setattr(qfr.db, "get_agent_model_binding", only_memory_filter_bound)
+    monkeypatch.setattr(mg.db, "get_agent_model_binding", only_memory_filter_bound)
     monkeypatch.setattr(
-        qfr.db, "get_model_group_member_uuids", lambda group_uuid: [uuid4()])
-    assert qfr.resolve_assistant_model_uuids(
+        mg.db, "get_model_group_member_uuids", lambda group_uuid: [uuid4()])
+    assert mg.resolve_assistant_model_uuids(
         ASSISTANT_SECOND_OPINION_UUID) == (None, None)
-    _uuids, label = qfr.resolve_assistant_model_uuids(
+    _uuids, label = mg.resolve_assistant_model_uuids(
         ASSISTANT_MEMORY_FILTER_UUID)
     assert label == "assistant.memory_filter"

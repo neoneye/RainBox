@@ -1,5 +1,5 @@
 """Unit tests for the code-side keep/drop policy over the filter LLM's
-Likert scores (agents.query_filter_router.apply_filter_scores).
+Likert scores (agents.recall_filter.apply_filter_scores).
 
 The LLM only scores candidates (direct/indirect/relevancy, "1".."5"); which
 candidates survive is decided here, deterministically: fewer than top_k
@@ -9,7 +9,7 @@ FILTER_KEEP_TOP_N ranked candidates survive on rank (unless pure noise below
 FILTER_KEEP_TOP_FLOOR), plus anything with a scale at FILTER_KEEP_THRESHOLD.
 """
 
-from agents.query_filter_router import (
+from agents.recall_filter import (
     FILTER_KEEP_THRESHOLD,
     FILTER_KEEP_TOP_FLOOR,
     FILTER_KEEP_TOP_N,
@@ -39,7 +39,7 @@ def test_reasoning_field_precedes_items_in_the_schema():
 
 
 def test_filter_prompt_asks_for_reasoning_first():
-    from agents.query_filter_router import FILTER_SYSTEM_PROMPT
+    from agents.recall_filter import FILTER_SYSTEM_PROMPT
     p = FILTER_SYSTEM_PROMPT.lower()
     assert "`reasoning`" in p
     assert "in this order" in p

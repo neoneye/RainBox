@@ -561,12 +561,12 @@ class RequestSummary(BaseModel):
 # The request-summary call's persona prompt. Like the criteria and second-
 # opinion calls it is a separate narrow job, not the assistant's working
 # prompt: this one never answers the request, it only describes it.
-# The recall filter's job. It was the query_filter_router's FILTER_SYSTEM_PROMPT
-# — a proof of concept the assistant borrowed. The assistant now owns its own
-# copy so this call can carry the shared system prompt like every other
-# assistant call and keep its job description in <turn_instructions>, which is
-# what lets it share a cached prefix with them. The query_filter_router keeps
-# its own constant for its own routing calls.
+# The recall filter's job, as <turn_instructions> rather than a system prompt
+# of its own: that is what lets this call carry the shared system prompt like
+# every other assistant call, and so share a cached prefix with them.
+# `agents.recall_filter.FILTER_SYSTEM_PROMPT` is the same job written as a
+# standalone system prompt, for a caller with no assistant prompt to nest in;
+# the two carry the same scales and must not drift apart.
 RECALL_FILTER_TURN_INSTRUCTIONS: str = """\
 You are a relevance scorer. Given the user's latest chat message and a list of
 candidates — knowledge-base Q&A entries and/or remembered facts — score EVERY
@@ -1162,7 +1162,7 @@ class AssistantActionContext:
     # own step row — the filter is an assistant call like any other, not a
     # private LLM path inside an action. None for a caller with no run (the
     # /memory/developer probe), which falls through to the standalone
-    # `query_filter_router.structured_llm_call` and records nothing.
+    # `model_groups.structured_llm_call` and records nothing.
     recall_filter_call: "RecallFilterCall | None" = None
 
 
@@ -1314,7 +1314,7 @@ def _build_recall_filter_prompt(
     simply get the job description first. The candidate rows go through
     ElementTree like every other dynamic section, so a remembered fact cannot
     forge or close a prompt zone."""
-    from agents.query_filter_router import build_filter_prompt_rows
+    from agents.recall_filter import build_filter_prompt_rows
 
     root = ET.Element("recall_filter_call")
     AssistantAgent._append_turn_instructions(
@@ -1352,10 +1352,10 @@ def _filter_recalled_candidates(
     columns, and everything downstream of `scored` is shared.
 
     The LLM scorer's model group resolves via `assistant.memory_filter`, else
-    `assistant.default` — the assistant's own slot, so a scorer chosen for
-    this filter is not also chosen for the query_filter_router chat route. The
-    reranker backend resolves no group at all: the model it runs is named in
-    the setting, and no model slot points at it.
+    `assistant.default` — its own slot, so a scorer chosen for this filter
+    moves this call and nothing else. The reranker backend resolves no group
+    at all: the model it runs is named in the setting, and no model slot
+    points at it.
     Returns `(seeds, kept_claims, debug)`;
     the first two are None when the LLM backend has no group bound anywhere
     (the caller falls back to gated seed retrieval + unfiltered claims); a
@@ -1377,10 +1377,11 @@ def _filter_recalled_candidates(
     `top_k_vector`/`top_k_fulltext` override the per-signal seed budgets
     (defaults TOP_K_VECTOR/TOP_K_FULLTEXT) — /memory/developer tuning knobs;
     live runs pass None."""
-    from agents.query_filter_router import (
-        TOP_K_FILTER, FilterDecision,
-        apply_filter_scores, resolve_assistant_model_group,
-        seed_candidate_rows, structured_llm_call,
+    from agents.model_groups import (
+        resolve_assistant_model_group, structured_llm_call,
+    )
+    from agents.recall_filter import (
+        TOP_K_FILTER, FilterDecision, apply_filter_scores, seed_candidate_rows,
     )
     from agents.recall_reranker import (
         apply_rerank_scores, document_text, rerank, reranker_model,
@@ -1808,10 +1809,9 @@ def _action_query_memory(
         seeds = []
         recall_filter_debug: dict[str, Any] = {}
         try:
-            # The assistant loop, unlike the chat route's query_filter_router.handle(),
-            # never loads the seed KB — so load the registry (_entries_by_id), or
-            # every seed match is dropped. Skip when a retriever is injected
-            # (tests stay hermetic).
+            # Nothing else in the loop loads the seed KB, so load the registry
+            # (_entries_by_id) here or every seed match is dropped. Skip when a
+            # retriever is injected (tests stay hermetic).
             if _seed_retriever is not None:
                 with timer.phase("seed retrieval"):
                     seeds = _seed_retriever(query, qctx=qctx)
@@ -3671,7 +3671,7 @@ class AssistantAgent(ModelGroupAgent):
         result down, so these two attributes are what remains for the paths
         that never named a slot — and the default is the right answer for
         those, being the answer every slot falls back to anyway."""
-        from agents.query_filter_router import resolve_assistant_model_group
+        from agents.model_groups import resolve_assistant_model_group
 
         if self._pinned_model_group is not None:
             return
@@ -3709,7 +3709,7 @@ class AssistantAgent(ModelGroupAgent):
         Resolved per call rather than once per run: a binding changed on
         /agentmodel mid-turn takes effect on the next call, which is what an
         operator comparing models expects from a page they just saved."""
-        from agents.query_filter_router import resolve_assistant_model_group
+        from agents.model_groups import resolve_assistant_model_group
 
         if self._pinned_model_group is not None:
             return (self.candidate_model_uuids, self._pinned_model_group,
@@ -4810,8 +4810,8 @@ class AssistantAgent(ModelGroupAgent):
         without the persona, calibration or remembered digest.
 
         Only pays off when the filter answers on the assistant's own model
-        group. The memory_filter / query_filter_router bindings resolve first
-        (see _filter_recalled_candidates), and a different model is a different
+        group. The memory_filter binding resolves first (see
+        _filter_recalled_candidates), and a different model is a different
         cache no matter how the prompt is shaped."""
         return AssistantPromptBuilder(
             self, "recall_filter_call", messages=messages,
@@ -4904,7 +4904,7 @@ class AssistantAgent(ModelGroupAgent):
         bound or the review call itself fails, the action runs and the review
         payload records why the check was skipped — blocking pure compute on a
         reviewer outage would degrade the assistant for no safety gain."""
-        from agents.query_filter_router import (
+        from agents.model_groups import (
             resolve_assistant_model_uuids, structured_llm_call,
         )
 
@@ -5188,7 +5188,7 @@ class AssistantAgent(ModelGroupAgent):
         because a checker was unreachable is worse than one that produces an
         unaudited reply.
         """
-        from agents.query_filter_router import (
+        from agents.model_groups import (
             resolve_assistant_model_uuids, structured_llm_call,
         )
 
@@ -5436,7 +5436,7 @@ class AssistantAgent(ModelGroupAgent):
         language because the classifier never ran is a different problem from
         one whose classifier errored.
         """
-        from agents.query_filter_router import (
+        from agents.model_groups import (
             resolve_assistant_model_group,
             structured_llm_call,
         )
@@ -5753,7 +5753,7 @@ class AssistantAgent(ModelGroupAgent):
         Returns the parsed FilterDecision and the model that answered. A
         failure is recorded as a failed row and re-raised: the action catches
         it and falls back to gated retrieval."""
-        from agents.query_filter_router import FilterDecision
+        from agents.recall_filter import FilterDecision
 
         requested_at = datetime.now(UTC)
         step_uuid = uuid4()

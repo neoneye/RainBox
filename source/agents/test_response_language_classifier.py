@@ -416,14 +416,14 @@ def test_classifier_call_records_its_token_cost_on_the_step_row(room, monkeypatc
     """The classifier is a model call like any other, so its row carries the
     same in/out/throughput figures — the inspector's io-meta line reads them
     straight off the row, and a step missing them silently reads as free."""
-    import agents.query_filter_router as router
+    import agents.model_groups as mg
 
     group_uuid, model_uuid = uuid4(), uuid4()
 
     def fake_resolve(_bindings):
         return group_uuid, "response_language_classifier"
 
-    real_call = router.structured_llm_call
+    real_call = mg.structured_llm_call
 
     def fake_call(name, models, system, user, schema, usage_out=None):
         # The reply audit goes through this same helper; leave it alone.
@@ -435,8 +435,8 @@ def test_classifier_call_records_its_token_cost_on_the_step_row(room, monkeypatc
             usage_out.update({"input": 812, "output": 96, "ms": 4200})
         return _classification(), model_uuid
 
-    monkeypatch.setattr(router, "resolve_model_group", fake_resolve)
-    monkeypatch.setattr(router, "structured_llm_call", fake_call)
+    monkeypatch.setattr(mg, "resolve_model_group", fake_resolve)
+    monkeypatch.setattr(mg, "structured_llm_call", fake_call)
     monkeypatch.setattr(db, "get_model_group_member_uuids", lambda _g: [model_uuid])
     agent = _agent()
     agent._decide_next_step = lambda **_: _reply()

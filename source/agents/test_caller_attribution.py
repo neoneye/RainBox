@@ -18,8 +18,8 @@ def _agent(cls, name):
 
 
 def test_caller_tag_is_the_agent_name_unprefixed():
-    agent = _agent(ModelGroupAgent, "query_filter_router")
-    assert agent._caller_tag() == "query_filter_router"
+    agent = _agent(ModelGroupAgent, "chat_structured")
+    assert agent._caller_tag() == "chat_structured"
 
 
 def test_purpose_becomes_the_second_segment():

@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 import pytest
 
 import db
-import agents.query_filter_router as qfr
+import agents.model_groups as mg
 from agents.assistant import AssistantAgent
 from agents.config import (
     ASSISTANT_ACCEPTANCE_CRITERIA_UUID,
@@ -46,12 +46,12 @@ def _bind(monkeypatch, bound: dict[UUID, UUID]):
     Each group has one member, named after its group so a test can tell which
     group answered from the member list alone."""
     monkeypatch.setattr(
-        qfr.db, "get_agent_model_binding",
+        mg.db, "get_agent_model_binding",
         lambda agent_uuid: (
             type("B", (), {"model_group_uuid": bound[agent_uuid]})()
             if agent_uuid in bound else None))
     monkeypatch.setattr(
-        qfr.db, "get_model_group_member_uuids", lambda group_uuid: [group_uuid])
+        mg.db, "get_model_group_member_uuids", lambda group_uuid: [group_uuid])
 
 
 # --- the roster ---------------------------------------------------------------
@@ -107,7 +107,7 @@ def test_an_unbound_slot_falls_back_to_the_default(slot, monkeypatch):
     """Binding only assistant.default configures the whole assistant."""
     default_group = uuid4()
     _bind(monkeypatch, {ASSISTANT_DEFAULT_UUID: default_group})
-    assert qfr.resolve_assistant_model_group(slot) == (
+    assert mg.resolve_assistant_model_group(slot) == (
         default_group, "assistant.default")
 
 
@@ -117,7 +117,7 @@ def test_a_bound_slot_beats_the_default(slot, monkeypatch):
     slot_group, default_group = uuid4(), uuid4()
     _bind(monkeypatch,
           {slot: slot_group, ASSISTANT_DEFAULT_UUID: default_group})
-    assert qfr.resolve_assistant_model_group(slot) == (
+    assert mg.resolve_assistant_model_group(slot) == (
         slot_group, role_name(slot))
 
 
@@ -126,14 +126,14 @@ def test_a_slot_bound_to_an_empty_group_falls_through(monkeypatch):
     the same rule the generic resolver applies to every chain."""
     empty_group, default_group = uuid4(), uuid4()
     monkeypatch.setattr(
-        qfr.db, "get_agent_model_binding",
+        mg.db, "get_agent_model_binding",
         lambda agent_uuid: type("B", (), {"model_group_uuid": (
             empty_group if agent_uuid == ASSISTANT_DECIDE_UUID
             else default_group)})())
     monkeypatch.setattr(
-        qfr.db, "get_model_group_member_uuids",
+        mg.db, "get_model_group_member_uuids",
         lambda group_uuid: [] if group_uuid == empty_group else [uuid4()])
-    _group, label = qfr.resolve_assistant_model_group(ASSISTANT_DECIDE_UUID)
+    _group, label = mg.resolve_assistant_model_group(ASSISTANT_DECIDE_UUID)
     assert label == "assistant.default"
 
 
@@ -141,9 +141,9 @@ def test_nothing_bound_anywhere_resolves_to_nothing(monkeypatch):
     """Not an error: each call site turns this into its own outcome — the loop
     raises, the optional calls record a skipped step."""
     _bind(monkeypatch, {})
-    assert qfr.resolve_assistant_model_group(ASSISTANT_DECIDE_UUID) == (
+    assert mg.resolve_assistant_model_group(ASSISTANT_DECIDE_UUID) == (
         None, None)
-    assert qfr.resolve_assistant_model_uuids(ASSISTANT_DECIDE_UUID) == (
+    assert mg.resolve_assistant_model_uuids(ASSISTANT_DECIDE_UUID) == (
         None, None)
 
 
@@ -156,8 +156,8 @@ def test_the_default_does_not_chain_to_itself(monkeypatch):
         asked.append(agent_uuid)
         return None
 
-    monkeypatch.setattr(qfr.db, "get_agent_model_binding", record)
-    assert qfr.resolve_assistant_model_group(ASSISTANT_DEFAULT_UUID) == (
+    monkeypatch.setattr(mg.db, "get_agent_model_binding", record)
+    assert mg.resolve_assistant_model_group(ASSISTANT_DEFAULT_UUID) == (
         None, None)
     assert asked == [ASSISTANT_DEFAULT_UUID]
 

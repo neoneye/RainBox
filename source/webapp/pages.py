@@ -10,8 +10,8 @@ from flask import (
     url_for,
 )
 
-from agents.config import DREAMER_UUID, agent_config
-from db import Inbox, Journal, db, enqueue, reset_demo_data
+from agents.config import agent_config
+from db import Inbox, Journal, db
 
 from .core import app
 
@@ -23,12 +23,6 @@ INDEX_TEMPLATE: str = """
 {% include "_nav.html" %}
 <div class="pp-content">
 <h1>rainbox</h1>
-
-<h2>Demo</h2>
-<form method="post" action="{{ url_for('demo') }}">
-  <button type="submit">Run demo (reset + seed 5 dreamer tasks)</button>
-</form>
-{% if demo %}<p class="ok">demo started &mdash; 5 dreamer tasks seeded; the supervisor will wake the agents.</p>{% endif %}
 
 <h2>Try it</h2>
 <ul>
@@ -98,16 +92,7 @@ AGENT_TEMPLATE: str = """
 
 @app.route("/")
 def index() -> str:
-    demo_flash = bool(request.args.get("demo"))
-    return render_template_string(INDEX_TEMPLATE, agents=agent_config, demo=demo_flash)
-
-
-@app.route("/demo", methods=["POST"])
-def demo() -> Response:
-    reset_demo_data()
-    for i in range(5):
-        enqueue(DREAMER_UUID, {"task": f"dreamer_task_{i}"})
-    return redirect(url_for("index", demo=1))
+    return render_template_string(INDEX_TEMPLATE, agents=agent_config)
 
 
 @app.route("/agent/<name>", methods=["GET", "POST"])

@@ -36,16 +36,13 @@ def test_page_has_query_input_and_panels():
     assert 'id="memdev-query"' in body
     assert 'id="memdev-run"' in body
     assert 'id="memdev-assistant-out"' in body
-    assert 'id="memdev-router-out"' in body
     assert "memory_query" in body
-    assert "query_filter_router" in body
 
 
 def test_js_posts_to_the_query_api():
     body = _body()
     assert "/memory/api/developer/query" in body
     assert "memdevRenderAssistant" in body
-    assert "memdevRenderRouter" in body
 
 
 def test_js_renders_assistant_recall_filter_debug():

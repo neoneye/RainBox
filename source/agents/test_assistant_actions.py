@@ -498,7 +498,7 @@ def test_query_memory_recall_filter_drops_low_scores_on_a_full_list(app_ctx, mon
     lives in apply_filter_scores. A below-MIN_SCORE candidate with a high score
     IS recalled (the gated path would have dropped it); low-scored and unscored
     candidates are NOT; hallucinated qa_ids are ignored."""
-    import agents.query_filter_router as qfr
+    import agents.model_groups as mg
     from memory import seed_memory as qkb
     from memory.seed_memory import Match
 
@@ -539,7 +539,7 @@ def test_query_memory_recall_filter_drops_low_scores_on_a_full_list(app_ctx, mon
             # qa-unscored deliberately omitted by the LLM.
         ]), model_uuids[0])
 
-    monkeypatch.setattr(qfr, "structured_llm_call", fake_call)
+    monkeypatch.setattr(mg, "structured_llm_call", fake_call)
     obs = _action_query_memory(_ctx(), {"query": "first mac"})
     assert obs.ok
     assert "PowerBook" in obs.text
@@ -570,7 +570,7 @@ def test_query_memory_keeps_the_scorers_note_out_of_an_empty_result(
     no facts beside it, the scorer's explanation would be the only substantive
     thing the answering model reads. A live run had it asserting that no
     candidate held an answer that was sitting in the candidate list."""
-    import agents.query_filter_router as qfr
+    import agents.model_groups as mg
     from memory import seed_memory as qkb
     from memory.seed_memory import Match
 
@@ -600,7 +600,7 @@ def test_query_memory_keeps_the_scorers_note_out_of_an_empty_result(
             reasoning="nothing here answers the question",
             items=[_score(f"qa-{c}") for c in "abcde"]), model_uuids[0])
 
-    monkeypatch.setattr(qfr, "structured_llm_call", fake_call)
+    monkeypatch.setattr(mg, "structured_llm_call", fake_call)
     obs = _action_query_memory(_ctx(), {"query": "something else"})
     assert obs.ok
     assert obs.text == "No relevant remembered facts."
@@ -618,7 +618,8 @@ def test_recall_filter_scores_through_the_loops_call_seam(app_ctx, monkeypatch):
     through the same `_structured_completion` as the decide call and gives it a
     step row. The standalone `structured_llm_call` is only for a caller with no
     run — /memory/developer — and must not be reached from a turn."""
-    import agents.query_filter_router as qfr
+    import agents.model_groups as mg
+    import agents.recall_filter as rf
     from agents.assistant import ASSISTANT_SHARED_SYSTEM_PROMPT
     from memory import seed_memory as qkb
     from memory.seed_memory import Match
@@ -636,7 +637,7 @@ def test_recall_filter_scores_through_the_loops_call_seam(app_ctx, monkeypatch):
     def unreachable(*a, **kw):
         raise AssertionError("a turn must score through the loop's seam")
 
-    monkeypatch.setattr(qfr, "structured_llm_call", unreachable)
+    monkeypatch.setattr(mg, "structured_llm_call", unreachable)
     answering_model = uuid4()
     seen: dict = {}
 
@@ -645,7 +646,7 @@ def test_recall_filter_scores_through_the_loops_call_seam(app_ctx, monkeypatch):
         seen.update(model_uuids=model_uuids, model_group_uuid=model_group_uuid,
                     group_from=group_from, system_prompt=system_prompt,
                     user_prompt=user_prompt, step_index=step_index)
-        return qfr.FilterDecision(reasoning="r", items=[
+        return rf.FilterDecision(reasoning="r", items=[
             _score("qa-mac", direct=5, relevancy=5)]), answering_model
 
     ctx = replace(_ctx(), recall_filter_call=seam, step_index=3)
@@ -670,7 +671,7 @@ def test_query_memory_recall_filter_keeps_all_when_fewer_than_top_k(app_ctx, mon
     """With fewer than top-K candidates there is no real competition: every
     candidate is kept even when the LLM scored it low — the code-side policy
     overrides an over-aggressive scorer."""
-    import agents.query_filter_router as qfr
+    import agents.model_groups as mg
     from memory import seed_memory as qkb
     from memory.seed_memory import Match
 
@@ -695,7 +696,7 @@ def test_query_memory_recall_filter_keeps_all_when_fewer_than_top_k(app_ctx, mon
             _score("qa-family"),   # scored 1/1/1 — would drop on a full list
         ]), model_uuids[0])
 
-    monkeypatch.setattr(qfr, "structured_llm_call", fake_call)
+    monkeypatch.setattr(mg, "structured_llm_call", fake_call)
     obs = _action_query_memory(_ctx(), {"query": "hvem er min bror"})
     assert obs.ok
     assert "Her brother fact." in obs.text
@@ -708,7 +709,7 @@ def test_query_memory_forwards_per_signal_budgets(app_ctx, monkeypatch):
     """The /memory/developer knobs: top_k_vector/top_k_fulltext flow through
     memory_query to the hybrid ranker unchanged — each signal fills its own
     quota, neither weighted over the other."""
-    import agents.query_filter_router as qfr
+    import agents.model_groups as mg
     from memory import seed_memory as qkb
     from memory.seed_memory import Match
 
@@ -724,7 +725,7 @@ def test_query_memory_forwards_per_signal_budgets(app_ctx, monkeypatch):
         return [Match(qa_id="qa-1", method="fulltext", score=0.8, matched_question="q")]
 
     monkeypatch.setattr(qkb, "_hybrid_seed_ranked", fake_ranked)
-    monkeypatch.setattr(qfr, "structured_llm_call", lambda *a, **k: (
+    monkeypatch.setattr(mg, "structured_llm_call", lambda *a, **k: (
         a[4](reasoning="budget test", items=[_score("qa-1", direct=5)]), a[1][0]))
     obs = _action_query_memory(_ctx(), {"query": "q"},
                                top_k_vector=7, top_k_fulltext=2)
@@ -737,7 +738,7 @@ def test_query_memory_claims_go_through_the_filter_too(app_ctx, monkeypatch):
     filter call: a claim the scorer rates as noise is dropped from the
     observation; a relevant one stays, with its Likert scores in the trace."""
     from uuid import UUID as _UUID
-    import agents.query_filter_router as qfr
+    import agents.model_groups as mg
     import memory.retrieval as retrieval
     from memory import seed_memory as qkb
     from memory.retrieval import RetrievedMemory
@@ -765,7 +766,7 @@ def test_query_memory_claims_go_through_the_filter_too(app_ctx, monkeypatch):
             _score(str(claim_noise)),   # 1/1/1 noise
         ]), model_uuids[0])
 
-    monkeypatch.setattr(qfr, "structured_llm_call", fake_call)
+    monkeypatch.setattr(mg, "structured_llm_call", fake_call)
     obs = _action_query_memory(_ctx(), {"query": "deploy host"})
     assert obs.ok
     assert "prod-web-01" in obs.text
@@ -783,7 +784,7 @@ def test_query_memory_records_recall_verdicts_with_fifo(app_ctx, monkeypatch):
     positive) or `rejected` (false positive) with the Likert scales in
     metadata — and each stream is pruned to the recall FIFO capacity."""
     from uuid import UUID as _UUID
-    import agents.query_filter_router as qfr
+    import agents.model_groups as mg
     import db.settings as db_settings
     import memory.retrieval as retrieval
     from db import RetrievalEvent
@@ -810,7 +811,7 @@ def test_query_memory_records_recall_verdicts_with_fifo(app_ctx, monkeypatch):
             _score(str(claim_id)),   # 1/1/1 — but small set → kept... see below
         ]), model_uuids[0])
 
-    monkeypatch.setattr(qfr, "structured_llm_call", fake_call)
+    monkeypatch.setattr(mg, "structured_llm_call", fake_call)
     try:
         for _ in range(5):
             _action_query_memory(_ctx(), {"query": "fifo probe"})
@@ -834,7 +835,7 @@ def test_query_memory_dropped_claim_leaves_the_observation(app_ctx, monkeypatch)
     """On a full candidate list, a noise-scored claim is dropped from the
     observation entirely."""
     from uuid import UUID as _UUID
-    import agents.query_filter_router as qfr
+    import agents.model_groups as mg
     import memory.retrieval as retrieval
     from memory import seed_memory as qkb
     from memory.retrieval import RetrievedMemory
@@ -869,7 +870,7 @@ def test_query_memory_dropped_claim_leaves_the_observation(app_ctx, monkeypatch)
             _score(str(claim_noise)),   # 1/1/1 on a full list → dropped
         ]), model_uuids[0])
 
-    monkeypatch.setattr(qfr, "structured_llm_call", fake_call)
+    monkeypatch.setattr(mg, "structured_llm_call", fake_call)
     obs = _action_query_memory(_ctx(), {"query": "q"})
     assert obs.ok
     assert "Seed answer 0." in obs.text
@@ -882,7 +883,7 @@ def test_recall_filter_dedicated_memory_filter_binding_wins(app_ctx, monkeypatch
     """A bound assistant.memory_filter (the /agentmodel knob for scorer
     experiments) outranks the default: the filter scores with ITS group even
     when assistant.default has one of its own."""
-    import agents.query_filter_router as qfr
+    import agents.model_groups as mg
     from agents.config import ASSISTANT_MEMORY_FILTER_UUID as MEMORY_FILTER_UUID
     from memory import seed_memory as qkb
     from memory.seed_memory import Match
@@ -912,20 +913,19 @@ def test_recall_filter_dedicated_memory_filter_binding_wins(app_ctx, monkeypatch
         seen_members.extend(model_uuids)
         return (response_model(reasoning="scores calibrated on the message", items=[_score("qa-1", direct=5)]), model_uuids[0])
 
-    monkeypatch.setattr(qfr, "structured_llm_call", fake_call)
+    monkeypatch.setattr(mg, "structured_llm_call", fake_call)
     obs = _action_query_memory(_ctx(), {"query": "q"})
     assert seen_members == [filter_member]
     assert obs.data["recall_filter"]["group_from"] == "assistant.memory_filter"
 
 
-def test_recall_filter_ignores_the_query_filter_routers_model_group(app_ctx, monkeypatch):
-    """The scorer is the assistant's own choice, not a shared one: a bound
-    query_filter_router group is invisible here. The two pipelines once shared
-    a scorer binding, which made either one's model choice the other's too."""
-    import agents.query_filter_router as qfr
-    from agents.config import (
-        ASSISTANT_MEMORY_FILTER_UUID, QUERY_FILTER_ROUTER_UUID,
-    )
+def test_recall_filter_ignores_other_agents_model_groups(app_ctx, monkeypatch):
+    """The scorer is the assistant's own choice, not a shared one: the chain is
+    memory_filter then assistant.default, and no other agent's binding is
+    consulted at any point. A shared scorer binding makes one pipeline's model
+    choice the other's too, silently."""
+    import agents.model_groups as mg
+    from agents.config import ASSISTANT_MEMORY_FILTER_UUID, ROUTER_UUID
     from memory import seed_memory as qkb
     from memory.seed_memory import Match
 
@@ -936,20 +936,19 @@ def test_recall_filter_ignores_the_query_filter_routers_model_group(app_ctx, mon
     monkeypatch.setattr(qkb, "_hybrid_seed_ranked", lambda q, vs, **_: [
         Match(qa_id="qa-1", method="semantic", score=0.8, matched_question="q")])
 
-    router_member, default_member = uuid4(), uuid4()
-    router_group, default_group = uuid4(), uuid4()
+    other_member, default_member = uuid4(), uuid4()
+    other_group, default_group = uuid4(), uuid4()
 
     def binding_for(agent_uuid):
         if agent_uuid == ASSISTANT_MEMORY_FILTER_UUID:
             return None   # no dedicated scorer bound
-        group = (router_group if agent_uuid == QUERY_FILTER_ROUTER_UUID
-                 else default_group)
+        group = (other_group if agent_uuid == ROUTER_UUID else default_group)
         return type("B", (), {"model_group_uuid": group})()
 
     monkeypatch.setattr(db, "get_agent_model_binding", binding_for)
     monkeypatch.setattr(
         db, "get_model_group_member_uuids",
-        lambda group_uuid: ([router_member] if group_uuid == router_group
+        lambda group_uuid: ([other_member] if group_uuid == other_group
                             else [default_member]))
     seen_members = []
 
@@ -958,14 +957,14 @@ def test_recall_filter_ignores_the_query_filter_routers_model_group(app_ctx, mon
         seen_members.extend(model_uuids)
         return (response_model(reasoning="scores calibrated on the message", items=[_score("qa-1", direct=5)]), model_uuids[0])
 
-    monkeypatch.setattr(qfr, "structured_llm_call", fake_call)
+    monkeypatch.setattr(mg, "structured_llm_call", fake_call)
     obs = _action_query_memory(_ctx(), {"query": "q"})
-    assert seen_members == [default_member]   # not the router's group
+    assert seen_members == [default_member]   # not the other agent's group
     assert obs.data["recall_filter"]["group_from"] == "assistant.default"
 
 
 def test_recall_filter_falls_back_to_the_assistant_default(app_ctx, monkeypatch):
-    import agents.query_filter_router as qfr
+    import agents.model_groups as mg
     from agents.config import ASSISTANT_DEFAULT_UUID
     from memory import seed_memory as qkb
     from memory.seed_memory import Match
@@ -986,7 +985,7 @@ def test_recall_filter_falls_back_to_the_assistant_default(app_ctx, monkeypatch)
 
     monkeypatch.setattr(db, "get_agent_model_binding", binding_for)
     monkeypatch.setattr(db, "get_model_group_member_uuids", lambda g: [uuid4()])
-    monkeypatch.setattr(qfr, "structured_llm_call", lambda *a, **k: (
+    monkeypatch.setattr(mg, "structured_llm_call", lambda *a, **k: (
         a[4](reasoning="fallback test", items=[_score("qa-1", direct=5)]), a[1][0]))
     # assistant.memory_filter is unbound above, so the default answers.
     obs = _action_query_memory(_ctx(), {"query": "q"})
@@ -997,7 +996,7 @@ def test_recall_filter_falls_back_to_the_assistant_default(app_ctx, monkeypatch)
 def test_filter_prompt_asks_for_scores_not_decisions():
     """The filter LLM scores every candidate on three Likert scales; the
     keep/drop decision is code (apply_filter_scores), not the prompt."""
-    from agents.query_filter_router import FILTER_SYSTEM_PROMPT
+    from agents.recall_filter import FILTER_SYSTEM_PROMPT
     p = FILTER_SYSTEM_PROMPT.lower()
     assert "likert" in p
     assert "score every" in p.replace("\n", " ")
@@ -1008,7 +1007,7 @@ def test_filter_prompt_asks_for_scores_not_decisions():
 def test_query_memory_recall_filter_falls_back_when_llm_fails(app_ctx, monkeypatch):
     """A dead filter LLM must degrade to the MIN_SCORE-gated retrieval, not to
     an empty seed block."""
-    import agents.query_filter_router as qfr
+    import agents.model_groups as mg
     from memory import seed_memory as qkb
     from memory.seed_memory import Match, SeedMemory
 
@@ -1020,7 +1019,7 @@ def test_query_memory_recall_filter_falls_back_when_llm_fails(app_ctx, monkeypat
     def boom(*_a, **_k):
         raise RuntimeError("all models in the group failed")
 
-    monkeypatch.setattr(qfr, "structured_llm_call", boom)
+    monkeypatch.setattr(mg, "structured_llm_call", boom)
     monkeypatch.setattr(qkb, "retrieve_seed_answers", lambda q, *, qctx: [
         SeedMemory(uuid="gated-1", path="p", source="upstream",
                    answer="gated fallback fact", score=0.7)])
@@ -1323,7 +1322,7 @@ def test_recall_filter_lands_as_its_own_step_row(room, monkeypatch):
     the response nor a model to click."""
     from memory import seed_memory as qkb
     from memory.seed_memory import Match
-    from agents.query_filter_router import FilterDecision
+    from agents.recall_filter import FilterDecision
 
     room_uuid, message_uuid = room
     _stub_seed_kb(monkeypatch, qkb)
@@ -1919,7 +1918,7 @@ def test_likert_scores_are_integers():
     """
     import json
 
-    from agents.query_filter_router import FilterScore
+    from agents.recall_filter import FilterScore
 
     schema = FilterScore.model_json_schema()["properties"]
     for scale in ("direct", "indirect", "relevancy"):
@@ -1937,7 +1936,7 @@ def test_the_scoring_prompts_ask_for_unquoted_numbers():
     """Models copy the shape a prompt shows them. A prompt writing "1".."5"
     nudges toward quoted values, which the integer schema rejects."""
     from agents.assistant import RECALL_FILTER_TURN_INSTRUCTIONS
-    from agents.query_filter_router import FILTER_SYSTEM_PROMPT
+    from agents.recall_filter import FILTER_SYSTEM_PROMPT
 
     # Both scoring prompts: the standalone filter and the assistant's nested
     # recall filter carry the same scale prose and must not drift apart.
@@ -1962,7 +1961,8 @@ def test_query_memory_reranker_backend_scores_without_an_llm(app_ctx, monkeypatc
     """With a reranker backend the recall filter makes no model call at all:
     no group is resolved, the cross-encoder sidecar scores the same candidate
     list, and the trace says which model did it and how long it took."""
-    import agents.query_filter_router as qfr
+    import agents.model_groups as mg
+    import agents.recall_filter as rf
     import agents.recall_reranker as rr
     from memory import seed_memory as qkb
     from memory.seed_memory import Match
@@ -1978,13 +1978,13 @@ def test_query_memory_reranker_backend_scores_without_an_llm(app_ctx, monkeypatc
         Match(qa_id=f"qa-{i}", method="semantic", score=0.8,
               matched_question=f"question {i}")
         for i in range(1, 6)])
-    # The candidate rows are built in query_filter_router, which bound
+    # The candidate rows are built in agents.recall_filter, which bound
     # get_entry at import; without this the rows carry no answer and the
     # document text under test would be half of what it is in a real run.
-    monkeypatch.setattr(qfr, "get_entry", qkb.get_entry)
+    monkeypatch.setattr(rf, "get_entry", qkb.get_entry)
     # No model group is bound anywhere: the reranker path must not need one.
     monkeypatch.setattr(db, "get_agent_model_binding", lambda agent_uuid: None)
-    monkeypatch.setattr(qfr, "structured_llm_call", _no_llm)
+    monkeypatch.setattr(mg, "structured_llm_call", _no_llm)
 
     seen = {}
 
@@ -2031,7 +2031,7 @@ def test_query_memory_reranker_trace_says_where_a_long_candidate_was_cut(
     """A pair over the service's max_length is cut at the tokenizer. A fact
     that scored low because half of it was dropped has to be tellable apart
     from a fact that scored low."""
-    import agents.query_filter_router as qfr
+    import agents.recall_filter as rf
     import agents.recall_reranker as rr
     from memory import seed_memory as qkb
     from memory.seed_memory import Match
@@ -2044,7 +2044,7 @@ def test_query_memory_reranker_trace_says_where_a_long_candidate_was_cut(
     })
     monkeypatch.setattr(qkb, "_hybrid_seed_ranked", lambda q, vs, **_: [
         Match(qa_id="qa-1", method="semantic", score=0.8, matched_question="q")])
-    monkeypatch.setattr(qfr, "get_entry", qkb.get_entry)
+    monkeypatch.setattr(rf, "get_entry", qkb.get_entry)
     monkeypatch.setattr(db, "get_agent_model_binding", lambda agent_uuid: None)
     monkeypatch.setattr(rr, "rerank", lambda *a, **k: rr.RerankResult(
         scores={"qa-1": 0.4}, service_ms=12, max_length=512,

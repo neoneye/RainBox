@@ -177,7 +177,7 @@ def apply_rerank_scores(
 ) -> list:
     """Reranker scores → the same `ScoredCandidate` rows the LLM path produces.
 
-    Policy, mirroring the LLM filter's shape (agents/query_filter_router.
+    Policy, mirroring the LLM filter's shape (agents/recall_filter.
     apply_filter_scores) with the constants above: fewer than `top_k`
     candidates is no competition, so all are kept; on a full list the top
     RERANK_KEEP_TOP_N by score are kept on rank, any candidate within
@@ -189,7 +189,7 @@ def apply_rerank_scores(
     trace that no model produced. The number it did produce rides along as
     `rerank_score`. A candidate the service omitted scores 0.0 and is dropped
     (kept only when the whole list is). Returns every candidate, best-first."""
-    from agents.query_filter_router import ScoredCandidate
+    from agents.recall_filter import ScoredCandidate
 
     keep_all = len(candidates) < top_k
     ranked = sorted(candidates, key=lambda c: -scores.get(c.qa_id, 0.0))

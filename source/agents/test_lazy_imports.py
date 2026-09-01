@@ -35,7 +35,7 @@ def test_resolve_agent_class_loads_only_the_selected_agent():
          "cls = resolve_agent_class('assistant'); "
          "import sys; print(cls.__name__); "
          "print(any(m.startswith('llama_index') for m in sys.modules)); "
-         "print('agents.query_filter_router' in sys.modules)"],
+         "print('agents.chat_structured' in sys.modules)"],
         capture_output=True, text=True, cwd=SOURCE_DIR,
     )
     assert out.returncode == 0, out.stderr

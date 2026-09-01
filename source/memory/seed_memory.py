@@ -1,11 +1,12 @@
-"""Shared KB / vector-store / match plumbing used by `agents/query.py` and
-`agents/query_filter_router.py`. Extracted to avoid `agents/query_filter_router`
-importing underscore-prefixed names across module boundaries (the prior
-pattern).
+"""The seed knowledge base: its JSONL sources, its in-memory registry, its
+pgvector table, and the matching over both.
 
-The names retain their leading underscores from the original `agents/query.py`
-because the existing call sites already use them with that convention. Both
-caller modules import them explicitly — that's the public API of this module.
+Callers are the assistant's `memory_query` action, `agents/recall_filter.py`,
+/memory/developer and the /settings repopulate buttons.
+
+Many names here keep a leading underscore for historical reasons and are
+imported explicitly by those callers anyway — the underscore marks "internal
+to the seed KB", not "do not import".
 """
 
 import hashlib

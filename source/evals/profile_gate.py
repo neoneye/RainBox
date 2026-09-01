@@ -333,7 +333,7 @@ def evaluate_gate(
     # else assistant.default. That is the call this eval's prompt changes, so it
     # is the one a gate verdict has to describe.
     from agents.config import ASSISTANT_DECIDE_UUID
-    from agents.query_filter_router import resolve_assistant_model_group
+    from agents.model_groups import resolve_assistant_model_group
 
     decide_group, _slot = resolve_assistant_model_group(ASSISTANT_DECIDE_UUID)
     bound_group = str(decide_group) if decide_group else None

@@ -2,7 +2,7 @@
 
 Schema and validator tests are pure functions — no database or model server
 needed. The integration test (added in a later task) follows the
-test_agent_followup.py convention: skip if no model group is bound.
+convention: skip if no model group is bound.
 
     python -m pytest test_agent_edit_document_v1.py -v
 """

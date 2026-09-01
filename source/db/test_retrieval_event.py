@@ -42,7 +42,7 @@ def test_record_retrieval_event_writes_a_row(app_ctx, fresh_tag):
             room_uuid=uuid4(),
             agent_uuid=uuid4(),
             journal_id=uuid4(),
-            source="query_filter_router",
+            source="memory.hybrid",
             retrieval_rank=0,
             retrieval_score=0.87,
             filter_label=None,
@@ -70,7 +70,7 @@ def test_record_retrieval_event_accepts_all_five_stages(app_ctx, fresh_tag):
                 target_type="qa_entry",
                 target_id=f"{fresh_tag}.{stage}",
                 stage=stage,
-                source="query_filter_router",
+                source="memory.hybrid",
             )
         rows = db.session.query(RetrievalEvent).filter(
             RetrievalEvent.target_id.like(f"{fresh_tag}%")
@@ -91,7 +91,7 @@ def test_record_retrieval_event_rejects_unknown_stage(app_ctx, fresh_tag):
                 target_type="qa_entry",
                 target_id=f"{fresh_tag}.bogus",
                 stage="not_a_real_stage",
-                source="query_filter_router",
+                source="memory.hybrid",
             )
         db.session.rollback()
     finally:
@@ -108,7 +108,7 @@ def test_record_retrieval_event_rejects_unknown_target_type(
                 target_type="bogus_target",
                 target_id=f"{fresh_tag}.x",
                 stage="retrieved",
-                source="query_filter_router",
+                source="memory.hybrid",
             )
         db.session.rollback()
     finally:

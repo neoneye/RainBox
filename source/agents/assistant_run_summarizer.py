@@ -188,7 +188,7 @@ class AssistantRunSummarizerAgent(StructuredLLMAgent):
         be applied here instead of at a call site — otherwise this would be the
         single call an operator had to bind by hand after setting the default.
         """
-        from agents.query_filter_router import resolve_assistant_model_group
+        from agents.model_groups import resolve_assistant_model_group
 
         group_uuid, _label = resolve_assistant_model_group(self.agent_uuid)
         self.model_group_uuid = group_uuid

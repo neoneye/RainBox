@@ -1,9 +1,8 @@
 /* /memory/developer page logic.
  *
  * One action: POST the typed query to /memory/api/developer/query and render
- * the two pipeline results side by side (assistant memory_query on the left,
- * query_filter_router stage-by-stage on the right). The last query is kept in
- * localStorage so a page reload doesn't lose it.
+ * what the assistant's memory_query returned for it. The last query is kept
+ * in localStorage so a page reload doesn't lose it.
  */
 
 const MEMDEV_QUERY_KEY = 'memoryDeveloper.lastQuery';
@@ -91,61 +90,12 @@ function memdevRenderModels(m) {
     ' <span class="muted">(claims)</span>';
   return '<table class="memdev-table"><tbody>' +
     '<tr><th>embedding</th><td>' + emb + '</td></tr>' +
-    '<tr><th>filter scorer (assistant panel)</th><td>' +
+    '<tr><th>filter scorer</th><td>' +
       memdevMemberList(m.filter_assistant_panel) + '</td></tr>' +
-    '<tr><th>filter scorer (router panel)</th><td>' +
-      memdevMemberList(m.filter_router_panel) + '</td></tr>' +
-    '<tr><th>route reply</th><td>' + memdevMemberList(m.route) + '</td></tr>' +
     '</tbody></table>';
 }
 
-// --- left panel: assistant memory_query ------------------------------------
-function memdevRenderAssistant(a) {
-  const parts = [];
-  const badges = [memdevBadge(a.elapsed_ms + ' ms')];
-  if (a.error) {
-    badges.push(memdevBadge('error', 'bad'));
-  } else {
-    badges.push(memdevBadge(a.ok ? 'ok' : 'not ok', a.ok ? 'good' : 'bad'));
-  }
-  const d = a.data || {};
-  if (d.qa_static != null) badges.push(memdevBadge('seed static: ' + d.qa_static));
-  if (d.qa_dynamic != null) badges.push(memdevBadge('seed dynamic: ' + d.qa_dynamic));
-  if (d.memory != null) badges.push(memdevBadge('claims: ' + d.memory));
-  if (d.truncated) badges.push(memdevBadge('truncated: ' + d.truncated, 'warn'));
-  if (d.omitted) badges.push(memdevBadge('omitted: ' + d.omitted, 'warn'));
-  const sf = d.recall_filter || {};
-  if (sf.mode) {
-    // group_from: whose binding supplied the scorer group — 'memory_filter'
-    // (dedicated), 'query_filter_router' (shared default) or 'own' (fallback).
-    let label = 'memory filter: ' + sf.mode;
-    if (sf.reason) label += ' (' + sf.reason + ')';
-    if (sf.group_from) label += ' · ' + sf.group_from + ' group';
-    badges.push(memdevBadge(label, sf.mode === 'llm' ? 'good' : 'warn'));
-  }
-  if (sf.scorer_model) badges.push(memdevBadge('scored by: ' + sf.scorer_model));
-  parts.push('<div class="memdev-meta">' + badges.join('') + '</div>');
-  if (a.error) {
-    parts.push(memdevSection('error', '<div class="err">' + memdevEscape(a.error) + '</div>'));
-  }
-  if ((sf.candidates || []).length) {
-    const keptIds = sf.candidates.filter(c => c.kept).map(c => c.qa_id);
-    parts.push(memdevSection('recalled candidates + LLM filter',
-      memdevCandidateTable(sf.candidates, keptIds)));
-  }
-  if (sf.reasoning) {
-    parts.push(memdevSection('filter reasoning (written before scoring)',
-      memdevPre(sf.reasoning)));
-  }
-  if (a.text) {
-    parts.push(memdevSection('observation text (what the assistant model sees)', memdevPre(a.text)));
-  } else if (!a.error) {
-    parts.push('<p class="memdev-empty">Empty response.</p>');
-  }
-  return parts.join('');
-}
-
-// --- right panel: query_filter_router --------------------------------------
+// --- assistant memory_query ------------------------------------------------
 function memdevCandidateTable(candidates, keptIds) {
   if (!candidates.length) {
     return '<p class="memdev-empty">No semantic candidates.</p>';
@@ -180,64 +130,47 @@ function memdevCandidateTable(candidates, keptIds) {
     '</tr></thead><tbody>' + rows.join('') + '</tbody></table>';
 }
 
-function memdevRenderRouter(r) {
+function memdevRenderAssistant(a) {
   const parts = [];
-  const badges = [memdevBadge(r.elapsed_ms + ' ms')];
-  if (r.error) badges.push(memdevBadge('error', 'bad'));
-  if (r.memory_command) badges.push(memdevBadge('memory command: ' + r.memory_command, 'warn'));
-  if (r.exact) badges.push(memdevBadge('exact match', 'good'));
-  if (r.filter_group) badges.push(memdevBadge('filter: ' + r.filter_group + ' group'));
-  if (r.filter_model) badges.push(memdevBadge('scored by: ' + r.filter_model));
+  const badges = [memdevBadge(a.elapsed_ms + ' ms')];
+  if (a.error) {
+    badges.push(memdevBadge('error', 'bad'));
+  } else {
+    badges.push(memdevBadge(a.ok ? 'ok' : 'not ok', a.ok ? 'good' : 'bad'));
+  }
+  const d = a.data || {};
+  if (d.qa_static != null) badges.push(memdevBadge('seed static: ' + d.qa_static));
+  if (d.qa_dynamic != null) badges.push(memdevBadge('seed dynamic: ' + d.qa_dynamic));
+  if (d.memory != null) badges.push(memdevBadge('claims: ' + d.memory));
+  if (d.truncated) badges.push(memdevBadge('truncated: ' + d.truncated, 'warn'));
+  if (d.omitted) badges.push(memdevBadge('omitted: ' + d.omitted, 'warn'));
+  const sf = d.recall_filter || {};
+  if (sf.mode) {
+    // group_from: whose binding supplied the scorer group — 'memory_filter'
+    // (dedicated) or 'assistant.default' (the fallback link).
+    let label = 'memory filter: ' + sf.mode;
+    if (sf.reason) label += ' (' + sf.reason + ')';
+    if (sf.group_from) label += ' · ' + sf.group_from + ' group';
+    badges.push(memdevBadge(label, sf.mode === 'llm' ? 'good' : 'warn'));
+  }
+  if (sf.scorer_model) badges.push(memdevBadge('scored by: ' + sf.scorer_model));
   parts.push('<div class="memdev-meta">' + badges.join('') + '</div>');
-
-  if (r.error) {
-    parts.push(memdevSection('error', '<div class="err">' + memdevEscape(r.error) + '</div>'));
-    return parts.join('');
+  if (a.error) {
+    parts.push(memdevSection('error', '<div class="err">' + memdevEscape(a.error) + '</div>'));
   }
-  if (r.memory_command) {
-    parts.push('<p class="muted">In a chatroom this query would run as the ' +
-      '<code>' + memdevEscape(r.memory_command) + '</code> memory command and never ' +
-      'reach retrieval. The stages below show what retrieval would have surfaced.</p>');
+  if ((sf.candidates || []).length) {
+    const keptIds = sf.candidates.filter(c => c.kept).map(c => c.qa_id);
+    parts.push(memdevSection('recalled candidates + LLM filter',
+      memdevCandidateTable(sf.candidates, keptIds)));
   }
-  if (r.exact) {
-    parts.push(memdevSection('1 · exact alias match (no LLM stages run)',
-      '<table class="memdev-table"><tbody>' +
-      '<tr><th>qa_id</th><td><code>' + memdevEscape(r.exact.qa_id) + '</code></td></tr>' +
-      '<tr><th>score</th><td>' + memdevEscape(r.exact.score) + '</td></tr>' +
-      '<tr><th>matched</th><td>' + memdevEscape(r.exact.matched_question || '') + '</td></tr>' +
-      '</tbody></table>'));
-    parts.push(memdevSection('reply', memdevPre(r.exact.reply || '')));
-    return parts.join('');
-  }
-
-  parts.push(memdevSection('1 · semantic candidates + 2 · LLM filter',
-    memdevCandidateTable(r.candidates || [], r.filter_kept || [])));
-  if (r.filter_reasoning) {
+  if (sf.reasoning) {
     parts.push(memdevSection('filter reasoning (written before scoring)',
-      memdevPre(r.filter_reasoning)));
+      memdevPre(sf.reasoning)));
   }
-  if (r.filter_error) {
-    parts.push(memdevSection('filter error', '<div class="err">' + memdevEscape(r.filter_error) + '</div>'));
-  }
-
-  const resolvedIds = Object.keys(r.resolved || {});
-  if (resolvedIds.length) {
-    const body = resolvedIds.map(id =>
-      '<div class="memdev-section-label"><code>' + memdevEscape(id) + '</code></div>' +
-      memdevPre(r.resolved[id])).join('');
-    parts.push(memdevSection('3 · resolved replies for kept candidates', body));
-  }
-
-  if (r.route) {
-    parts.push(memdevSection('4 · route LLM (synthetic one-message transcript)',
-      '<table class="memdev-table"><tbody>' +
-      '<tr><th>subject</th><td>' + memdevEscape(r.route.subject || '') + '</td></tr>' +
-      '<tr><th>action</th><td>' + memdevEscape(r.route.action || '') + '</td></tr>' +
-      (r.route.model ? '<tr><th>model</th><td>' + memdevEscape(r.route.model) + '</td></tr>' : '') +
-      '</tbody></table>'));
-    parts.push(memdevSection('reply', memdevPre(r.route.reply || '')));
-  } else if (r.route_error) {
-    parts.push(memdevSection('route error', '<div class="err">' + memdevEscape(r.route_error) + '</div>'));
+  if (a.text) {
+    parts.push(memdevSection('observation text (what the assistant model sees)', memdevPre(a.text)));
+  } else if (!a.error) {
+    parts.push('<p class="memdev-empty">Empty response.</p>');
   }
   return parts.join('');
 }
@@ -247,7 +180,6 @@ async function memdevRun() {
   const input = document.getElementById('memdev-query');
   const button = document.getElementById('memdev-run');
   const assistantOut = document.getElementById('memdev-assistant-out');
-  const routerOut = document.getElementById('memdev-router-out');
   const query = input.value.trim();
   if (!query) { input.focus(); return; }
   const topKVector = memdevBudget('memdev-topk-vector');
@@ -262,7 +194,6 @@ async function memdevRun() {
   button.disabled = true;
   button.textContent = 'Running…';
   assistantOut.innerHTML = '<p class="memdev-empty">Running…</p>';
-  routerOut.innerHTML = '<p class="memdev-empty">Running… (two LLM calls; can take a while)</p>';
   try {
     const resp = await fetch('/memory/api/developer/query', {
       method: 'POST',
@@ -273,9 +204,8 @@ async function memdevRun() {
     });
     const data = await resp.json();
     if (!resp.ok) {
-      const msg = '<div class="err">' + memdevEscape(data.error || ('HTTP ' + resp.status)) + '</div>';
-      assistantOut.innerHTML = msg;
-      routerOut.innerHTML = msg;
+      assistantOut.innerHTML =
+        '<div class="err">' + memdevEscape(data.error || ('HTTP ' + resp.status)) + '</div>';
       return;
     }
     const modelsWrap = document.getElementById('memdev-models');
@@ -283,11 +213,8 @@ async function memdevRun() {
     document.getElementById('memdev-models-out').innerHTML =
       memdevRenderModels(data.models);
     assistantOut.innerHTML = memdevRenderAssistant(data.assistant || {});
-    routerOut.innerHTML = memdevRenderRouter(data.filter_router || {});
   } catch (e) {
-    const msg = '<div class="err">' + memdevEscape(String(e)) + '</div>';
-    assistantOut.innerHTML = msg;
-    routerOut.innerHTML = msg;
+    assistantOut.innerHTML = '<div class="err">' + memdevEscape(String(e)) + '</div>';
   } finally {
     button.disabled = false;
     button.textContent = 'Run';

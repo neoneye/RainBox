@@ -92,7 +92,7 @@ def _eval_agent(model_group_uuid: UUID | None) -> AssistantAgent:
     that let one call resolve to a different slot than another would be
     measuring the slots, not the prompt."""
     from agents.config import ASSISTANT_DECIDE_UUID
-    from agents.query_filter_router import resolve_assistant_model_group
+    from agents.model_groups import resolve_assistant_model_group
 
     agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant-eval",
                            send=lambda _: None)

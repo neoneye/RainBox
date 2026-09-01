@@ -7,7 +7,7 @@ string in the auditor's prompt, so it cannot be audited before it exists.
 
 Deterministic: the decide seam is scripted (`scripted_decisions`) and the
 audit seam is either monkeypatched at the agent method (loop tests) or
-exercised for real with `agents.query_filter_router.structured_llm_call`
+exercised for real with `agents.query_filter_mg.structured_llm_call`
 monkeypatched (unit tests).
 """
 
@@ -192,7 +192,7 @@ def audit_call(monkeypatch):
     Yields a dict: set `["verdict"]` to the ReplyAudit the model returns, or
     `["raise"]` to make the call fail. `["prompts"]` records what was sent.
     """
-    import agents.query_filter_router as router
+    import agents.model_groups as mg
 
     box: dict = {"verdict": None, "raise": None, "prompts": []}
 
@@ -203,8 +203,8 @@ def audit_call(monkeypatch):
             raise box["raise"]
         return box["verdict"], uuid4()
 
-    monkeypatch.setattr(router, "structured_llm_call", fake_structured_llm_call)
-    monkeypatch.setattr(router, "resolve_assistant_model_uuids",
+    monkeypatch.setattr(mg, "structured_llm_call", fake_structured_llm_call)
+    monkeypatch.setattr(mg, "resolve_assistant_model_uuids",
                         lambda _slot: ([uuid4()], "assistant.reply_audit"))
     return box
 
@@ -243,10 +243,10 @@ def test_the_audit_fails_open_when_the_call_raises(app_ctx, audit_call):
 
 def test_the_audit_fails_open_when_no_model_group_is_bound(
         app_ctx, monkeypatch):
-    import agents.query_filter_router as router
+    import agents.model_groups as mg
 
     monkeypatch.setattr(
-        router, "resolve_assistant_model_uuids", lambda _slot: (None, None))
+        mg, "resolve_assistant_model_uuids", lambda _slot: (None, None))
     ok, payload = _agent()._reply_audit(
         _reply("12 feet is 3.6576 meters."), messages=[], scratchpad=[])
     assert ok is True
