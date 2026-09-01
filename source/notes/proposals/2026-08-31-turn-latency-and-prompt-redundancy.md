@@ -2,7 +2,8 @@
 
 **Status:** Proposal. One part of it — rendering `formatting_guide` as a bare
 tag so every call of the turn spells it the same way — is already the current
-state; the rest is unbuilt.
+state. Finding 1's fix is a one-line environment change that has been measured
+on a scratch server but not yet applied to the live one. The rest is unbuilt.
 **Date:** 2026-08-31
 **Related:** `2026-07-23-reply-acceptance-criteria.md` (why the criteria call
 exists), `2026-08-17-gating-the-response-language-classifier.md` (the same
@@ -34,7 +35,7 @@ wall-clock, and **49s of that is prefill**.
   settings that the very next call prefills again from scratch.
 - 4.4s emitting 211 tokens, most of which restate deterministic data.
 
-## Finding 1 — a shared head is worth nothing; only a whole prefix counts
+## Finding 1 — the cache break is a 1536-token window, and there is a flag for it
 
 `/activity` reports two numbers per call: **reusable** (how much of the
 prompt's leading text rainbox had already sent — exact, from the prefix-hash
@@ -54,7 +55,7 @@ Past 24 hours, `gemma4:e4b`, 24 calls:
 decide had 6648 reusable tokens and reused none. The two calls run back to
 back, seconds apart, on the same model.
 
-### It is not configuration
+### It is not the configuration it looks like
 
 `llama-server` is launched with `-c 102400 -np 1 --context-shift --keep 4`:
 one slot, so request parallelism is not involved. `OLLAMA_NUM_PARALLEL` is
@@ -83,8 +84,26 @@ erased invalidated context checkpoint (... n_swa = 512 ...)
 
 It **found** the 7371-token shared prefix and threw it away. `gemma4` is a
 sliding-window-attention model, and llama.cpp cannot resume from a divergence
-point deep inside a cached sequence: the window states for those positions are
-gone, and the context checkpoints it keeps did not cover the reuse point.
+point deep inside a cached sequence.
+
+### The number that explains it
+
+At load, llama.cpp splits the cache in two:
+
+```
+llama_kv_cache_iswa: creating non-SWA KV cache, size = 102400 cells
+llama_kv_cache: size = 1600.00 MiB (102400 cells,  4 layers), K/V f16
+llama_kv_cache_iswa: creating     SWA KV cache, size =   1536 cells
+llama_kv_cache: size =   60.00 MiB (  1536 cells, 20 layers), K/V f16
+```
+
+Four layers keep the full 102400-cell history. The other twenty keep a
+**1536-cell sliding window**. Reuse therefore requires the divergence point to
+sit within ~1536 tokens of the end of the cached sequence; past that the
+window states for those positions have been overwritten and the whole prompt
+is re-processed. criteria -> decide diverges at 6859 while the cache runs to
+8898 — 2039 tokens back, just outside the window. That one number decides
+every case below.
 
 ### The measured rule
 
@@ -96,34 +115,94 @@ nothing had cached:
 | identical repeat | 13650 | 0 | 24ms | total |
 | extension — same prompt plus a tail | 12295 | 3140 | 5.3s (cold would be 17.5s) | head reused |
 | fork — shared head, diverging at 45% | 12298 | 3143 | 18.0s at 684 tok/s | **none** |
-| the real criteria → decide pair | 13650 | ~6.3k | 20.9s at 652 tok/s | **none** |
+| the real criteria -> decide pair | 13650 | ~6.3k | 20.9s at 652 tok/s | **none** |
 
-**An earlier call's prompt must be a complete prefix of the later one.**
-Sharing a head and then diverging is worth exactly zero on this stack — the
-same price as sharing nothing. In the log, 135 requests were forced into full
-re-processing, spread evenly across every prompt size the assistant produces.
+**Divergence must land inside the sliding window.** An extension always does
+(it diverges at the end); a fork 2000+ tokens back never does, and then a
+shared head is worth exactly what sharing nothing is worth. In the log, 135
+requests were forced into full re-processing, spread evenly across every
+prompt size the assistant produces.
 
-### What that costs, and what it does not
+### The fix: a full-size SWA cache
 
-The ~20s per turn is real, but it is **not** recoverable by making the prompts
-share more. Every call of the turn ends with its own `turn_instructions` and
-its own request anchor, so every pair of calls is a fork by construction, and
-no amount of block-order nesting changes that. The nesting in
-`_ALL_STATIC_BLOCKS` is still worth keeping — it is necessary, it costs
-nothing, and it pays in full on a non-SWA model — but on this model it is
-currently inert.
+`--swa-full` makes llama.cpp keep the whole window, restoring reuse from any
+position. Measured on the llama-server ollama itself ships, run on a spare
+port so the live server was untouched. `prompt_n` is tokens actually
+processed:
+
+| call | default | `--swa-full` |
+|---|---|---|
+| cold baseline | 8620 processed, 11.8s | 8620, 12.1s |
+| extension | 2860, 4.6s | 2857, 4.6s |
+| **fork at 45%** | **11483 processed (all of it), 16.3s** | **7612 processed, 11.4s** |
+
+With the flag the fork reused every token up to the divergence point — 11483
+minus 7612 is 3871, exactly the shared head — and cost nothing on the other
+shapes. Applied to the measured turn: decide would process ~6.8k tokens
+instead of 13.6k (21.8s -> ~11s) and reply_audit ~2.3k instead of 9.5k (14.6s
+-> ~4s). **About 20s off an 83s turn, with no prompt change at all.**
+
+The cost is memory: the SWA cache grows from 1536 cells to the full context,
+roughly 60 MiB x (102400/1536) ~ 4 GiB at `num_ctx=100k`. This machine is an
+M1 Max with 64 GiB, Metal reporting 47.5 GiB available, against 1.66 GiB of KV
+cache today. Affordable here; it would not be on a small Mac.
+
+### Reaching it through ollama
+
+Ollama never passes `--swa-full` and has no setting for it, but the flag
+carries an environment variable — `LLAMA_ARG_SWA_FULL` — and ollama documents
+passing `LLAMA_ARG_*` through to llama-server (`LLAMA_ARG_FIT`,
+`LLAMA_ARG_FIT_TARGET` appear in `ollama serve --help`). The binary honors it:
+started with `LLAMA_ARG_SWA_FULL=1` it logs `llama_kv_cache_iswa: using
+full-size SWA cache`.
+
+What is **not** yet verified is that ollama's spawned subprocess inherits it.
+One restart settles that:
+
+```
+launchctl setenv LLAMA_ARG_SWA_FULL 1
+```
+
+then quit and reopen Ollama and check `~/.ollama/logs/server.log`: `using
+full-size SWA cache` means it worked, `SWA KV cache, size = 1536 cells` means
+the variable never reached the subprocess. If it does not, the fallback is
+running llama-server directly with the flag and pointing a provider at its
+OpenAI-compatible endpoint — `providers/` already carries three
+OpenAI-compatible providers to model one on.
+
+### What it costs while the flag is off
+
+Every call of the turn ends with its own `turn_instructions` and its own
+request anchor, so every pair of calls is a fork by construction, and no
+amount of block-order nesting changes that. The nesting in
+`_ALL_STATIC_BLOCKS` is still right — it makes the divergence point as late as
+possible — but until the window covers that point it pays nothing.
 
 Consecutive decide steps within a turn are the one pair that is nearly an
 extension: the scratchpad grows append-only and only the tail moves. That is
 where the 6.2% decide hit rate comes from.
 
-Two levers would restore mid-prompt reuse, and neither is a prompt change:
+### Knobs that look relevant and are not
 
-- **`--swa-full`** — llama.cpp keeps the whole SWA cache, trading memory for
-  arbitrary-position reuse. Ollama 0.32.15 never passes it and exposes no
-  environment variable for it, so it is not reachable from here today.
-- **a non-SWA model** on the assistant slots, which turns every one of these
-  findings from inert into cashable.
+On this machine, measured rather than assumed:
+
+- **`OLLAMA_FLASH_ATTENTION=1`** — already on. Ollama launches with
+  `--flash-attn auto` and the server logs `Flash Attention enabled`.
+- **`OLLAMA_NUM_PARALLEL=1`** — already the effective value; the launch line
+  carries `-np 1`. (The variable also still exists in 0.32.15, despite the
+  closed feature request arguing it should not be needed.)
+- **`OLLAMA_KV_CACHE_TYPE=q8_0`** — halves KV memory. KV is 1.66 GiB out of
+  47.5 GiB available here, so it buys ~830 MiB of a budget nothing is
+  competing for, while adding a quality risk to a 4B model doing structured
+  output. It does not touch the window size, which is the actual constraint.
+- **`OLLAMA_CONTEXT_LENGTH=8192`** — actively wrong for this workload: the
+  decide prompt is 13648 tokens. rainbox sends `num_ctx` per request anyway,
+  so the variable would mostly reach other callers and truncate them instead.
+
+The one general-advice item that does apply is **`keep_alive`**. The default
+is 5 minutes, and the criteria call in the measured run spent 6.8s on
+`llama-server started in 6.54 seconds` after an idle gap. A longer keep-alive
+trades ~10 GiB resident for removing that from the first turn of a session.
 
 ### `/activity` is measuring the wrong thing for this model
 
@@ -233,12 +312,17 @@ actually rely on (a request carrying only a pronoun takes its subject from the
 exchange before it). That takes the call from ~15s to ~4s.
 
 This was drafted as the proposal that fights the cache — criteria's full
-history was thought to warm decide behind it. Finding 1 removes the conflict:
-the pair is a fork, decide re-prefills from token 0 regardless, and criteria's
-history is pure cost with no downstream benefit. **On the current model this
-is the largest single saving in the note and it has no trade-off.** It becomes
-a trade again only if the assistant moves to a non-SWA model, where criteria
-really would prime the calls behind it.
+history was thought to warm decide behind it. Which of those is true now
+depends on the SWA flag, so measure before choosing:
+
+- **Flag off (today).** The pair is a fork, decide re-prefills from token 0
+  regardless, and criteria's history is pure cost with no downstream benefit.
+  No trade-off; the largest single saving in the note.
+- **Flag on.** criteria genuinely does prime decide — decide reuses everything
+  up to the divergence point — and trimming criteria's history moves that
+  point earlier, giving back part of what the flag just won. Then it is a real
+  trade between ~11s on criteria and some fraction of ~11s on decide, and it
+  wants measuring rather than deciding.
 
 ### D. Ask whether the call should exist on trivial turns
 
@@ -250,17 +334,15 @@ gives that up. Not proposed, only flagged.
 
 ## Order
 
-1. **C.** No trade-off while the model is SWA, and it is the biggest single
-   number: ~11s off every turn.
-2. **A**, gated behind the replay diff.
-3. **B**, which is nearly free once A has removed the third copy.
-4. **The `/activity` metric split**, so the page stops recommending a fix that
+1. **`LLAMA_ARG_SWA_FULL`.** Configuration, one restart, reversible, no code,
+   ~20s per turn, and it changes the economics of everything below it. Verify
+   from the server log that it reached the subprocess before believing it.
+2. **Re-measure**, then choose on **C** — its sign depends on step 1.
+3. **A**, gated behind the replay diff. Independent of the flag: fewer output
+   tokens and twenty fewer instruction lines either way.
+4. **B**, which is nearly free once A has removed the third copy.
+5. **The `/activity` metric split**, so the page stops recommending a fix that
    does not apply to this stack.
-
-Finding 1 is no longer first: there is no configuration to correct. What it
-leaves behind is a constraint the other proposals are now written against —
-prefill is paid in full on every call, so the only lever is sending fewer
-tokens.
 
 ## How to verify
 
