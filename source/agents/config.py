@@ -5,7 +5,6 @@ from uuid import UUID
 class AgentConfigEntry(TypedDict):
     uuid: UUID
     description: str
-    next: UUID | None
     # True for agents that drive tool/function calls (e.g. ToolDemoAgent). The
     # /agentmodel page only offers groups that require function calling to
     # these. Independent of requires_structured_output — a model may support
@@ -127,24 +126,20 @@ agent_config: dict[str, AgentConfigEntry] = {
         "uuid": CHAT_STRUCTURED_UUID,
         "requires_structured_output": True,
         "description": "reads a chatroom's history and decides whether to reply",
-        "next": None,
     },
     "chat_unstructured": {
         "uuid": CHAT_UNSTRUCTURED_UUID,
         "excludes_structured_output": True,
         "description": "plain-text sibling of chat: replies with one non-structured completion; needs a model group with 'structured output: must not have'",
-        "next": None,
     },
     "tool_demo": {
         "uuid": TOOL_DEMO_UUID,
         "description": "replies in a chatroom using a FunctionAgent with a multiply tool",
-        "next": None,
         "requires_function_calling": True,
     },
     "workspace_shell": {
         "uuid": WORKSPACE_SHELL_UUID,
         "description": "runs a chatroom's commands as non-shell argv (no LLM, no bash, workspace-confined)",
-        "next": None,
         "kanban_authority": "work",
         "kanban_verified": True,
     },
@@ -153,66 +148,55 @@ agent_config: dict[str, AgentConfigEntry] = {
         "requires_structured_output": True,
         "kanban_authority": "work",
         "description": "LLM kanban worker: claims one card, produces a text deliverable into the event trail via one structured call (status done/unclear/failed), completes into Review (unverified)",
-        "next": None,
     },
     "router": {
         "uuid": ROUTER_UUID,
         "requires_structured_output": True,
         "description": "triages a chat message via structured output: a subject summary + whether it needs an action (no LLM tools)",
-        "next": None,
     },
     "edit_document_v1": {
         "uuid": EDIT_DOCUMENT_V1_UUID,
         "requires_structured_output": True,
         "description": "given a document and an instruction, returns non-overlapping replace_lines patches in the journal result (does not apply them)",
-        "next": None,
     },
     "edit_document_v2": {
         "uuid": EDIT_DOCUMENT_V2_UUID,
         "requires_structured_output": True,
         "description": "planner sibling of edit_document that also returns a status (done/partial/unclear) and a required non-empty comment for the orchestrator",
-        "next": None,
     },
     "edit_document_v3": {
         "uuid": EDIT_DOCUMENT_V3_UUID,
         "requires_structured_output": True,
         "description": "third sibling of edit_document: LLM emits one of four high-level patch ops (replace_lines / insert_before / append_text / append_newline) that normalize internally to the v2 replace_lines form for validation and application",
-        "next": None,
     },
     "edit_document_v4": {
         "uuid": EDIT_DOCUMENT_V4_UUID,
         "requires_structured_output": True,
         "description": "fourth sibling of edit_document: same four high-level patch ops as v3, but renders the document with a 'logical line' view (trailing newline folded into EOF) and bakes EOF normalization into the returned patches",
-        "next": None,
     },
     "edit_document_v5": {
         "uuid": EDIT_DOCUMENT_V5_UUID,
         "requires_structured_output": True,
         "description": "fifth sibling of edit_document: duplicate of v4 reserved for further experimentation",
-        "next": None,
     },
     "edit_document_v6": {
         "uuid": EDIT_DOCUMENT_V6_UUID,
         "requires_structured_output": True,
         "description": "sixth sibling of edit_document: same two-op schema as v5 plus a leading `reasoning` field that asks the model to think out loud (10-20 words) before emitting patches",
-        "next": None,
     },
     "direct_chat": {
         "uuid": DIRECT_CHAT_UUID,
         "description": "one-to-one operator<->model chat for room_type='direct' rooms: full history as chat messages, one plain-text completion, model + system prompt from the room's own settings (no model group)",
-        "next": None,
     },
     "mcp": {
         "uuid": MCP_UUID,
         "description": "chat agent that runs a FunctionAgent with tools sourced from MCP servers (configured in mcp.json + the customize.dir overlay)",
-        "next": None,
         "requires_function_calling": True,
     },
     "assistant": {
         "uuid": ASSISTANT_UUID,
         "requires_structured_output": True,
         "description": "rainbox-owned ReAct loop: decides one bounded action per step via structured output, observes, and repeats until a terminal reply or the step cap. Its models come from the assistant.* slots below, not from a binding of its own (AssistantAgent.uses_model_group is False), so it has no row on /agentmodel.",
-        "next": None,
     },
     # The assistant's model slots, one per model call it makes. Each resolves
     # through `<slot> -> assistant.default`, so the default alone configures
@@ -227,55 +211,46 @@ agent_config: dict[str, AgentConfigEntry] = {
         "uuid": ASSISTANT_DEFAULT_UUID,
         "requires_structured_output": True,
         "description": "binding-only: the model every other assistant.* slot falls back to when it is unbound. With nothing but this bound, one group runs the whole assistant. Never receives journal work.",
-        "next": None,
     },
     "assistant.decide": {
         "uuid": ASSISTANT_DECIDE_UUID,
         "requires_structured_output": True,
         "description": "binding-only: the model that DECIDES each step of the ReAct loop — the assistant's hot path, called once per step (up to the step cap) where every other slot is called once. The slot to move first when a turn is too slow, and the one whose quality the turn's shape depends on.",
-        "next": None,
     },
     "assistant.acceptance_criteria": {
         "uuid": ASSISTANT_ACCEPTANCE_CRITERIA_UUID,
         "requires_structured_output": True,
         "description": "binding-only: the model that ESTABLISHES what a good reply must satisfy, before step 0, and revises it when the loop asks. Unbound or failing, the turn runs with no criteria section rather than failing.",
-        "next": None,
     },
     "assistant.request_summary": {
         "uuid": ASSISTANT_REQUEST_SUMMARY_UUID,
         "requires_structured_output": True,
         "description": "binding-only: the model that DESCRIBES a request too long to ride into the prompts whole. Runs only for an over-long request, and reads far more of it than any other call.",
-        "next": None,
     },
     "assistant.memory_filter": {
         "uuid": ASSISTANT_MEMORY_FILTER_UUID,
         "requires_structured_output": True,
         "description": "binding-only: the model that SCORES what memory_query recalled (Likert relevance filter), one call per memory_query. Narrow, repetitive work over candidate text.",
-        "next": None,
     },
     "assistant.second_opinion": {
         "uuid": ASSISTANT_SECOND_OPINION_UUID,
         "requires_structured_output": True,
         "description": "binding-only: the model that REVIEWS a gated assistant action (currently python_run) before it executes — checks the stated reason, the model's reasoning, and the program against the request and operator profile. Fails open: unbound or failing, the action runs.",
-        "next": None,
     },
     "assistant.reply_audit": {
         "uuid": ASSISTANT_REPLY_AUDIT_UUID,
         "requires_structured_output": True,
         "description": "binding-only: the model that AUDITS a finished reply message before it is sent — checks it against the request (every sub-question answered), the turn's constraints, the operator settings and the turn's observations, and returns it with problems when it is not sound. Fails open: unbound or failing, the message is sent.",
-        "next": None,
     },
     "assistant.response_language_classifier": {
         "uuid": ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID,
         "requires_structured_output": True,
         "description": "binding-only: narrow scorer that predicts which language(s) the assistant's next reply should use before step 0; records reason and per-language Likert confidence, then supplies later assistant calls with score-free ranked Markdown. Unbound, the run records a skipped step.",
-        "next": None,
     },
     "assistant.run_summarizer": {
         "uuid": ASSISTANT_RUN_SUMMARIZER_UUID,
         "requires_structured_output": True,
         "description": "summarizes a completed assistant run (trigger + obstacles + outcome) via one structured call; enqueued by the assistant at every terminal state. The one assistant.* slot that is also a real agent — it runs off the critical path, so a slow model here costs the operator nothing.",
-        "next": None,
     },
 }
 

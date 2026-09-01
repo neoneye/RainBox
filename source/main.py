@@ -174,20 +174,15 @@ def supervisor_loop(stop_event: threading.Event) -> None:
             for journal_row in db.fetch_unrouted_terminal():
                 found_work = True
                 src_role = uuid_to_role.get(journal_row["agent_uuid"])
-                # Dynamic return address (set by the conversation manager in the
-                # turn payload, copied to result["_routing"] by Agent.run) takes
-                # precedence over static `next`. Static `next` is success-only;
-                # a dynamic address also routes failed turns so a manager can
-                # recover. Model output never chooses a routing target.
+                # The return address a dispatcher wrote into the turn payload,
+                # copied to result["_routing"] by Agent.run. It routes FAILED
+                # turns as well as completed ones, so a manager that dispatched
+                # the work can recover from a failure rather than waiting on a
+                # row that will never come back. Model output never chooses a
+                # routing target — only the payload the dispatcher wrote does.
                 result = journal_row["result"] or {}
                 dynamic_next = (result.get("_routing") or {}).get("return_to_agent_uuid")
-                static_next = agent_config[src_role]["next"] if src_role else None
-                if dynamic_next:
-                    next_uuid = UUID(dynamic_next)
-                elif journal_row["state"] == "completed":
-                    next_uuid = static_next
-                else:
-                    next_uuid = None
+                next_uuid = UUID(dynamic_next) if dynamic_next else None
                 if next_uuid is not None:
                     next_role = uuid_to_role.get(next_uuid, "?")
                     payload = {

@@ -19,7 +19,6 @@ def test_chat_unstructured_in_agent_config():
 
     entry = agent_config["chat_unstructured"]
     assert entry["uuid"] == CHAT_UNSTRUCTURED_UUID
-    assert entry["next"] is None
     # It needs structured output turned OFF — the /agentmodel page offers it
     # only groups with "structured output: must not have" (and the model call
     # also enforces this at runtime). It must NOT require structured output.

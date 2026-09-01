@@ -1,7 +1,7 @@
 """Queue persistence: agent inbox + journal.
 
 Split out of db.py. Holds the inbox/journal queue operations (enqueue,
-take_item, journal_update, fetch_unrouted_completed, mark_routed,
+take_item, journal_update, fetch_unrouted_terminal, mark_routed,
 agent_uuids_with_work). Re-exported from db for import compatibility.
 """
 import json
@@ -83,32 +83,15 @@ def fail_journal_if_processing(
     return True
 
 
-def fetch_unrouted_completed() -> list[dict[str, Any]]:
-    """Journal rows that are completed but have not yet been routed to the next agent."""
-    rows = (
-        db.session.query(Journal)
-        .filter(Journal.state == "completed", Journal.routed_at.is_(None))
-        .order_by(Journal.started_at.asc())  # uuid id isn't monotonic
-        .all()
-    )
-    return [
-        {
-            "id": r.id,
-            "agent_uuid": r.agent_uuid,
-            "payload": json.loads(r.payload) if r.payload else None,
-            "result": json.loads(r.result) if r.result else None,
-        }
-        for r in rows
-    ]
-
-
 def fetch_unrouted_terminal() -> list[dict[str, Any]]:
     """Terminal (completed OR failed) journal rows not yet routed, oldest first.
 
-    Carries `state` and `result` so the supervisor can do dynamic return-address
-    routing: a completed row may follow static `next`, while a failed row is
-    routed only when its result carries an explicit `_routing.return_to_agent_uuid`
-    (so a conversation turn that errors still wakes its manager)."""
+    Failed rows are included deliberately: a row is routed when its result
+    carries an explicit `_routing.return_to_agent_uuid`, and that is exactly
+    when a turn that errored still has to wake the manager waiting on it.
+
+    Carries `state` and `result` so the supervisor can read that return address
+    without a second query."""
     rows = (
         db.session.query(Journal)
         .filter(Journal.state.in_(("completed", "failed")), Journal.routed_at.is_(None))

@@ -117,7 +117,6 @@ def test_classifier_has_a_structured_output_model_binding():
     entry = agent_config["assistant.response_language_classifier"]
     assert entry["uuid"] == ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID
     assert entry["requires_structured_output"] is True
-    assert entry["next"] is None
 
 
 def test_prompt_scores_all_profile_rows_and_carries_both_roles():

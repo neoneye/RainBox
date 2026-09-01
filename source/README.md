@@ -7,7 +7,7 @@ Rainbox is my local LLM experiment box for running private models, agents, and a
 Each agent runs in its own child process, so they easily can be killed when they get stuck or timeouts.
 Unlike other frameworks where the agents runs in the same process, being fragile and error prone.
 
-A small Python demo of an **OS-process supervisor for AI agents**, built from POSIX primitives without a workflow framework.
+At its base is an **OS-process supervisor for AI agents**, built from POSIX primitives without a workflow framework. On top of it sit the parts that get used daily: an assistant with its own ReAct loop and inspectable trace, a long-term memory store with hybrid retrieval, group chat over SSE, a kanban board, a cron scheduler, and local speech in and out.
 
 A single executable (`main.py`) runs a Flask webserver and an idle-by-default supervisor in the same process. When work shows up in an agent's inbox (Postgres-backed), the supervisor spawns that agent as a child process via `posix_spawn`, hands it an inherited `socketpair` for JSONL communication, and multiplexes it via a `selectors` loop. Each agent drains its inbox, journals each item through `processing → completed`, then exits when idle; the supervisor reaps it and does **not** respawn until new work appears. A heartbeat watchdog SIGKILLs unresponsive processes or broken status channels. Ctrl-C stops both the webserver and the supervisor cleanly.
 
@@ -129,7 +129,7 @@ Press **Ctrl-C** in the terminal to stop. The SIGINT handler asks the webserver 
 - `main.py` — entrypoint. Starts the Flask webserver on the main thread (via `werkzeug.serving.make_server`) and the supervisor on a non-daemon background thread. Installs SIGINT/SIGTERM handlers for clean shutdown. Owns the `spawn()` helper and the supervisor's `selectors` loop. The `--force-model-sync` flag runs the provider model sync (refreshing existing rows' capability flag) and exits without starting the server.
 - `webapp/` — Flask app as a package, split by feature so no single file is large (see [The `webapp/` package](#the-webapp-package) below). Defines the `app` object that `main.py` imports.
 - `agents/` — the child agent process (`python -m agents`) **and** the agent class hierarchy. `Agent` (in `agents/base.py`) owns the inbox-drain lifecycle (pop item → journal `processing` → `handle()` → `completed`/`failed` → emit socket status → exit when idle), with `setup()`/`handle()` hooks. `ModelGroupAgent` resolves the agent's bound model group in `setup()`. `StructuredLLMAgent` makes one schema-validated LLM call per item (system prompt + a per-item user prompt → a Pydantic model, falling back through the group's models). `agents/__main__.py` reads the socket config and picks the subclass for the role via `agents/config.AGENT_CLASS_PATHS` (`resolve_agent_class` imports only the selected module, so an agent process does not load every other agent's dependencies; a role absent from the table falls back to `ModelGroupAgent`). Takes `--socket-fd` and nothing else.
-- `agents/config.py` — the role declarations: each role's uuid, the model-capability constraints it needs on /agentmodel, its kanban authority, and its static `next` successor.
+- `agents/config.py` — the role declarations: each role's uuid, the description shown on /agentmodel and /user, the model-capability constraints it needs (structured output, function calling), and its kanban authority. Also `AGENT_CLASS_PATHS`, which `resolve_agent_class` uses to import one agent module and no others.
 - `agents/chat_structured.py` — `StructuredChatAgent` (role `chat_structured`), a `StructuredLLMAgent` that filters diagnostic rows out of the chat history, retrieves relevant memory claims, renders an IRC-style transcript with an optional memory context block, asks the model for `{reply_format, reply_content}` (`reply_format ∈ {"markdown","json"}`), normalizes JSON replies, and posts the result back into the room.
 - `agents/chat_unstructured.py` — `UnstructuredChatAgent` (role `chat_unstructured`), a plain-text sibling that shares the same transcript formatting (`chat/transcript.format_history`) and memory retrieval but makes a single non-structured completion instead of structured output. It subclasses `ModelGroupAgent` directly and requires a model group declared "structured output: must not have".
 - `agents/router.py` — `RouterAgent`, a `StructuredLLMAgent` that reuses the shared transcript formatter (`chat/transcript.format_history`) that, instead of replying, triages the latest message into `{subject, action}` — a 10-20 word summary and whether it needs an action (`action ∈ {"no","unclear","yes"}`) — via structured output (no `FunctionAgent`/tools), posting the decision back into the room as a JSON message. Bind it to a model group on `/agentmodel`.
@@ -187,7 +187,7 @@ A SIGINT/SIGTERM handler sets a `threading.Event` (`stop_event`) and calls `serv
 
 **Supervisor loop** (runs while `stop_event` is not set):
 
-1. **Routing pass:** scan the journal for rows in `state='completed' AND routed_at IS NULL`. For each, look up the source agent's `next` uuid in `agents/config`. If non-null, enqueue a lineage payload into that next agent's inbox. Mark the row routed regardless (terminal rows get marked too, so they aren't re-scanned).
+1. **Routing pass:** scan the journal for terminal rows not yet routed. For each, read the return address the dispatcher left in `result["_routing"]`; if there is one, enqueue a lineage payload into that agent's inbox. Mark the row routed regardless, so it isn't re-scanned.
 2. **Wake-up pass:** call `db.agent_uuids_with_work()` (returns the set of agent UUIDs whose inbox is non-empty). For each role in `agents/config` whose UUID is in that set and whose agent is not currently running, `spawn()` it and register its socket on the `selectors`.
 3. **Socket drain:** `sel.select(timeout=1.0)` blocks in the kernel for up to one tick. For each readable socket, `recv` once, append to its buffer, split on `\n`, log each JSON message, and update the agent's `last_heartbeat`. An empty `recv` (EOF) marks the agent as dead.
 4. **Watchdog:** if `now - last_heartbeat > HEARTBEAT_TIMEOUT` (60 s) for any alive agent, log a warning, `SIGKILL` it, and mark it dead. A background heartbeat runs during `handle()`, including model calls; the timeout therefore catches a dead process or broken status channel rather than ordinary slow inference.
@@ -241,12 +241,11 @@ After that, the agent sends status messages parent ← agent at each transition:
 {"status": "idle"}
 ```
 
-## Pipeline routing
+## Journal routing
 
-The supervisor's loop includes a routing pass that turns one agent's terminal journal row into another agent's inbox row. There are two ways a successor is chosen, and the dynamic one wins:
+The supervisor's loop includes a routing pass that turns one agent's terminal journal row into another agent's inbox row. The successor is whatever **return address** the dispatcher wrote into the turn payload as `return_to_agent_uuid`; `Agent.run` copies it to `result["_routing"]`, and the supervisor enqueues to it.
 
-- **Dynamic** — the finishing agent's result carries `_routing.return_to_agent_uuid` (copied there by `Agent.run` from the turn payload's `return_to_agent_uuid`). This routes **failed** turns as well as completed ones, so a manager that dispatched the work can recover from a failure. Model output never chooses the target; only the payload the dispatcher wrote does.
-- **Static** — a role declares `next: UUID | None` in `agents/config`. Success-only. Every role currently declares `next: None`, so this link is a topology hook with no user rather than something the running system depends on.
+It routes **failed** turns as well as completed ones, so a dispatcher that handed out the work can recover from a failure instead of waiting on a row that never comes back. Model output never chooses the target — only the payload the dispatcher wrote does.
 
 Each enqueued payload carries lineage:
 
@@ -260,7 +259,7 @@ Each enqueued payload carries lineage:
 }
 ```
 
-So a successor receives a nested payload holding both the source's input and its result — every stage's input/output is recoverable from the latest payload alone.
+So a successor receives a nested payload holding both the source's input and its result — every hop's input/output is recoverable from the latest payload alone.
 
 A `routed_at timestamptz` column on `journal` marks rows the supervisor has already processed; the routing query is `WHERE state='completed' AND routed_at IS NULL`. Each route step (`enqueue(next_uuid, ...)` + `mark_routed(...)`) is two commits, so on a crash between them a duplicate inbox item is possible — easy follow-up if needed.
 
@@ -377,7 +376,7 @@ Tests are colocated inside each package next to the modules they test (`<pkg>/te
 
 ## As a loop for running AI agents
 
-A candid assessment of this code as the basis for an AI-agent system.
+A candid assessment of the supervisor layer as the basis for an AI-agent system.
 
 ### What's right (OS-level)
 
@@ -399,7 +398,7 @@ A candid assessment of this code as the basis for an AI-agent system.
 2. **Heartbeat detects liveness, not semantic progress.** The background thread keeps a process alive during long model calls, but it also keeps heartbeating if `handle()` is deadlocked while the process itself remains healthy. Per-call model timeouts are the primary bound for that case; the supervisor watchdog covers process or status-channel failure.
 3. **Retry / backoff policy.** The journal *can* hold `failed` rows (and `handle()` exceptions now produce them), but nothing reads them. A real system needs "if `failed` and attempts < N, re-enqueue with attempts+1 and an exponential delay."
 4. **Bidirectional protocol post-config.** The agent reads its inbox directly from Postgres and doesn't react to anything the supervisor sends after the initial config message. Cancellation and live steering still need a socket-side protocol.
-5. **Routing topology is a single successor.** `next: UUID | None` expresses one static hop and nothing else — and no role currently declares one, so the live path is the dynamic `_routing.return_to_agent_uuid` return address a dispatcher writes into the payload. Real workflows need fanout (one role feeds many), fanin (many feed one), conditional routing (route on result content), and stop conditions.
+5. **Routing is one hop to a fixed address.** `return_to_agent_uuid` names a single successor, chosen when the work is dispatched rather than from what came back. Real workflows need fanout (one role feeds many), fanin (many feed one), conditional routing (route on result content), and stop conditions.
 
 ### Where it sits in the landscape
 
@@ -416,7 +415,7 @@ This behaves like a multi-agent system: durable, type-checked, observable throug
 Four paths, depending on what you want to learn or use:
 
 - **Path A — Multi-agent workflows on the journal.** The assistant is one agent looping over its own actions; the journal can carry work between *several* agents, and nothing currently does. A worked example — a producer role whose result is reviewed by a second role, which either accepts or sends it back — would exercise the routing pass, the lineage payload, and the model-group binding that are already built and currently only used one hop at a time.
-- **Path B — Conditional routing and feedback loops.** Today `next` is a single uuid, declared by nobody. The architectural leap is making the successor conditional on the result: `{"verdict": "approved"}` → terminate; `{"verdict": "rework", "feedback": "..."}` → enqueue back to the producer with the feedback in the payload. That is an actual agentic loop rather than a linear assembly line. Needs: termination conditions (max iterations) and cycle detection.
+- **Path B — Conditional routing and feedback loops.** Today the successor is one address fixed at dispatch time. The architectural leap is making it conditional on the result: `{"verdict": "approved"}` → terminate; `{"verdict": "rework", "feedback": "..."}` → enqueue back to the producer with the feedback in the payload. That is an actual agentic loop rather than a linear assembly line. Needs: termination conditions (max iterations) and cycle detection.
 - **Path C — Survivability.** Retry/backoff for `failed` rows (attempts column, exponential backoff), cancellation protocol over the socket (the supervisor can ask an agent to abort a specific journal_id), recovery on supervisor restart (resume `processing` rows from where you left off). Pure systems work, no API keys required.
 - **Path D — Operator tools.** Dashboard view in the webapp showing live work (counts per role, in-flight items, throughput); manual "re-route this row" / "cancel this row" buttons in Flask-Admin.
 

@@ -19,7 +19,6 @@ def test_workspace_shell_in_agent_config():
 
     entry = agent_config["workspace_shell"]
     assert entry["uuid"] == WORKSPACE_SHELL_UUID
-    assert entry["next"] is None
     # No LLM, so it must NOT require a function-calling model group.
     assert "requires_function_calling" not in entry
 
