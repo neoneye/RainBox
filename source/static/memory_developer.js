@@ -102,9 +102,11 @@ function memdevCandidateTable(candidates, keptIds) {
   }
   const kept = new Set(keptIds || []);
   const rows = candidates.map(c => {
-    const detail = c.kind === 'dynamic'
-      ? 'handler: ' + memdevEscape(c.handler || '')
-      : memdevEscape(c.answer_preview || '');
+    // What the reranker backend actually read, when that is the backend —
+    // it replaces the matched question rather than joining it, because the
+    // document opens with that same question. The LLM backend sends no
+    // document and this stays empty.
+    const detail = c.document ? memdevEscape(c.document) : '';
     // Likert scores from the filter LLM (direct/indirect/relevancy);
     // absent until the filter stage has run.
     const dir = c.direct != null

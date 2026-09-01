@@ -1,7 +1,7 @@
 """Tests for the assistant's read-only actions (PR 4) and dispatch.
 
-Each action reuses an existing rainbox surface (memory retrieval, the QueryAgent
-Q&A pipeline, the workspace command policy, kanban reads) and returns an
+Each action reuses an existing rainbox surface (memory retrieval, the seed Q&A
+knowledge base, the workspace command policy, kanban reads) and returns an
 AssistantObservation; the dispatcher owns validation, the output cap, and the
 running->observed/failed trace boundary. No writes, no MCP, no generated code.
 """

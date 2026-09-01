@@ -7,7 +7,7 @@ string in the auditor's prompt, so it cannot be audited before it exists.
 
 Deterministic: the decide seam is scripted (`scripted_decisions`) and the
 audit seam is either monkeypatched at the agent method (loop tests) or
-exercised for real with `agents.query_filter_mg.structured_llm_call`
+exercised for real with `agents.model_groups.structured_llm_call`
 monkeypatched (unit tests).
 """
 

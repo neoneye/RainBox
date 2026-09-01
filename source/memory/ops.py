@@ -3,8 +3,8 @@
 remember about …", "why do you remember …", and dispatch them against
 db.MemoryClaim / db.MemoryEvidence.
 
-Wired into QueryAgent.handle as a wedge BEFORE the Q&A path so memory
-commands aren't accidentally answered by the curated registry.
+Matched BEFORE the seed Q&A path so a memory command is never accidentally
+answered out of the curated registry.
 """
 
 import re

@@ -1,9 +1,13 @@
-"""Dynamic handlers for the QueryAgent.
+"""Dynamic handlers for the seed knowledge base.
+
+A seed entry of kind `dynamic` names a handler here instead of carrying a
+static answer, and the handler produces the answer at retrieval time — project
+status, git status, capabilities, model info.
 
 Each handler takes a `QueryContext` and returns a short string. Keep them small,
 fast, and free of side effects. Where a handler shells out (git, ps, uptime,
 pip), give the subprocess a tight timeout and surface a clear error blurb on
-failure instead of raising — the agent isn't a place to make Postgres errors
+failure instead of raising — retrieval isn't a place to make Postgres errors
 look like Python tracebacks to a chat user.
 """
 
@@ -33,17 +37,17 @@ _REPO_DIR = Path(__file__).resolve().parent.parent
 
 @dataclass
 class QueryContext:
-    """What a QueryAgent dynamic handler is told about the request it's
-    answering. Lives here (not in query_agent) so handlers can import the type
-    without circular imports."""
+    """What a dynamic handler is told about the request it's answering. Lives
+    beside the handlers so they can import the type without circular
+    imports."""
 
     room_uuid: UUID
     query: str
     payload: dict[str, Any]
     agent_uuid: UUID
 
-    # Model-group context, populated by agents that run on a model group (e.g.
-    # QueryFilterRouterAgent) so a handler can report which model is answering.
+    # Model-group context, populated by a caller that runs on a model group,
+    # so a handler can report which model is answering.
     # `candidate_model_uuids` is the group's priority-ordered fallback list;
     # `active_model_uuid` is the member the agent's LLM call already settled on
     # this turn (None until an LLM call has succeeded, e.g. on the exact-alias
@@ -630,7 +634,7 @@ def get_outdated_dependencies(ctx: QueryContext) -> str:
 
 
 def get_memory_stats(ctx: QueryContext) -> str:
-    """Where the QueryAgent stores its memory and how much is there."""
+    """Where the seed knowledge base lives and how much is in it."""
     kb_path = _REPO_DIR / "data" / "question_answer.jsonl"
     jsonl_count = 0
     try:

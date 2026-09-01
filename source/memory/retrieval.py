@@ -626,7 +626,7 @@ def record_memory_use(
     Returns the new row, or None if there's nothing to record or the
     room is unknown.
 
-    The payload mirrors the `debug-query` shape used by `QueryAgent`."""
+    The payload mirrors the `debug-query` shape the chat debug rows use."""
     if not memories or room_uuid is None:
         return None
     payload: dict[str, Any] = {

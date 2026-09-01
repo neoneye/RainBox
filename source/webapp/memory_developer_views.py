@@ -43,12 +43,6 @@ def _memory_developer_js_version() -> int:
         return 0
 
 
-def _preview(text: str) -> str:
-    if len(text) > _ANSWER_PREVIEW_CHARS:
-        return text[:_ANSWER_PREVIEW_CHARS] + "…"
-    return text
-
-
 def _member_row(member_uuid) -> dict[str, Any]:
     """Display info for one model-group member, via the same resolver the
     model-group UI uses (db.resolve_member): provider, model, the parent

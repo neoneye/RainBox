@@ -275,7 +275,7 @@ def test_format_memory_context_includes_provenance_labels():
             evidence=["confirmed_by_user"],
         ),
         _retrieved(
-            text="QueryAgent answers from JSONL plus pgvector.",
+            text="The seed KB answers from JSONL plus pgvector.",
             kind="project_decision",
             sensitivity="public",
             evidence=["observed_from_source"],
@@ -286,7 +286,7 @@ def test_format_memory_context_includes_provenance_labels():
     assert "confirmed_by_user" in out
     assert "observed_from_source" in out
     assert "Username prefers concise technical answers." in out
-    assert "QueryAgent answers from JSONL plus pgvector." in out
+    assert "The seed KB answers from JSONL plus pgvector." in out
 
 
 def test_format_memory_context_returns_empty_string_when_no_memories():

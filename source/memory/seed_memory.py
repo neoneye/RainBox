@@ -75,7 +75,6 @@ OLLAMA_KEY: str = "ollama"  # Ollama ignores the key but the OpenAI client requi
 # and let callers cap the aggregated per-entry ranking instead.
 TOP_K_NODES: int = 50
 MIN_SCORE: float = 0.60
-MIN_MARGIN: float = 0.05
 
 REBUILD_ENV: str = "QUERY_AGENT_REBUILD_KB"
 
@@ -98,8 +97,6 @@ class Match:
     method: str                       # "exact" or "semantic"
     score: float
     matched_question: str | None = None
-    second_qa_id: str | None = None
-    second_score: float | None = None
 
 
 # Similarity scores are 0.0–1.0 floats. For compact display and LLM prompts we
@@ -1257,8 +1254,8 @@ def _semantic_ranked(query: str, vs: PGVectorStore, *,
     qa_id), return the entries ranked descending by score — callers cap how
     many entries they want (e.g. `[:TOP_K_FILTER]`). Locked shields are
     excluded at the vector query (so they never occupy a node slot) and again
-    as an in-memory backstop. **No** MIN_SCORE/MIN_MARGIN gating — for the
-    caller to apply."""
+    as an in-memory backstop. **No** MIN_SCORE gating — for the caller to
+    apply."""
     unlocked = _unlocked_shields() if unlocked_shields is None else unlocked_shields
     index = VectorStoreIndex.from_vector_store(vs, embed_model=_embed_model())
     # The query vector is supplied rather than left to the retriever, which
@@ -1483,33 +1480,6 @@ def _hybrid_seed_ranked(query: str, vs: PGVectorStore, *,
     return fused
 
 
-def _semantic_match(query: str, vs: PGVectorStore) -> Match | None:
-    """Gated semantic match: require best score >= MIN_SCORE and best -
-    second >= MIN_MARGIN (between distinct qa_ids). Returns None when the best
-    is too weak or too ambiguous — a clean "no" beats a confident wrong answer."""
-    candidates = _semantic_ranked(query, vs)
-    if not candidates:
-        return None
-    best = candidates[0]
-    if best.score < MIN_SCORE:
-        return None
-    second_qa: str | None = None
-    second_score: float | None = None
-    if len(candidates) > 1:
-        second = candidates[1]
-        if best.score - second.score < MIN_MARGIN:
-            return None
-        second_qa, second_score = second.qa_id, second.score
-    return Match(
-        qa_id=best.qa_id,
-        method="semantic",
-        score=best.score,
-        matched_question=best.matched_question,
-        second_qa_id=second_qa,
-        second_score=second_score,
-    )
-
-
 def _resolve_match(match: Match, ctx: QueryContext) -> str:
     entry = _entries_by_id.get(match.qa_id)
     if entry is None:
@@ -1530,34 +1500,6 @@ def _resolve_match(match: Match, ctx: QueryContext) -> str:
 
 
 # --- Payload helpers (lifted from agent classes) ------------------------------
-
-
-def room_uuid_from_payload(payload: dict[str, Any]) -> UUID:
-    """Extract the chatroom uuid from an agent payload. Lifted from
-    the `_room_uuid` static methods that previously existed (identically)
-    on both `QueryAgent` and `QueryFilterRouterAgent`."""
-    raw = payload.get("room_uuid")
-    if not raw:
-        raise ValueError("query agent payload missing 'room_uuid'")
-    return raw if isinstance(raw, UUID) else UUID(str(raw))
-
-
-def command_from_payload(room_uuid: UUID, payload: dict[str, Any]) -> str | None:
-    """Extract the most recent human-typed query from a payload, or
-    None if none is present. Lifted from the `_command_from_payload`
-    static methods that previously existed (identically) on both
-    `QueryAgent` and `QueryFilterRouterAgent`."""
-    msgs = db.list_room_messages(room_uuid)
-    msg_uuid = payload.get("message_uuid")
-    if msg_uuid:
-        for m in msgs:
-            if m.get("uuid") == str(msg_uuid) and m.get("sender_type") == "human":
-                return (m.get("text") or "").strip()
-        return None
-    for m in reversed(msgs):
-        if m.get("sender_type") == "human":
-            return (m.get("text") or "").strip()
-    return None
 
 
 @dataclass
