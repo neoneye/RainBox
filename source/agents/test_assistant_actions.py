@@ -925,7 +925,7 @@ def test_recall_filter_ignores_other_agents_model_groups(app_ctx, monkeypatch):
     consulted at any point. A shared scorer binding makes one pipeline's model
     choice the other's too, silently."""
     import agents.model_groups as mg
-    from agents.config import ASSISTANT_MEMORY_FILTER_UUID, ROUTER_UUID
+    from agents.config import ASSISTANT_MEMORY_FILTER_UUID, CHAT_STRUCTURED_UUID
     from memory import seed_memory as qkb
     from memory.seed_memory import Match
 
@@ -942,7 +942,8 @@ def test_recall_filter_ignores_other_agents_model_groups(app_ctx, monkeypatch):
     def binding_for(agent_uuid):
         if agent_uuid == ASSISTANT_MEMORY_FILTER_UUID:
             return None   # no dedicated scorer bound
-        group = (other_group if agent_uuid == ROUTER_UUID else default_group)
+        group = (other_group if agent_uuid == CHAT_STRUCTURED_UUID
+                 else default_group)
         return type("B", (), {"model_group_uuid": group})()
 
     monkeypatch.setattr(db, "get_agent_model_binding", binding_for)

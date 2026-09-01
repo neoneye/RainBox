@@ -23,7 +23,6 @@ from agents.config import (
     CHAT_UNSTRUCTURED_UUID,
     DIRECT_CHAT_UUID,
     MCP_UUID,
-    ROUTER_UUID,
     TOOL_DEMO_UUID,
     WORKSPACE_SHELL_UUID,
 )
@@ -41,13 +40,12 @@ CHAT_RESPONDER_UUIDS = (
     CHAT_UNSTRUCTURED_UUID,
     TOOL_DEMO_UUID,
     WORKSPACE_SHELL_UUID,
-    ROUTER_UUID,
     MCP_UUID,
     ASSISTANT_UUID,
 )
 
 # Which room members can carry a persona. Personas answer "who is the
-# assistant"; the other responders (router, query, tool_demo, …) carry their
+# assistant"; the other responders (chat_structured, tool_demo, …) carry their
 # own prompts and are not personas. A second assistant identity — a room with
 # a math assistant and a physics assistant — is one more entry here, not a
 # schema change.

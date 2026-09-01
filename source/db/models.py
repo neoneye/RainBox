@@ -685,7 +685,9 @@ class ChatMessage(db.Model):
     # What role this message plays in the room (orthogonal to content_type):
     #   "message"      — a real, user-facing chat message (default)
     #   "thinking"     — an agent's thought process / intermediate reasoning
-    #   "debug-router" — the router agent's {subject, action} triage output
+    #   "debug-router" — {subject, action} triage output; written by a chat
+    #                    triage agent that no longer exists, kept because the
+    #                    rows it wrote are still in rooms
     # The UI can fold away non-"message" rows so they don't clutter the chat.
     kind: Mapped[str] = mapped_column(Text, default="message")
     # Structured attachment for interactive messages (default {}). A confirm-tier

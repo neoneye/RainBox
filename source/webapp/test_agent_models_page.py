@@ -50,7 +50,7 @@ def test_page_hides_agents_that_dont_use_model_groups(client):
     for hidden in ("direct_chat", "workspace_shell", "assistant"):
         assert str(agent_config[hidden]["uuid"]) not in body, hidden
     # Model-group consumers are still there.
-    for shown in ("router", "assistant.decide", "chat_structured"):
+    for shown in ("mcp", "assistant.decide", "chat_structured"):
         assert str(agent_config[shown]["uuid"]) in body, shown
 
 
@@ -90,7 +90,7 @@ def test_the_default_row_inherits_from_nothing(client):
 
     assert _fallback_name("assistant.default") == ""
     assert _fallback_name("assistant.decide") == "assistant.default"
-    assert _fallback_name("router") == ""
+    assert _fallback_name("chat_structured") == ""
     # A dotted name whose family has no default inherits nothing rather than
     # naming a row that does not exist.
     assert _fallback_name("nosuchfamily.step") == ""

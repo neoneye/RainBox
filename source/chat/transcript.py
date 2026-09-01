@@ -5,7 +5,7 @@ message history into an IRC-style prompt.
 `[ts] <sender> text`, with the latest message separated out as the "Current
 message" at the bottom — the transcript shape local models expect. It lives in
 its own module (rather than inside any one agent) because the structured and
-unstructured chat agents, the router/query agents, and the tool/MCP agents all
+unstructured chat agents and the tool/MCP agents all
 share it; none of them should import it from a sibling agent module.
 """
 

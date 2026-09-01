@@ -49,7 +49,6 @@ AGENT_CLASS_PATHS: dict[str, str] = {
     "kanban_worker": "agents.kanban_worker:KanbanWorkerAgent",
     "tool_demo": "agents.tool_demo:ToolDemoAgent",
     "workspace_shell": "tools.workspace_shell_chat:WorkspaceShellChatAgent",
-    "router": "agents.router:RouterAgent",
     "mcp": "agents.mcp:MCPAgent",
 }
 
@@ -76,7 +75,6 @@ CHAT_UNSTRUCTURED_UUID: UUID = UUID("6f8b1c0a-9d3e-4a72-bd41-2c7e5f0a9b84")
 TOOL_DEMO_UUID: UUID = UUID("953cc2d8-3aa3-4ffe-afc2-99f1c18ebea4")
 WORKSPACE_SHELL_UUID: UUID = UUID("672547eb-7ef1-4d72-a0ed-1c17fee80b6e")
 KANBAN_WORKER_UUID: UUID = UUID("3e8d2c41-9b7a-4f06-8c52-d14a90b7e6f3")
-ROUTER_UUID: UUID = UUID("04707c68-cda4-46e4-929a-48b3f53f7270")
 EDIT_DOCUMENT_V1_UUID: UUID = UUID("9f3b1a8e-2c5d-4d7a-9e3b-5f8a1c2d4e7b")
 EDIT_DOCUMENT_V2_UUID: UUID = UUID("d2a7c5e1-6b3f-4e9a-9c1d-7e4b8f2a3c5d")
 EDIT_DOCUMENT_V3_UUID: UUID = UUID("8f4d9b2a-7e3c-4a5b-9c8d-1f6e7d2c4b3a")
@@ -148,11 +146,6 @@ agent_config: dict[str, AgentConfigEntry] = {
         "requires_structured_output": True,
         "kanban_authority": "work",
         "description": "LLM kanban worker: claims one card, produces a text deliverable into the event trail via one structured call (status done/unclear/failed), completes into Review (unverified)",
-    },
-    "router": {
-        "uuid": ROUTER_UUID,
-        "requires_structured_output": True,
-        "description": "triages a chat message via structured output: a subject summary + whether it needs an action (no LLM tools)",
     },
     "edit_document_v1": {
         "uuid": EDIT_DOCUMENT_V1_UUID,

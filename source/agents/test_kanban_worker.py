@@ -25,7 +25,7 @@ def test_kanban_worker_in_agent_config():
     assert ws.get("kanban_verified") is True
 
     # Default: an agent with no kanban fields is observe / unverified.
-    assert agent_config["router"].get("kanban_authority", "observe") == "observe"
+    assert agent_config["chat_structured"].get("kanban_authority", "observe") == "observe"
 
 
 @pytest.fixture()

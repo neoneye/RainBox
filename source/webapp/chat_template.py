@@ -1232,9 +1232,9 @@ function fillMessageBody(body, m){
 
 function makeMessage(m){
   const msg = document.createElement('div');
-  // Anything other than a real "message" (e.g. the router's "debug-router"
-  // output, or "thinking", or in-flight "progress") renders as a muted
-  // debug bubble with a kind badge.
+  // Anything other than a real "message" (e.g. "debug-memory", "thinking",
+  // or in-flight "progress") renders as a muted debug bubble with a kind
+  // badge.
   const isDebug = m.kind && m.kind !== 'message';
   msg.className = isDebug ? 'msg msg-debug' : 'msg';
   // Collapsible rows and the noun used in their toggle labels: reasoning rows
