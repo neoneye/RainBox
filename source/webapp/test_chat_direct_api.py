@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 import pytest
 
 import db
-from agents.config import DIRECT_CHAT_UUID
+from agents.config import ASSISTANT_UUID, DIRECT_CHAT_UUID
 
 
 @pytest.fixture
@@ -99,6 +99,30 @@ def test_agents_list_omits_the_direct_chat_responder(client):
     resp = test_client.get("/chat/api/agents")
     assert resp.status_code == 200
     assert str(DIRECT_CHAT_UUID) not in {a["uuid"] for a in resp.get_json()}
+
+
+def test_agents_list_offers_only_agents_that_can_answer(client):
+    """Every offered member replies when a human posts; nothing else is shown.
+
+    The `chat_user` table outlives `agent_config` — `seed_chat_defaults` adds a
+    row per role and never removes one — so it accumulates retired roles, and
+    it also holds identities that were never roles at all (the `cron` event
+    author, personas from proofs of concept whose code is gone). Offering the
+    table meant offering members that build a silent room, with nothing on
+    screen to say why it is silent."""
+    from webapp.chat_api import CHAT_RESPONDER_UUIDS
+
+    test_client, app_ = client
+    offered = {a["uuid"] for a in test_client.get("/chat/api/agents").get_json()}
+    assert offered <= {str(u) for u in CHAT_RESPONDER_UUIDS}
+
+    with app_.app_context():
+        rows = db.list_agent_chat_users()
+    known = {str(u.uuid) for u in rows}
+    # The assistant is the one everybody picks; it must survive the filter.
+    assert str(ASSISTANT_UUID) in offered
+    # And anything in the table that no responder tuple names stays out.
+    assert not (known - {str(u) for u in CHAT_RESPONDER_UUIDS}) & offered
 
 
 def test_create_agents_room_rejects_the_direct_chat_responder(client):

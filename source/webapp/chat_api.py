@@ -290,13 +290,31 @@ def remove_chat_room_member(room_uuid: str, user_uuid: str) -> Response:
 @app.route("/chat/api/agents")
 def chat_agents() -> Response:
     """Agent users selectable as members — when creating a room, and in the
-    Members sidebar. The direct-chat responder is left out: a direct room gets
-    it automatically and an agents room must not have it (nothing enqueues it
+    Members sidebar.
+
+    The offer is CHAT_RESPONDER_UUIDS, which is the same tuple
+    `_maybe_trigger_chat_agents` enqueues from: an agent is offered exactly
+    when putting it in a room causes it to answer. Listing every agent-type
+    `chat_user` instead offered a pile of members that cannot reply — the
+    binding-only `assistant.*` model slots, the `cron` event author, roles
+    retired from `agent_config`, and leftovers from proofs of concept whose
+    code is gone. Each one built a room that sits silent, and the room gives
+    no hint why.
+
+    A row surviving in `chat_user` is not evidence a role exists:
+    `seed_chat_defaults` creates one per `agent_config` entry and never
+    removes the row when the entry goes, so the table accumulates every role
+    the system has ever had. This resolves through the config, not the table.
+
+    The direct-chat responder is absent from that tuple and so from this list,
+    which is what we want for its own reason: a direct room gets it
+    automatically, and an agents room must not have it (nothing enqueues it
     there, so the room would sit silent and its Settings sidebar would offer
     the persona picker instead of the model and system prompt)."""
+    offered = set(CHAT_RESPONDER_UUIDS)
     return jsonify(
         [{"uuid": str(u.uuid), "name": u.name}
-         for u in db.list_agent_chat_users() if u.uuid != DIRECT_CHAT_UUID]
+         for u in db.list_agent_chat_users() if u.uuid in offered]
     )
 
 
