@@ -12,7 +12,8 @@ question asked of the classifier), `2026-07-24-operator-locale-and-language.md`
 
 ## The measurement
 
-One live run, 2026-08-31 16:37, `gemma4:e4b`, request: six words, no tool use,
+Everything in this section predates the SWA fix below; it is the baseline
+the rest is measured against. One live run, 2026-08-31 16:37, `gemma4:e4b`, request: six words, no tool use,
 one reply. The classifier resolved by detection, so no model was asked for it.
 
 | call | prompt in | out | prefill | total |
@@ -32,10 +33,11 @@ wall-clock, and **49s of that is prefill**.
   earlier the same day show no such gap, so this term is a cold start, not a
   standing cost. Steady state is ~15s.
 - 12.9s prefilling 8688 tokens, of which ~8.4k is conversation history and
-  settings that the very next call prefills again from scratch.
+  settings that the very next call prefilled again from scratch. That
+  duplication is what Finding 1 turned out to be about, and it is now gone.
 - 4.4s emitting 211 tokens, most of which restate deterministic data.
 
-## Finding 1 — the cache break is a 1536-token window, and there is a flag for it
+## Finding 1 — the cache break was a 1536-token window (fixed 2026-09-01)
 
 `/activity` reports two numbers per call: **reusable** (how much of the
 prompt's leading text rainbox had already sent — exact, from the prefix-hash
@@ -105,10 +107,11 @@ is re-processed. criteria -> decide diverges at 6859 while the cache runs to
 8898 — 2039 tokens back, just outside the window. That one number decides
 every case below.
 
-### The measured rule
+### The measured rule, with the window at its default
 
 One model, one slot, `num_ctx=100k`, each shape measured against a prefix
-nothing had cached:
+nothing had cached. This is the behaviour the flag below removes; it is kept
+because it is what returns if the flag is ever lost:
 
 | shape | prompt | new tokens | prefill | reuse |
 |---|---|---|---|---|
@@ -187,17 +190,18 @@ call and inherits whatever the previous turn left, whereas in the replay it
 followed a decide prompt it shares 6859 tokens with. A live turn should expect
 roughly 49s of prefill falling to the mid-20s, not to 15s.
 
-### What it costs while the flag is off
+### What this makes of the prompt-assembly work
 
 Every call of the turn ends with its own `turn_instructions` and its own
-request anchor, so every pair of calls is a fork by construction, and no
-amount of block-order nesting changes that. The nesting in
-`_ALL_STATIC_BLOCKS` is still right — it makes the divergence point as late as
-possible — but until the window covers that point it pays nothing.
+request anchor, so every pair of calls is a fork by construction. With the
+window at its default that made the block nesting inert. With the full window
+it makes it valuable: reuse now runs up to the divergence point, so how late
+`_ALL_STATIC_BLOCKS` pushes that point is paid straight back in prefill.
+Keeping the per-call block sets nested is a live performance property now, not
+a tidiness argument.
 
-Consecutive decide steps within a turn are the one pair that is nearly an
-extension: the scratchpad grows append-only and only the tail moves. That is
-where the 6.2% decide hit rate comes from.
+Consecutive decide steps within a turn remain the cheapest pair: the
+scratchpad grows append-only and only the tail moves.
 
 ### Knobs that look relevant and are not
 
@@ -221,16 +225,19 @@ is 5 minutes, and the criteria call in the measured run spent 6.8s on
 `llama-server started in 6.54 seconds` after an idle gap. A longer keep-alive
 trades ~10 GiB resident for removing that from the first turn of a session.
 
-### `/activity` is measuring the wrong thing for this model
+### What `/activity` now means
 
-`reusable_prefix_tokens` counts shared *leading text*, which is the right
-metric when the runtime can resume mid-sequence and a misleading one when it
-cannot. On an SWA model the number that predicts a cache hit is whether the
-earlier prompt is a **strict prefix** of this one. The page currently reads
-"the runtime is losing prefixes it could have kept" and recommends fewer
-models in rotation; on this stack that advice is wrong. Worth splitting the
-metric into "shared head" and "is a strict prefix of a previous prompt", and
-letting the second one drive the recommendation.
+`reusable_prefix_tokens` counts shared *leading text*. With the window at its
+default that was close to meaningless — the page read "the runtime is losing
+prefixes it could have kept" and recommended fewer models in rotation, which
+was wrong advice for this stack. With the full window it is a fair predictor
+again: reuse really does run to the divergence point, so reusable and cached
+should now track each other.
+
+That gives the page a new job. **Reusable high with cached near zero is now
+the signature of a lost `LLAMA_ARG_SWA_FULL`** — an Ollama reinstall, a new
+machine, a `launchctl` environment that did not persist. Worth reading it that
+way rather than as a prompt-assembly problem.
 
 ## Finding 2 — the locale facts appear three times in one prompt
 
@@ -288,10 +295,10 @@ so the two spell the tag the same way. What a call must *do* with the guide is
 `turn_instructions`' job to say: the criteria call reads it as material to
 restate, the decide call as the defaults its reply follows.
 
-Per Finding 1 this uniformity buys no prefill on the current model — the pair
-is a fork whatever the tag says, and a fork reuses nothing. It is a
-consistency fix that keeps the prompt honest and would pay on a non-SWA model,
-not a performance fix.
+Per Finding 1 this uniformity now pays: the pair reuses everything up to the
+point where they first differ, so an attribute on one side and not the other
+would cut the shared run at the guide's opening tag and cost decide the
+guide's prefill.
 
 ## Proposals
 
@@ -328,18 +335,19 @@ request plus the last exchange covers the follow-up case the instructions
 actually rely on (a request carrying only a pronoun takes its subject from the
 exchange before it). That takes the call from ~15s to ~4s.
 
-This was drafted as the proposal that fights the cache — criteria's full
-history was thought to warm decide behind it. Which of those is true now
-depends on the SWA flag, so measure before choosing:
+This was drafted as the proposal that fights the cache, and with the full
+window it does. criteria genuinely primes decide now: decide reuses everything
+up to the point the two prompts first differ, and that point sits inside the
+conversation history. Trimming criteria's history moves it earlier and hands
+back part of the 11s the flag just won on decide — plausibly more than the
+~11s the trim saves on criteria itself, because decide and audit both sit
+behind it.
 
-- **Flag off (today).** The pair is a fork, decide re-prefills from token 0
-  regardless, and criteria's history is pure cost with no downstream benefit.
-  No trade-off; the largest single saving in the note.
-- **Flag on.** criteria genuinely does prime decide — decide reuses everything
-  up to the divergence point — and trimming criteria's history moves that
-  point earlier, giving back part of what the flag just won. Then it is a real
-  trade between ~11s on criteria and some fraction of ~11s on decide, and it
-  wants measuring rather than deciding.
+**So this one is now measure-first, not do-first.** The experiment is cheap:
+render a criteria prompt with the short window, replay criteria -> decide ->
+audit against the live server, and compare total prefill with the 15.3s the
+current shape produces. Do not implement it on the strength of the original
+~11s figure, which was computed when the reuse it destroys did not exist.
 
 ### D. Ask whether the call should exist on trivial turns
 
@@ -351,28 +359,35 @@ gives that up. Not proposed, only flagged.
 
 ## Order
 
-1. **`LLAMA_ARG_SWA_FULL`.** Configuration, one restart, reversible, no code,
-   ~20s per turn, and it changes the economics of everything below it. Verify
-   from the server log that it reached the subprocess before believing it.
-2. **Re-measure**, then choose on **C** — its sign depends on step 1.
-3. **A**, gated behind the replay diff. Independent of the flag: fewer output
-   tokens and twenty fewer instruction lines either way.
-4. **B**, which is nearly free once A has removed the third copy.
-5. **The `/activity` metric split**, so the page stops recommending a fix that
-   does not apply to this stack.
+Step 0 is done: `LLAMA_ARG_SWA_FULL=1` is set and measured, and it moved a
+turn's prefill from ~49s toward the mid-20s without a prompt change. What
+remains:
+
+1. **A**, gated behind the replay diff. Independent of the cache — fewer
+   output tokens, twenty fewer instruction lines, and a criteria block that
+   stops being fresh model prose on every turn.
+2. **B**, which is nearly free once A has removed the third copy.
+3. **C**, and only after the measurement described in it. Its sign changed
+   when the flag landed and it may now be net-negative.
+4. **`keep_alive`**, if the ~6.5s model load on the first turn after an idle
+   gap is worth ~10 GiB resident.
+
+The `/activity` metric split is dropped: with the full window, reusable is a
+fair predictor again and needs no companion number.
 
 ## How to verify
 
+- **The flag is still on.** `~/.ollama/logs/server.log` at the next model load
+  must say `using full-size SWA cache` and `SWA KV cache, size = 100096
+  cells`. `1536 cells` means it was lost. This is the first thing to check
+  when turn latency regresses.
 - **The runtime, directly.** Two `/api/chat` calls over a shared prefix with
   `prompt_eval_duration` compared says more in a minute than any dashboard.
-  Vary the shape — identical, extension, fork — because on an SWA model those
-  three have completely different costs.
-- **`~/.ollama/logs/server.log`.** It states per request whether the slot was
-  reused and why not, including the `forcing full prompt re-processing` line
-  that settled this. `grep -c` on that phrase is a direct count of wasted
-  prefill.
-- **`/activity`**: reusable versus measured cached, per caller — read with
-  Finding 1's caveat about what reusable means here.
+  Vary the shape — identical, extension, fork — because those three had
+  completely different costs before the fix and should now behave alike up to
+  the divergence point.
+- **`/activity`**: reusable versus measured cached, per caller. They should
+  track each other now; a gap means the flag, not the prompts.
 - **`agents/test_assistant_prompt_tiers.py`**: the shared-prefix tests assert
   the byte-level property directly, so a builder edit that quietly reorders a
   section fails there rather than silently costing prefill.

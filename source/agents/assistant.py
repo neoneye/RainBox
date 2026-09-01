@@ -6490,10 +6490,10 @@ class AssistantAgent(ModelGroupAgent):
         with them is turn_instructions' job to say — the criteria call reads
         the same text as material to restate, the decide call as the
         defaults its reply follows. A bare tag also keeps the guide inside
-        the prefix those two calls share, which an attribute one of them
-        carries and the other does not would cut — worth keeping, though it
-        buys no prefill on a sliding-window model, where a prompt that shares
-        a head and then diverges is re-processed whole (see
+        the prefix those two calls share: a runtime reuses a cached prompt up
+        to the point it first differs, so an attribute one call carries and
+        the other does not would end the shared run at the opening tag and
+        make the later call prefill the guide again (see
         notes/proposals/2026-08-31-turn-latency-and-prompt-redundancy.md)."""
         unknown = set(blocks) - set(self._ALL_STATIC_BLOCKS)
         if unknown:
