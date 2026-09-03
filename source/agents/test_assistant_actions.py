@@ -22,6 +22,7 @@ from agents.assistant import (
     AssistantStepDecision,
     AssistantTurnStep,
     _action_kanban_read,
+    _action_python_run,
     _action_query_memory,
     _action_workspace_read_command,
 )
@@ -2084,3 +2085,30 @@ def test_query_memory_falls_back_to_gated_when_the_reranker_is_down(
     assert "gated fallback fact" in obs.text
     assert obs.data["recall_filter"] == {"mode": "gated",
                                          "reason": "filter_failed"}
+
+
+# --- python_run phase timing --------------------------------------------------
+
+
+def test_python_run_records_the_sandbox_as_a_timed_phase(monkeypatch):
+    """The sandbox run is the action's whole cost, and an action's wall-clock
+    reaches the timeline only as the phases it records. Without one, the
+    seconds the program ran show up as an unaccounted gap between the review
+    that approved the action and the call that followed it."""
+    from datetime import datetime
+
+    from tools.python_sandbox import sandbox
+
+    monkeypatch.setattr(
+        sandbox, "run_python",
+        lambda code, **_kw: sandbox.SandboxResult(
+            ok=True, stdout="4\n", duration_seconds=1.243))
+
+    obs = _action_python_run(_ctx(), {"code": "print(2 + 2)"})
+
+    phases = (obs.data or {}).get("timing", {}).get("phases")
+    assert phases and [p["name"] for p in phases] == ["sandbox"]
+    assert isinstance(phases[0]["ms"], int) and phases[0]["ms"] >= 0
+    assert datetime.fromisoformat(phases[0]["started_at"])
+    # The sandbox's own measure stays where it was.
+    assert obs.data["duration_seconds"] == 1.243

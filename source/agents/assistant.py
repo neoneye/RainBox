@@ -2003,8 +2003,16 @@ def _action_python_run(
     code = str(args.get("code", ""))
     if not code.strip():
         return AssistantObservation(ok=False, text="blocked: empty code")
+    # The sandbox run is this action's whole cost, and an action's wall-clock
+    # reaches the trace only as the phases it records: without one, the seconds
+    # the program ran are an unaccounted gap between the review that approved
+    # the action and the call that followed it. One phase, because that is what
+    # there is — the spawn of a fresh node+pyodide process and the program
+    # itself are not separable from out here.
+    timer = _PhaseTimer()
     try:
-        result = run_python(code)
+        with timer.phase("sandbox"):
+            result = run_python(code)
     except SandboxUnavailable as e:
         return AssistantObservation(ok=False, text=f"blocked: {e}")
 
@@ -2022,7 +2030,8 @@ def _action_python_run(
     return AssistantObservation(
         ok=result.ok,
         text="\n".join(parts),
-        data={"duration_seconds": round(result.duration_seconds, 3)},
+        data={"duration_seconds": round(result.duration_seconds, 3),
+              "timing": {"phases": timer.phases}},
     )
 
 
