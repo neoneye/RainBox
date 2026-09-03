@@ -286,6 +286,11 @@ def _prompt_cache(event: dict) -> dict[str, dict]:
     Empty when there is nothing to place: no token count to scale by, or
     neither prefix recorded. `cached` alone may be None — a model still
     calibrating has no estimate, and the exact count is still worth drawing.
+
+    The token counts are the whole prompt's; `chars` and `prompt_chars` are
+    what lets the page scale a pane's own bands back to tokens and say what
+    THIS pane cached, rather than printing the same whole-prompt figures
+    under both panes as if each had recorded them.
     """
     kpis = event.get("kpis") or {}
     payload = event.get("payload") or {}
@@ -309,6 +314,7 @@ def _prompt_cache(event: dict) -> dict[str, dict]:
     return {
         role: {"cached": clip(cached, start, end),
                "reusable": clip(reusable, start, end),
+               "chars": end - start, "prompt_chars": chars,
                "cached_tokens": cached, "reusable_tokens": reusable,
                "prompt_tokens": total}
         for (role, _), (start, end) in zip(pairs, content_spans(pairs))

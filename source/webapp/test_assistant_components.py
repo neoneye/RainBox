@@ -833,3 +833,19 @@ def test_the_cache_attribute_stays_off_the_markdown():
         "s" * 40, "u" * 40, cached_tokens=60, reusable_tokens=100))
 
     assert not any("data-cache" in line or "reusable" in line for line in lines)
+
+
+def test_each_pane_carries_its_own_length_so_the_legend_can_speak_for_the_pane():
+    """The counts on the event are whole-prompt figures, and a legend that
+    printed them under both panes read as if each pane had them. The pane's
+    own length and the whole prompt's ride along, so the page can scale the
+    pane's bands back to tokens and say what THIS pane cached."""
+    system, user = "s" * 40, "u" * 40
+    html = render_event_detail(_cached_llm(
+        system, user, cached_tokens=60, reusable_tokens=100))
+
+    sys_attr = _cache_attr(html, "system prompt")
+    user_attr = _cache_attr(html, "user prompt")
+    assert sys_attr["chars"] == 40 and user_attr["chars"] == 40
+    # "<system>" + 40 + "\n<user>" + 40
+    assert sys_attr["prompt_chars"] == user_attr["prompt_chars"] == 95

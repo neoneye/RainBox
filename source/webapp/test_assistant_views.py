@@ -2763,3 +2763,29 @@ def test_the_inspect_mode_is_this_operator_s_and_it_persists(app_ctx, client):
         db.session.query(AssistantRun).filter(
             AssistantRun.uuid == run.uuid).delete()
         db.session.commit()
+
+
+def test_the_cache_legend_speaks_for_its_own_pane(app_ctx, client):
+    """One legend per pane, about that pane: the whole-prompt counts under
+    both panes looked like the same number recorded twice. The pane's share
+    is scaled from its characters, and named as an estimate."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    db.append_assistant_step(
+        run_uuid=run.uuid, step_index=0, phase="final", action="reply",
+        reason="ready", system_prompt="be brief", user_prompt="hi",
+        requested_at=datetime.now(UTC), duration_ms=1000)
+    db.finish_run(run, "finished")
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        legend = body.split("function ccLegend(")[1].split("\nfunction ")[0]
+        assert "info.prompt_chars" in legend and "info.chars" in legend
+        assert "in this pane" in legend
+        # The parts are separated in the text itself, not only by a margin,
+        # so a copied legend still reads.
+        assert "' · '" in legend
+    finally:
+        db.session.query(AssistantRun).filter(
+            AssistantRun.uuid == run.uuid).delete()
+        db.session.commit()

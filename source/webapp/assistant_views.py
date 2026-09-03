@@ -613,21 +613,43 @@ function ccLegendPart(legend, cls, label) {
   legend.appendChild(swatch);
   legend.appendChild(document.createTextNode(label));
 }
+// About THIS pane. The counts the server has are the whole prompt's, and a
+// legend that printed them under both panes read as the same figure
+// recorded twice. The pane's bands are in characters, so they are scaled back
+// to tokens at the prompt's own chars-per-token rate — an estimate, marked as
+// one — and the whole-prompt figure follows so it can be tied to the meta
+// line's "cached N" above.
 function ccLegend(legend, info) {
   legend.textContent = '';
-  var total = info.prompt_tokens;
-  var hit = info.cached_tokens;
-  var reusable = info.reusable_tokens;
-  ccLegendPart(legend, 'cc-hit', hit === null
-    ? 'cached: still calibrating'
-    : 'cached ' + hit + ' of ' + total + ' tokens');
-  if (reusable !== null) {
-    var miss = Math.max(0, reusable - (hit === null ? 0 : hit));
-    ccLegendPart(legend, 'cc-miss', 'reusable, not cached ' + miss);
-    ccLegendPart(legend, 'cc-new', 'sent fresh ' + Math.max(0, total - reusable));
+  var tok = function (chars) {
+    return Math.round(chars * info.prompt_tokens / info.prompt_chars);
+  };
+  var hit = info.cached === null ? null : Math.min(info.cached, info.chars);
+  var miss = info.reusable === null ? null
+    : Math.max(hit === null ? 0 : hit, Math.min(info.reusable, info.chars));
+  var paneTokens = tok(info.chars);
+  var parts = [];
+  if (hit === null) {
+    parts.push(['cc-hit', 'cached: still calibrating']);
+  } else if (hit >= info.chars) {
+    parts.push(['cc-hit', 'all ≈' + paneTokens + ' tokens in this pane cached']);
+  } else {
+    parts.push(['cc-hit', 'cached ≈' + tok(hit) + ' of ≈' + paneTokens
+                          + ' tokens in this pane']);
   }
+  if (miss !== null) {
+    parts.push(['cc-miss', 'reusable, not cached ≈' + tok(miss - (hit === null ? 0 : hit))]);
+    parts.push(['cc-new', 'sent fresh ≈' + tok(info.chars - miss)]);
+  }
+  parts.forEach(function (part, i) {
+    if (i) { legend.appendChild(document.createTextNode(' · ')); }
+    ccLegendPart(legend, part[0], part[1]);
+  });
+  var whole = info.cached_tokens === null
+    ? 'whole prompt ' + info.prompt_tokens + ' tokens'
+    : 'whole prompt: cached ' + info.cached_tokens + ' of ' + info.prompt_tokens;
   legend.appendChild(document.createTextNode(
-    ' — boundaries are scaled from token counts, so read them to the paragraph'));
+    ' — ' + whole + '; boundaries are scaled from token counts, so read them to the paragraph'));
 }
 // Runs BEFORE applyJsonView wherever both run: on `normal` it restores the
 // recorded bytes and the JSON view then indents them if asked; on `cache` it
