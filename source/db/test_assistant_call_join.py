@@ -148,3 +148,29 @@ def test_a_row_naming_a_step_this_run_has_no_event_for_falls_back(app_ctx):
         assert calls[0]["kpis"]["prefill_ms"] == 700
     finally:
         _cleanup(run.uuid)
+
+
+def test_the_reusable_prefix_reaches_the_event_beside_the_cached_count(app_ctx):
+    """The two prefix lengths mean different things — what the runtime served
+    and what it could have — and the page paints them as different bands, so
+    the row's exact count travels with its estimate."""
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=uuid4())
+    try:
+        step = db.open_assistant_step(
+            run_uuid=run.uuid, step_index=0, action="reply",
+            requested_at=_at(0), duration_ms=1000)
+        db.settle_assistant_step(step, phase="observed")
+        db.record_llm_call({
+            "started_at": _at(0), "finished_at": _at(1),
+            "caller": "assistant.decide", "model": "m", "provider": "test",
+            "run_uuid": run.uuid, "step_uuid": step.uuid, "ok": True,
+            "prompt_tokens": 1000, "prefill_ms": 500, "decode_ms": 1,
+            "cached_tokens_reported": 400, "reusable_prefix_tokens": 900,
+        })
+        calls = [e for e in _events(run) if e["kind"] == "llm"]
+
+        assert calls[0]["kpis"]["cached_tokens"] == 400
+        assert calls[0]["kpis"]["reusable_tokens"] == 900
+    finally:
+        _cleanup(run.uuid)

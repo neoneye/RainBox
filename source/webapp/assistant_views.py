@@ -222,15 +222,31 @@ ASSISTANT_TEMPLATE = """
      and a control aligned to the pane edge reads as belonging to the pane.
      Small and grey until it is the view you are on — the switch is not the
      thing being inspected, and the two words are legible enough unlit. */
-  .as-main .ev-view { display:inline-flex; margin-left:0.5rem; vertical-align:middle;
+  .as-main .ev-view, .as-main .ev-mode { display:inline-flex; margin-left:0.5rem;
+                      vertical-align:middle;
                       border:1px solid #e5e7eb; border-radius:5px; overflow:hidden; }
-  .as-main .ev-view button { border:0; background:#fff; cursor:pointer;
+  .as-main .ev-view button, .as-main .ev-mode button { border:0; background:#fff;
+                             cursor:pointer;
                              font:inherit; font-size:0.62rem; letter-spacing:0.03em;
                              text-transform:lowercase; color:#98a2b3;
                              padding:0 0.4rem; line-height:1.5; }
-  .as-main .ev-view button + button { border-left:1px solid #e5e7eb; }
-  .as-main .ev-view button:hover { color:#1a1a2e; background:#f3f4f6; }
-  .as-main .ev-view button.on { background:#eef2ff; color:#2563eb; font-weight:600; }
+  .as-main .ev-view button + button, .as-main .ev-mode button + button {
+                             border-left:1px solid #e5e7eb; }
+  .as-main .ev-view button:hover, .as-main .ev-mode button:hover {
+                             color:#1a1a2e; background:#f3f4f6; }
+  .as-main .ev-view button.on, .as-main .ev-mode button.on {
+                             background:#eef2ff; color:#2563eb; font-weight:600; }
+  /* The cache view's three bands over a prompt: served from cache, reusable
+     but not served, and sent fresh. Backgrounds only — the bytes underneath
+     are what is being read, and a colour that changed them would lie. */
+  .as-main .cc-hit { background:#bbf7d0; }
+  .as-main .cc-miss { background:#fde68a; }
+  .as-main .cc-new { background:#fecaca; }
+  .as-main .ev-cache-legend { font-size:0.62rem; color:#6b7280; margin:0 0 0.3rem; }
+  .as-main .ev-cache-legend i { display:inline-block; width:0.65em; height:0.65em;
+                                border-radius:2px; margin:0 0.25em 0 0.6em;
+                                vertical-align:middle; }
+  .as-main .ev-cache-legend i:first-child { margin-left:0; }
   /* The block's controls, together on its label. `copy` last because it acts
      where the switch only changes how you are looking. */
   .as-main .ev-acts { display:inline-flex; gap:0.35rem; align-items:center;
@@ -458,6 +474,14 @@ ASSISTANT_TEMPLATE = """
           <span class="ev-crumb-step">{{ log.events[0].step_ref }}</span>
           <span class="ev-crumb-label">{{ log.events[0].label }}</span>
           <span class="ev-crumb-desc">{{ log.events[0].description }}</span>
+          {# How the panes are read. One preference for the page, restored
+             from localStorage — see applyInspectMode. #}
+          <span class="ev-mode">
+            <button type="button" data-mode="normal"
+                    title="Each pane exactly as recorded">normal</button>
+            <button type="button" data-mode="cache"
+                    title="Paint the prompts by what the prompt cache reused: green was served from cache, amber could have been and was not, red was sent fresh">cache</button>
+          </span>
           {# A link to whatever is being inspected. Real href so the context
              menu can copy it; clicking copies the absolute URL, because a
              click that only rewrote the address bar looks like nothing
@@ -523,6 +547,9 @@ function applyJsonView(root) {
       // touched — switching back has to return the original, not a
       // re-serialization of it.
       if (pre.dataset.raw === undefined) { pre.dataset.raw = pre.textContent; }
+      // A pane the cache view has painted keeps its bands: the offsets are
+      // over the recorded bytes, and only those.
+      if (pre.dataset.painted) { return; }
       if (mode !== 'pretty') { pre.textContent = pre.dataset.raw; return; }
       try {
         // No key sorting: the order a decision was written in — reason,
@@ -552,12 +579,116 @@ document.addEventListener('click', function (ev) {
   jsonViewMode = b.getAttribute('data-view') === 'pretty' ? 'pretty' : 'raw';
   try { localStorage.setItem(JSON_VIEW_KEY, jsonViewMode); }
   catch (e) {}  // it still switches; it just will not be remembered
+  applyInspectMode(document);
   applyJsonView(document);
 });
-// Applied here, beside its own definition, rather than at the end of the
+
+// --- how this operator reads a pane: as recorded, or by what the cache reused
+//
+// One preference for the whole page, kept exactly the way the JSON reading
+// is: held here, persisted to localStorage, never read back on a switch.
+// `normal` shows every pane as recorded. `cache` paints the two prompt panes
+// by how far the prompt cache's prefixes reached into them, from the
+// `data-cache` offsets the server put on each: green for what the runtime
+// served from cache, amber for what it could have reused and did not (its
+// loss), red for what rainbox sent fresh (rainbox's divergence). The bytes
+// are untouched — the spans wrap the same text, so copy and the line clamp
+// see the same pane in both modes.
+//
+// A further mode is a further button and a further branch here.
+var INSPECT_MODE_KEY = 'assistant.mode';
+var inspectMode = 'normal';
+try {
+  if (localStorage.getItem(INSPECT_MODE_KEY) === 'cache') { inspectMode = 'cache'; }
+} catch (e) {}  // storage unavailable: this session starts on normal
+function ccSpan(cls, text) {
+  var s = document.createElement('span');
+  s.className = cls;
+  s.textContent = text;
+  return s;
+}
+function ccLegendPart(legend, cls, label) {
+  var swatch = document.createElement('i');
+  swatch.className = cls;
+  legend.appendChild(swatch);
+  legend.appendChild(document.createTextNode(label));
+}
+function ccLegend(legend, info) {
+  legend.textContent = '';
+  var total = info.prompt_tokens;
+  var hit = info.cached_tokens;
+  var reusable = info.reusable_tokens;
+  ccLegendPart(legend, 'cc-hit', hit === null
+    ? 'cached: still calibrating'
+    : 'cached ' + hit + ' of ' + total + ' tokens');
+  if (reusable !== null) {
+    var miss = Math.max(0, reusable - (hit === null ? 0 : hit));
+    ccLegendPart(legend, 'cc-miss', 'reusable, not cached ' + miss);
+    ccLegendPart(legend, 'cc-new', 'sent fresh ' + Math.max(0, total - reusable));
+  }
+  legend.appendChild(document.createTextNode(
+    ' — boundaries are scaled from token counts, so read them to the paragraph'));
+}
+// Runs BEFORE applyJsonView wherever both run: on `normal` it restores the
+// recorded bytes and the JSON view then indents them if asked; on `cache` it
+// paints, and the JSON view leaves a painted pane alone.
+function applyInspectMode(root) {
+  var mode = inspectMode;
+  Array.prototype.forEach.call(
+    root.querySelectorAll('pre.ev-pre[data-cache]'),
+    function (pre) {
+      if (pre.dataset.raw === undefined) { pre.dataset.raw = pre.textContent; }
+      var legend = pre.parentNode.querySelector('.ev-cache-legend');
+      if (mode !== 'cache') {
+        if (pre.dataset.painted) {
+          pre.textContent = pre.dataset.raw;
+          delete pre.dataset.painted;
+        }
+        if (legend) { legend.parentNode.removeChild(legend); }
+        return;
+      }
+      var info;
+      try { info = JSON.parse(pre.getAttribute('data-cache')); }
+      catch (e) { return; }  // not ours to draw; the pane stays as recorded
+      var text = pre.dataset.raw;
+      var hit = info.cached === null ? 0 : Math.min(info.cached, text.length);
+      var miss = info.reusable === null ? hit
+        : Math.max(hit, Math.min(info.reusable, text.length));
+      pre.textContent = '';
+      if (hit > 0) { pre.appendChild(ccSpan('cc-hit', text.slice(0, hit))); }
+      if (miss > hit) { pre.appendChild(ccSpan('cc-miss', text.slice(hit, miss))); }
+      if (text.length > miss) { pre.appendChild(ccSpan('cc-new', text.slice(miss))); }
+      pre.dataset.painted = '1';
+      if (!legend) {
+        legend = document.createElement('div');
+        legend.className = 'ev-cache-legend';
+        pre.parentNode.insertBefore(legend, pre);
+      }
+      ccLegend(legend, info);
+    });
+  Array.prototype.forEach.call(
+    root.querySelectorAll('.ev-mode button'),
+    function (b) {
+      var on = b.getAttribute('data-mode') === mode;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+}
+document.addEventListener('click', function (ev) {
+  var b = ev.target.closest('.ev-mode button');
+  if (!b) { return; }
+  ev.preventDefault();
+  inspectMode = b.getAttribute('data-mode') === 'cache' ? 'cache' : 'normal';
+  try { localStorage.setItem(INSPECT_MODE_KEY, inspectMode); }
+  catch (e) {}  // it still switches; it just will not be remembered
+  applyInspectMode(document);
+  applyJsonView(document);
+});
+// Applied here, beside their own definitions, rather than at the end of the
 // script: every pane is already in the document by this point, and a throw
 // anywhere below would otherwise leave the reader looking at a view they did
 // not choose with no sign that anything went wrong.
+applyInspectMode(document);
 applyJsonView(document);
 
 // A block is only measurable once its pane is shown and its <details> open,
@@ -956,6 +1087,7 @@ var asSelectEvent = null;
             cur.querySelectorAll('details[data-k]'),
             function (d) { if (open[detailsKey(d)]) d.open = true; });
           reselect(cur, key);
+          applyInspectMode(cur);
           applyJsonView(cur);
           cur.scrollTop = scrollTop;
           retick(cur);

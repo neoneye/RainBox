@@ -1083,6 +1083,10 @@ def _apply_call_kpis(event: dict, row) -> None:
         "cached_tokens": (row.cached_tokens_reported
                           if row.cached_tokens_reported is not None
                           else row.cached_tokens_estimated),
+        # Exact where `cached_tokens` is (usually) an estimate: how much of the
+        # prompt's prefix recent calls had already sent. The gap between the
+        # two is the runtime's loss, and the page paints it as its own band.
+        "reusable_tokens": row.reusable_prefix_tokens,
         "model": row.model,
         "provider": row.provider,
         "call_uuid": str(row.uuid),

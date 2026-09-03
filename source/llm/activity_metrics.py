@@ -65,6 +65,36 @@ MIN_COLD_SAMPLES: int = 3
 MIN_CACHE_FRACTION: float = 0.02
 
 
+def flatten_prompt(pairs: list[tuple[str, str]]) -> str:
+    """The outgoing messages as the one text that gets hashed.
+
+    Roles are interleaved so that a change of speaker can't look like an
+    unchanged prefix, and blocks line up the way the runtime's own template
+    would lay them out.
+    """
+    return "\n".join(f"<{role}>{content}" for role, content in pairs)
+
+
+def content_spans(pairs: list[tuple[str, str]]) -> list[tuple[int, int]]:
+    """Where each message's content sits in `flatten_prompt(pairs)`, as
+    `(start, end)` character offsets, in message order.
+
+    The inverse the assistant page needs: a prefix length over the flattened
+    text — the cached count, the reusable count — becomes a split point inside
+    the pane that shows one message, and the tags and separators between the
+    messages are accounted for rather than guessed at.
+    """
+    spans: list[tuple[int, int]] = []
+    at = 0
+    for i, (role, content) in enumerate(pairs):
+        if i:
+            at += 1  # the newline between messages
+        at += len(f"<{role}>")
+        spans.append((at, at + len(content)))
+        at += len(content)
+    return spans
+
+
 def prefix_chain(text: str, block_chars: int = BLOCK_CHARS) -> list[str]:
     """Cumulative hashes of `text`'s successive blocks, one entry per block.
 

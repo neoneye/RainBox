@@ -12,6 +12,8 @@ from llm.activity_metrics import (
     BLOCK_CHARS,
     MIN_CALIBRATION_CALLS,
     cached_tokens_estimate,
+    content_spans,
+    flatten_prompt,
     cold_rate,
     percentile,
     prefix_chain,
@@ -243,3 +245,24 @@ class TestCachedTokensEstimate:
 @pytest.mark.parametrize("bad", [-1.0, 0.0])
 def test_a_nonpositive_cold_rate_is_refused_rather_than_dividing_by_it(bad):
     assert cached_tokens_estimate(1000, 100, bad) is None
+
+
+class TestPromptLayout:
+    """The flattened prompt is what gets hashed, so a prefix length over it
+    has to map back onto the messages it was built from — that is how the
+    assistant page places a cache boundary inside a prompt pane."""
+
+    def test_every_span_slices_its_own_content_out_of_the_flattened_text(self):
+        pairs = [("system", "be brief"), ("user", "hi\nthere")]
+        text = flatten_prompt(pairs)
+        spans = content_spans(pairs)
+
+        assert len(spans) == 2
+        for (role, content), (start, end) in zip(pairs, spans):
+            assert text[start:end] == content
+
+    def test_the_spans_are_in_message_order_and_disjoint(self):
+        spans = content_spans([("system", "aaa"), ("user", "bbbb")])
+
+        assert spans[0][1] <= spans[1][0]
+        assert spans[1][1] == len(flatten_prompt([("system", "aaa"), ("user", "bbbb")]))

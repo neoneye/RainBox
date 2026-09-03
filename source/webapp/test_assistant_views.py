@@ -1214,8 +1214,9 @@ def test_the_json_reading_is_this_operator_s_and_it_persists(app_ctx, client):
         assert "jsonViewMode = b.getAttribute('data-view')" in body
         # Restored on load, and re-applied after a live swap — the swap brings
         # back raw markup, so without this the reader's choice lasts one
-        # refresh on a running run.
-        assert body.count("applyJsonView(document);") == 2
+        # refresh on a running run. Three at load or on a click: its own
+        # switch, and the inspect mode's, which repaints the same panes.
+        assert body.count("applyJsonView(document);") == 3
         assert "applyJsonView(cur);" in body
         # Never sorted: the order a decision was written in is part of it.
         assert "JSON.stringify(\n          JSON.parse(pre.dataset.raw), null, 2)" in body
@@ -2732,3 +2733,33 @@ def test_a_long_block_clamps_instead_of_scrolling_inside_itself():
     assert ".ev-more" in ASSISTANT_TEMPLATE
     assert "EV_CLAMP_LINES" in ASSISTANT_TEMPLATE
     assert "function clampBlocks" in ASSISTANT_TEMPLATE
+
+
+def test_the_inspect_mode_is_this_operator_s_and_it_persists(app_ctx, client):
+    """`normal | cache` is one preference for the page, kept in localStorage
+    the way the JSON reading is, and applied at load, on every switch, and
+    after the live swap — a mode that reset on refresh would have to be
+    re-chosen every few seconds on a running run."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    db.append_assistant_step(
+        run_uuid=run.uuid, step_index=0, phase="final", action="reply",
+        reason="ready", system_prompt="be brief", user_prompt="hi",
+        requested_at=datetime.now(UTC), duration_ms=1000)
+    db.finish_run(run, "finished")
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        assert 'data-mode="normal"' in body and 'data-mode="cache"' in body
+        assert "localStorage.getItem(INSPECT_MODE_KEY)" in body
+        assert "localStorage.setItem(INSPECT_MODE_KEY, inspectMode)" in body
+        assert "var inspectMode = 'normal';" in body
+        # Restored on load and re-applied after a live swap, beside the JSON
+        # view's own re-application.
+        assert body.count("applyInspectMode(") >= 3
+        swap = body.split("cur.innerHTML = next.innerHTML;")[1]
+        assert "applyInspectMode(cur);" in swap
+    finally:
+        db.session.query(AssistantRun).filter(
+            AssistantRun.uuid == run.uuid).delete()
+        db.session.commit()

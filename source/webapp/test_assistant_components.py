@@ -6,8 +6,11 @@ written a special case for that action. Bespoke renderers are a promotion a
 payload earns, never a requirement.
 """
 
+import json
+
 import db
-from webapp.assistant_components import event_kpis, render_event_detail
+from webapp.assistant_components import (
+    event_kpis, event_markdown, render_event_detail)
 
 
 def _event(kind, label="x", *, kpis=None, payload=None, duration_ms=1000):
@@ -755,3 +758,78 @@ def test_the_controls_ride_with_the_block_s_own_label():
     # The switch first, then copy: one changes how you are looking, the other
     # acts on what you are looking at.
     assert acts.index("ev-view") < acts.index("ev-copy")
+
+
+# --- the cache view's boundaries ----------------------------------------------
+
+
+def _cache_attr(html: str, title: str) -> dict | None:
+    """The `data-cache` payload on the pane titled `title`, or None."""
+    import html as html_mod
+    import re
+    block = html.split(f"<summary>{title} (")[1].split("</details>")[0]
+    m = re.search(r'data-cache="([^"]*)"', block)
+    return json.loads(html_mod.unescape(m.group(1))) if m else None
+
+
+def _cached_llm(system: str, user: str, **kpis) -> dict:
+    return _event("llm", "decide → reply",
+                  kpis={"input_tokens": 100, **kpis},
+                  payload={"system_prompt": system, "user_prompt": user})
+
+
+def test_a_prefix_that_ends_inside_the_system_prompt_leaves_the_user_prompt_cold():
+    """Prefix counts are lengths over the flattened prompt, system first. A
+    cache that stopped partway through the system prompt therefore covers
+    part of that pane and none of the next."""
+    system, user = "s" * 40, "u" * 40
+    # Flattened: "<system>" + 40 + "\n<user>" + 40 = 95 chars. 20 tokens of
+    # 100 is 19 chars: 8 of tag, 11 of system prompt.
+    html = render_event_detail(_cached_llm(
+        system, user, cached_tokens=20, reusable_tokens=20))
+
+    assert _cache_attr(html, "system prompt")["cached"] == 11
+    assert _cache_attr(html, "user prompt")["cached"] == 0
+
+
+def test_a_prefix_past_the_system_prompt_fills_it_and_reaches_into_the_user_prompt():
+    system, user = "s" * 40, "u" * 40
+    # 60 tokens of 100 over 95 chars is 57 chars: the tag (8), the system
+    # prompt (40), the newline and user tag (7), then 2 of the user prompt.
+    html = render_event_detail(_cached_llm(
+        system, user, cached_tokens=60, reusable_tokens=100))
+
+    sys_attr = _cache_attr(html, "system prompt")
+    user_attr = _cache_attr(html, "user prompt")
+    assert sys_attr["cached"] == 40 and sys_attr["reusable"] == 40
+    assert user_attr["cached"] == 2 and user_attr["reusable"] == 40
+    # The counts ride along so the page can name them in tokens.
+    assert user_attr["cached_tokens"] == 60
+    assert user_attr["reusable_tokens"] == 100
+    assert user_attr["prompt_tokens"] == 100
+
+
+def test_a_calibrating_call_still_places_what_is_exact():
+    """No cached estimate yet, but the reusable prefix owes nothing to timing:
+    the amber band can be drawn and the green one honestly left out."""
+    html = render_event_detail(_cached_llm(
+        "s" * 40, "u" * 40, cached_tokens=None, reusable_tokens=100))
+
+    attr = _cache_attr(html, "user prompt")
+    assert attr["cached"] is None
+    assert attr["reusable"] == 40
+
+
+def test_a_call_with_no_prefix_counts_carries_no_cache_attribute():
+    html = render_event_detail(_cached_llm("s" * 40, "u" * 40))
+
+    assert "data-cache" not in html
+
+
+def test_the_cache_attribute_stays_off_the_markdown():
+    """The export reads blocks, not attributes: what a call sent is what the
+    document quotes, with nothing about how the page colours it."""
+    lines = event_markdown(_cached_llm(
+        "s" * 40, "u" * 40, cached_tokens=60, reusable_tokens=100))
+
+    assert not any("data-cache" in line or "reusable" in line for line in lines)

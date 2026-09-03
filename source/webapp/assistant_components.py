@@ -23,6 +23,7 @@ import json
 from typing import Any
 
 from agents.assistant import CAPABILITIES
+from llm.activity_metrics import content_spans, flatten_prompt
 from markupsafe import Markup
 
 #: What each action is for, keyed by action name. Every pane says what
@@ -242,7 +243,7 @@ def _kpi_html(event: dict) -> Markup:
 
 
 def _block(title: str, body: Any, *, collapsed: bool = False,
-           key: str = "") -> dict | None:
+           key: str = "", cache: dict | None = None) -> dict | None:
     """A labelled block of text, or None when there is nothing to show.
 
     None rather than an empty block: an absent field says "not recorded",
@@ -259,11 +260,59 @@ def _block(title: str, body: Any, *, collapsed: bool = False,
     tail hides the divergence being hunted. Nothing is bought by clipping
     either: a collapsed block costs no paint until it is opened, and what a
     step recorded was already bounded when it was captured.
+
+    `cache` is where the prompt cache's prefixes end inside THIS body
+    (`_prompt_cache`), for the page's cache view. Only the two prompt panes
+    have one; the page draws it, the export never sees it.
     """
     if body in (None, "", {}, []):
         return None
     return {"title": title, "body": body, "collapsed": collapsed,
-            "key": key or title, "note": False, "json": _is_json_text(body)}
+            "key": key or title, "note": False, "json": _is_json_text(body),
+            "cache": cache}
+
+
+def _prompt_cache(event: dict) -> dict[str, dict]:
+    """Where the cache's two prefixes end inside each prompt pane, by role.
+
+    Both counts on the event are token lengths over the flattened prompt the
+    recorder hashed (`flatten_prompt`: system first, then user, each behind
+    its role tag). A count is scaled onto that text's character length —
+    the same proportional step `reusable_prefix_tokens` took the other way —
+    and then clipped to each message's own span, so a prefix that ends inside
+    the system prompt leaves the user prompt at zero and one that runs past it
+    fills it.
+
+    Empty when there is nothing to place: no token count to scale by, or
+    neither prefix recorded. `cached` alone may be None — a model still
+    calibrating has no estimate, and the exact count is still worth drawing.
+    """
+    kpis = event.get("kpis") or {}
+    payload = event.get("payload") or {}
+    total = kpis.get("input_tokens")
+    cached, reusable = kpis.get("cached_tokens"), kpis.get("reusable_tokens")
+    if not total or (cached is None and reusable is None):
+        return {}
+    pairs = [(role, payload.get(f"{role}_prompt"))
+             for role in ("system", "user")]
+    pairs = [(role, text) for role, text in pairs if isinstance(text, str)]
+    chars = len(flatten_prompt(pairs))
+    if not chars:
+        return {}
+
+    def clip(tokens, start, end):
+        if tokens is None:
+            return None
+        at = round(chars * tokens / total)
+        return max(0, min(at, end) - start)
+
+    return {
+        role: {"cached": clip(cached, start, end),
+               "reusable": clip(reusable, start, end),
+               "cached_tokens": cached, "reusable_tokens": reusable,
+               "prompt_tokens": total}
+        for (role, _), (start, end) in zip(pairs, content_spans(pairs))
+    }
 
 
 def _is_json_text(body: Any) -> bool:
@@ -352,8 +401,12 @@ def _block_html(block: dict | None) -> Markup:
     text = _block_text(block)
     acts = Markup('<span class="ev-acts">{}{}</span>').format(
         _VIEW_SWITCH if block.get("json") else Markup(""), _COPY_BUTTON)
-    pre = Markup('<pre class="ev-pre"{}>{}</pre>').format(
-        Markup(' data-json') if block.get("json") else Markup(""), text)
+    attrs = Markup(' data-json') if block.get("json") else Markup("")
+    if block.get("cache"):
+        # One JSON attribute rather than a handful: the page reads it whole,
+        # and a further count later is a further key, not a further attribute.
+        attrs += Markup(' data-cache="{}"').format(json.dumps(block["cache"]))
+    pre = Markup('<pre class="ev-pre"{}>{}</pre>').format(attrs, text)
     if block["collapsed"]:
         return Markup(
             '<details class="prompt ev-block" data-k="{}">'
@@ -438,6 +491,7 @@ def _llm(event: dict) -> list[dict]:
     payload = event.get("payload") or {}
     rejected = payload.get("rejected_attempts") or []
     key = event.get("uuid") or event.get("label") or "ev"
+    cache = _prompt_cache(event)
     return _blocks(
         # First: what the call was working from — the profile in force, the
         # switch states. It frames everything below it, and it is short, so
@@ -453,9 +507,9 @@ def _llm(event: dict) -> list[dict]:
         # The prompts shut by default: they are the largest thing here and the
         # least often the answer. The response is what the reader came for.
         _block("system prompt", payload.get("system_prompt"),
-               collapsed=True, key=f"{key}-system"),
+               collapsed=True, key=f"{key}-system", cache=cache.get("system")),
         _block("user prompt", payload.get("user_prompt"),
-               collapsed=True, key=f"{key}-user"),
+               collapsed=True, key=f"{key}-user", cache=cache.get("user")),
         _block("response", payload.get("model_response")),
         _block("reasoning", payload.get("reasoning"),
                collapsed=True, key=f"{key}-reasoning"),

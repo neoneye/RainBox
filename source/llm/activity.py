@@ -59,6 +59,7 @@ import providers
 from llm.activity_metrics import (
     cached_tokens_estimate,
     cold_rate,
+    flatten_prompt,
     prefix_chain,
     reusable_prefix_tokens,
 )
@@ -207,15 +208,10 @@ def _extract_reported_cache(usage: Any) -> int | None:
 
 
 def prompt_text(messages: Any) -> str:
-    """The outgoing prompt flattened to text, for prefix hashing.
-
-    Roles are interleaved so that a change of speaker can't look like an
-    unchanged prefix, and blocks line up the way the runtime's own template
-    would lay them out.
-    """
-    return "\n".join(
-        f"<{role}>{content}" for role, content in _role_content_pairs(messages)
-    )
+    """The outgoing prompt flattened to text, for prefix hashing. The layout
+    is `flatten_prompt`'s, so a page mapping a prefix length back onto the
+    messages reads the same layout the hash did."""
+    return flatten_prompt(_role_content_pairs(messages))
 
 
 def _role_content_pairs(messages: Any) -> list[tuple[str, str]]:
