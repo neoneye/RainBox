@@ -237,3 +237,49 @@ def test_handle_rejects_agents_room(app_ctx):
     finally:
         db.session.query(Chatroom).filter(Chatroom.uuid == room.uuid).delete()
         db.session.commit()
+
+
+def test_build_messages_window_keeps_newest_rows_and_system_message():
+    history = [
+        {"kind": "message", "sender_type": "human", "text": "one"},
+        {"kind": "message", "sender_type": "agent", "text": "two"},
+        {"kind": "thinking", "sender_type": "agent", "text": "hmm"},
+        {"kind": "message", "sender_type": "human", "text": "three"},
+        {"kind": "message", "sender_type": "agent", "text": "four"},
+        {"kind": "message", "sender_type": "human", "text": "five"},
+    ]
+    messages = DirectChatAgent.build_messages("Sys.", history, window=2)
+    assert [(m.role, m.content) for m in messages] == [
+        (MessageRole.SYSTEM, "Sys."),
+        (MessageRole.ASSISTANT, "four"),
+        (MessageRole.USER, "five"),
+    ]
+
+
+def test_build_messages_window_none_keeps_everything():
+    history = [
+        {"kind": "message", "sender_type": "human", "text": str(i)}
+        for i in range(5)
+    ]
+    assert len(DirectChatAgent.build_messages("", history, window=None)) == 5
+    assert len(DirectChatAgent.build_messages("", history, window=50)) == 5
+
+
+def test_handle_applies_room_history_window(direct_room, monkeypatch):
+    room_uuid, human_uuid = direct_room
+    db.post_chat_message(room_uuid, human_uuid, "first")
+    db.post_chat_message(room_uuid, DIRECT_CHAT_UUID, "reply one")
+    db.post_chat_message(room_uuid, human_uuid, "second")
+    db.set_chatroom_settings(room_uuid, model_uuid=uuid4(), history_window=1)
+    agent = _agent()
+    seen = {}
+
+    def fake_stream(room, model, messages, request_timeout=None):
+        seen["messages"] = messages
+        return "ok"
+
+    monkeypatch.setattr(agent, "_stream_reply", fake_stream)
+    agent.handle(uuid4(), {"room_uuid": str(room_uuid)})
+    assert [(m.role, m.content) for m in seen["messages"]] == [
+        (MessageRole.USER, "second"),
+    ]

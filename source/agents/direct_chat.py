@@ -1,9 +1,10 @@
 """Direct LLM chat agent — the responder for room_type='direct' chatrooms.
 
 A direct room is a one-to-one conversation between the operator and a single
-model: the model sees the ENTIRE room history as proper
-system/user/assistant chat messages (not the IRC-style transcript the
-group-chat agents get), and replies with one plain-text completion. No
+model: the model sees the room history (all of it, or the newest
+history_window kind="message" rows) as proper system/user/assistant chat
+messages (not the IRC-style transcript the group-chat agents get), and
+replies with one plain-text completion. No
 structured output, no tools, no memory retrieval, no persona.
 
 Unlike the other LLM agents it is NOT a ModelGroupAgent: the model comes from
@@ -53,20 +54,24 @@ class DirectChatAgent(Agent):
 
     @staticmethod
     def build_messages(
-        system_prompt: str, history: list[dict[str, Any]]
+        system_prompt: str, history: list[dict[str, Any]],
+        window: int | None = None,
     ) -> list[ChatMessage]:
         """The LLM message list: optional system message (blank prompt = none),
-        then every kind='message' row oldest-first — human rows as `user`,
-        everything else as `assistant`. The triggering message is simply the
-        last user row; no window is applied (the model sees the whole room)."""
+        then kind='message' rows oldest-first — human rows as `user`,
+        everything else as `assistant`. `window` keeps only the newest that
+        many message rows (the room's history_window); None = every row. The
+        system message is never counted. The triggering message is simply
+        the last user row."""
         messages: list[ChatMessage] = []
         if system_prompt.strip():
             messages.append(
                 ChatMessage(role=MessageRole.SYSTEM, content=system_prompt)
             )
-        for m in history:
-            if m.get("kind") != "message":
-                continue
+        rows = [m for m in history if m.get("kind") == "message"]
+        if window is not None and window > 0:
+            rows = rows[-window:]
+        for m in rows:
             role = (
                 MessageRole.USER
                 if m.get("sender_type") == "human"
@@ -221,7 +226,8 @@ class DirectChatAgent(Agent):
             return {"ok": True, "notice": "no_model"}
         history = db.list_room_messages(room_uuid)
         messages = self.build_messages(
-            db.resolve_room_system_prompt(room), history
+            db.resolve_room_system_prompt(room), history,
+            window=room.history_window,
         )
         reply = self._stream_reply(
             room_uuid, model_uuid, messages,
