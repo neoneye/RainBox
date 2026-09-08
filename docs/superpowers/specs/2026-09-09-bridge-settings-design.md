@@ -1,241 +1,381 @@
 # Where chat-bridge settings live
 
 **Date:** 2026-09-09
-**Status:** design note (no implementation yet)
-**Applies to:** `discord_service/`, `telegram_service/`, and any future
-bridge (Zulip is the likely next one)
 
-## The question
+**Status:** design note; none of the proposed tables, endpoints, or live reload
+behavior is implemented yet.
 
-`discord_service` and `telegram_service` are configured entirely by
-environment variables. That is fine for a process you restart freely and
-wrong for settings you want to change while the system runs. A `.env` file
-does not fix it: the values are still read once at process start, so
-changing one means restarting whoever read it.
+**Applies to:** `source/discord_service/`, `source/telegram_service/`, and a
+future Zulip bridge.
 
-The core (`main.py`) must not be restarted casually — agents may be
-mid-turn. The bridge processes may. **That restart boundary is the whole
-design.** Put a setting where the process that must restart to see it is a
-process you are willing to restart.
+## Decision and current behavior
 
-## Three homes, one rule each
+Keep deployment configuration and credentials in the bridge process's
+environment. Store operator-editable connectors, bindings, and policies in
+Postgres, exposed to bridges through the core's HTTP API. Keep delivery
+checkpoints in each bridge's local state file.
 
-| Home | Rule | Bridge examples |
+The core (`source/main.py`) should not need a restart for ordinary bridge
+configuration changes: agents may be mid-turn. Each connector runs in its own
+bridge process, which can be restarted independently. Installing the initial
+schema and application code still requires the normal deployment procedure;
+live editing is a property of the implemented feature, not a way to hot-load
+new core code.
+
+Today both bridges read environment variables at startup and use HTTP only;
+neither needs database credentials or imports the core's database models.
+Discord binds one configured channel to a room found by name. Telegram binds
+one room, but learns its outbound chat ID from an allowed inbound message.
+Both have an inbound worker and an independent outbound SSE worker. Updating
+only the inbound polling loop would leave the outbound worker using stale
+configuration.
+
+## Three homes
+
+| Home | Rule | Examples |
 |---|---|---|
-| **Environment (deployment facts)** | Needed to reach the DB or identify this process before any config is readable | `DATABASE_URL`, `RAINBOX_URL`, `BRIDGE_STATE_FILE`, `BRIDGE_CONNECTOR` |
-| **Environment (secrets)** | Never in Postgres — cleartext there means cleartext in every backup | bot tokens, Zulip API keys |
-| **Postgres (operator settings)** | Everything else: read fresh at use, editable in the UI, no restart | which channel maps to which room, allowlists, poll interval, forwarded kinds, enabled flags |
+| Environment: deployment | Needed before fetching configuration, or specific to the host/process | `RAINBOX_URL`, `BRIDGE_CONNECTOR`, state-file path |
+| Environment: credentials | Credential values never enter the bridge tables or config API | Discord/Telegram bot tokens, Zulip API key |
+| Postgres: operator settings | Validated edits take effect in the running bridge | Bindings, allowlists, direction, enabled flags, forwarding policy |
 
-The secret rule is not new. `db/settings.py` already enforces it:
-`secret=True` settings are env-backed and refuse to store a value, for the
-reason given in `notes/backup.md`. Bridge tokens are the same class of
-thing and get the same treatment.
+`DATABASE_URL` remains a **core** deployment setting. Bridges fetch configuration
+through HTTP and do not connect directly to Postgres. `BRIDGE_CONNECTOR` is
+proposed below; existing state-file variables remain `DISCORD_STATE_FILE` and
+`TELEGRAM_STATE_FILE`. A common `BRIDGE_STATE_FILE` name can be added as an
+explicit alias during migration, with precedence documented then.
 
-This split lands exactly on the boundary you described. Everything you
-change often is in the DB, so the core keeps running and the bridge picks
-it up live. The one thing that stays in env is the one thing that almost
-never changes, and its only reader is a process you are happy to restart.
+This follows `source/db/settings.py:set_setting`, which rejects non-null values
+for secret-flagged settings. The scope here is bridge credentials, not a claim
+that the whole database is secret-free: `source/notes/backup.md` documents
+existing model API keys in `model_config`. Backups are encrypted, but any secret
+stored in the database is also present in the decrypted dump.
 
-## Rows, not settings keys
+`app_setting` is a registry of fixed keys. User-created connectors and bindings
+are collections of rows, like model configurations and cron jobs, so they need
+real tables rather than dynamically generated setting keys.
 
-`app_setting` is a flat key–value table with a code-side registry, and its
-own proposal deliberately refused a `scope` column. Bridge configuration
-does not fit it: there is no fixed set of keys, there are *rows* — many
-connectors, many bindings, created and deleted from a UI. That is
-`model_config` / `cron_job` shaped, so it gets real tables.
+## Data model
 
-## Schema sketch
+All three tables use the repository's integer primary key, unique UUID, and
+created/updated timestamps. UUIDs are the persistent API and state identities;
+names are editable labels. The following fields describe the contract, not a
+complete SQLAlchemy migration.
 
-```python
-class BridgeConnector(db.Model):
-    """One bot identity on one platform: what to talk to and who we are."""
-    __tablename__ = "bridge_connector"
-    id: Mapped[int] = mapped_column(primary_key=True)
-    uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
-    name: Mapped[str] = mapped_column(Text, unique=True)   # "mainbot", referenced by BRIDGE_CONNECTOR
-    platform: Mapped[str] = mapped_column(Text)            # "discord" | "telegram" | "zulip"
-    # Zulip needs its realm URL; Discord/Telegram use the platform's fixed API base.
-    base_url: Mapped[str | None] = mapped_column(default=None)
-    # Zulip authenticates as email + API key; the email is not a secret.
-    identity: Mapped[str | None] = mapped_column(default=None)
-    # The NAME of the env var holding the credential — never the credential.
-    token_env: Mapped[str] = mapped_column(Text)
-    enabled: Mapped[bool] = mapped_column(default=True)
-    policy: Mapped[dict] = mapped_column(JSON, default=dict)   # connector-level defaults
-
-
-class BridgeBinding(db.Model):
-    """One remote conversation <-> one rainbox room."""
-    __tablename__ = "bridge_binding"
-    id: Mapped[int] = mapped_column(primary_key=True)
-    uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
-    connector_uuid: Mapped[UUID] = mapped_column()          # plain col, no FK (house style)
-    room_uuid: Mapped[UUID] = mapped_column()               # chatroom.uuid
-    # Platform-shaped remote address. NOT a scalar id — see below.
-    address: Mapped[dict] = mapped_column(JSON, default=dict)
-    enabled: Mapped[bool] = mapped_column(default=True)
-    policy: Mapped[dict] = mapped_column(JSON, default=dict)  # overrides the connector's
-    folder_uuid: Mapped[UUID | None] = mapped_column(default=None)
-    position: Mapped[int] = mapped_column(default=0)
-```
-
-Plus a `bridge_folder` table mirroring `chatroom_folder` for grouping.
-
-### The address must not be one id column
-
-This is the single decision that keeps the design from being
-Discord-shaped. The three platforms address a conversation differently:
-
-```json
-{"channel_id": "…"}                          // Discord
-{"chat_id": …}                               // Telegram
-{"stream": "engineering", "topic": "rainbox"} // Zulip — a PAIR, topic optional
-```
-
-A `channel_id` column would force Zulip into a fiction. A JSON `address`
-validated per platform by a small code-side registry (same shape as the
-`SETTINGS` registry: which keys are required, how to render them) costs
-nothing now and is the difference between adding Zulip and rewriting for
-it. Discord's guild id, if wanted, is another key in that blob — a server
-is not a level, it is metadata.
-
-## Inheritance
-
-Four levels, nearest non-null wins:
-
-```
-code defaults (per platform, in the registry)
-  └─ connector.policy
-       └─ folder chain, root → leaf
-            └─ binding.policy
-```
-
-Null means inherit; that is already the repo's idiom
-(`Chatroom.request_timeout` null = the model config's, `history_window`
-null = the whole room, `chat.default_model` under a room's own model).
-Folder-chain inheritance has direct precedent too:
-`_cron_job_effective_enabled` walks every ancestor folder before deciding a
-job is live.
-
-Letting the **folder tree** carry inheritance is what makes the hierarchy
-generic. You arrange folders however the situation demands — one per
-Discord server, one per platform, one per purpose — and no platform
-concept is baked into the schema. It also inherits the UI conventions: a
-`/bridges` page follows `notes/ui-left-panel-tree.md` (mirror `/cron`'s CSS
-and JS) and renames go through the modal in `notes/ui-modal-rename.md`.
-
-Policy keys worth having, all resolvable at any level:
-
-| Key | Meaning |
+| Table | Fields in addition to common identity/timestamps |
 |---|---|
-| `allowed_senders` | remote user ids permitted to post inbound |
-| `forward_kinds` | which row kinds go out, e.g. `["message","notice","progress"]` |
-| `poll_seconds` | inbound poll interval |
-| `mirror_progress` | edit one remote message in place vs post each update |
-| `replay_history` | whether a fresh binding backfills |
-| `direction` | `both` / `in` / `out` |
+| `bridge_connector` | `name` (unique label), `platform`, nullable `base_url` and `identity`, `token_env`, `enabled` (default false), `policy` (JSON object, default `{}`) |
+| `bridge_folder` | `connector_uuid`, `parent_uuid` (nullable), `name`, `position`, `enabled` (default true), `policy` (JSON object, default `{}`) |
+| `bridge_binding` | `connector_uuid`, `folder_uuid` (nullable), `room_uuid`, `address` (validated JSON object), `address_key` (canonical text), `enabled` (default false), `policy` (JSON object, default `{}`), `position` |
 
-## Secrets with more than one bot
+`bridge_folder` follows the tree shape of `ChatroomFolder`, adding policy and
+an enabled gate. Folders belong to exactly one connector. This makes sender IDs
+and platform-specific policy unambiguous: a Discord server can be represented
+by a folder under its bot, without introducing a server table. Cross-connector
+folders and defaults are deferred.
 
-`token_env` per connector is what makes multiple bots work without putting
-any credential in Postgres:
+Required invariants:
 
-| Connector | `token_env` | Where the value lives |
+- `platform` is an installed adapter's registered name. Discord and Telegram
+  require null `base_url` and `identity`; Zulip requires a realm URL and bot
+  email. Unknown policy keys, unsupported features, malformed addresses, and
+  invalid types are rejected on write and on configuration load.
+- References must exist; a binding's folder and every ancestor must belong to
+  its connector. Reject cycles, missing parents, and cross-connector moves.
+  Index connector membership and `(parent_uuid, position)` for tree reads.
+- Enforce uniqueness of `(connector_uuid, address_key)` in the database,
+  including disabled bindings. The adapter derives `address_key` from the
+  normalized routing fields; optional display metadata is excluded. One remote
+  conversation maps to one room per connector. Several distinct conversations
+  may intentionally share a room, whose agent output reaches each enabled
+  outbound binding.
+- Connector platform, realm, bot identity, and credential-variable reference
+  are fixed after creation. Binding connector, room, and address are also
+  fixed. To change a destination, create a disabled replacement with a new UUID
+  and retire the old binding. Never apply old cursors or progress-message IDs
+  to a new destination. Name, policy, position, and enabled state remain editable.
+- Deleting a referenced room is rejected until its bindings are removed.
+  Reject deletion of nonempty folders/connectors; the UI can offer an explicit
+  transactional removal of their contents. A move or deletion validates and
+  commits the whole change together. If plain UUID columns are used instead
+  of foreign keys, all write paths, including room deletion, must share locking
+  and validation that prevents concurrent dangling references. Do not silently
+  repair a missing reference by routing to another room.
+
+### Platform addresses
+
+IDs are canonical decimal **strings** in JSON, preserving Discord snowflakes
+through JavaScript and signed Telegram chat IDs. Adapters validate their own
+ID format and convert to API types at the boundary.
+
+| Platform | Example address | Initial supported scope |
 |---|---|---|
-| `mainbot` | `DISCORD_TOKEN_MAINBOT` | repo-root `.env`, or the shell |
-| `testbot` | `DISCORD_TOKEN_TESTBOT` | same |
-| `zulip-work` | `ZULIP_KEY_WORK` | same |
+| Discord | `{"channel_id":"123456789012345678"}` | One text channel; guild ID may be display metadata |
+| Telegram | `{"chat_id":"-1001234567890"}` | One chat; forum-topic routing is deferred |
+| Zulip | `{"stream_id":"42","topic":"rainbox"}` | One channel and one explicit, nonempty topic |
 
-`.env` is a fine transport for these — `env_file.py` already loads the
-repo-root file, and it is gitignored. The point is not that env vars are
-better; it is that the value never reaches Postgres, never reaches a
-backup, and never crosses the core's unauthenticated local HTTP API.
+A Zulip channel-wide inbound subscription is a different routing feature: it
+needs both overlap rules and an outbound-topic decision. Omission of `topic`
+must not silently mean “send to the whole stream.” The first adapter requires
+an explicit topic in both directions. Zulip's [send-message
+API](https://zulip.com/api/send-message) distinguishes the channel destination
+and topic; the registry must reflect that rather than treating every platform
+as a scalar channel ID.
 
-Run **one process per connector**, selected by `BRIDGE_CONNECTOR=mainbot`.
-It reads only its own token, and restarting one bot leaves the others
-alone. One process serving several connectors is possible but buys
-nothing here.
+## Policy resolution and enabled gates
 
-## How the bridge sees changes without a restart
+Resolve each policy key independently, in this order:
 
-The bridge already polls. Have it re-fetch its config on the same cycle:
-
+```text
+platform code default
+  -> connector.policy
+  -> connector's folder chain, root to leaf
+  -> binding.policy
 ```
-GET /bridge/api/connectors/<name>/config
-  -> {connector: {...}, bindings: [{uuid, room_uuid, address, policy resolved}]}
+
+A missing key or JSON null means inherit. A present non-null value replaces
+the previous value. Lists replace lists; there is no concatenation or deep
+merge. In particular, `[]` means an empty list and `false` is an explicit value.
+The registry defines types, defaults, validation, and adapter capabilities.
+The UI shows the effective value and which level supplied it.
+
+| Key | Default and meaning |
+|---|---|
+| `allowed_senders` | `[]`: deny all inbound. A list of platform user-ID strings, not usernames or rainbox UUIDs. A child can replace its parent's list; the UI must show this clearly. |
+| `forward_kinds` | Discord: `["message","notice","progress"]`; Telegram: `["message"]`. Only supported agent row kinds can be forwarded; human, thinking, and debug rows remain excluded. |
+| `poll_seconds` | Discord: `2`; finite number in `[0.5, 300]`. Controls channel polling, not config refresh. Reject for adapters that do not use per-binding polling. |
+| `mirror_progress` | Discord: `true`; edits one remote bubble per progress row. When false, sends each supported progress update separately. Unsupported by the current Telegram adapter. Ignored when `progress` is excluded. |
+| `direction` | `both`; accepted values `both`, `in`, `out`, relative to rainbox. |
+
+Bot/self-authored messages are always excluded inbound, regardless of
+`allowed_senders`, to avoid bridge echo loops. No wildcard allowlist is part of
+this design. Folders are operator organization, not an access-control boundary;
+allowlist overrides intentionally can broaden access.
+
+Enabled state is **not** nearest-value inheritance:
+
+```text
+effective_enabled = connector.enabled
+                    AND every ancestor folder.enabled
+                    AND binding.enabled
 ```
 
-Secrets are absent by construction, so this endpoint exposes nothing the
-`/chat` API does not already. A changed policy applies on the next cycle;
-an added or removed binding is a rebind, not a restart. Only two things
-still need a process restart: the credential itself, and which connector
-this process is.
+A child cannot override a disabled ancestor. This matches the enabled gate in
+`source/db/cron.py:_cron_job_effective_enabled`, not a general policy merge.
+Unlike that helper's permissive missing-parent handling, invalid bridge trees
+fail closed. New connectors and bindings start disabled so configuration can
+be completed before any traffic flows.
 
-So in practice you stop restarting the bridge too, even though you were
-willing to.
+The `/bridges` page follows `source/notes/ui-left-panel-tree.md` and the rename
+modal in `source/notes/ui-modal-rename.md`. Show both local and effective enabled
+state, inherited values, and validation errors. Moving a binding between
+folders changes its effective policy and must be shown as such.
 
-## Cursors stay in the service's state file
+## Credentials and process identity
 
-Per-binding bookkeeping (`discord_after`, `room_cursor`, the progress
-message map) is high-write process state, not operator configuration. In
-Postgres it would churn every backup for no gain. Keep it in the state
-file, but key it **by binding uuid** rather than flat, so adding or
-removing a binding cannot disturb another's position:
+Run one process per connector, selected by **UUID**, for example
+`BRIDGE_CONNECTOR=<connector-uuid>`. A rename cannot break startup or reload.
+`token_env` stores only the name of its credential variable, such as
+`DISCORD_TOKEN_MAINBOT`; it never stores a value.
+
+The process reads that variable locally. Empty/missing credentials prevent
+activation and produce a redacted error. Rotation under the same variable name
+requires restarting only that connector. A replacement token must authenticate
+as the same bot; verify and retain the authenticated bot identity in local state
+so a different bot cannot inherit the previous bot's checkpoints.
+
+The current bridges do **not** load the repo-root `.env`: `source/env_file.py`
+is invoked by provider imports, which these isolated services do not use.
+Initially, supply credentials in the launch environment. Adding `.env` support
+requires an explicit bridge startup loader and its own dependency arrangement;
+do not import the LLM/provider stack just to obtain it. Environment variables
+provided by the launcher must win over file values.
+
+Keeping credential values out of JSON does not make configuration harmless.
+The core API is currently unauthenticated and bound to localhost; connector
+configuration belongs within that same trusted operator boundary. An editable
+realm URL determines where credentials are sent. Validate HTTPS realm URLs
+without userinfo/query/fragment, reject cross-origin authentication redirects,
+and keep realm/token-reference changes outside ordinary live policy edits.
+The bridge should receive only its own credential in its launch environment.
+Never return credential values, environment dumps, or token-bearing URLs in
+config responses or logs. `token_env` names and binding metadata may be returned.
+
+## Live configuration contract
+
+```text
+GET /bridge/api/connectors/<connector-uuid>/config
+  -> {
+       schema_version: 1,
+       revision: <opaque revision of this complete resolved snapshot>,
+       connector: {uuid, name, platform, base_url, identity, token_env, enabled},
+       bindings: [{uuid, room_uuid, address, effective_enabled, policy}]
+     }
+```
+
+The core resolves a coherent database snapshot, including folder policies and
+enabled gates, before producing the response. `revision` changes whenever an
+effective setting or binding membership changes; it is not merely the
+connector's `updated_at`. Include disabled bindings so disable and deletion
+remain distinguishable. Use a strict response schema; never serialize ORM rows
+or environment values wholesale.
+
+A dedicated config refresh task runs every 5 seconds, including while all
+bindings are disabled. It is independent of platform polling, SSE traffic,
+long polling, and retry backoff. Bound each config request to 5 seconds.
+Validate the entire response before atomically publishing an immutable snapshot
+to **both** workers. They re-check the current binding, enabled gate, and
+policy before every new send/post/edit/delete and retry; a request already in
+flight may complete after a disable. Edits neither cancel agent turns nor
+restart the core.
+
+| Event | Required behavior |
+|---|---|
+| Policy/folder change | Publish a new snapshot; preserve checkpoints; wake affected workers. |
+| New binding | Validate destination, initialize at current high-water marks, persist state, then activate; no history replay. |
+| Disable or removal | Stop new traffic for that binding when the snapshot is applied. Retain checkpoints and progress mappings for reconciliation; do not send cleanup requests while disabled. |
+| Re-enable | Resume from retained checkpoints under the current policy; catch up retained backlog and reconcile stale progress bubbles. Telegram inbound events consumed while disabled are an explicit exception, described below. |
+| Direction/kind/allowlist change | Apply to newly handled events; intentionally filtered events advance the applicable cursor and are not replayed if policy later changes. |
+| Missing connector (404) | Immediately pause all traffic; retain state and keep refreshing. Never fall back to legacy env configuration. |
+| Timeout, 5xx, malformed response, or unsupported schema | Keep the last valid snapshot for at most 30 seconds since its last successful validation, then pause new traffic until a valid response arrives. At startup, no valid snapshot means no traffic. Log the condition without credentials. |
+| Restart-required identity mismatch | Pause and report it; do not reuse another connector's state. |
+
+The 30-second freshness limit bounds stale allowlist/enablement use during an
+outage; it does not promise instantaneous revocation. Readiness/status must
+distinguish disabled, stale configuration, invalid configuration, and transport
+failure. SSE reconnect still triggers catch-up from persisted cursors.
+
+## Delivery state and ownership
+
+Keep a versioned state file per connector, with one owning process and an
+exclusive lock. Workers serialize state mutation and atomic replacement; two
+processes must not write the same file. Deployment must also prevent duplicate
+processes for the same connector/bot using different state paths: a file lock
+alone cannot enforce that across hosts.
+
+State has **connector-wide** and **binding-specific** parts:
 
 ```json
-{"bindings": {"<binding-uuid>": {"remote_after": "…", "room_cursor": 42,
-                                 "progress_messages": {}}}}
+{
+  "schema_version": 1,
+  "connector_uuid": "<connector-uuid>",
+  "platform": "telegram",
+  "remote_identity": "<authenticated-bot-id>",
+  "transport": {"telegram_offset": 123},
+  "bindings": {
+    "<binding-uuid>": {
+      "room_uuid": "<room-uuid>",
+      "address_key": "<canonical-address>",
+      "room_cursor": 42,
+      "progress_messages": {}
+    }
+  }
+}
 ```
 
-## Getting there from today
+- Discord's `discord_after` is per binding/channel. Room cursors and progress
+  maps are always per binding; bindings sharing a room still have independent
+  outbound delivery positions.
+- Telegram's `getUpdates` offset belongs to the **bot**, not a chat or binding.
+  Use one inbound poller to route updates by explicit chat address. Advance the
+  shared checkpoint only after the matched active binding's post succeeds, or
+  an update is deliberately filtered/unmapped. A failed post blocks advancement
+  past that update; head-of-line blocking is accepted initially. Telegram
+  confirms earlier updates when the client requests a higher offset, so persist
+  the handled checkpoint before making that next request. See the [Telegram
+  Bot API](https://core.telegram.org/bots/api#getupdates).
+- Disabled Telegram bindings cannot retain their events in that shared stream
+  while other bindings continue. Treat their updates as deliberately filtered
+  and advance the shared offset; those inbound messages are not replayed on
+  re-enable. The UI must state this when disabling a Telegram binding or folder.
+  Outbound room cursors remain paused and catch up on re-enable. When the whole
+  connector is disabled, stop remote polling; recovery then depends on what
+  Telegram still retains. A durable per-binding inbox is deferred rather than
+  implying that a shared cursor can provide independent inbound pause queues.
+- Zulip queue IDs and event cursors belong to the connector's event
+  subscription. Expired queues require re-registration and an adapter-specific
+  recovery/catch-up strategy. Its [queue registration
+  API](https://docs.zulip.com/api/register-queue) returns both a queue ID and an
+  event position; recovery needs more than renaming `discord_after`.
 
-Additive, with env as the fallback layer — the same precedence
-`get_setting()` already uses (DB → env → default):
+First activation must establish a per-binding remote high-water mark before
+accepting inbound events, even when the adapter uses a shared transport cursor;
+an existing connector's backlog must not become a new binding's history replay.
+The adapter must define this boundary before its multi-binding mode ships.
 
-1. Build the tables, the resolver, the config endpoint, and the `/bridges`
-   page. Nothing else changes.
-2. `discord_service` prefers a connector named by `BRIDGE_CONNECTOR`; with
-   none set it falls back to today's `DISCORD_*` variables, so an existing
-   command line keeps working.
-3. `telegram_service` gets the same fallback when it is next touched. Its
-   env vars keep working until then.
-4. `DISCORD_CHANNEL_ID`, `DISCORD_ALLOWED_USER_IDS`, `DISCORD_ROOM_NAME`
-   and `DISCORD_POLL_SECONDS` become DB-backed. `RAINBOX_URL` and the state
-   file path stay env: they are deployment facts.
+State is operationally important even though it is outside Postgres backups.
+Missing state initializes at newest and skips backlog; corrupt, incompatible,
+or identity-mismatched state stops activation with a recovery instruction.
+Database restore does not restore delivery positions. Preserve matching state
+when migrating; make any reset explicit. Deleted-binding state can be pruned
+after workers have quiesced, never while a worker still owns it.
 
-## Does it actually hold for Zulip?
+Inbound remains at-least-once: a crash after the core accepts a message but
+before the checkpoint is saved may duplicate it. Remote sends have the same
+uncertain-success window; neither exactly-once delivery nor unbounded recovery
+beyond platform retention is promised. Local state avoids putting frequent
+checkpoint writes into configuration tables, but is not disposable cache.
 
-Worth checking before committing, since Zulip is the reason for the
-generality:
+## Migration and implementation boundaries
 
-- **Realm URL** — `base_url` on the connector. Discord and Telegram leave
-  it null.
-- **Email + API key** — `identity` plus `token_env`. Discord and Telegram
-  leave `identity` null.
-- **Stream + topic** — the JSON `address`, with `topic` optional meaning
-  the whole stream.
-- **Long-polling `/events` instead of REST polling** — an implementation
-  detail of that platform's client, invisible to the schema.
-- **Message edits and reactions** — Zulip supports both, so the progress
-  bubble mirroring maps cleanly.
+Legacy env mode and DB mode are **exclusive**; this is not per-field
+`DB -> env -> default` resolution. Once `BRIDGE_CONNECTOR` is set, missing or
+invalid DB configuration must never reactivate the legacy channel/allowlist.
+Unset DB policy fields inherit through the registry and folder chain only.
 
-Nothing about the model resists Zulip, and nothing in it is Discord-only.
-If Zulip replaces Discord entirely, connectors and bindings are re-pointed;
-the tables, resolver, UI and endpoint are untouched.
+1. Add tables and transactional validation, policy resolution, the versioned
+   endpoint, and `/bridges`. Register models in the existing initialization and
+   migration flow. Existing bridges continue unchanged until explicitly opted in.
+2. Add Discord DB mode with the independent refresh task and shared snapshots.
+   With `BRIDGE_CONNECTOR` unset, preserve all existing `DISCORD_*` behavior.
+   In DB mode, use room UUIDs rather than recurring name lookups; replace
+   channel, room-name, allowlist, and poll settings with resolved DB values.
+3. Provide an explicit one-time import: resolve the legacy room name uniquely,
+   create a disabled connector/binding, and copy nonsecret settings. Store the
+   token variable's name only. After stopping the legacy process, back up its
+   state and wrap matching cursors/progress maps under the new identities.
+   Verify the remote address and room before reuse, then start DB mode and
+   enable it. Keep the original state for rollback; never run both modes for
+   the same bot simultaneously. A rollback after new deliveries needs current
+   compatible checkpoints or an explicit reset, not blind reuse of an old file.
+4. Migrate Telegram separately, preserving env mode until then. DB mode requires
+   an explicit `chat_id`; import a learned `operator_chat_id` only after the
+   operator verifies the destination. Do not keep “last allowed sender wins”
+   as a DB-mode routing rule. Implement shared-offset routing and make the
+   disabled-binding discard behavior visible before enabling multiple bindings.
+5. Add Zulip only after defining topic validation, queue recovery, initial
+   high-water marks, and progress edit/delete behavior in its adapter. Reuse
+   policy resolution and core row handling where their semantics match; do not
+   promise that transport or reconciliation code carries over unchanged.
 
-## Not building yet
+History replay, channel-wide Zulip subscriptions, Telegram forum topics,
+operator-editable platform defaults, cross-connector folders, multi-host
+failover, durable inbound inboxes, exactly-once delivery, and inbound attachments
+are outside this first implementation. `replay_history` is deliberately absent
+until its direction, bounds, deduplication, and activation semantics have a
+separate design.
 
-- Operator-editable per-platform defaults. The code registry covers it; if
-  a real need appears it is one more level in the resolver, or a folder.
-- DB-held cursors, one process for many connectors, per-binding rate
-  limits, inbound attachments.
-- Anything multi-tenant. This stays single-operator; the folder tree is
-  organization, not access control.
+## Acceptance checks for implementation
 
-## The one open choice
-
-Whether Discord stays. If Zulip wins on being open source, this design
-absorbs that as a new `platform` value plus a client module, and the work
-already done on the Discord bridge (the row-kind mapping, progress
-mirroring, at-least-once inbound, the reconcile-on-reconnect logic) carries
-over unchanged, because none of it is about Discord's API.
+- Resolver distinguishes absent/null from `[]`/`false`, replaces lists, rejects
+  invalid types/cycles/references, and prevents a child enabling a disabled tree.
+- A rename preserves UUID selection and state; concurrent duplicate-address
+  creates cannot both commit; destination edits cannot reuse old checkpoints.
+- Allowlist removal, direction changes, and disablement reach both workers
+  during idle SSE and platform backoff; stale config pauses within the stated
+  limit. 404 and schema errors never enable legacy fallback.
+- Two bindings sharing a room have independent outbound cursors. Telegram
+  interleaved chats share one offset; a failed post is retried without skipping,
+  deliberately filtered/disabled-chat updates advance the offset, and restarting
+  does not route one chat's messages to another binding.
+- New bindings skip history; re-enabled bindings catch up retained backlog,
+  with the explicit Telegram inbound-discard exception; progress maps reconcile
+  on reconnect. Lost, corrupt, and mismatched state have the distinct behaviors
+  specified above.
+- A second owner cannot open the same state file. Crash injection around
+  send/post, state persistence, and transport acknowledgement demonstrates the
+  documented duplicate window without silent checkpoint advancement.
+- Config responses and errors contain no credential values. Secret-variable
+  rotation restarts only its bridge; identity mismatch prevents state reuse.
+- Existing isolated Discord and Telegram test suites still pass in env mode;
+  migration preserves their matching checkpoints. Core tests cover validation,
+  serialization, tree edits, and the initial schema migration independently.
