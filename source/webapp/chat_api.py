@@ -457,6 +457,47 @@ def retry_chat_room_message(room_uuid: str, message_id: int) -> Response:
                     "deleted_ids": deleted})
 
 
+TROUBLESHOOTING_KINDS: tuple[str, ...] = ("message", "progress", "notice")
+
+
+@app.route("/chat/api/rooms/<room_uuid>/troubleshooting-post", methods=["POST"])
+def troubleshooting_post(room_uuid: str) -> tuple[Response, int]:
+    """Post into a direct room AS its responder, with no model turn — the
+    sidebar's "Bridge troubleshooting" section. The rows are ordinary
+    progress/message/notice rows, so the web UI shows them and the bridges
+    (Discord, Telegram) forward them exactly as they would a real turn: that
+    is how an operator watches the far-side bot post several messages, and
+    edit one progress bubble in place, without any message from that side.
+    Nothing is enqueued: the sender is an agent and the db layer is called
+    directly, never the human-post trigger."""
+    ruuid = _parse_uuid(room_uuid)
+    room = db.get_chatroom(ruuid)
+    if room is None:
+        abort(404, "room not found")
+    if room.room_type != "direct":
+        abort(400, "troubleshooting posts apply to direct rooms only")
+    data = request.get_json(silent=True) or {}
+    kind = data.get("kind")
+    if kind not in TROUBLESHOOTING_KINDS:
+        abort(400, "kind must be one of: " + ", ".join(TROUBLESHOOTING_KINDS))
+    text = data.get("text")
+    if not isinstance(text, str):
+        abort(400, "text must be a string")
+    if kind != "progress" and not text.strip():
+        abort(400, "text required")
+    if kind == "progress":
+        # Rewrites the responder's one live bubble (or creates it) — the same
+        # path a working turn uses, so repeated presses edit in place.
+        msg = db.upsert_progress(ruuid, DIRECT_CHAT_UUID, text)
+    else:
+        # A terminal kind: reaps the responder's progress rows in the same
+        # transaction, like a real reply or failure notice.
+        msg = db.post_chat_message(
+            ruuid, DIRECT_CHAT_UUID, text, db.detect_content_type(text), kind=kind
+        )
+    return jsonify({"id": msg.id, "uuid": str(msg.uuid)}), 201
+
+
 # Parameter names whose values must not leave the server in an export
 # (ModelConfig.arguments carries credentials like api_key).
 _SECRET_PARAM_MARKERS = ("key", "token", "secret", "password")
@@ -577,7 +618,8 @@ def chat_room_export(room_uuid: str) -> Response:
 @app.route("/chat/api/rooms/<room_uuid>/settings", methods=["GET", "PUT"])
 def chat_room_settings(room_uuid: str) -> Response | tuple[Response, int]:
     """A direct room's settings: its system prompt (free text OR a link to a
-    stored /prompt version) and which model it talks to. PUT applies
+    stored /prompt version), which model it talks to, its reply timeout, and
+    how many recent messages the model sees (history_window). PUT applies
     mid-conversation — the next turn reads the room fresh."""
     ruuid = _parse_uuid(room_uuid)
     room = db.get_chatroom(ruuid)
@@ -622,6 +664,15 @@ def chat_room_settings(room_uuid: str) -> Response | tuple[Response, int]:
                     abort(400, "request_timeout must be a positive integer "
                                "(seconds) or null")
                 kwargs["request_timeout"] = raw
+        if "history_window" in data:
+            raw = data.get("history_window")
+            if raw is None:
+                kwargs["history_window"] = None
+            else:
+                if not isinstance(raw, int) or isinstance(raw, bool) or raw <= 0:
+                    abort(400, "history_window must be a positive integer "
+                               "(messages) or null")
+                kwargs["history_window"] = raw
         room = db.set_chatroom_settings(ruuid, **kwargs)
     # Resolve the linked prompt's name so the sidebar can label the link
     # without a second request ("prompt_exists": false = the linked version
@@ -636,6 +687,7 @@ def chat_room_settings(room_uuid: str) -> Response | tuple[Response, int]:
         # chat.default_model setting), so the sidebar can label that state.
         "default_model_uuid": str(default_model) if default_model else None,
         "request_timeout": room.request_timeout,
+        "history_window": room.history_window,
         "prompt_uuid": str(room.prompt_uuid) if room.prompt_uuid else None,
         "prompt_name": linked["name"] if linked else None,
         "prompt_exists": (linked is not None) if room.prompt_uuid else None,
