@@ -20,6 +20,27 @@ RETRY_AFTER_CAP_SECONDS = 30.0
 _NO_MENTIONS: dict[str, Any] = {"parse": []}
 
 
+class DiscordAPIError(Exception):
+    """A non-2xx Discord response, carrying the body's `message` and `code`
+    (https://discord.com/developers/docs/topics/opcodes-and-status-codes#json).
+    A bare HTTP status hides the one thing an operator needs: 403 "Missing
+    Access" (50001, the bot is not in that server / can't see the channel)
+    reads the same as 403 "Missing Permissions" (50013, a missing permission
+    on a channel it can see)."""
+
+    def __init__(self, status: int, method: str, path: str,
+                 message: str | None, code: int | None) -> None:
+        self.status = status
+        self.method = method
+        self.path = path
+        self.message = message
+        self.code = code
+        detail = message or "no error body"
+        if code is not None:
+            detail += f" (code {code})"
+        super().__init__(f"{status} on {method} {path}: {detail}")
+
+
 def chunk_text(text: str, limit: int = DISCORD_MAX_LEN) -> list[str]:
     """Split text into <=limit chunks; empty text yields no chunks."""
     if not text:
@@ -42,7 +63,8 @@ class DiscordClient:
         self, method: str, path: str, *, ok_404: bool = False, **kwargs: Any
     ) -> Any:
         """One call. A 429 is honored once (sleep the body's retry_after,
-        capped, then retry); a second 429 or any other error status raises."""
+        capped, then retry); a second 429 or any other error status raises
+        DiscordAPIError with the body's message and code."""
         url = f"{API_BASE}{path}"
         for attempt in (1, 2):
             resp = self._session.request(
@@ -59,7 +81,15 @@ class DiscordClient:
                 continue
             if ok_404 and resp.status_code == 404:
                 return resp
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                message = code = None
+                try:
+                    body = resp.json() or {}
+                    message = body.get("message")
+                    code = body.get("code")
+                except Exception:
+                    pass
+                raise DiscordAPIError(resp.status_code, method, path, message, code)
             return resp
         raise RuntimeError("unreachable")
 

@@ -1,7 +1,7 @@
 """DiscordClient against a fake requests session — no network."""
 import pytest
 
-from discord_api import DISCORD_MAX_LEN, DiscordClient, chunk_text
+from discord_api import DISCORD_MAX_LEN, DiscordAPIError, DiscordClient, chunk_text
 
 
 class FakeResponse:
@@ -114,5 +114,31 @@ def test_second_429_raises():
         FakeResponse({"retry_after": 1}, status=429),
         FakeResponse({"retry_after": 1}, status=429),
     ])
-    with pytest.raises(RuntimeError):
+    with pytest.raises(DiscordAPIError) as info:
         client.send_message("777", "hi")
+    assert info.value.status == 429
+
+
+def test_error_status_surfaces_discord_message_and_code():
+    """A 403 on the channel read is the first thing a misconfigured bot hits;
+    Discord's body says WHY (Missing Access vs Missing Permissions) — keep it."""
+    client, _session = _client([FakeResponse({"message": "Missing Access", "code": 50001}, status=403)])
+    with pytest.raises(DiscordAPIError) as info:
+        client.get_messages("777", after=None, limit=1)
+    err = info.value
+    assert err.status == 403
+    assert err.code == 50001
+    assert "Missing Access" in str(err)
+    assert "50001" in str(err)
+    assert "GET /channels/777/messages" in str(err)
+
+
+def test_error_status_without_json_body_still_raises():
+    class NoJson(FakeResponse):
+        def json(self):
+            raise ValueError("not json")
+    client, _session = _client([NoJson(None, status=502)])
+    with pytest.raises(DiscordAPIError) as info:
+        client.get_me()
+    assert info.value.status == 502
+    assert info.value.code is None

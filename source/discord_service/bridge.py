@@ -144,6 +144,29 @@ def init_room_cursor(cfg: Config, state: dict[str, Any], rainbox: Any, room_uuid
     save_state(cfg.state_file, state)
 
 
+def startup_channel_check(cfg: Config, state: dict[str, Any], discord: Any) -> None:
+    """The first read of the channel, at startup. It is where a bot that was
+    never invited to the server, or can't see this channel, fails — so a
+    refusal here becomes a SystemExit that quotes Discord's reason and says
+    what to fix, instead of a traceback out of the cursor init."""
+    try:
+        init_discord_cursor(cfg, state, discord)
+    except Exception as exc:
+        raise SystemExit(
+            f"cannot read discord channel {cfg.channel_id}: "
+            f"{redact(str(exc), cfg.bot_token)}\n"
+            "The bot must be a member of that channel's server, and the channel "
+            "must grant it View Channel + Read Message History (plus Send "
+            "Messages and Manage Messages to reply and clear progress bubbles). "
+            "\"Missing Access\" (code 50001) = not invited or cannot see the "
+            "channel: open the OAuth2 invite URL from README step 2 and check the "
+            "channel's permission overrides. \"Missing Permissions\" (code 50013) "
+            "= a permission is missing on a channel it can see. Also confirm "
+            "DISCORD_CHANNEL_ID is the text channel's id (Copy Channel ID), not "
+            "the server's."
+        ) from None
+
+
 # --- logging helper -----------------------------------------------------
 
 
@@ -389,7 +412,7 @@ def main() -> None:
     )
 
     state = load_state(cfg.state_file)
-    init_discord_cursor(cfg, state, discord)
+    startup_channel_check(cfg, state, discord)
     init_room_cursor(cfg, state, rainbox, room_uuid)
 
     stop = threading.Event()

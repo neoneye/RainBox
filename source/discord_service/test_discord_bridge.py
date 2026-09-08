@@ -21,6 +21,7 @@ from bridge import (
     reconcile_progress,
     redact,
     save_state,
+    startup_channel_check,
     truncate_text,
 )
 
@@ -384,3 +385,31 @@ def test_loop_errors_never_log_the_bot_token(tmp_path, caplog):
         inbound_loop(cfg, {"discord_after": "0"}, FakeRainbox(), Boom(), "room", stop)
     assert "SECRET-TOKEN" not in caplog.text
     assert "<redacted>" in caplog.text
+
+
+# --- startup ------------------------------------------------------------
+
+
+def test_startup_channel_check_explains_a_refused_channel(tmp_path):
+    """The first channel read is where a bot that was never invited (or can't
+    see the channel) fails; that must be a SystemExit naming Discord's reason
+    and what to fix, not a traceback."""
+    cfg = _cfg(tmp_path)
+
+    class Refused(FakeDiscord):
+        def get_messages(self, channel_id, after, limit=100):
+            raise RuntimeError("403 Forbidden on GET /channels/777/messages: Missing Access (code 50001)")
+
+    with pytest.raises(SystemExit) as info:
+        startup_channel_check(cfg, {}, Refused())
+    text = str(info.value)
+    assert "Missing Access" in text
+    assert "777" in text
+    assert "Read Message History" in text
+
+
+def test_startup_channel_check_initializes_cursor_when_readable(tmp_path):
+    cfg = _cfg(tmp_path)
+    state: dict[str, Any] = {}
+    startup_channel_check(cfg, state, FakeDiscord([_dmsg("40")]))
+    assert state["discord_after"] == "40"
