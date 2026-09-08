@@ -313,6 +313,7 @@ def test_settings_get_and_put(client, direct_room):
         "room_type": "direct", "system_prompt": "", "model_uuid": None,
         "prompt_uuid": None, "prompt_name": None, "prompt_exists": None,
         "request_timeout": None,
+        "history_window": None,
     }
     with app.app_context():
         cfg = db.create_model_config(f"direct-test-model-{uuid4().hex[:6]}", {})
@@ -567,3 +568,79 @@ def test_a_second_send_does_not_stack_progress_bubbles(client, direct_room):
     with app.app_context():
         assert len([m for m in db.list_room_messages(room_uuid)
                     if m["kind"] == "progress"]) == 1
+
+
+def test_settings_history_window(client, direct_room):
+    """The rolling window: positive int or null; anything else is a 400."""
+    test_client, _app = client
+    room_uuid, _human = direct_room
+    url = f"/chat/api/rooms/{room_uuid}/settings"
+
+    resp = test_client.put(url, json={"history_window": 5})
+    assert resp.status_code == 200
+    assert resp.get_json()["history_window"] == 5
+    assert test_client.get(url).get_json()["history_window"] == 5
+
+    for bad in (0, -1, "5", 2.5, True):
+        resp = test_client.put(url, json={"history_window": bad})
+        assert resp.status_code == 400, bad
+
+    resp = test_client.put(url, json={"history_window": None})
+    assert resp.status_code == 200
+    assert resp.get_json()["history_window"] is None
+
+
+def test_troubleshooting_post_progress_then_reply(client, direct_room):
+    """The sidebar's bridge check: progress rows are rewritten in place
+    (one bubble), a following reply reaps them, and no turn is enqueued."""
+    test_client, app = client
+    room_uuid, _human = direct_room
+    url = f"/chat/api/rooms/{room_uuid}/troubleshooting-post"
+    r1 = test_client.post(url, json={"kind": "progress", "text": "step 1"})
+    assert r1.status_code == 201
+    r2 = test_client.post(url, json={"kind": "progress", "text": "step 2"})
+    assert r2.status_code == 201
+    assert r2.get_json()["id"] == r1.get_json()["id"]
+    with app.app_context():
+        rows = db.list_room_messages(room_uuid)
+        assert [(r["kind"], r["sender_uuid"], r["text"]) for r in rows] == [
+            ("progress", str(DIRECT_CHAT_UUID), "step 2"),
+        ]
+    r3 = test_client.post(url, json={"kind": "message", "text": "done"})
+    assert r3.status_code == 201
+    with app.app_context():
+        rows = db.list_room_messages(room_uuid)
+        assert [(r["kind"], r["sender_type"], r["text"]) for r in rows] == [
+            ("message", "agent", "done"),
+        ]
+        assert _drain_direct_inbox() == []
+
+
+def test_troubleshooting_post_notice_and_empty_progress(client, direct_room):
+    test_client, app = client
+    room_uuid, _human = direct_room
+    url = f"/chat/api/rooms/{room_uuid}/troubleshooting-post"
+    # An empty progress text mirrors the room's own empty "working" bubble.
+    assert test_client.post(url, json={"kind": "progress", "text": ""}).status_code == 201
+    assert test_client.post(url, json={"kind": "notice", "text": "oops"}).status_code == 201
+    with app.app_context():
+        rows = db.list_room_messages(room_uuid)
+        assert [(r["kind"], r["text"]) for r in rows] == [("notice", "oops")]
+
+
+def test_troubleshooting_post_rejects_bad_input(client, direct_room, agents_room):
+    test_client, _app = client
+    room_uuid, _human = direct_room
+    url = f"/chat/api/rooms/{room_uuid}/troubleshooting-post"
+    assert test_client.post(
+        f"/chat/api/rooms/{uuid4()}/troubleshooting-post",
+        json={"kind": "message", "text": "x"},
+    ).status_code == 404
+    assert test_client.post(
+        f"/chat/api/rooms/{agents_room[0]}/troubleshooting-post",
+        json={"kind": "message", "text": "x"},
+    ).status_code == 400
+    assert test_client.post(url, json={"kind": "thinking", "text": "x"}).status_code == 400
+    assert test_client.post(url, json={"kind": "message", "text": "  "}).status_code == 400
+    assert test_client.post(url, json={"kind": "notice", "text": ""}).status_code == 400
+    assert test_client.post(url, json={"kind": "message", "text": 5}).status_code == 400

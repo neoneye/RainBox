@@ -487,3 +487,19 @@ def test_deleting_rows_prunes_stranded_dividers():
     assert "    renderedIds.delete(id);\n  });\n  pruneDaySeparators();" in body
     assert ("const heads = !!next && next.dataset.day === el.dataset.day\n"
             "      && shownDay !== el.dataset.day;") in body
+
+
+def test_direct_room_history_window_setting():
+    body = _body()
+    assert "History window (messages)" in body
+    assert "ds-window" in body
+    assert "history_window:" in body
+
+
+def test_direct_room_bridge_troubleshooting():
+    body = _body()
+    assert "Bridge troubleshooting" in body
+    assert "/troubleshooting-post" in body
+    for marker in ("ds-trouble-text", "ds-trouble-progress",
+                   "ds-trouble-reply", "ds-trouble-notice"):
+        assert marker in body

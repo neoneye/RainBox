@@ -127,7 +127,7 @@ CHAT_TEMPLATE: str = """
   /* Direct-room Settings sidebar (model picker + system prompt). */
   .room-sidebar .ds-label{display:block;margin:0.8em 0 0.25em;font-size:0.78rem;color:#6b7280;text-transform:uppercase;letter-spacing:0.03em}
   .room-sidebar select.ds-model{width:100%;box-sizing:border-box;font:inherit;font-size:0.85rem;padding:0.3em;border:1px solid #ccc;border-radius:6px;background:#fff}
-  .room-sidebar input.ds-timeout{width:100%;box-sizing:border-box;font:inherit;font-size:0.85rem;padding:0.3em;border:1px solid #ccc;border-radius:6px;background:#fff}
+  .room-sidebar input.ds-timeout,.room-sidebar input.ds-window{width:100%;box-sizing:border-box;font:inherit;font-size:0.85rem;padding:0.3em;border:1px solid #ccc;border-radius:6px;background:#fff}
   .room-sidebar textarea.ds-prompt{width:100%;box-sizing:border-box;font:inherit;font-size:0.85rem;line-height:1.4;padding:0.4em;border:1px solid #ccc;border-radius:6px;resize:vertical;min-height:12em}
   /* Linked stored prompt: the textarea becomes a read-only preview. */
   .room-sidebar textarea.ds-prompt:disabled{background:#f8fafc;color:#6b7280}
@@ -152,6 +152,13 @@ CHAT_TEMPLATE: str = """
   .room-sidebar .ds-save{margin-top:0.8em;padding:0.4em 1em;font:inherit;font-size:0.85rem;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#374151;cursor:pointer}
   .room-sidebar .ds-save:hover{background:#f1f5f9}
   .room-sidebar .ds-save:disabled{background:#f8fafc;color:#9ca3af;cursor:default}
+  /* Bridge troubleshooting: post as the responder, no model turn. */
+  .room-sidebar .ds-trouble-help{margin:0.25em 0 0.4em;font-size:0.8rem;color:#6b7280;line-height:1.35}
+  .room-sidebar textarea.ds-trouble-text{width:100%;box-sizing:border-box;font:inherit;font-size:0.85rem;line-height:1.4;padding:0.4em;border:1px solid #ccc;border-radius:6px;resize:vertical;min-height:4em}
+  .room-sidebar .ds-trouble-row{display:flex;gap:0.4em;flex-wrap:wrap;margin-top:0.4em}
+  .room-sidebar .ds-trouble-row button{border:1px solid #cbd5e1;background:#fff;color:#374151;border-radius:6px;padding:0.3em 0.7em;font:inherit;font-size:0.8rem;cursor:pointer}
+  .room-sidebar .ds-trouble-row button:hover{background:#f1f5f9}
+  .room-sidebar .ds-trouble-row button:disabled{background:#f8fafc;color:#9ca3af;cursor:default}
   .room-sidebar .ds-note{color:#888;font-size:0.85rem}
 
   /* In-place message editing (direct rooms only). */
@@ -2711,6 +2718,20 @@ async function renderDirectSettings(){
   timeoutInput.placeholder = 'default (model config, else 60)';
   if (settings.request_timeout) timeoutInput.value = settings.request_timeout;
   sidebarEl.appendChild(timeoutInput);
+  // Per-room history window: how many kind="message" rows (yours and the
+  // model's, newest first) the model sees. Empty = the whole room.
+  const windowLabel = document.createElement('span');
+  windowLabel.className = 'ds-label';
+  windowLabel.textContent = 'History window (messages)';
+  sidebarEl.appendChild(windowLabel);
+  const windowInput = document.createElement('input');
+  windowInput.type = 'number';
+  windowInput.className = 'ds-window';
+  windowInput.min = '1';
+  windowInput.step = '1';
+  windowInput.placeholder = 'all';
+  if (settings.history_window) windowInput.value = settings.history_window;
+  sidebarEl.appendChild(windowInput);
   const promptLabel = document.createElement('span');
   promptLabel.className = 'ds-label';
   promptLabel.textContent = 'System prompt';
@@ -2797,11 +2818,13 @@ async function renderDirectSettings(){
     save.disabled = true;
     try {
       const t = parseInt(timeoutInput.value, 10);
+      const w = parseInt(windowInput.value, 10);
       await putJSON('/chat/api/rooms/' + room + '/settings', {
         system_prompt: customText,
         model_uuid: sel.value || null,
         prompt_uuid: linked ? linked.uuid : null,
         request_timeout: Number.isFinite(t) && t > 0 ? t : null,
+        history_window: Number.isFinite(w) && w > 0 ? w : null,
       });
       const r = rooms.find(x => x.uuid === room);
       if (r) r.model_uuid = sel.value || null;
@@ -2813,6 +2836,49 @@ async function renderDirectSettings(){
     }
   });
   sidebarEl.appendChild(save);
+  // Bridge troubleshooting: post into this room AS the responder, with no
+  // model turn. The rows are ordinary progress/message/notice rows, so the
+  // bridges (Discord, Telegram) forward them like a real turn — press
+  // progress a few times, then reply, and watch the far side edit one bubble
+  // in place and then replace it. That is the bot posting on its own, not
+  // answering a message.
+  const troubleHead = document.createElement('span');
+  troubleHead.className = 'ds-label';
+  troubleHead.textContent = 'Bridge troubleshooting';
+  sidebarEl.appendChild(troubleHead);
+  const troubleHelp = document.createElement('div');
+  troubleHelp.className = 'ds-trouble-help';
+  troubleHelp.textContent = 'Posts into this room as the responder, without a model turn. Bridges (Discord, Telegram) forward these like real replies.';
+  sidebarEl.appendChild(troubleHelp);
+  const troubleText = document.createElement('textarea');
+  troubleText.className = 'ds-trouble-text';
+  troubleText.placeholder = 'Message text';
+  sidebarEl.appendChild(troubleText);
+  const troubleRow = document.createElement('div');
+  troubleRow.className = 'ds-trouble-row';
+  sidebarEl.appendChild(troubleRow);
+  [['progress', 'Post as progress', 'ds-trouble-progress'],
+   ['message', 'Post as reply', 'ds-trouble-reply'],
+   ['notice', 'Post as notice', 'ds-trouble-notice']].forEach(([kind, label, cls]) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = cls;
+    b.textContent = label;
+    b.addEventListener('click', async () => {
+      const text = troubleText.value;
+      if (kind !== 'progress' && !text.trim()){ chatToast('Reply/notice needs text'); return; }
+      b.disabled = true;
+      try {
+        await postJSON('/chat/api/rooms/' + room + '/troubleshooting-post', {kind: kind, text: text});
+        chatToast('Posted as ' + (kind === 'message' ? 'reply' : kind) + '.');
+      } catch (e) {
+        alert('Post failed: ' + e.message);
+      } finally {
+        b.disabled = false;
+      }
+    });
+    troubleRow.appendChild(b);
+  });
 }
 
 async function renderMembers(){

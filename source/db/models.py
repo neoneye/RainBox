@@ -586,9 +586,10 @@ class Chatroom(db.Model):
     name: Mapped[str] = mapped_column(Text)
     created_by: Mapped[UUID] = mapped_column()  # chat_user.uuid (the human)
     # "agents" — the group chat where responder agents reply to human posts.
-    # "direct" — a one-to-one operator<->model chat: the model sees the FULL
-    # history as system/user/assistant messages, replies with one plain-text
-    # completion, and the room's own settings (below) pick the model + prompt.
+    # "direct" — a one-to-one operator<->model chat: the model sees the room
+    # history (all of it, or the newest history_window messages) as
+    # system/user/assistant messages, replies with one plain-text completion,
+    # and the room's own settings (below) pick the model + prompt.
     room_type: Mapped[str] = mapped_column(Text, default="agents")
     # Direct-room settings (ignored for "agents" rooms). Empty system_prompt =
     # send no system message. model_uuid names a ModelConfig OR
@@ -605,6 +606,9 @@ class Chatroom(db.Model):
     # request_timeout/timeout (or the built-in 60s fallback). Raise it for
     # long conversations where prompt processing alone can exceed the default.
     request_timeout: Mapped[int | None] = mapped_column(default=None)
+    # How much history the model sees, in kind="message" rows (the operator's
+    # and the model's alike), counted from the newest. Null = the whole room.
+    history_window: Mapped[int | None] = mapped_column(default=None)
     # Left-panel folder placement (mirrors cron's folder tree). null = top level;
     # plain col, no FK (house style — app-side validation). `position` orders
     # rooms within their folder (or among top-level rooms).

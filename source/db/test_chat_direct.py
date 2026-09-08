@@ -201,3 +201,16 @@ def test_edit_chat_message_guards(direct_room):
     )
     with pytest.raises(ValueError):
         db.edit_chat_message(streaming.id, "x")
+
+
+def test_set_chatroom_settings_history_window(direct_room):
+    """The rolling window: how many kind='message' rows the model sees.
+    Null (the default) = the whole room; partial updates leave it alone."""
+    room_uuid, _human = direct_room
+    assert db.get_chatroom(room_uuid).history_window is None
+    db.set_chatroom_settings(room_uuid, history_window=12)
+    assert db.get_chatroom(room_uuid).history_window == 12
+    db.set_chatroom_settings(room_uuid, system_prompt="unrelated")
+    assert db.get_chatroom(room_uuid).history_window == 12
+    db.set_chatroom_settings(room_uuid, history_window=None)
+    assert db.get_chatroom(room_uuid).history_window is None
