@@ -90,12 +90,22 @@ Required invariants:
   outbound binding.
 - Connector platform, realm, bot identity, and credential-variable reference
   are fixed after creation. Binding connector, room, and address are also
-  fixed. To change a destination, create a disabled replacement with a new UUID
-  and retire the old binding. Never apply old cursors or progress-message IDs
-  to a new destination. Name, policy, position, and enabled state remain editable.
+  fixed. Name, policy, position, and enabled state remain editable. To point
+  a remote conversation at a different room, **delete** the old binding and
+  create a new one: the uniqueness rule above covers disabled bindings, so a
+  disabled replacement with the same address cannot coexist with the old row.
+  Deleting the binding discards its checkpoints, which is the intent — old
+  cursors and progress-message IDs must never be applied to a new
+  destination, and a new binding starts at the current high-water marks.
 - Deleting a referenced room is rejected until its bindings are removed.
-  Reject deletion of nonempty folders/connectors; the UI can offer an explicit
-  transactional removal of their contents. A move or deletion validates and
+  The room delete dialog already runs on a rollup
+  (`source/db/chat.py:chatroom_delete_preview`, served at
+  `/chat/api/rooms/<uuid>/delete-preview`); extend that rollup with the
+  room's bindings so the refusal is visible before the attempt. The chat
+  *folder* delete (`delete_chatroom_folder`) recursively deletes every room
+  in the subtree, so its preview needs the same rollup and the same refusal.
+  Reject deletion of nonempty bridge folders/connectors; the UI can offer an
+  explicit transactional removal of their contents. A move or deletion validates and
   commits the whole change together. If plain UUID columns are used instead
   of foreign keys, all write paths, including room deletion, must share locking
   and validation that prevents concurrent dangling references. Do not silently
@@ -174,6 +184,11 @@ folders changes its effective policy and must be shown as such.
 
 Run one process per connector, selected by **UUID**, for example
 `BRIDGE_CONNECTOR=<connector-uuid>`. A rename cannot break startup or reload.
+A UUID is hostile to type, so the `/bridges` tree gives each connector the
+same **Copy ID** kebab item the chat and cron trees have, and the connector's
+detail panel shows the full launch line (`BRIDGE_CONNECTOR=… venv/bin/python
+bridge.py`) ready to copy, with the credential variable *named*, never filled
+in.
 `token_env` stores only the name of its credential variable, such as
 `DISCORD_TOKEN_MAINBOT`; it never stores a value.
 
@@ -184,11 +199,17 @@ as the same bot; verify and retain the authenticated bot identity in local state
 so a different bot cannot inherit the previous bot's checkpoints.
 
 The current bridges do **not** load the repo-root `.env`: `source/env_file.py`
-is invoked by provider imports, which these isolated services do not use.
-Initially, supply credentials in the launch environment. Adding `.env` support
-requires an explicit bridge startup loader and its own dependency arrangement;
-do not import the LLM/provider stack just to obtain it. Environment variables
-provided by the launcher must win over file values.
+is invoked from `providers/__init__.py`, which these isolated services never
+import. Initially, supply credentials in the launch environment. Adding `.env`
+support is small: `env_file.py` resolves the repo root from its own
+location and has one third-party dependency, `python-dotenv`, imported
+lazily inside `load_env_file()`. A bridge can therefore load it by path
+(`sys.path.insert(0, "..")` then `from env_file import load_env_file`) after
+pinning `python-dotenv` in its own `requirements.txt` beside `requests`,
+without touching the LLM/provider stack or the core venv. It must be an
+explicit call at bridge startup, not an import side effect. Launcher
+environment variables win over file values; the loader already guarantees
+that (`load_dotenv(..., override=False)`).
 
 Keeping credential values out of JSON does not make configuration harmless.
 The core API is currently unauthenticated and bound to localhost; connector
@@ -323,8 +344,11 @@ invalid DB configuration must never reactivate the legacy channel/allowlist.
 Unset DB policy fields inherit through the registry and folder chain only.
 
 1. Add tables and transactional validation, policy resolution, the versioned
-   endpoint, and `/bridges`. Register models in the existing initialization and
-   migration flow. Existing bridges continue unchanged until explicitly opted in.
+   endpoint, and `/bridges`. New tables need no migration step here:
+   `init_db` runs `create_all()`, which builds any model it has not seen;
+   only columns added to *existing* tables need the guarded
+   `_add_column_if_missing` call in `source/db/__init__.py`. Existing bridges
+   continue unchanged until explicitly opted in.
 2. Add Discord DB mode with the independent refresh task and shared snapshots.
    With `BRIDGE_CONNECTOR` unset, preserve all existing `DISCORD_*` behavior.
    In DB mode, use room UUIDs rather than recurring name lookups; replace
