@@ -115,6 +115,11 @@ Required invariants:
   must recheck current references in the deletion transaction and return HTTP
   409 with current blockers if any exist. Recursive deletion is all-or-nothing;
   never delete unbound rooms first and discover a bound room partway through.
+  `delete_chatroom_folder` already does the whole subtree in one transaction
+  (it collects the descendant folders, deletes their rooms and the folders,
+  and commits once at the end), so the binding guard is a query inside that
+  existing transaction before the first delete — not a new transactional
+  wrapper. The single-room path is the same shape with one row.
   Reject deletion of nonempty bridge folders/connectors; the UI can offer an
   explicit transactional removal of their contents. A move or deletion
   validates and commits the whole change together. If plain UUID columns are
@@ -283,7 +288,7 @@ restart the core.
 | Policy/folder change | Publish a new snapshot; preserve checkpoints; wake affected workers. |
 | New binding | Validate destination, initialize at current high-water marks, persist state, then activate; no history replay. |
 | Disable | Stop new traffic for that binding when the snapshot is applied. Retain checkpoints and progress mappings for reconciliation; do not send cleanup requests while disabled. |
-| Removal | Stop new work under the removed UUID, cancel queued retries, and drain in-flight work before pruning its local state. Do not transfer its checkpoints or progress map to a replacement. |
+| Removal | Stop new work under the removed UUID, cancel queued retries, and drain in-flight work. Then delete, best-effort, every remote progress message in its retained progress map (they are stale by definition once the binding is gone; a 404 is success, any other failure is logged once and not retried). Only then prune its local state. Do not transfer its checkpoints or progress map to a replacement. |
 | Re-enable | Resume from retained checkpoints under the current policy; catch up retained backlog and reconcile stale progress bubbles. Telegram inbound events consumed while disabled are an explicit exception, described below. |
 | Direction/kind/allowlist change | Apply to newly handled events; intentionally filtered events advance the applicable cursor and are not replayed if policy later changes. |
 | Missing connector (404) | Immediately pause all traffic; retain state and keep refreshing. Never fall back to legacy env configuration. |
@@ -303,8 +308,11 @@ under; never re-route old work to the replacement by looking up its address.
 The config DELETE response confirms the database change, not that the bridge
 has stopped. Already submitted requests can still complete. For a cutover that
 requires the process to be stopped, stop that connector before changing its
-bindings. Deletion does not clean up remote progress bubbles: they can remain
-and require manual removal; only a retained, re-enabled binding reconciles them.
+bindings. The retired worker removes its own remote progress bubbles from the
+map it still holds (see the Removal row); a binding removed while its bridge
+process is *down* has nobody to do that, so those bubbles stay until removed
+by hand — the status view should say so when it starts and finds state for a
+UUID the config no longer lists.
 
 ## Delivery state and ownership
 
@@ -428,7 +436,8 @@ separate design.
 - A rename preserves UUID selection and state; concurrent duplicate-address
   creates cannot both commit; destination edits cannot reuse old checkpoints.
 - Delete-and-create between config fetches retires old work before activating
-  the replacement, never re-routes an old retry, and preserves Telegram's shared
+  the replacement, never re-routes an old retry, removes the old binding's
+  mirrored progress bubbles best-effort, and preserves Telegram's shared
   offset and other bindings' state. Pruning waits for in-flight state writers.
 - Room/folder delete previews include disabled bindings. A binding added after
   preview causes DELETE to return 409 with blockers and removes no rooms or
