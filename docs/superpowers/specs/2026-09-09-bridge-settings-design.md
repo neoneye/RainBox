@@ -115,19 +115,38 @@ Required invariants:
   must recheck current references in the deletion transaction and return HTTP
   409 with current blockers if any exist. Recursive deletion is all-or-nothing;
   never delete unbound rooms first and discover a bound room partway through.
-  `delete_chatroom_folder` already does the whole subtree in one transaction
-  (it collects the descendant folders, deletes their rooms and the folders,
-  and commits once at the end), so the binding guard is a query inside that
-  existing transaction before the first delete — not a new transactional
-  wrapper. The single-room path is the same shape with one row.
+  `delete_chatroom_folder` already commits the whole subtree once at the end.
+  Put the binding guard before its first delete, inside that transaction, but
+  acquire the shared mutation lock described below before collecting the
+  subtree. A transaction alone does not prevent a concurrent binding insert
+  after the guard query. The single-room path requires the same coordination.
   Reject deletion of nonempty bridge folders/connectors; the UI can offer an
   explicit transactional removal of their contents. A move or deletion
-  validates and commits the whole change together. If plain UUID columns are
-  used instead of foreign keys, all write paths, including room deletion, must share locking
-  and validation that prevents concurrent dangling references. For recursive
-  room deletion this also covers concurrent room/folder moves and creates
-  that change the subtree being deleted. Do not silently repair a missing
-  reference by routing to another room.
+  validates and commits the whole change together. Do not silently repair a
+  missing reference by routing to another room.
+
+### Mutation and snapshot consistency
+
+For this single-operator implementation, use one code-defined PostgreSQL
+transaction advisory-lock key for chat-tree membership and bridge configuration
+mutations. Acquire it before reading affected rows or making pending ORM
+changes, then validate, mutate, and commit/roll back without releasing it early.
+All room/folder create, move, and delete paths and all connector/folder/binding
+edits participate, including admin and import paths. Use the existing transaction
+at READ COMMITTED; re-read rows after obtaining the lock rather than validating
+cached ORM objects. Ordinary message writes do not take this lock.
+
+This serializes the infrequent edits, including inserts into an otherwise empty
+subtree, without relying on a row lock over rows that do not yet exist. Retain
+database uniqueness constraints and use foreign keys where appropriate; advisory
+locks protect only cooperating application paths. PostgreSQL documents both
+[transaction advisory locks](https://www.postgresql.org/docs/current/explicit-locking.html#ADVISORY-LOCKS)
+and the [per-statement snapshots at READ COMMITTED](https://www.postgresql.org/docs/current/transaction-iso.html#XACT-READ-COMMITTED).
+
+Config reads and delete previews use a short, read-only REPEATABLE READ
+transaction, set before their first query, to assemble a coherent response.
+Resolve and serialize within that snapshot, then close it before returning the
+HTTP response. Never hold a database transaction across bridge network calls.
 
 ### Platform addresses
 
@@ -240,8 +259,9 @@ pinning `python-dotenv` in its own `requirements.txt` beside `requests`,
 the bridge can call `load_env_file()` without importing the LLM/provider stack
 or using the core venv. Call it explicitly at startup before reading config,
 not when importing the bridge module for tests. Launcher environment variables
-win over file values; the loader already guarantees that (`load_dotenv(..., override=False)`). The helper loads all keys in the
-shared file, not just this connector's credential. Keep launcher-supplied
+win over file values; the loader already guarantees that
+(`load_dotenv(..., override=False)`). The helper loads all keys in the shared
+file, not just this connector's credential. Keep launcher-supplied
 credentials as the default when each process should receive only its own
 secret; reusing the shared loader does not provide that isolation.
 
@@ -277,27 +297,37 @@ or environment values wholesale.
 A dedicated config refresh task runs every 5 seconds, including while all
 bindings are disabled. It is independent of platform polling, SSE traffic,
 long polling, and retry backoff. Bound each config request to 5 seconds.
-Validate the entire response before atomically publishing an immutable snapshot
-to **both** workers. They re-check the current binding, enabled gate, and
-policy before every new send/post/edit/delete and retry; a request already in
-flight may complete after a disable. Edits neither cancel agent turns nor
-restart the core.
+Allow only one config request in flight. Validate the entire response before
+atomically publishing an immutable snapshot to **both** workers. Workers check
+its freshness, current binding, enabled gate, and policy before each delivery
+request (send/post/edit/delete), including each chunk of a long message and
+each retry inside the adapter. Connector-wide inbound polling checks freshness
+and connector enablement; each returned update is routed under current binding
+policy before posting. Checking once around `send_message()` is insufficient: the current
+Discord client sends multiple chunks and retries 429s internally. Removal
+cleanup has the narrow exception defined below. Requests already in flight
+may complete after a disable. Edits neither cancel agent turns nor restart
+the core.
 
 | Event | Required behavior |
 |---|---|
 | Policy/folder change | Publish a new snapshot; preserve checkpoints; wake affected workers. |
 | New binding | Validate destination, initialize at current high-water marks, persist state, then activate; no history replay. |
 | Disable | Stop new traffic for that binding when the snapshot is applied. Retain checkpoints and progress mappings for reconciliation; do not send cleanup requests while disabled. |
-| Removal | Stop new work under the removed UUID, cancel queued retries, and drain in-flight work. Then delete, best-effort, every remote progress message in its retained progress map (they are stale by definition once the binding is gone; a 404 is success, any other failure is logged once and not retried). Only then prune its local state. Do not transfer its checkpoints or progress map to a replacement. |
+| Removal | Stop new work under the removed UUID, cancel queued retries, and drain in-flight work. Perform the bounded cleanup below, then prune its local state. Do not transfer its checkpoints or progress map to a replacement. |
 | Re-enable | Resume from retained checkpoints under the current policy; catch up retained backlog and reconcile stale progress bubbles. Telegram inbound events consumed while disabled are an explicit exception, described below. |
 | Direction/kind/allowlist change | Apply to newly handled events; intentionally filtered events advance the applicable cursor and are not replayed if policy later changes. |
 | Missing connector (404) | Immediately pause all traffic; retain state and keep refreshing. Never fall back to legacy env configuration. |
 | Timeout, 5xx, malformed response, or unsupported schema | Keep the last valid snapshot for at most 30 seconds since its last successful validation, then pause new traffic until a valid response arrives. At startup, no valid snapshot means no traffic. Log the condition without credentials. |
 | Restart-required identity mismatch | Pause and report it; do not reuse another connector's state. |
 
-The 30-second freshness limit bounds stale allowlist/enablement use during an
-outage; it does not promise instantaneous revocation. Readiness/status must
-distinguish disabled, stale configuration, invalid configuration, and transport
+Measure the 30-second freshness limit with a monotonic clock, resetting it only
+after a successful fetch and validation, even if the revision is unchanged.
+Never restore freshness from a timestamp in the state file. Workers enforce
+expiry themselves so a stuck refresh task cannot leave traffic enabled. This
+bounds stale allowlist/enablement use during an outage; it does not promise
+instantaneous revocation. Readiness/status must distinguish disabled, stale
+configuration, invalid configuration, and transport
 failure. SSE reconnect still triggers catch-up from persisted cursors.
 
 Delete-and-create may happen between two config fetches: the bridge can observe
@@ -308,18 +338,52 @@ under; never re-route old work to the replacement by looking up its address.
 The config DELETE response confirms the database change, not that the bridge
 has stopped. Already submitted requests can still complete. For a cutover that
 requires the process to be stopped, stop that connector before changing its
-bindings. The retired worker removes its own remote progress bubbles from the
-map it still holds (see the Removal row); a binding removed while its bridge
-process is *down* has nobody to do that, so those bubbles stay until removed
-by hand — the status view should say so when it starts and finds state for a
-UUID the config no longer lists.
+bindings.
+
+### Cleanup when a binding is removed
+
+Removal permits a retired worker to DELETE only the remote progress messages
+whose IDs it recorded, using its original address and authenticated connector.
+It may not send or edit messages, inspect the replacement's progress map, or
+reset shared transport state. This is the sole exception to requiring a binding
+to exist and be enabled before making a remote request.
+
+Start cleanup only after a fresh, valid snapshot for the same connector omits
+the old UUID and all its in-flight work has drained. Before each deletion,
+require that connector still be enabled and the snapshot still be fresh.
+A connector 404, invalid response, or identity mismatch never authorizes cleanup.
+Disabling a connector stops cleanup too; removing a binding under a disabled
+folder may clean up its recorded bubbles because removal is an explicit action.
+
+Cleanup has a 30-second total deadline, with at most 5 seconds per request
+(or the remaining budget). Attempt each recorded message once: 2xx and 404
+complete it; other failures, including 429, are recorded without automatic
+retry. The adapter must bypass its normal retry/sleep behavior for this path.
+Abort on deadline, connector disablement, or lost freshness; report unattempted
+and failed messages with their original destination and remote IDs, then prune
+the retired state. Do not block config refresh or unrelated bindings while
+cleaning up. A replacement waits for the old worker to drain and this bounded
+cleanup phase to finish; cleanup's deadline does not authorize pruning state
+still owned by an in-flight writer.
+
+If the process stops during retirement, its persisted progress map may be
+incomplete: a crash after a remote send but before saving its returned ID can
+leave an untracked bubble. On restart, state for a UUID absent from a valid
+config is reported for manual cleanup and then pruned; this version does not
+resume remote cleanup for orphaned state. Preserve the original address in the
+state file for that report. Merely having no valid config, or receiving a
+connector 404, must not classify every local binding as orphaned or prune it.
 
 ## Delivery state and ownership
 
-Keep a versioned state file per connector, with one owning process and an
-exclusive lock. Workers serialize state mutation and atomic replacement; two
-processes must not write the same file. Deployment must also prevent duplicate
-processes for the same connector/bot using different state paths: a file lock
+Keep a versioned state file per connector, with one owning process. Acquire an
+exclusive OS lock on a stable sibling `<state-file>.lock` before reading state
+and hold it for the process lifetime. Do not lock the JSON file itself: atomic
+replacement changes that file's identity. Never replace or unlink the lock file
+while running; a stale file without a held OS lock is harmless after a crash.
+Workers serialize state mutation and atomic replacement; two processes must not
+write the same file. Deployment must also prevent duplicate processes for the
+same connector/bot using different state paths: a file lock
 alone cannot enforce that across hosts.
 
 State has **connector-wide** and **binding-specific** parts:
@@ -334,6 +398,7 @@ State has **connector-wide** and **binding-specific** parts:
   "bindings": {
     "<binding-uuid>": {
       "room_uuid": "<room-uuid>",
+      "address": {"chat_id": "-1001234567890"},
       "address_key": "<canonical-address>",
       "room_cursor": 42,
       "progress_messages": {}
@@ -439,17 +504,26 @@ separate design.
   the replacement, never re-routes an old retry, removes the old binding's
   mirrored progress bubbles best-effort, and preserves Telegram's shared
   offset and other bindings' state. Pruning waits for in-flight state writers.
+- Cleanup never edits/sends or touches replacement messages; 404 completes it,
+  429 does not trigger a hidden retry, and its deadline bounds the cleanup phase.
+  Disablement/staleness stops further deletes. After restart, orphaned state is
+  reported and pruned only following a valid connector snapshot, not a 404.
 - Room/folder delete previews include disabled bindings. A binding added after
   preview causes DELETE to return 409 with blockers and removes no rooms or
   folders. Concurrent subtree moves and binding creation cannot leave dangling
   references; bypassing the preview cannot bypass the deletion guard.
+  Exercise both mutation orders with two database sessions. A concurrent folder
+  policy edit during config serialization yields one complete snapshot, never
+  a mixture of the old policy and new membership.
 - Copied launch commands use distinct state files and preserve already exported
   credentials. If `.env` loading ships, it resolves the same file from the
   service directory, repo root, and an unrelated working directory; importing
   the bridge alone loads no secrets and launcher values retain precedence.
 - Allowlist removal, direction changes, and disablement reach both workers
   during idle SSE and platform backoff; stale config pauses within the stated
-  limit. 404 and schema errors never enable legacy fallback.
+  limit, including between message chunks and during adapter retries. A stalled
+  refresh task and wall-clock jumps cannot extend freshness; an unchanged valid
+  revision renews it. 404 and schema errors never enable legacy fallback.
 - Two bindings sharing a room have independent outbound cursors. Telegram
   interleaved chats share one offset; a failed post is retried without skipping,
   deliberately filtered/disabled-chat updates advance the offset, and restarting
@@ -458,8 +532,10 @@ separate design.
   with the explicit Telegram inbound-discard exception; progress maps reconcile
   on reconnect. Lost, corrupt, and mismatched state have the distinct behaviors
   specified above.
-- A second owner cannot open the same state file. Crash injection around
-  send/post, state persistence, and transport acknowledgement demonstrates the
+- A second owner cannot acquire the state lock after repeated JSON replacements;
+  after the first process exits, a new owner can acquire the surviving lock file.
+  Crash injection around send/post, state persistence, and transport
+  acknowledgement demonstrates the
   documented duplicate window without silent checkpoint advancement.
 - Config responses and errors contain no credential values. Secret-variable
   rotation restarts only its bridge; identity mismatch prevents state reuse.
