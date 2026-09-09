@@ -64,8 +64,8 @@ complete SQLAlchemy migration.
 | Table | Fields in addition to common identity/timestamps |
 |---|---|
 | `bridge_connector` | `name` (unique label), `platform`, nullable `base_url` and `identity`, `token_env`, `enabled` (default false), `policy` (JSON object, default `{}`) |
-| `bridge_folder` | `connector_uuid`, `parent_uuid` (nullable), `name`, `position`, `enabled` (default true), `policy` (JSON object, default `{}`) |
-| `bridge_binding` | `connector_uuid`, `folder_uuid` (nullable), `room_uuid`, `address` (validated JSON object), `address_key` (canonical text), `enabled` (default false), `policy` (JSON object, default `{}`), `position` |
+| `bridge_folder` | `connector_uuid` (FK `RESTRICT`), `parent_uuid` (nullable, plain uuid), `name`, `position`, `enabled` (default true), `policy` (JSON object, default `{}`) |
+| `bridge_binding` | `connector_uuid` (FK `RESTRICT`), `folder_uuid` (nullable, plain uuid), `room_uuid` (FK `RESTRICT` to `chatroom.uuid`), `address` (validated JSON object), `address_key` (canonical text), `enabled` (default false), `policy` (JSON object, default `{}`), `position` |
 
 `bridge_folder` follows the tree shape of `ChatroomFolder`, adding policy and
 an enabled gate. Folders belong to exactly one connector. This makes sender IDs
@@ -115,38 +115,54 @@ Required invariants:
   must recheck current references in the deletion transaction and return HTTP
   409 with current blockers if any exist. Recursive deletion is all-or-nothing;
   never delete unbound rooms first and discover a bound room partway through.
-  `delete_chatroom_folder` already commits the whole subtree once at the end.
-  Put the binding guard before its first delete, inside that transaction, but
-  acquire the shared mutation lock described below before collecting the
-  subtree. A transaction alone does not prevent a concurrent binding insert
-  after the guard query. The single-room path requires the same coordination.
+  `delete_chatroom_folder` already commits the whole subtree once at the end,
+  and the guard itself is the database's: `bridge_binding.room_uuid` is a real
+  foreign key with `ondelete="RESTRICT"` (below), so deleting a bound room
+  fails inside that transaction and the whole subtree delete rolls back. A
+  binding inserted after any application-side check is caught the same way.
+  The handlers catch the integrity error and answer 409 with current blockers;
+  the preview query is a courtesy, not the enforcement.
   Reject deletion of nonempty bridge folders/connectors; the UI can offer an
   explicit transactional removal of their contents. A move or deletion
   validates and commits the whole change together. Do not silently repair a
   missing reference by routing to another room.
 
-### Mutation and snapshot consistency
+### Referential integrity and concurrency
 
-For this single-operator implementation, use one code-defined PostgreSQL
-transaction advisory-lock key for chat-tree membership and bridge configuration
-mutations. Acquire it before reading affected rows or making pending ORM
-changes, then validate, mutate, and commit/roll back without releasing it early.
-All room/folder create, move, and delete paths and all connector/folder/binding
-edits participate, including admin and import paths. Use the existing transaction
-at READ COMMITTED; re-read rows after obtaining the lock rather than validating
-cached ORM objects. Ordinary message writes do not take this lock.
+The repository uses two mechanisms for this, and the bridge tables reuse both
+rather than adding a lock:
 
-This serializes the infrequent edits, including inserts into an otherwise empty
-subtree, without relying on a row lock over rows that do not yet exist. Retain
-database uniqueness constraints and use foreign keys where appropriate; advisory
-locks protect only cooperating application paths. PostgreSQL documents both
-[transaction advisory locks](https://www.postgresql.org/docs/current/explicit-locking.html#ADVISORY-LOCKS)
-and the [per-statement snapshots at READ COMMITTED](https://www.postgresql.org/docs/current/transaction-iso.html#XACT-READ-COMMITTED).
+- **Real foreign keys where a delete must be refused or cascaded.**
+  `model_config` is protected with `ForeignKey(..., ondelete="RESTRICT")`;
+  `chatroom_member` and `chat_message` cascade from `chatroom`. Bridge rows
+  follow that split: `bridge_binding.room_uuid` and
+  `bridge_binding.connector_uuid` are `RESTRICT` foreign keys, and
+  `bridge_folder.connector_uuid` likewise, so a bound room, a nonempty
+  connector, or a connector with folders cannot be deleted by any path — UI,
+  admin, import, or a raw session — and the refusal is race-free because
+  Postgres checks it at commit. Handlers translate the integrity error into
+  HTTP 409 with blockers.
+- **Plain uuid columns with a version token for placement.** `folder_uuid`
+  and `parent_uuid` stay plain columns validated app-side, the cron/chat
+  house style, and the `/bridges` tree uses the six-endpoint shape in
+  `source/notes/ui-tree-persistence.md`: the page hydrates with an opaque
+  version token and echoes it on PUT; a stale token is a 409 and the client
+  re-hydrates. That is how `/chat` and `/cron` already serialize concurrent
+  tree edits, and it is enough here — these edits are rare and human-paced.
 
-Config reads and delete previews use a short, read-only REPEATABLE READ
-transaction, set before their first query, to assemble a coherent response.
-Resolve and serialize within that snapshot, then close it before returning the
-HTTP response. Never hold a database transaction across bridge network calls.
+What that does not cover is the same thing it does not cover for chat today:
+an *unbound* room moved into a folder while that folder's recursive delete is
+committing. That is existing behavior of the chat tree, not a bridge concern,
+and a bound room is protected regardless.
+
+Config reads and delete previews assemble a coherent response from several
+tables. Run them in a read-only REPEATABLE READ transaction so a folder policy
+edit committing mid-read cannot yield a snapshot mixing old policy with new
+membership: set it on the request's session before the first query
+(`db.session.connection(execution_options={"isolation_level": "REPEATABLE
+READ"})`), resolve and serialize inside it, and let it close before the HTTP
+response is returned. Never hold a database transaction across a bridge
+network call.
 
 ### Platform addresses
 
@@ -512,9 +528,12 @@ separate design.
   preview causes DELETE to return 409 with blockers and removes no rooms or
   folders. Concurrent subtree moves and binding creation cannot leave dangling
   references; bypassing the preview cannot bypass the deletion guard.
-  Exercise both mutation orders with two database sessions. A concurrent folder
-  policy edit during config serialization yields one complete snapshot, never
-  a mixture of the old policy and new membership.
+  Exercise both mutation orders with two database sessions; the losing order
+  fails on the `RESTRICT` foreign key, not on an application check, and a
+  direct `db.session.delete(room)` with a binding present raises. A stale
+  tree version on PUT is a 409. A concurrent folder policy edit during config
+  serialization yields one complete snapshot, never a mixture of the old
+  policy and new membership.
 - Copied launch commands use distinct state files and preserve already exported
   credentials. If `.env` loading ships, it resolves the same file from the
   service directory, repo root, and an unrelated working directory; importing
