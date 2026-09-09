@@ -94,22 +94,35 @@ Required invariants:
   a remote conversation at a different room, **delete** the old binding and
   create a new one: the uniqueness rule above covers disabled bindings, so a
   disabled replacement with the same address cannot coexist with the old row.
-  Deleting the binding discards its checkpoints, which is the intent — old
-  cursors and progress-message IDs must never be applied to a new
-  destination, and a new binding starts at the current high-water marks.
+  The core deletes only the configuration row; the bridge retires the old
+  binding's local state after observing its removal and draining in-flight
+  work. The new UUID never inherits that state and initializes at current
+  high-water marks on first activation. Do not reset the connector-wide
+  Telegram offset when retiring one binding.
 - Deleting a referenced room is rejected until its bindings are removed.
   The room delete dialog already runs on a rollup
   (`source/db/chat.py:chatroom_delete_preview`, served at
   `/chat/api/rooms/<uuid>/delete-preview`); extend that rollup with the
   room's bindings so the refusal is visible before the attempt. The chat
-  *folder* delete (`delete_chatroom_folder`) recursively deletes every room
-  in the subtree, so its preview needs the same rollup and the same refusal.
+  *folder* delete (`source/db/chat.py:delete_chatroom_folder`) recursively
+  deletes every room in the subtree; extend `chatroom_folder_delete_preview`
+  at `/chat/api/folders/<uuid>/delete-preview` with the same binding blockers.
+  Both previews include disabled bindings, a `can_delete` flag, a total
+  `binding_count`, and blocker references (binding, connector, and room UUIDs)
+  that the UI can link to. A blocked dialog explains which bindings to remove
+  and keeps Delete unavailable even after the confirmation name is entered.
+  A preview is informational, not permission to delete: both DELETE handlers
+  must recheck current references in the deletion transaction and return HTTP
+  409 with current blockers if any exist. Recursive deletion is all-or-nothing;
+  never delete unbound rooms first and discover a bound room partway through.
   Reject deletion of nonempty bridge folders/connectors; the UI can offer an
-  explicit transactional removal of their contents. A move or deletion validates and
-  commits the whole change together. If plain UUID columns are used instead
-  of foreign keys, all write paths, including room deletion, must share locking
-  and validation that prevents concurrent dangling references. Do not silently
-  repair a missing reference by routing to another room.
+  explicit transactional removal of their contents. A move or deletion
+  validates and commits the whole change together. If plain UUID columns are
+  used instead of foreign keys, all write paths, including room deletion, must share locking
+  and validation that prevents concurrent dangling references. For recursive
+  room deletion this also covers concurrent room/folder moves and creates
+  that change the subtree being deleted. Do not silently repair a missing
+  reference by routing to another room.
 
 ### Platform addresses
 
@@ -184,11 +197,23 @@ folders changes its effective policy and must be shown as such.
 
 Run one process per connector, selected by **UUID**, for example
 `BRIDGE_CONNECTOR=<connector-uuid>`. A rename cannot break startup or reload.
-A UUID is hostile to type, so the `/bridges` tree gives each connector the
-same **Copy ID** kebab item the chat and cron trees have, and the connector's
-detail panel shows the full launch line (`BRIDGE_CONNECTOR=… venv/bin/python
-bridge.py`) ready to copy, with the credential variable *named*, never filled
-in.
+The `/bridges` tree gives each connector the same **Copy ID** kebab item the
+chat and cron trees have. The detail panel also offers a copyable launch command
+for the connector's platform, labeled with its required working directory
+(`source/discord_service/` or `source/telegram_service/` on the bridge host).
+Include `BRIDGE_CONNECTOR` and a distinct state-file path derived from its UUID,
+using the platform's existing state-file variable. Two copied commands must not
+both use the default `./state.json`. Interpreter, script, and state paths are
+relative to that displayed directory; do not infer bridge-host paths from the
+core's checkout. Show `RAINBOX_URL` as a separate deployment prerequisite when
+the default localhost endpoint is unsuitable.
+
+Name the required credential variable beside the command as “must already be
+set in the launch environment”; do not insert an empty or placeholder token
+assignment that would overwrite it. Validate `token_env` as an environment
+variable name (`[A-Za-z_][A-Za-z0-9_]*`), reject reserved bridge/deployment names
+such as `BRIDGE_CONNECTOR`, `RAINBOX_URL`, and state-file variables, and shell-quote
+generated argument values. Connector display names never become shell syntax.
 `token_env` stores only the name of its credential variable, such as
 `DISCORD_TOKEN_MAINBOT`; it never stores a value.
 
@@ -200,16 +225,20 @@ so a different bot cannot inherit the previous bot's checkpoints.
 
 The current bridges do **not** load the repo-root `.env`: `source/env_file.py`
 is invoked from `providers/__init__.py`, which these isolated services never
-import. Initially, supply credentials in the launch environment. Adding `.env`
-support is small: `env_file.py` resolves the repo root from its own
+import. Initially, supply credentials in the launch environment. If `.env`
+support is added, `env_file.py` resolves the repo root from its own
 location and has one third-party dependency, `python-dotenv`, imported
-lazily inside `load_env_file()`. A bridge can therefore load it by path
-(`sys.path.insert(0, "..")` then `from env_file import load_env_file`) after
+lazily inside `load_env_file()`. A bridge can import it after adding the absolute
+source directory, `str(Path(__file__).resolve().parents[1])`, to its import path;
+do not use `".."`, which resolves against the launcher's working directory. After
 pinning `python-dotenv` in its own `requirements.txt` beside `requests`,
-without touching the LLM/provider stack or the core venv. It must be an
-explicit call at bridge startup, not an import side effect. Launcher
-environment variables win over file values; the loader already guarantees
-that (`load_dotenv(..., override=False)`).
+the bridge can call `load_env_file()` without importing the LLM/provider stack
+or using the core venv. Call it explicitly at startup before reading config,
+not when importing the bridge module for tests. Launcher environment variables
+win over file values; the loader already guarantees that (`load_dotenv(..., override=False)`). The helper loads all keys in the
+shared file, not just this connector's credential. Keep launcher-supplied
+credentials as the default when each process should receive only its own
+secret; reusing the shared loader does not provide that isolation.
 
 Keeping credential values out of JSON does not make configuration harmless.
 The core API is currently unauthenticated and bound to localhost; connector
@@ -253,7 +282,8 @@ restart the core.
 |---|---|
 | Policy/folder change | Publish a new snapshot; preserve checkpoints; wake affected workers. |
 | New binding | Validate destination, initialize at current high-water marks, persist state, then activate; no history replay. |
-| Disable or removal | Stop new traffic for that binding when the snapshot is applied. Retain checkpoints and progress mappings for reconciliation; do not send cleanup requests while disabled. |
+| Disable | Stop new traffic for that binding when the snapshot is applied. Retain checkpoints and progress mappings for reconciliation; do not send cleanup requests while disabled. |
+| Removal | Stop new work under the removed UUID, cancel queued retries, and drain in-flight work before pruning its local state. Do not transfer its checkpoints or progress map to a replacement. |
 | Re-enable | Resume from retained checkpoints under the current policy; catch up retained backlog and reconcile stale progress bubbles. Telegram inbound events consumed while disabled are an explicit exception, described below. |
 | Direction/kind/allowlist change | Apply to newly handled events; intentionally filtered events advance the applicable cursor and are not replayed if policy later changes. |
 | Missing connector (404) | Immediately pause all traffic; retain state and keep refreshing. Never fall back to legacy env configuration. |
@@ -264,6 +294,17 @@ The 30-second freshness limit bounds stale allowlist/enablement use during an
 outage; it does not promise instantaneous revocation. Readiness/status must
 distinguish disabled, stale configuration, invalid configuration, and transport
 failure. SSE reconnect still triggers catch-up from persisted cursors.
+
+Delete-and-create may happen between two config fetches: the bridge can observe
+the old and replacement UUIDs in consecutive snapshots without ever seeing an
+empty address. It must retire the old worker before activating a replacement
+for that address. Queued events and retries retain the UUID they were assigned
+under; never re-route old work to the replacement by looking up its address.
+The config DELETE response confirms the database change, not that the bridge
+has stopped. Already submitted requests can still complete. For a cutover that
+requires the process to be stopped, stop that connector before changing its
+bindings. Deletion does not clean up remote progress bubbles: they can remain
+and require manual removal; only a retained, re-enabled binding reconciles them.
 
 ## Delivery state and ownership
 
@@ -344,11 +385,13 @@ invalid DB configuration must never reactivate the legacy channel/allowlist.
 Unset DB policy fields inherit through the registry and folder chain only.
 
 1. Add tables and transactional validation, policy resolution, the versioned
-   endpoint, and `/bridges`. New tables need no migration step here:
-   `init_db` runs `create_all()`, which builds any model it has not seen;
-   only columns added to *existing* tables need the guarded
-   `_add_column_if_missing` call in `source/db/__init__.py`. Existing bridges
-   continue unchanged until explicitly opted in.
+   endpoint, and `/bridges`. Define/import the models into the core's SQLAlchemy
+   metadata before `init_db` calls `create_all()` in `source/db/__init__.py`.
+   That creates missing tables with their declared indexes and constraints;
+   this initial addition needs no separate table-creation migration. It does
+   not upgrade existing tables. Later changes need guarded migration code for
+   columns (`_add_column_if_missing`), indexes, constraints, or data backfills
+   as applicable. Existing bridges continue unchanged until explicitly opted in.
 2. Add Discord DB mode with the independent refresh task and shared snapshots.
    With `BRIDGE_CONNECTOR` unset, preserve all existing `DISCORD_*` behavior.
    In DB mode, use room UUIDs rather than recurring name lookups; replace
@@ -384,6 +427,17 @@ separate design.
   invalid types/cycles/references, and prevents a child enabling a disabled tree.
 - A rename preserves UUID selection and state; concurrent duplicate-address
   creates cannot both commit; destination edits cannot reuse old checkpoints.
+- Delete-and-create between config fetches retires old work before activating
+  the replacement, never re-routes an old retry, and preserves Telegram's shared
+  offset and other bindings' state. Pruning waits for in-flight state writers.
+- Room/folder delete previews include disabled bindings. A binding added after
+  preview causes DELETE to return 409 with blockers and removes no rooms or
+  folders. Concurrent subtree moves and binding creation cannot leave dangling
+  references; bypassing the preview cannot bypass the deletion guard.
+- Copied launch commands use distinct state files and preserve already exported
+  credentials. If `.env` loading ships, it resolves the same file from the
+  service directory, repo root, and an unrelated working directory; importing
+  the bridge alone loads no secrets and launcher values retain precedence.
 - Allowlist removal, direction changes, and disablement reach both workers
   during idle SSE and platform backoff; stale config pauses within the stated
   limit. 404 and schema errors never enable legacy fallback.
@@ -402,4 +456,7 @@ separate design.
   rotation restarts only its bridge; identity mismatch prevents state reuse.
 - Existing isolated Discord and Telegram test suites still pass in env mode;
   migration preserves their matching checkpoints. Core tests cover validation,
-  serialization, tree edits, and the initial schema migration independently.
+  serialization and tree edits independently. Initialization checks cover a
+  fresh database, an existing database without bridge tables, and repeated
+  initialization with saved bridge rows; required constraints/indexes exist
+  and existing data survives.
