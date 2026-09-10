@@ -24,6 +24,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from db.models import AppSetting, db
+from services.definitions import (
+    CORE_KEY,
+    STATIC_SERVICES,
+    enabled_setting_key,
+    env_setting_key,
+    nonce_setting_key,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -261,6 +268,44 @@ SETTINGS: dict[str, Setting] = {
                     "context marker acknowledges it; not operator-facing.",
     ),
 }
+
+
+def _service_settings() -> dict[str, Setting]:
+    """Registry entries generated from the service catalogue: a toggle per
+    static service, an optional string per supported env variable, and an
+    internal restart nonce per service (and one for the core). The nonce is
+    what a Restart button rewrites; the launcher restarts a process when its
+    nonce changes, so the core never executes anything itself. Keeping the
+    nonce persisted (not in memory) is what stops a core restart from looking
+    like "every nonce changed"."""
+    out: dict[str, Setting] = {}
+    for svc in STATIC_SERVICES.values():
+        out[enabled_setting_key(svc.key)] = Setting(
+            enabled_setting_key(svc.key), None, "bool", False,
+            description=f"Run {svc.key} under the launcher ({svc.description} "
+                        f"binds {svc.bind}). The launcher starts or stops the "
+                        "process on its next poll; the core is untouched.",
+        )
+        for var in svc.env_keys:
+            out[env_setting_key(svc.key, var)] = Setting(
+                env_setting_key(svc.key, var), None, "string", None,
+                description=f"Value of {var} in {svc.key}'s launch environment "
+                            "(empty = the service's own default). Changing it "
+                            "restarts the service.",
+            )
+        out[nonce_setting_key(svc.key)] = Setting(
+            nonce_setting_key(svc.key), None, "string", None, internal=True,
+            description=f"Restart nonce for {svc.key}; rewritten by Restart and "
+                        "by enable/env changes, consumed by the launcher.",
+        )
+    out[nonce_setting_key(CORE_KEY)] = Setting(
+        nonce_setting_key(CORE_KEY), None, "string", None, internal=True,
+        description="Restart nonce for the core; rewritten by Restart core.",
+    )
+    return out
+
+
+SETTINGS.update(_service_settings())
 
 
 def _registry(key: str) -> Setting:
