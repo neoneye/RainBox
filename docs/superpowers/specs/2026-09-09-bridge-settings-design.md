@@ -328,7 +328,10 @@ both, as siblings. On the supervised host they use HTTP at
 - **One long-lived streaming response, Server-Sent Events.** The bridge holds
   `GET /chat/stream` open and reads `data:` lines as the core emits them —
   the same stream the browser uses. Behind it the core listens on a
-  Postgres NOTIFY channel and forwards each payload.
+  Postgres NOTIFY channel and forwards each payload. The same stream carries
+  `{"event": "bridge_config", "connector_uuid": …}` whenever a connector,
+  folder, or binding row changes, so a bridge learns that its configuration
+  moved without ever asking; browsers ignore that event type.
 
 No pipe, no RPC framework, no message broker, no shared files, no database
 connection: the bridge's state file is private to the bridge, and the bridge
@@ -343,8 +346,10 @@ This is deliberately *not* the mechanism the supervisor uses for its agents.
 `core.py` spawns each agent as `python -m agents --socket-fd N` over a
 `socketpair()`, writes the agent's config down that socket, and reads
 heartbeats and status back up it. Agents need config injected because they
-have no other way to receive it; a bridge fetches its config over HTTP and
-owns its own transport/config recovery. The launcher observes process liveness
+have no other way to receive it; a bridge fetches its config over HTTP when
+the stream tells it to — at connect and on a `bridge_config` event — and
+owns its own transport/config recovery. Nothing in the bridge polls for
+configuration; like the launcher, it sleeps until something happens. The launcher observes process liveness
 and exit status and sends signals; the core's agent supervisor does not own or
 control bridge processes. Child logs are not read by the launcher.
 
@@ -391,7 +396,7 @@ services.bridges.autostart AND connector.launch_mode == "launcher"
 
 `services.bridges.autostart` is a registry bool (default true). Folder/binding
 enablement never controls whether the process runs: an enabled connector must
-keep refreshing even with no active bindings. `launch_mode` controls ownership,
+keep listening for change events even with no active bindings. `launch_mode` controls ownership,
 not forwarding permission; the bridge's effective-enabled rule is unchanged.
 `--core-only` suppresses bridge launches too.
 
@@ -406,7 +411,7 @@ instructs the operator to restart their process instead of queuing a launcher
 restart that cannot take effect.
 
 A supervised connector disable stops its process; a manual connector disable
-pauses its workers while its config refresh continues. Both preserve matching
+pauses its workers while it keeps listening for a change event. Both preserve matching
 state for the next activation. Binding disable only pauses that binding in
 either mode, including the Telegram inbound-discard exception below. Process
 shutdown is not binding deletion: do not delete remote progress bubbles or prune
@@ -452,14 +457,18 @@ connector's `updated_at`. Include disabled bindings so disable and deletion
 remain distinguishable. Use a strict response schema; never serialize ORM rows
 or environment values wholesale.
 
-A dedicated config refresh task runs every 5 seconds, including while all
-bindings are disabled. It is independent of platform polling, SSE traffic,
-long polling, and retry backoff. Bound each config request to 5 seconds.
-Allow only one config request in flight. Validate the entire response before
-atomically publishing an immutable snapshot to **both** workers. Workers check
-its freshness, current binding, enabled gate, and policy before each delivery
-request (send/post/edit/delete), including each chunk of a long message and
-each retry inside the adapter. Connector-wide inbound polling checks freshness
+The bridge fetches this snapshot exactly when it can have changed: once when
+its SSE stream (re)connects, and again whenever that stream delivers a
+`bridge_config` event naming its connector. There is no refresh timer. The
+core emits the event from the same transaction that commits any connector,
+folder, or binding write (the `NOTIFY` the chat stream already forwards), so
+a toggle on `/bridges` reaches the bridge in milliseconds. Bound each config
+request to 5 seconds and allow only one in flight; a second event while one
+is in flight schedules one more fetch, not one per event. Validate the
+entire response before atomically publishing an immutable snapshot to
+**both** workers. Workers check its freshness, current binding, enabled
+gate, and policy before each delivery request (send/post/edit/delete),
+including each chunk of a long message and each retry inside the adapter. Connector-wide inbound polling checks freshness
 and connector enablement; each returned update is routed under current binding
 policy before posting. Checking once around `send_message()` is insufficient: the current
 Discord client sends multiple chunks and retries 429s internally. Removal
@@ -475,18 +484,25 @@ the core.
 | Removal | Stop new work under the removed UUID, cancel queued retries, and drain in-flight work. Perform the bounded cleanup below, then prune its local state. Do not transfer its checkpoints or progress map to a replacement. |
 | Re-enable | Resume from retained checkpoints under the current policy; catch up retained backlog and reconcile stale progress bubbles. Telegram inbound events consumed while disabled are an explicit exception, described below. |
 | Direction/kind/allowlist change | Apply to newly handled events; intentionally filtered events advance the applicable cursor and are not replayed if policy later changes. |
-| Missing connector (404) | Immediately pause all traffic; retain state and keep refreshing. Never fall back to legacy env configuration. |
-| Timeout, 5xx, malformed response, or unsupported schema | Keep the last valid snapshot for at most 30 seconds since its last successful validation, then pause new traffic until a valid response arrives. At startup, no valid snapshot means no traffic. Log the condition without credentials. |
+| Missing connector (404) | Immediately pause all traffic; retain state; refetch on the next `bridge_config` event or stream reconnect. Never fall back to legacy env configuration. (Under the launcher the row's removal also stops the process.) |
+| Timeout, 5xx, malformed response, or unsupported schema | The snapshot is now known-stale (an event said it changed, or the stream just reconnected): pause new traffic and retry the fetch with capped backoff (2, 4, … 60 s) until a valid response arrives. At startup, no valid snapshot means no traffic. Log the condition without credentials. |
 | Restart-required identity mismatch | Pause and report it; do not reuse another connector's state. |
 
-Measure the 30-second freshness limit with a monotonic clock, resetting it only
-after a successful fetch and validation, even if the revision is unchanged.
-Never restore freshness from a timestamp in the state file. Workers enforce
-expiry themselves so a stuck refresh task cannot leave traffic enabled. This
-bounds stale allowlist/enablement use during an outage; it does not promise
-instantaneous revocation. Readiness/status must distinguish disabled, stale
-configuration, invalid configuration, and transport
-failure. SSE reconnect still triggers catch-up from persisted cursors.
+Freshness is a fact, not a clock. A snapshot is fresh while both hold: it
+was fetched on the SSE connection that is currently open, and no
+`bridge_config` event for this connector has arrived since. A dropped stream
+makes it stale at once — the core's `: keepalive` every 15 s and the bridge's
+existing 90 s read timeout are what detect a dead connection, and they exist
+for the chat events anyway — and the bridge pauses outbound delivery and
+inbound posting until it reconnects and refetches. Workers read that state
+themselves before every request, so a wedged fetch cannot leave traffic
+enabled on stale policy. Never restore freshness from a timestamp in the
+state file. This bounds stale allowlist/enablement use to the interval
+between a change and the event's delivery, which is the NOTIFY round trip;
+it does not promise revocation while the stream is down, because nothing is
+delivered then. Readiness/status must distinguish disabled, stale
+configuration, invalid configuration, and transport failure. SSE reconnect
+still triggers catch-up from persisted cursors.
 
 Delete-and-create may happen between two config fetches: the bridge can observe
 the old and replacement UUIDs in consecutive snapshots without ever seeing an
@@ -623,7 +639,7 @@ Unset DB policy fields inherit through the registry and folder chain only.
    not upgrade existing tables. Later changes need guarded migration code for
    columns (`_add_column_if_missing`), indexes, constraints, or data backfills
    as applicable. Existing bridges continue unchanged until explicitly opted in.
-2. Add Discord DB mode with the independent refresh task and shared snapshots.
+2. Add Discord DB mode with the event-driven config fetch and shared snapshots.
    With `BRIDGE_CONNECTOR` unset, preserve all existing `DISCORD_*` behavior.
    In DB mode, use room UUIDs rather than recurring name lookups; replace
    channel, room-name, allowlist, and poll settings with resolved DB values.
@@ -683,10 +699,13 @@ separate design.
   Importing the bridge loads no secrets; launcher/file precedence and rotation
   match the launcher contract. Ownership changes never start two processes.
 - Allowlist removal, direction changes, and disablement reach both workers
-  during idle SSE and platform backoff; stale config pauses within the stated
-  limit, including between message chunks and during adapter retries. A stalled
-  refresh task and wall-clock jumps cannot extend freshness; an unchanged valid
-  revision renews it. 404 and schema errors never enable legacy fallback.
+  during idle SSE and platform backoff, via a `bridge_config` event and never
+  a timer; an idle bridge makes no config request at all. A dropped stream
+  pauses traffic before the next request, including between message chunks
+  and during adapter retries; a change event during an in-flight fetch yields
+  exactly one more fetch. Every connector, folder, and binding write emits
+  the event in its own transaction. 404 and schema errors never enable legacy
+  fallback.
 - Two bindings sharing a room have independent outbound cursors. Telegram
   interleaved chats share one offset; a failed post is retried without skipping,
   deliberately filtered/disabled-chat updates advance the offset, and restarting
