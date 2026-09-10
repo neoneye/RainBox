@@ -270,6 +270,11 @@ SETTINGS: dict[str, Setting] = {
 }
 
 
+def _validate_positive_int(value: object) -> None:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise ValueError(f"must be a positive integer (got {value!r})")
+
+
 def _service_settings() -> dict[str, Setting]:
     """Registry entries generated from the service catalogue: a toggle per
     static service, an optional string per supported env variable, and an
@@ -287,9 +292,13 @@ def _service_settings() -> dict[str, Setting]:
                         "process on its next poll; the core is untouched.",
         )
         for var in svc.env_keys:
+            spec = svc.env_spec(var)
             out[env_setting_key(svc.key, var)] = Setting(
-                env_setting_key(svc.key, var), None, "string", None,
-                description=f"Value of {var} in {svc.key}'s launch environment "
+                env_setting_key(svc.key, var), None, spec.type, None,
+                validate=_validate_positive_int if spec.type == "int" and spec.positive else None,
+                choices=spec.choices,
+                description=f"{spec.description + ' ' if spec.description else ''}"
+                            f"Value of {var} in {svc.key}'s launch environment "
                             "(empty = the service's own default). Changing it "
                             "restarts the service.",
             )

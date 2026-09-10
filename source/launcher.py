@@ -264,13 +264,15 @@ def http_json(
         length_text = headers.get("Content-Length")
         raw = rest
         if length_text is not None and not chunked:
+            if not length_text.strip().isdigit():
+                raise ControlError(f"{method} {path}: bad Content-Length")
             length = int(length_text)
             if length > max_bytes:
                 raise ControlError(f"{method} {path}: response over {max_bytes} bytes")
             while len(raw) < length:
                 chunk = recv(sock)
                 if not chunk:
-                    break
+                    raise ControlError(f"{method} {path}: body shorter than Content-Length")
                 raw += chunk
             raw = raw[:length]
         else:
@@ -552,23 +554,24 @@ class Launcher:
     # --- stopping ----------------------------------------------------------------
 
     def _group_alive(self, pgid: int | None) -> bool:
+        """Whether a group this launcher created still has members. EPERM
+        means the id has been reused by a process we may not signal — it is
+        not ours any more, so it counts as gone; we never adopt ids."""
         if pgid is None:
             return False
         try:
             os.killpg(pgid, 0)
             return True
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             return False
-        except PermissionError:
-            return True
 
     def _signal_group(self, rec: Proc, sig: int) -> None:
         if rec.pgid is None:
             return
         try:
             os.killpg(rec.pgid, sig)
-        except ProcessLookupError:
-            pass
+        except (ProcessLookupError, PermissionError):
+            pass  # gone, or the id was reused by a process that is not ours
 
     def _request_stop(self, rec: Proc, now: float, *, reason: str) -> None:
         if rec.proc is None or rec.stop_requested:
@@ -645,6 +648,8 @@ class Launcher:
     # --- reconcile ---------------------------------------------------------------
 
     def _apply_snapshot(self, snap: Snapshot, now: float) -> None:
+        if self.shutting_down:
+            return  # request_shutdown() already decided every desired flag
         first = not self.snapshot_valid_once
         self.snapshot = snap
         self.snapshot_valid_once = True
@@ -864,6 +869,10 @@ class Launcher:
         self._reconcile(now)
         if now >= self._next_poll:
             self._poll_desired(now)
+            # A signal may have arrived while the request was waiting; the
+            # shutdown path owns desired flags from here on.
+            if self.shutting_down:
+                return True
             self._reconcile(now)
         if (self._status_dirty and now >= self._status_retry_at) or now >= self._next_heartbeat:
             self._post_status(now)

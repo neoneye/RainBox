@@ -170,3 +170,19 @@ def test_service_setting_locks_the_row_before_reading(client, managed, monkeypat
     key = env_setting_key("reranker", "RERANKER_BATCH_SIZE")
     registry.set_service_setting(key, "8")
     assert order[0] == ("lock", key) and order[1] == ("read", key)
+
+
+def test_invalid_env_override_is_refused_before_any_restart(client, managed):
+    nonce_before = db.get_setting(nonce_setting_key("reranker"))
+    r = client.post("/settings/api/set", json={"key": env_setting_key("reranker", "RERANKER_BATCH_SIZE"), "value": "oops"})
+    assert r.status_code == 400
+    r = client.post("/settings/api/set", json={"key": env_setting_key("reranker", "RERANKER_BATCH_SIZE"), "value": 0})
+    assert r.status_code == 400
+    r = client.post("/settings/api/set", json={"key": env_setting_key("reranker", "RERANKER_DEVICE"), "value": "gpu9"})
+    assert r.status_code == 400
+    assert db.get_setting(nonce_setting_key("reranker")) == nonce_before
+    r = client.post("/settings/api/set", json={"key": env_setting_key("reranker", "RERANKER_BATCH_SIZE"), "value": 8})
+    assert r.status_code == 200
+    assert db.get_setting(nonce_setting_key("reranker")) != nonce_before
+    entry = next(s for s in client.get("/services/api/desired").get_json()["services"] if s["key"] == "reranker")
+    assert entry["env"] == {"RERANKER_BATCH_SIZE": "8"}

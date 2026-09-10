@@ -27,6 +27,19 @@ EXIT_LOCK_HELD: int = 3         # an ownership lock is held by another process
 
 
 @dataclass(frozen=True)
+class EnvVar:
+    """One operator-settable, non-secret environment variable of a service,
+    typed so an invalid edit is refused BEFORE it restarts anything: a child
+    that raises while parsing its environment would otherwise burn through
+    its crash budget on a typo."""
+    name: str
+    type: str = "string"                    # "string" | "int"
+    positive: bool = False                  # int: must be >= 1
+    choices: tuple[str, ...] | None = None  # string: the only accepted values
+    description: str = ""
+
+
+@dataclass(frozen=True)
 class ServiceKind:
     kind: str
     directory: str                 # relative to source/
@@ -35,6 +48,13 @@ class ServiceKind:
     env_keys: tuple[str, ...]      # non-secret env vars the operator may set
     description: str
     core_url_env: str | None = None  # the core's discovery variable, if any
+    env_specs: tuple[EnvVar, ...] = ()  # types for env_keys; a key without one is a free string
+
+    def env_spec(self, name: str) -> EnvVar:
+        for spec in self.env_specs:
+            if spec.name == name:
+                return spec
+        return EnvVar(name)
 
     @property
     def key(self) -> str:
@@ -59,6 +79,15 @@ STATIC_SERVICES: dict[str, ServiceKind] = {
         env_keys=("WHISPER_MODEL", "WHISPER_COMPUTE_TYPE", "WHISPER_CPU_THREADS"),
         description="faster-whisper speech-to-text for /voice pages.",
         core_url_env="WHISPER_STT_URL",
+        env_specs=(
+            EnvVar("WHISPER_MODEL", description="faster-whisper model name, e.g. small.en, medium.en, large-v3-turbo."),
+            EnvVar("WHISPER_COMPUTE_TYPE", choices=(
+                "default", "auto", "int8", "int8_float32", "int8_float16", "int8_bfloat16",
+                "int16", "float16", "bfloat16", "float32"),
+                description="CTranslate2 compute type."),
+            EnvVar("WHISPER_CPU_THREADS", type="int", positive=True,
+                   description="CPU threads for inference."),
+        ),
     ),
     "voice_tts_dotstts": ServiceKind(
         kind="voice_tts_dotstts",
@@ -76,6 +105,12 @@ STATIC_SERVICES: dict[str, ServiceKind] = {
         bind="127.0.0.1:5008",
         env_keys=("RERANKER_MAX_LENGTH", "RERANKER_BATCH_SIZE", "RERANKER_DEVICE"),
         description="Cross-encoder reranker for memory recall.",
+        env_specs=(
+            EnvVar("RERANKER_MAX_LENGTH", type="int", positive=True, description="Token cap per query/passage pair."),
+            EnvVar("RERANKER_BATCH_SIZE", type="int", positive=True, description="Pairs scored per forward pass."),
+            EnvVar("RERANKER_DEVICE", choices=("auto", "cpu", "mps", "cuda"),
+                   description="torch device; auto picks the best available."),
+        ),
     ),
 }
 

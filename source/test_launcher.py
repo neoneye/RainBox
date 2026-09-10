@@ -101,6 +101,13 @@ class FakeCore:
                             return
                         time.sleep(0.1)
                     return
+                if self.path in ("/short", "/neglen"):
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", "200" if self.path == "/short" else "-1")
+                    self.end_headers()
+                    self.wfile.write(b"{}" if self.path == "/short" else b"{}X")
+                    return
                 if self.path == "/chunked":
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
@@ -295,6 +302,9 @@ def test_http_json_bounds_size_and_elapsed_time(core: FakeCore):
         L.http_json(core.addr, "GET", "/trickle-headers", deadline_s=0.5)
     assert time.monotonic() - t0 < 2.0
     assert L.http_json(core.addr, "GET", "/chunked") == (200, {"a": [1, 2]})
+    for path in ("/short", "/neglen"):
+        with pytest.raises(L.ControlError):
+            L.http_json(core.addr, "GET", path)
 
 
 # --- supervision with real children -------------------------------------------
@@ -614,3 +624,15 @@ def test_core_child_gets_the_launcher_selected_port(tree: Path, core: FakeCore, 
     env = captured["env"]
     assert env[L.CORE_PORT_ENV] == "5090"
     assert env[L.LAUNCHER_ID_ENV] == l.launcher_id and env[L.CORE_INSTANCE_ID_ENV] == l.core_instance_id
+
+
+def test_shutdown_requested_during_the_poll_spawns_nothing(lch: L.Launcher, core: FakeCore):
+    """The signal handler can run while the desired-state request waits; the
+    returning snapshot must not re-enable services."""
+    def desired_and_signal():
+        lch.request_shutdown()          # as if SIGTERM arrived mid-request
+        return desired_for(lch, enabled=True)
+    core.desired = desired_and_signal
+    poll_now(lch)
+    assert lch.shutting_down and svc(lch).proc is None and not svc(lch).desired
+    assert lch.tick(lch.clock_obj.t) is False  # nothing to stop: shutdown completes
