@@ -5,8 +5,8 @@
 **Status:** design note; none of the proposed tables, endpoints, or live reload
 behavior is implemented yet.
 
-**Applies to:** `source/discord_service/`, `source/telegram_service/`, and a
-future Zulip bridge.
+**Applies to:** `source/discord_service/`, `source/telegram_service/`, and
+future bridges for Zulip, Signal, Slack.
 
 ## Decision and current behavior
 
