@@ -17,6 +17,7 @@ the supervisor's job is to spawn, watch, kill, recover, and route.
 | Agent child-process entrypoint (`python -m agents --socket-fd N`) | `agents/__main__.py` |
 | Agent class hierarchy (`Agent` → `ModelGroupAgent` → `StructuredLLMAgent`) | `agents/base.py` |
 | Role registry (`agent_config`), class dispatch (`AGENT_CLASS_PATHS`) | `agents/config.py` |
+| Control channel to the launcher (`core.py --control-fd N`): desired-state pushes down, status lines up | `services/registry.py` (`ControlChannel`) |
 
 `main()` (`core.py`) starts the supervisor as a non-daemon thread, then serves
 the webapp on `127.0.0.1:5000` (werkzeug `make_server`, threaded) — the two
@@ -25,6 +26,17 @@ share one process and one `agent_config`, which is why the app must run via
 what makes anything execute. The same loop also hosts the cron scheduler
 (`db.cron_tick()` throttled to `CRON_TICK_INTERVAL` = 5 s, self-guarded so a
 cron bug cannot take down the thread — see `notes/cron-design.md`).
+
+When started by the launcher (`python main.py`), `core.py` also receives
+`--control-fd N`: one end of a `socketpair()` the launcher created, inherited
+across the exec exactly like an agent's `--socket-fd`. The core adopts it in
+`main()` (`services.registry.CHANNEL`), pushes a desired-state snapshot down
+it once `init_db` has run and again whenever a `services.*` setting or restart
+nonce changes, and a daemon thread reads the launcher's status lines up it
+until EOF. EOF means the launcher is gone and the core is unmanaged from that
+moment (`/settings` says so). Started without the flag — by hand, or by
+`tools.serve_ui` — the core is unmanaged from the start. Nothing on this
+channel polls; see `docs/superpowers/specs/2026-09-10-launcher-design.md`.
 
 ## The queue: inbox → journal
 
