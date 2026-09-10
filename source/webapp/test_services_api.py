@@ -186,3 +186,22 @@ def test_invalid_env_override_is_refused_before_any_restart(client, managed):
     assert db.get_setting(nonce_setting_key("reranker")) != nonce_before
     entry = next(s for s in client.get("/services/api/desired").get_json()["services"] if s["key"] == "reranker")
     assert entry["env"] == {"RERANKER_BATCH_SIZE": "8"}
+
+
+def test_unreadable_stored_override_reads_as_unset_and_can_be_repaired(client, managed):
+    """A blank or unparseable value left in an int-typed row (a key retyped
+    after it was saved) must not break /settings or the desired snapshot,
+    and a write must repair it without reading it first."""
+    key = env_setting_key("reranker", "RERANKER_BATCH_SIZE")
+    for legacy in ("", "oops"):
+        row = db.session.query(db.AppSetting).filter_by(key=key).one()
+        row.value = legacy
+        db.session.commit()
+        assert db.get_setting(key) is None
+        assert client.get("/settings").status_code == 200
+        entry = next(s for s in client.get("/services/api/desired").get_json()["services"] if s["key"] == "reranker")
+        assert entry["env"] == {}
+        nonce_before = db.get_setting(nonce_setting_key("reranker"))
+        assert registry.set_service_setting(key, 8) is True
+        assert db.get_setting(key) == 8
+        assert db.get_setting(nonce_setting_key("reranker")) != nonce_before
