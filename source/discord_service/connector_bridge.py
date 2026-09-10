@@ -225,10 +225,13 @@ def parse_snapshot(payload: Any, expected_connector: str) -> Snapshot:
 class ConfigState:
     """The published snapshot plus its freshness, shared by every thread.
 
-    `invalidate` (stream connect, stream drop, or a bridge_config event)
-    bumps the epoch, clears freshness, and requests a fetch. `publish` keeps
-    a snapshot fetched under a superseded epoch as the latest known data
-    but leaves it stale, so a change that raced the fetch is fetched again."""
+    `invalidate` (stream connect, or a bridge_config event) bumps the
+    epoch, clears freshness, and requests a fetch. `publish` keeps a
+    snapshot fetched under a superseded epoch as the latest known data but
+    leaves it stale, so a change that raced the fetch is fetched again.
+    Freshness also requires the stream to be open: a snapshot fetched while
+    disconnected is stored but stays stale, because the next change event
+    could not reach us; `stream_opened` is what restores it (with a fetch)."""
 
     def __init__(self) -> None:
         self._cond = threading.Condition()
@@ -236,17 +239,31 @@ class ConfigState:
         self.fresh = False
         self.stale_reason = "startup"
         self.epoch = 0
+        self.stream_open = False
         self._wanted = False
         self.changes = 0   # bumps on every publish; workers wait on it
 
     def invalidate(self, reason: str) -> None:
+        """A change may have happened: nothing is fresh until a fetch made
+        on the open stream lands. No fetch is requested while the stream is
+        closed — it could not be fresh anyway; the reconnect requests one."""
         with self._cond:
             self.epoch += 1
             self.fresh = False
             self.stale_reason = reason
-            self._wanted = True
+            self._wanted = self.stream_open
             self.changes += 1
             self._cond.notify_all()
+
+    def stream_opened(self) -> None:
+        with self._cond:
+            self.stream_open = True
+        self.invalidate("stream connected")
+
+    def stream_closed(self, reason: str) -> None:
+        with self._cond:
+            self.stream_open = False
+        self.invalidate(reason)
 
     def request_fetch(self) -> None:
         with self._cond:
@@ -267,10 +284,10 @@ class ConfigState:
     def publish(self, snapshot: Snapshot, epoch: int) -> bool:
         with self._cond:
             self.snapshot = snapshot
-            self.fresh = (epoch == self.epoch)
+            self.fresh = (epoch == self.epoch) and self.stream_open
             if not self.fresh:
-                self.stale_reason = "changed during fetch"
-                self._wanted = True
+                self.stale_reason = "changed during fetch" if self.stream_open else "stream not open"
+                self._wanted = self.stream_open
             self.changes += 1
             self._cond.notify_all()
             return self.fresh
@@ -429,9 +446,17 @@ class Bridge:
             return False
         return b.policy.inbound if direction == "in" else b.policy.outbound
 
-    def require(self, binding_uuid: str, direction: str) -> None:
+    def require(self, binding_uuid: str, direction: str) -> Binding:
+        """The binding as the CURRENT snapshot has it (policy included), or
+        Paused. Callers read policy from the returned value, never from a
+        binding captured before the loop began: a snapshot published mid-poll
+        (a revoked sender, a narrowed forward list) applies to the very next
+        message."""
         if not self.may_act(binding_uuid, direction):
             raise Paused(f"binding {binding_uuid} paused ({direction}); config {self.config.stale_reason if not self.config.fresh else 'fresh'}")
+        snap, _ = self.config.current()
+        assert snap is not None
+        return snap.bindings[binding_uuid]
 
     def guarded_sleep(self, seconds: float) -> None:
         """Injected into the Discord client for its 429 retry: sleep, then
@@ -478,12 +503,13 @@ class Bridge:
         only after it is fully handled; a failed post raises before the
         advance (at-least-once)."""
         for msg in messages:
+            cur = self.require(b.uuid, "in")   # the allowlist as of NOW, not of the poll
             author = msg.get("author") or {}
             author_id = str(author.get("id"))
             content = msg.get("content") or ""
             if author.get("bot"):
                 pass  # our own posts, and any other bot's — never echoed
-            elif author_id not in b.policy.allowed_senders:
+            elif author_id not in cur.policy.allowed_senders:
                 self.limiter.warn(f"unauthorized:{b.uuid}:{author_id}",
                                   "binding %s: dropping discord message from user %s (not in allowed_senders)",
                                   b.uuid, author_id)
@@ -511,7 +537,7 @@ class Bridge:
         mapping = rec.setdefault("progress_messages", {})
         key = str(row_id)
         existing = mapping.get(key)
-        if not b.policy.mirror_progress:
+        if not self.require(b.uuid, "out").policy.mirror_progress:
             self.send(b, shown)  # each update is its own message; nothing to edit later
             return
         if existing:
@@ -545,10 +571,10 @@ class Bridge:
         (progress excluded: it is mirrored from events), advancing the
         cursor row by row and stopping at the first still-streaming row."""
         rows = self.rainbox.get_messages_after(b.room_uuid, rec.get("room_cursor", 0))
-        kinds = b.policy.forward_kinds & {"message", "notice"}
         for row in rows:
             if row.get("streaming"):
                 break
+            kinds = self.require(b.uuid, "out").policy.forward_kinds & {"message", "notice"}
             if row.get("kind") in kinds and row.get("sender_type") == "agent":
                 self.send(b, row.get("text") or "")
                 logger.info("room %s -> discord (%s): %s row id=%s", b.room_uuid, b.address_key, row.get("kind"), row["id"])
@@ -562,7 +588,7 @@ class Bridge:
         if event.get("event") == "delete":
             self.reconcile_progress(b, rec)
         if (event.get("kind") == "progress" and event.get("event") in ("insert", "update")
-                and "progress" in b.policy.forward_kinds):
+                and "progress" in self.require(b.uuid, "out").policy.forward_kinds):
             row_id = int(event["message_id"])
             text = event.get("text")
             if text is None:
@@ -663,11 +689,13 @@ class Bridge:
 
     # -- snapshot application --
 
-    def apply_snapshot(self, snap: Snapshot) -> None:
+    def apply_snapshot(self, snap: Snapshot) -> bool:
         """Retire what vanished (cleanup, or an orphan report on the first
         valid snapshot after start), activate what is new and enabled, then
-        catch up outbound for everything active."""
+        catch up outbound for everything active. Returns True when an
+        activation failed (a transient error) so the applier retries."""
         first = not self.first_applied
+        retry = False
         for uuid in self.store.binding_ids():
             if uuid in snap.bindings:
                 continue
@@ -687,10 +715,11 @@ class Bridge:
                                  "not using that state (delete the binding and re-create it, or fix the file)",
                                  b.uuid, rec.get("room_uuid"), rec.get("address_key"), b.room_uuid, b.address_key)
                     continue
-                if rec is None and snap.enabled and b.effective_enabled:
-                    self.activate(b)
+                if rec is None and snap.enabled and b.effective_enabled and not self.activate(b):
+                    retry = True
         self.first_applied = True
         self.catchup_all()
+        return retry
 
 
 # --- loops -----------------------------------------------------------------------
@@ -737,12 +766,17 @@ def config_loop(bridge: Bridge, stop: threading.Event, on_snapshot: Callable[[Sn
 
 class Applier:
     """Applies the latest published snapshot on its own thread so cleanup
-    (up to 30 s) never blocks config fetches or the stream reader."""
+    (up to 30 s) never blocks config fetches or the stream reader. An
+    activation that failed transiently is retried with capped backoff by
+    re-applying the current snapshot while it is still fresh."""
 
-    def __init__(self, bridge: Bridge) -> None:
+    def __init__(self, bridge: Bridge, clock: Callable[[], float] = time.monotonic) -> None:
         self.bridge = bridge
         self._cond = threading.Condition()
         self._pending: Snapshot | None = None
+        self._clock = clock
+        self._retry_at: float | None = None
+        self._attempt = 0
 
     def submit(self, snap: Snapshot) -> None:
         with self._cond:
@@ -752,15 +786,29 @@ class Applier:
     def run(self, stop: threading.Event) -> None:
         while not stop.is_set():
             with self._cond:
-                while self._pending is None and not stop.is_set():
-                    self._cond.wait(0.5)
+                while self._pending is None and not stop.is_set() and not (
+                        self._retry_at is not None and self._clock() >= self._retry_at):
+                    remaining = 0.5 if self._retry_at is None else max(0.0, min(0.5, self._retry_at - self._clock()))
+                    self._cond.wait(remaining)
                 snap, self._pending = self._pending, None
             if snap is None:
-                continue
+                if stop.is_set():
+                    break
+                self._retry_at = None
+                snap, fresh = self.bridge.config.current()
+                if snap is None or not fresh:
+                    continue   # a future publish re-applies anyway
             try:
-                self.bridge.apply_snapshot(snap)
+                retry = self.bridge.apply_snapshot(snap)
             except Exception as exc:
                 self.bridge.log_error("applying config", exc)
+                retry = True
+            if retry:
+                self._attempt += 1
+                self._retry_at = self._clock() + _backoff(self._attempt)
+                logger.info("config apply incomplete; retrying in %.0fs", _backoff(self._attempt))
+            else:
+                self._attempt, self._retry_at = 0, None
 
 
 def inbound_loop(bridge: Bridge, stop: threading.Event) -> None:
@@ -811,7 +859,7 @@ def outbound_loop(bridge: Bridge, stop: threading.Event) -> None:
                 attempt = 0
                 kind = event.get("event")
                 if kind == "stream_open":
-                    bridge.config.invalidate("stream connected")
+                    bridge.config.stream_opened()
                 elif kind == "bridge_config":
                     if str(event.get("connector_uuid")) == bridge.connector_uuid:
                         bridge.config.invalidate("bridge_config event")
@@ -821,13 +869,13 @@ def outbound_loop(bridge: Bridge, stop: threading.Event) -> None:
                     break
         except Exception as exc:
             attempt += 1
-            bridge.config.invalidate("stream dropped")
+            bridge.config.stream_closed("stream dropped")
             bridge.log_error(f"stream error (attempt {attempt})", exc)
             stop.wait(_backoff(attempt))
         else:
             if not stop.is_set():
                 attempt += 1
-                bridge.config.invalidate("stream ended")
+                bridge.config.stream_closed("stream ended")
                 stop.wait(_backoff(attempt))
 
 

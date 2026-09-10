@@ -211,6 +211,7 @@ def test_tree_load_save_version_and_refusals(cleanup):
     b = db.bridge_create_binding(cu, room.uuid, {"channel_id": "7"})
     tree = db.bridge_load_tree()
     assert "discord" in tree["platforms"] and tree["platforms"]["zulip"]["available"] is False
+    assert tree["platforms"]["telegram"]["available"] is False and tree["platforms"]["discord"]["available"] is True
     mine = lambda t: ([x for x in t["connectors"] if x["uuid"] == c["uuid"]],
                       [x for x in t["folders"] if x["connectorId"] == c["uuid"]],
                       [x for x in t["bindings"] if x["connectorId"] == c["uuid"]])

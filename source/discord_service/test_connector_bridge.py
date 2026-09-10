@@ -134,6 +134,7 @@ def _bridge(tmp_path, discord=None, rainbox=None, snapshot: dict | None = None, 
     b = Bridge(CONN, store, config, rainbox or FakeRainbox(), discord or FakeDiscord(), token="SECRET")
     if snapshot is not None:
         snap = parse_snapshot(snapshot, CONN)
+        config.stream_opened()
         config.publish(snap, config.epoch)
         if not fresh:
             config.invalidate("test")
@@ -186,7 +187,7 @@ def test_freshness_is_a_fact_not_a_clock():
     cs = ConfigState()
     stop = threading.Event()
     assert cs.current() == (None, False)
-    cs.invalidate("stream connected")
+    cs.stream_opened()
     epoch = cs.wait_for_request(stop)
     snap = parse_snapshot(_payload(), CONN)
     assert cs.publish(snap, epoch) is True and cs.current() == (snap, True)
@@ -431,7 +432,7 @@ def test_config_loop_fetches_on_request_publishes_and_backs_off_on_failure(tmp_p
     def on_snapshot(snap):
         got.append(snap)
         stop.set()
-    b.config.invalidate("stream connected")
+    b.config.stream_opened()                 # a fetch is wanted only once the stream is open
     config_loop(b, stop, on_snapshot)
     assert len(got) == 1 and b.config.current()[1] is True and rb.config_calls == 1
     # A 404 pauses without retrying; a failure retries with backoff.
@@ -561,3 +562,88 @@ def test_errors_never_log_the_token(tmp_path, caplog):
     with caplog.at_level("ERROR"):
         b.log_error("x", RuntimeError("401 for Bot SECRET"))
     assert "SECRET" not in caplog.text and "<redacted>" in caplog.text
+
+
+# --- review findings -----------------------------------------------------------
+
+
+def test_a_fetch_while_disconnected_never_restores_freshness():
+    """A snapshot is fresh only when fetched on the currently open stream:
+    after a drop, fetch results stay stale and no fetch is even requested
+    (an event could not reach us); the reconnect requests one."""
+    cs = ConfigState()
+    stop = threading.Event()
+    snap = parse_snapshot(_payload(), CONN)
+    cs.stream_opened()
+    assert cs.publish(snap, cs.wait_for_request(stop) or 0) is True
+    cs.stream_closed("stream dropped")
+    assert cs.current() == (snap, False) and cs._wanted is False
+    cs.invalidate("bridge_config event")             # while closed: still no fetch wanted
+    assert cs._wanted is False
+    assert cs.publish(snap, cs.epoch) is False and cs.stale_reason == "stream not open"
+    cs.stream_opened()
+    assert cs._wanted is True
+    assert cs.publish(snap, cs.wait_for_request(stop) or 0) is True
+
+
+def test_revoked_sender_is_dropped_mid_poll(tmp_path):
+    """A snapshot published between two messages of one poll applies to the
+    second message: the allowlist is read live, not from the poll's binding."""
+    b = _bridge(tmp_path, FakeDiscord(), FakeRainbox(), snapshot=_payload())
+    rec = _rec()
+    b.store.set_binding(B1, rec)
+    binding = b.config.snapshot.bindings[B1]
+
+    class Revoking(FakeRainbox):
+        def post_message(self, room_uuid, text):
+            out = super().post_message(room_uuid, text)
+            narrowed = parse_snapshot(_payload(bindings=[_binding(policy=_policy(allowed_senders=["222"]))], revision="r2"), CONN)
+            b.config.publish(narrowed, b.config.epoch)   # a fresh snapshot lands mid-poll
+            return out
+    b.rainbox = Revoking()
+    b.process_inbound(binding, rec, [_dmsg("10", content="first"), _dmsg("11", content="second")])
+    assert b.rainbox.posted == [(ROOM, "first")]
+    assert rec["discord_after"] == "11"                # the dropped message is consumed, not replayed
+
+
+def test_narrowed_forward_kinds_apply_to_the_next_row(tmp_path):
+    dc = FakeDiscord()
+    rb = FakeRainbox({ROOM: [_row(1, text="a"), _row(2, kind="notice", text="n")]})
+    b = _bridge(tmp_path, dc, rb, snapshot=_payload())
+    rec = _rec()
+    orig_send = dc.send_message
+
+    def send_then_narrow(channel_id, text):
+        ids = orig_send(channel_id, text)
+        narrowed = parse_snapshot(_payload(bindings=[_binding(policy=_policy(forward_kinds=["message"]))], revision="r2"), CONN)
+        b.config.publish(narrowed, b.config.epoch)
+        return ids
+    dc.send_message = send_then_narrow
+    b.outbound_catchup(b.config.snapshot.bindings[B1], rec)
+    assert dc.sent == [("777", "a")] and rec["room_cursor"] == 2
+
+
+def test_failed_activation_is_retried_by_the_applier(tmp_path, monkeypatch):
+    monkeypatch.setattr(cb, "_backoff", lambda attempt: 0.05)
+
+    class Flaky(FakeDiscord):
+        def __init__(self):
+            super().__init__({"777": [_dmsg("40")]})
+            self.fail_first = True
+
+        def get_messages(self, channel_id, after, limit=100):
+            if self.fail_first:
+                self.fail_first = False
+                raise RuntimeError("temporary network failure")
+            return super().get_messages(channel_id, after, limit)
+    b = _bridge(tmp_path, Flaky(), FakeRainbox(), snapshot=_payload())
+    applier = Applier(b)
+    stop = threading.Event()
+    t = threading.Thread(target=applier.run, args=(stop,), daemon=True)
+    t.start()
+    applier.submit(b.config.snapshot)
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline and b.store.binding(B1) is None:
+        time.sleep(0.02)
+    stop.set(); t.join(2)
+    assert b.store.binding(B1)["discord_after"] == "40"   # activated on the retry, no config change needed

@@ -1068,10 +1068,12 @@ def _bridge_connector_label(view, context, model, name):
 
 
 class BridgeConnectorView(ModelView):
-    """Read-mostly: the credential is never here (only `token_env`, the
-    variable NAME); enabling/disabling and policy edits belong on /bridges,
-    which also rewrites the restart nonce and notifies the running bridge."""
-    can_create = False
+    """Read-only: the credential is never here (only `token_env`, the
+    variable NAME); every write belongs on /bridges, whose API validates
+    addresses and policies, refuses deletes that would orphan rows, rewrites
+    the restart nonce, notifies the running bridge, and pushes the launcher.
+    An admin write would bypass all of that."""
+    can_create = can_edit = can_delete = False
     column_list = (
         "bridges_link", "position", "uuid", "name", "platform", "token_env", "launch_mode",
         "enabled", "base_url", "identity", "policy", "restart_nonce", "created_at", "updated_at",
@@ -1087,7 +1089,7 @@ class BridgeConnectorView(ModelView):
 
 
 class BridgeFolderView(ModelView):
-    can_create = False
+    can_create = can_edit = can_delete = False   # writes go through /bridges (see BridgeConnectorView)
     column_list = (
         "bridges_link", "position", "uuid", "name", "connector_uuid", "parent_uuid",
         "enabled", "policy", "created_at", "updated_at",
@@ -1104,7 +1106,7 @@ class BridgeFolderView(ModelView):
 
 
 class BridgeBindingView(ModelView):
-    can_create = False
+    can_create = can_edit = can_delete = False   # writes go through /bridges (see BridgeConnectorView)
     column_list = (
         "bridges_link", "position", "uuid", "connector_uuid", "folder_uuid", "room_uuid",
         "address_key", "address", "enabled", "policy", "created_at", "updated_at",

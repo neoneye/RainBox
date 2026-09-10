@@ -63,6 +63,8 @@ def test_connector_crud_and_validation(client):
     cu = row["uuid"]
     assert c.post("/bridges/api/connectors", json={"name": row["name"], "platform": "discord", "token_env": "X"}).status_code == 409
     assert c.post("/bridges/api/connectors", json={"name": "z", "platform": "zulip", "token_env": "X"}).status_code == 400
+    # Telegram's bridge has no connector mode yet: a connector for it could never start.
+    assert c.post("/bridges/api/connectors", json={"name": "t", "platform": "telegram", "token_env": "X"}).status_code == 400
     g = c.get(f"/bridges/api/connectors/{cu}").get_json()
     assert g["connector"]["enabled"] is False and g["launcher"] == {"state": "unknown"} and g["autostart"] is True
     r = c.put(f"/bridges/api/connectors/{cu}", json={"enabled": True, "policy": {"direction": "in"}})

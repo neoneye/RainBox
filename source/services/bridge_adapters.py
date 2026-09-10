@@ -215,7 +215,9 @@ ADAPTERS: dict[str, Adapter] = {
     ),
     "telegram": Adapter(
         platform="telegram", kind="telegram_bridge", label="Telegram",
-        state_file_env="TELEGRAM_STATE_FILE", available=True,
+        # The Telegram bridge still reads only its legacy environment; until
+        # it gains a connector mode a connector for it could never start.
+        state_file_env="TELEGRAM_STATE_FILE", available=False,
         requires_base_url=False, requires_identity=False,
         address_fields=(AddressField("chat_id", "signed_int"),),
         policy_keys=_common_policy(["message"], False, False),

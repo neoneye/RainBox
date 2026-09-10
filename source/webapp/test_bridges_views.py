@@ -67,3 +67,12 @@ def test_credentials_never_appear_in_the_page_or_command():
     assert "Only the NAME is stored" in b
     # Values are single-quoted for the shell so display names never become syntax.
     assert "brShellQuote" in b
+
+
+def test_admin_views_for_bridge_rows_are_read_only():
+    """Every bridge write goes through /bridges (validation, ownership
+    guards, restart nonce, bridge_config notify, launcher push); an admin
+    edit or delete would bypass all of it."""
+    from webapp.core import BridgeBindingView, BridgeConnectorView, BridgeFolderView
+    for view in (BridgeConnectorView, BridgeFolderView, BridgeBindingView):
+        assert not view.can_create and not view.can_edit and not view.can_delete
