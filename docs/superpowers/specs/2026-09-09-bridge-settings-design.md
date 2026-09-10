@@ -270,10 +270,12 @@ requires restarting only that connector. A replacement token must authenticate
 as the same bot; verify and retain the authenticated bot identity in local state
 so a different bot cannot inherit the previous bot's checkpoints.
 
-The current bridges do **not** load the repo-root `.env`: `source/env_file.py`
+The bridges do **not** load the repo-root `.env`, and this design does not
+add that: under the launcher the credential arrives in the environment, and
+in manual mode the operator sets it in the launch shell. `source/env_file.py`
 is invoked from `providers/__init__.py`, which these isolated services never
-import. Initially, supply credentials in the launch environment. If `.env`
-support is added, `env_file.py` resolves the repo root from its own
+import. For the record, should a bridge-side loader ever be wanted: `env_file.py`
+resolves the repo root from its own
 location and has one third-party dependency, `python-dotenv`, imported
 lazily inside `load_env_file()`. A bridge can import it after adding the absolute
 source directory, `str(Path(__file__).resolve().parents[1])`, to its import path;
@@ -381,9 +383,17 @@ is what hands them work.
 
 ### Bootstrap and the control loop
 
-1. The launcher reads `.env` (its own small parser, or `python-dotenv`
-   pinned in a launcher requirements file — the root venv is fine since the
-   launcher runs from `source/`), then starts the core unconditionally.
+1. The launcher is started with the root venv's interpreter
+   (`venv/bin/python launcher.py` from `source/`): it has no requirements
+   of its own, and `sys.executable` is what it runs the core with, so the
+   core gets the venv the operator chose for the launcher. It reads `.env`
+   with its **own parser**, not `python-dotenv` — the launcher is stdlib-only
+   and a test asserts that. The parser handles the subset the repo's
+   `.env.example` uses (`KEY=value`, single/double quotes, `#` comments,
+   blank lines); a test feeds `.env.example` and a fixture of edge cases
+   to both parsers and asserts identical results, so the launcher and the
+   core can never disagree about a value. Then it starts the core
+   unconditionally.
 2. It polls `GET /services/api/desired` on the core until the core answers,
    then every 5 seconds. The response lists every service that should be
    running: `{key, kind, dir, argv, env: {name: value}, token_env,
@@ -399,9 +409,10 @@ is what hands them work.
    `{key: {state, pid, since, last_exit, message}}`; it also re-posts the
    full table every 30 s as a heartbeat, so a core that restarted learns the
    current picture without waiting for a change.
-5. Its own `SIGINT`/`SIGTERM`: `SIGTERM` every child (the core last, so its
-   pages can record the bridges going down), wait 10 s, `SIGKILL` the rest,
-   exit.
+5. Its own `SIGINT`/`SIGTERM`: `SIGTERM` every service first and the core
+   last, so a bridge unwinding an in-flight post or state write still has a
+   live core to finish against; wait 10 s, `SIGKILL` the rest, exit. The
+   core's own shutdown then kills its agents as it does today.
 
 Because the core is a child, a core restart is just step 3 for the entry
 `core`; bridges keep running, notice the SSE stream drop, back off, and
@@ -444,7 +455,7 @@ For a bridge that is:
 |---|---|
 | `RAINBOX_URL` | `http://127.0.0.1:5000` |
 | `BRIDGE_CONNECTOR` | the connector uuid |
-| `<PLATFORM>_STATE_FILE` | `<state dir>/bridge-<connector-uuid>.json`, so two connectors can never share a file |
+| `<PLATFORM>_STATE_FILE` | `<state dir>/bridge-<connector-uuid>.json`, so two connectors can never share a file; the core sends the file *name*, the launcher owns the directory (`--state-dir`, default `<repo>/var/services/`, gitignored) and prefixes it, since where a host keeps runtime state is the launcher's fact, not the database's |
 | the variable `token_env` names | the credential value, and nothing else from the launcher's environment |
 
 The desired-state response carries the *name* in `token_env`, never the
@@ -455,7 +466,21 @@ the file over its own environment, so a rotated token reaches a service on
 is reported as **credential missing**, by variable name, and not spawned.
 A missing venv is **not installed**, and not spawned. Neither counts as a
 crash. Stdout and stderr are inherited, so every service's log lines land in
-the launcher's terminal, prefixed by the service itself as today.
+the launcher's terminal, prefixed by the service itself as today — which
+also means the launcher never *reads* them. The only thing it learns from a
+child is its exit status, so services use a small exit-code convention and
+the launcher maps codes to states instead of parsing logs:
+
+| Exit code | Meaning | Launcher reaction |
+|---|---|---|
+| `0` | clean exit after `SIGTERM` | `stopped` |
+| `2` | configuration or credential rejected (bad connector, token refused by the platform, room missing) | `failed`, no respawn; the bridge's own log line has the detail |
+| `3` | state-file lock held by another process | `failed`, message "state file locked by another process; see its log for the pid"; no respawn |
+| anything else, or a signal | crash | respawn with backoff; five in two minutes → `failed` |
+
+The two deterministic failures get no backoff loop because respawning
+cannot fix them; the bridges already exit through `SystemExit` for exactly
+these conditions and only need the codes assigned.
 
 ### Status
 
@@ -488,9 +513,10 @@ memory; run it once and keep it only if it shows.
 With `services.bridges.autostart` off, the launcher runs the core and the
 static services only, and the copyable launch line is the way in for
 bridges. With it on, a bridge also started by hand on the same host
-collides on the state-file lock and exits; the launcher then reports
-**failed** with the lock holder's pid in its message, which is the signal
-that two launchers are configured. Across hosts the lock cannot help, as
+collides on the state-file lock and exits with code 3; the launcher then
+reports **failed** with the lock message above, which is the signal that two
+launchers are configured (the pid is in the bridge's own log line, which the
+launcher does not read). Across hosts the lock cannot help, as
 the state section already says.
 
 Disabling a connector has two effects, and both are wanted: the launcher
