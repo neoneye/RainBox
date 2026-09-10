@@ -52,7 +52,7 @@ telegram_service/
   collision must not gain a third member).
 - `python bridge.py` from inside the dir runs it. Two daemon worker threads
   (inbound, outbound) + a main thread waiting on a `stop_event`; SIGINT/SIGTERM
-  set the event and the threads wind down (same shutdown shape as `main.py`).
+  set the event and the threads wind down (same shutdown shape as `core.py`).
 
 ## Inbound: Telegram → chatroom
 

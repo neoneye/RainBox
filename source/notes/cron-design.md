@@ -18,7 +18,7 @@ A cron job is a **schedule** attached to **an action that already exists in this
 | HTTP endpoints | `webapp/cron_api.py` |
 | Page shell + CSS | `webapp/cron_views.py` |
 | Page logic (~1.6k lines of JS) | `static/cron.js`, served with an mtime `?v=` cache-buster |
-| Scheduler host | `main.py` `supervisor_loop` |
+| Scheduler host | `core.py` `supervisor_loop` |
 | Tests | `webapp/test_cron_api.py`, `webapp/test_cron_views.py`, `webapp/test_cron_admin.py`, `db/test_cron_firing.py`, `db/test_cron_events.py`, `db/test_cron_backup.py` |
 
 ## Data model (as built)
@@ -91,7 +91,7 @@ Validation deliberately allows empty `command`/`message` because the page autosa
 
 ## Scheduler
 
-The supervisor loop in `main.py` is the heartbeat — no extra process. It calls `db.cron_tick()` throttled to `CRON_TICK_INTERVAL` (5 s; cron granularity is 1 min), self-guarded so a cron bug can't take down the supervisor thread (exception → log + rollback). When fully idle the loop's `select()` timeout backs off from 1 s to 5 s (`IDLE_TICK_TIMEOUT`) to stop at-rest Postgres polling; the cron pass counts as "found work" when it fires, keeping the loop responsive while jobs run.
+The supervisor loop in `core.py` is the heartbeat — no extra process. It calls `db.cron_tick()` throttled to `CRON_TICK_INTERVAL` (5 s; cron granularity is 1 min), self-guarded so a cron bug can't take down the supervisor thread (exception → log + rollback). When fully idle the loop's `select()` timeout backs off from 1 s to 5 s (`IDLE_TICK_TIMEOUT`) to stop at-rest Postgres polling; the cron pass counts as "found work" when it fires, keeping the loop responsive while jobs run.
 
 One `cron_tick` pass:
 
@@ -182,7 +182,7 @@ The three tables are registered under an **Admin → Cron** category (`CronFolde
 
 | Need | Reuse |
 |------|-------|
-| Run the scheduler | the `supervisor_loop` tick in `main.py` (`db.cron_tick()` every ~5 s) |
+| Run the scheduler | the `supervisor_loop` tick in `core.py` (`db.cron_tick()` every ~5 s) |
 | Execute a command safely | the workspace-shell agent — argv, no bash, workspace-confined |
 | Post to a chatroom | `post_chat_message` as the `cron` system user (router/chat agents react) |
 | Full command output | the `Journal` row linked from `cron_run.journal_id` |

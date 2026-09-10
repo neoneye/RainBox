@@ -214,7 +214,7 @@ the Add-model overlay described below.
 
 ### Force-sync (operator override)
 
-`python main.py --force-model-sync` runs the same sync but with
+`python core.py --force-model-sync` runs the same sync but with
 `force_update_arguments=True`, then exits without starting the server.
 Use this after a provider's reported tool support changes and you want
 existing rows refreshed.
@@ -354,7 +354,7 @@ both would imply a knob that does nothing.
 A blocking LLM call can't be cancelled in-process — a runaway model just
 hangs the request thread until the provider's read timeout (~60s). So the
 chat / structured / tool probes each run in a **throwaway subprocess** the
-web layer can SIGKILL, mirroring how the supervisor (`main.py`) kills hung
+web layer can SIGKILL, mirroring how the supervisor (`core.py`) kills hung
 agents:
 
 - `llm/models_test_worker.py` reads `{action, provider_id, model, arguments}`

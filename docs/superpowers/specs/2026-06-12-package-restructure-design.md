@@ -12,7 +12,7 @@ better shape; this restructure extends it to the rest.
 
 ## Decisions (made with the operator)
 
-1. **Topology:** sibling top-level packages next to `main.py` (not a single
+1. **Topology:** sibling top-level packages next to `main.py` and `core.py` (not a single
    `rainbox/` package, not a minimal regroup). No `pyproject.toml` needed;
    pyright `extraPaths: ["."]` and `python3 main.py` keep working.
 2. **Tests:** colocated inside the package of the module they test, following
@@ -30,7 +30,8 @@ better shape; this restructure extends it to the rest.
 
 ```
 source/
-├── main.py                      # entrypoint (unchanged role)
+├── main.py                      # the launcher (starts core.py and the side services)
+├── core.py                      # the core: webserver + supervisor
 ├── conftest.py                  # DB-safety pin (stays at root)
 │
 ├── agents/
@@ -121,7 +122,7 @@ Four sites spawn root scripts by `__file__`-derived path today:
 
 | Spawner | Old target | New invocation |
 |---|---|---|
-| `main.py` (`AGENT_SCRIPT`, posix_spawn) | `agent.py` | `-m agents` |
+| `core.py` (`AGENT_SCRIPT`, posix_spawn) | `agent.py` | `-m agents` |
 | `webapp/models_views.py:841` | `models_test_worker.py` | `-m llm.models_test_worker` |
 | `benchmark_runner.py:29` | `benchmark_worker.py` | `-m benchmarks.worker` |
 | `benchmark_editdocument_runner.py:42` | `benchmark_editdocument_worker.py` | `-m benchmarks.editdocument_worker` |
@@ -180,7 +181,7 @@ to `webapp/` even when named after a feature.)
    socket inheritance, and DB access end to end).
 5. `python -m backup.dump` produces an encrypted backup file (proves the CLI
    rename).
-6. No `*.py` files remain at root except `main.py` and `conftest.py`.
+6. No `*.py` files remain at root except `main.py`, `core.py`, `conftest.py`, and their tests.
 
 ## Out of scope
 

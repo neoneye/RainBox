@@ -134,7 +134,7 @@ def load_env_file() -> Path | None:
 ```
 
 Called at import of `providers/__init__.py`. That is the one choke point every
-process which builds an LLM passes through — the web app, `main.py`, the
+process which builds an LLM passes through — the web app, `core.py`, the
 benchmark runners, and the killable `llm/models_test_worker.py` subprocess all
 import `providers` (directly or via `llm`), so none of them can miss the key.
 Provider configuration already reads the environment (`OLLAMA_BASE_URL`,

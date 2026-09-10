@@ -54,7 +54,7 @@ is the responder becomes a direct room.
    terminal kinds. The human-only guard (sender must be `user_type='human'`)
    is what prevents loops: the model's reply is posted directly by the agent,
    never through this endpoint's trigger path.
-2. The supervisor (`main.py`) spawns the agent process;
+2. The supervisor (`core.py`) spawns the agent process;
    `agents/__main__.py` resolves the `direct_chat` kind to `DirectChatAgent`
    (`agents/direct_chat.py`).
 3. `handle()` resolves the model (next section). With no model it posts a
