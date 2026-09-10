@@ -512,3 +512,29 @@ def test_two_phase_shutdown_stops_services_before_the_core(tree: Path, core: Fak
                     os.killpg(rec.pgid, 9)
                 except ProcessLookupError:
                     pass
+
+
+def test_core_port_override_is_shared_with_main():
+    assert L.core_addr_from_env({}) == ("127.0.0.1", 5000)
+    assert L.core_addr_from_env({"RAINBOX_CORE_PORT": "5090"}) == ("127.0.0.1", 5090)
+    with pytest.raises(SystemExit):
+        L.core_addr_from_env({"RAINBOX_CORE_PORT": "x"})
+    main_py = (Path(__file__).parent / "main.py").read_text()
+    assert 'os.environ.get("RAINBOX_CORE_PORT"' in main_py
+
+
+def test_failed_status_post_is_retried_soon_not_at_the_heartbeat(tree: Path, core: FakeCore):
+    clock = FakeClock()
+    dead = ("127.0.0.1", 1)  # nothing listens here
+    l = L.Launcher(state_dir=tree / "state4", catalogue={"svc": KIND}, source_dir=tree,
+                   core_addr=dead, spawn_core=False, base_env=_base_env(), clock=clock)
+    l.acquire_lock()
+    l.tick(clock.t)                       # first post fails: core "not up"
+    assert l._status_dirty and l._status_retry_at == pytest.approx(clock.t + L.STATUS_RETRY_AFTER)
+    l.core_addr = core.addr               # the core comes up
+    clock.t += 1.0
+    l.tick(clock.t)                       # too early: no retry yet
+    assert core.statuses == []
+    clock.t += L.STATUS_RETRY_AFTER
+    l.tick(clock.t)                       # retried well before the 30 s heartbeat
+    assert len(core.statuses) == 1 and not l._status_dirty

@@ -59,6 +59,18 @@ logger = logging.getLogger("launcher")
 SOURCE_DIR: Path = Path(__file__).resolve().parent
 REPO_ROOT: Path = SOURCE_DIR.parent
 DEFAULT_STATE_DIR: Path = REPO_ROOT / "var" / "services"
+CORE_PORT_ENV = "RAINBOX_CORE_PORT"  # read by main.py too; default 5000
+
+
+def core_addr_from_env(env: dict[str, str] | None = None) -> tuple[str, int]:
+    raw = (os.environ if env is None else env).get(CORE_PORT_ENV, "5000")
+    try:
+        port = int(raw)
+    except ValueError:
+        raise SystemExit(f"{CORE_PORT_ENV} must be an integer port (got {raw!r})") from None
+    return ("127.0.0.1", port)
+
+
 CORE_ADDR: tuple[str, int] = ("127.0.0.1", 5000)
 
 LAUNCHER_ID_ENV = "RAINBOX_LAUNCHER_ID"
@@ -74,6 +86,7 @@ BACKOFF_CAP: float = 60.0
 CRASH_BUDGET: int = 5             # unexpected exits ...
 CRASH_WINDOW: float = 120.0       # ... within this many seconds latch `failed`
 BACKOFF_RESET_AFTER: float = 120.0
+STATUS_RETRY_AFTER: float = 2.0   # a failed status post is retried this soon
 
 # Variables that must never leak from the launcher into a service, whatever
 # the operator exported (loader injection, interpreter overrides, DB access).
@@ -362,6 +375,7 @@ class Launcher:
         self._next_poll = 0.0
         self._next_heartbeat = 0.0
         self._status_dirty = True
+        self._status_retry_at = 0.0
         self._lock_fh = None
         self._signals = 0
 
@@ -599,13 +613,24 @@ class Launcher:
         self._apply_snapshot(snap, now)
 
     def _post_status(self, now: float) -> None:
+        """Post the full table. A failed post (the core is still starting, or
+        restarting) keeps the table dirty and retries after STATUS_RETRY_AFTER,
+        so a fresh core learns the picture in seconds, not at the next
+        heartbeat; a non-2xx answer (stale sequence, markers of an older core)
+        is not retried since resending the same thing cannot help."""
         self._next_heartbeat = now + HEARTBEAT_INTERVAL
-        self._status_dirty = False
         self.sequence += 1
         try:
-            http_json(self.core_addr, "POST", "/services/api/status", self.status_payload(), clock=self.clock)
+            status, _ = http_json(self.core_addr, "POST", "/services/api/status",
+                                  self.status_payload(), clock=self.clock)
         except ControlError as exc:
             logger.debug("status: %s", exc)
+            self._status_dirty = True
+            self._status_retry_at = now + STATUS_RETRY_AFTER
+            return
+        self._status_dirty = False
+        if status >= 300:
+            logger.debug("status: HTTP %s", status)
 
     def status_payload(self) -> dict[str, Any]:
         services = {key: rec.status() for key, rec in self.services.items()}
@@ -755,7 +780,7 @@ class Launcher:
         if now >= self._next_poll:
             self._poll_desired(now)
             self._reconcile(now)
-        if self._status_dirty or now >= self._next_heartbeat:
+        if (self._status_dirty and now >= self._status_retry_at) or now >= self._next_heartbeat:
             self._post_status(now)
         return True
 
@@ -796,7 +821,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="run the core and nothing else, regardless of toggles")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s launcher: %(message)s")
-    launcher = Launcher(state_dir=args.state_dir, core_only=args.core_only)
+    launcher = Launcher(state_dir=args.state_dir, core_only=args.core_only,
+                        core_addr=core_addr_from_env())
     launcher.acquire_lock()
     if launcher.core_port_in_use():
         logger.error(

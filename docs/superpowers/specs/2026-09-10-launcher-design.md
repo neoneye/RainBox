@@ -2,8 +2,13 @@
 
 **Date:** 2026-09-10
 
-**Status:** design; nothing implemented yet. Paths and APIs below are proposed
-unless identified as current behavior.
+**Status:** phase 1 implemented (`source/launcher.py`, `source/services/`,
+`source/webapp/services_api.py`, the `services.*` settings and the /settings
+launcher card). Two runtime facts beyond the text below: `RAINBOX_CORE_PORT`
+overrides the core's port for both `main.py` and the launcher, so a second
+core can run beside the operator's for a smoke test; and a status post that
+fails at the transport level is retried after 2 seconds rather than at the
+next heartbeat, so a restarted core learns the table within seconds.
 
 **Roadmap:** ship the core and static services first, then add dynamic bridge
 entries from the [bridge settings design](2026-09-09-bridge-settings-design.md).

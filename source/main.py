@@ -359,8 +359,12 @@ def main() -> None:
     )
     thread.start()
 
-    server = make_server("127.0.0.1", 5000, app, threaded=True)
-    logger.info("supervisor thread started; webserver on http://127.0.0.1:5000 (Ctrl-C to quit)")
+    # RAINBOX_CORE_PORT exists so a second core (a launcher smoke test against
+    # the sandbox DB) can run beside the operator's on 5000; the launcher reads
+    # the same variable and passes its whole environment to the core.
+    port = int(os.environ.get("RAINBOX_CORE_PORT", "5000"))
+    server = make_server("127.0.0.1", port, app, threaded=True)
+    logger.info("supervisor thread started; webserver on http://127.0.0.1:%d (Ctrl-C to quit)", port)
 
     def shutdown_handler(signum: int, _frame: object) -> None:
         logger.info("received signal %d; shutting down", signum)
