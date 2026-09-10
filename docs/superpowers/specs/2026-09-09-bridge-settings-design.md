@@ -5,7 +5,7 @@
 **Status:** design note; none of the proposed tables, endpoints, or live reload
 behavior is implemented yet.
 
-**Roadmap:** the launcher (`2026-09-10-launcher-design.md`) comes first;
+**Roadmap:** the [launcher](2026-09-10-launcher-design.md) comes first;
 this design resumes once it runs the core and the static services reliably.
 The process-management mechanism lives there and is only summarized here.
 
@@ -23,10 +23,9 @@ The core (`source/main.py`) should not need a restart for ordinary bridge
 configuration changes: agents may be mid-turn. Each connector runs in its own
 bridge process, which can be restarted independently. By default a small
 top-level launcher (`source/launcher.py`) starts the core and every enabled
-service, and stops a service when it is disabled (see *Supervised
-services*); running a bridge by hand stays possible for a bridge on another
-host. Installing the initial
-schema and application code still requires the normal deployment procedure;
+service assigned to it, and stops that service when disabled (see [Supervised
+by the launcher](#supervised-by-the-launcher)). Manual operation remains possible.
+Installing the initial schema and application code requires the normal deployment procedure;
 live editing is a property of the implemented feature, not a way to hot-load
 new core code.
 
@@ -71,7 +70,7 @@ complete SQLAlchemy migration.
 
 | Table | Fields in addition to common identity/timestamps |
 |---|---|
-| `bridge_connector` | `name` (unique label), `platform`, nullable `base_url` and `identity`, `token_env`, `enabled` (default false), `policy` (JSON object, default `{}`) |
+| `bridge_connector` | `name` (unique label), `platform`, nullable `base_url` and `identity`, `token_env`, `launch_mode` (`launcher` or `manual`, default `launcher`), `restart_nonce` (UUID, default new UUID), `enabled` (default false), `policy` (JSON object, default `{}`) |
 | `bridge_folder` | `connector_uuid` (FK `RESTRICT`), `parent_uuid` (nullable, plain uuid), `name`, `position`, `enabled` (default true), `policy` (JSON object, default `{}`) |
 | `bridge_binding` | `connector_uuid` (FK `RESTRICT`), `folder_uuid` (nullable, plain uuid), `room_uuid` (FK `RESTRICT` to `chatroom.uuid`), `address` (validated JSON object), `address_key` (canonical text), `enabled` (default false), `policy` (JSON object, default `{}`), `position` |
 
@@ -128,7 +127,7 @@ Required invariants:
   foreign key with `ondelete="RESTRICT"` (below), so deleting a bound room
   fails inside that transaction and the whole subtree delete rolls back. A
   binding inserted after any application-side check is caught the same way.
-  The handlers catch the integrity error and answer 409 with current blockers;
+  The handlers roll back the integrity error and answer 409 with current blockers;
   the preview query is a courtesy, not the enforcement.
   Reject deletion of nonempty bridge folders/connectors; the UI can offer an
   explicit transactional removal of their contents. A move or deletion
@@ -137,8 +136,8 @@ Required invariants:
 
 ### Referential integrity and concurrency
 
-The repository uses two mechanisms for this, and the bridge tables reuse both
-rather than adding a lock:
+Use database constraints for ownership and a version check under a connector
+row lock for bridge-tree edits:
 
 - **Real foreign keys where a delete must be refused or cascaded.**
   `model_config` is protected with `ForeignKey(..., ondelete="RESTRICT")`;
@@ -147,16 +146,31 @@ rather than adding a lock:
   `bridge_binding.connector_uuid` are `RESTRICT` foreign keys, and
   `bridge_folder.connector_uuid` likewise, so a bound room, a nonempty
   connector, or a connector with folders cannot be deleted by any path — UI,
-  admin, import, or a raw session — and the refusal is race-free because
-  Postgres checks it at commit. Handlers translate the integrity error into
-  HTTP 409 with blockers.
+  admin, import, or a raw session — and the database prevents dangling references
+  even when application checks race. `RESTRICT` is not a deferred commit-time
+  check: the statement can fail
+  before commit. Catch failures from flush/execute as well as commit, roll back
+  the failed transaction, and query current blockers in a new transaction
+  before returning HTTP 409. See [PostgreSQL foreign-key constraints](https://www.postgresql.org/docs/current/ddl-constraints.html#DDL-CONSTRAINTS-FK).
 - **Plain uuid columns with a version token for placement.** `folder_uuid`
   and `parent_uuid` stay plain columns validated app-side, the cron/chat
   house style, and the `/bridges` tree uses the six-endpoint shape in
   `source/notes/ui-tree-persistence.md`: the page hydrates with an opaque
   version token and echoes it on PUT; a stale token is a 409 and the client
-  re-hydrates. That is how `/chat` and `/cron` already serialize concurrent
-  tree edits, and it is enough here — these edits are rare and human-paced.
+  re-hydrates. A token comparison alone does not serialize two simultaneous
+  saves: both can read the same token before either commits. Every bridge
+  mutation of an existing connector first locks its row with
+  `SELECT … FOR UPDATE`, then
+  re-reads/validates the tree and checks the token before changing anything.
+  Folder/binding creation, deletion, moves, and policy edits use this same
+  transaction boundary; connector deletion locks that row too. Roll back on
+  validation failure. This protects app-validated placement references without
+  adding a global lock to unrelated chat or cron operations. Direct SQL changing
+  plain placement columns remains outside this application guarantee. If a tree
+  PUT spans connectors, lock all affected connector rows in UUID order and
+  validate a token covering those rows; never compare a global token while
+  locking only one connector. New connector creation relies on DB uniqueness
+  and a server-generated UUID, since there is no row to lock yet.
 
 What that does not cover is the same thing it does not cover for chat today:
 an *unbound* room moved into a folder while that folder's recursive delete is
@@ -166,10 +180,10 @@ and a bound room is protected regardless.
 Config reads and delete previews assemble a coherent response from several
 tables. Run them in a read-only REPEATABLE READ transaction so a folder policy
 edit committing mid-read cannot yield a snapshot mixing old policy with new
-membership: set it on the request's session before the first query
-(`db.session.connection(execution_options={"isolation_level": "REPEATABLE
-READ"})`), resolve and serialize inside it, and let it close before the HTTP
-response is returned. Never hold a database transaction across a bridge
+membership. Set isolation and read-only mode before the first query, using a
+fresh transaction if request setup has already queried through `db.session`.
+Resolve and serialize inside it, then explicitly end the transaction before
+returning the HTTP response. Never hold a database transaction across a bridge
 network call.
 
 ### Platform addresses
@@ -245,18 +259,22 @@ folders changes its effective policy and must be shown as such.
 
 Run one process per connector, selected by **UUID**, for example
 `BRIDGE_CONNECTOR=<connector-uuid>`. A rename cannot break startup or reload.
-With autostart on (the default) the launcher issues this launch itself; the
-copyable command below is for the manual mode, a bridge host other than the
-core's, or debugging one connector in a terminal while autostart is off.
+With autostart on and `launch_mode=launcher` (the defaults), the launcher starts
+an enabled connector. Use `launch_mode=manual` for a bridge hosted elsewhere or
+for debugging one connector without turning off every other bridge. Switching
+ownership stops any launcher-owned instance; wait for it to exit before starting
+manually. Switching back requires stopping the manual instance first.
 The `/bridges` tree gives each connector the same **Copy ID** kebab item the
 chat and cron trees have. The detail panel also offers a copyable launch command
 for the connector's platform, labeled with its required working directory
 (`source/discord_service/` or `source/telegram_service/` on the bridge host).
 Include `BRIDGE_CONNECTOR` and a distinct state-file path derived from its UUID,
-using the platform's existing state-file variable. Two copied commands must not
-both use the default `./state.json`. Interpreter, script, and state paths are
-relative to that displayed directory; do not infer bridge-host paths from the
-core's checkout. Show `RAINBOX_URL` as a separate deployment prerequisite when
+using the platform's existing state-file variable. On the launcher's host use
+its reported absolute state directory, so manual and supervised runs use the
+same `bridge-<uuid>.json` and lock. If the host/path is unknown, require an explicit
+local state-directory choice before presenting a runnable command; do not guess
+it from the core checkout. Interpreter and script paths are relative to the
+shown service directory. Two commands must not both use `./state.json`. Show `RAINBOX_URL` as a separate deployment prerequisite when
 the default localhost endpoint is unsuitable.
 
 Name the required credential variable beside the command as “must already be
@@ -274,29 +292,19 @@ requires restarting only that connector. A replacement token must authenticate
 as the same bot; verify and retain the authenticated bot identity in local state
 so a different bot cannot inherit the previous bot's checkpoints.
 
-The bridges do **not** load the repo-root `.env`, and this design does not
-add that: under the launcher the credential arrives in the environment, and
-in manual mode the operator sets it in the launch shell. `source/env_file.py`
-is invoked from `providers/__init__.py`, which these isolated services never
-import. For the record, should a bridge-side loader ever be wanted: `env_file.py`
-resolves the repo root from its own
-location and has one third-party dependency, `python-dotenv`, imported
-lazily inside `load_env_file()`. A bridge can import it after adding the absolute
-source directory, `str(Path(__file__).resolve().parents[1])`, to its import path;
-do not use `".."`, which resolves against the launcher's working directory. After
-pinning `python-dotenv` in its own `requirements.txt` beside `requests`,
-the bridge can call `load_env_file()` without importing the LLM/provider stack
-or using the core venv. Call it explicitly at startup before reading config,
-not when importing the bridge module for tests. Launcher environment variables
-win over file values; the loader already guarantees that
-(`load_dotenv(..., override=False)`). The helper loads all keys in the shared
-file, not just this connector's credential. Keep launcher-supplied
-credentials as the default when each process should receive only its own
-secret; reusing the shared loader does not provide that isolation. Under
-the launcher that isolation comes for free: it copies exactly one variable,
-the one `token_env` names, into the child's environment (see *Supervised
-services*), so the shared `.env` is read by the launcher alone and a bridge
-process never sees another bot's token.
+The bridges do **not** load `.env`. Under supervision the launcher supplies the
+credential from its startup environment or its private
+`<state-dir>/credentials.env`, with environment precedence at every spawn. File
+rotation applies on Restart only when the file is the selected source. Manual
+runs receive credentials from their launch environment. The [launcher design's
+environment contract](2026-09-10-launcher-design.md#environment-and-credential-ownership)
+is the authority; do not add a second bridge-side dotenv loader.
+
+Only the selected credential is passed to a supervised bridge. This does not
+mean the core can never see it: credentials exported to the launcher can reach
+the core, and the core's existing `source/env_file.py` loads all keys from the
+repo-root `.env`. Use the private launcher credentials file to keep bridge-only
+values out of the core's environment. Environment filtering is not an OS sandbox.
 
 Keeping credential values out of JSON does not make configuration harmless.
 The core API is currently unauthenticated and bound to localhost; connector
@@ -311,8 +319,8 @@ config responses or logs. `token_env` names and binding metadata may be returned
 ## Transport between bridge and core
 
 The bridge is not a child of the core in any sense: the launcher starts
-both, as siblings. Everything between them is plain HTTP over the
-loopback TCP socket on `127.0.0.1`, in two forms:
+both, as siblings. On the supervised host they use HTTP at
+`http://127.0.0.1:5000`, in two forms:
 
 - **Request and response, JSON.** Find the room, post an inbound message,
   fetch a row by id, and fetch the resolved config snapshot from
@@ -326,68 +334,104 @@ No pipe, no RPC framework, no message broker, no shared files, no database
 connection: the bridge's state file is private to the bridge, and the bridge
 never holds `DATABASE_URL`. The core exposes nothing to a bridge that a
 browser on the same machine could not already reach, so a bridge inherits the
-existing localhost trust boundary instead of adding a channel.
+existing localhost trust boundary instead of adding a channel. A manually
+hosted remote bridge needs an operator-provided secure tunnel to that loopback
+endpoint (and an appropriate `RAINBOX_URL`); this design does not expose the
+unauthenticated core on an external interface or add remote supervision.
 
 This is deliberately *not* the mechanism the supervisor uses for its agents.
 `main.py` spawns each agent as `python -m agents --socket-fd N` over a
 `socketpair()`, writes the agent's config down that socket, and reads
 heartbeats and status back up it. Agents need config injected because they
 have no other way to receive it; a bridge fetches its config over HTTP and
-reports liveness through its logs, so the supervisor's only levers on a
-bridge are the ones it has on any child: its exit status, and signals.
+owns its own transport/config recovery. The launcher observes process liveness
+and exit status and sends signals; the core's agent supervisor does not own or
+control bridge processes. Child logs are not read by the launcher.
 
 ## Supervised by the launcher
 
-The launcher design (`2026-09-10-launcher-design.md`) owns the mechanism:
-a stdlib-only top-level process that starts the core and every enabled
-service as siblings, pulls the desired set from `GET /services/api/desired`,
-pushes status to `POST /services/api/status`, and maps exit codes to
-states. This section states only what a bridge connector adds to it.
+The [launcher design](2026-09-10-launcher-design.md) owns process lifecycle,
+credentials, status, and retries. Extend its local catalogue with one kind per
+implemented bridge adapter. The core returns one desired entry for **every**
+connector, including disabled and manual connectors; deletion alone removes the
+key from a complete desired snapshot.
 
-**Desired-state entry per connector.** The core derives one entry per
-`bridge_connector` row whose `enabled` flag is on, gated by one registry
-setting `services.bridges.autostart` (bool, default `true`) for the
-operator who runs bridges elsewhere. The entry's `dir` is the platform's
-service directory, `argv` its `venv/bin/python bridge.py`, and `env`:
+```json
+{
+  "key": "bridge:<connector-uuid>",
+  "kind": "discord_bridge",
+  "enabled": true,
+  "restart_nonce": "<connector-restart-nonce>",
+  "env": {
+    "RAINBOX_URL": "http://127.0.0.1:5000",
+    "BRIDGE_CONNECTOR": "<connector-uuid>"
+  },
+  "token_env": "DISCORD_TOKEN_MAINBOT",
+  "state_file": {
+    "env": "DISCORD_STATE_FILE",
+    "name": "bridge-<connector-uuid>.json"
+  }
+}
+```
 
-| Variable | Value |
-|---|---|
-| `RAINBOX_URL` | `http://127.0.0.1:5000` |
-| `BRIDGE_CONNECTOR` | the connector uuid |
-| `<PLATFORM>_STATE_FILE` | `bridge-<connector-uuid>.json`, which the launcher prefixes with its state dir, so two connectors can never share a file |
+The catalogue maps `discord_bridge` to `discord_service/venv/bin/python
+bridge.py`, and likewise for Telegram. It defines each adapter's state-file
+variable; the payload supplies no executable or directory. The launcher
+validates that the key UUID, `BRIDGE_CONNECTOR`, and state basename agree, rejects
+path separators/traversal in the basename, and supplies the absolute
+`<state-dir>/bridge-<uuid>.json` through the named variable. It never edits bridge
+state itself. `env` cannot also supply or override that state-file variable.
 
-plus `token_env`, the *name* of the credential variable; the launcher
-supplies the value from `.env` at each spawn. A bridge therefore sees
-exactly one credential and never another bot's. Toggling `enabled` on
-`/bridges` takes effect on the launcher's next poll and never restarts the
-core; *Restart* on `/bridges` rewrites the connector's `restart_nonce`.
+The entry's desired `enabled` is:
 
-**Exit codes the bridge must use.** `2` for a rejected configuration or
-credential (connector unknown, token refused by the platform, room
-missing) and `3` for a held state-file lock, so the launcher marks the
-connector **failed** without a respawn loop; any other exit is a crash and
-respawns with backoff. The current bridges already exit through
-`SystemExit` for these conditions and only need the codes assigned.
+```text
+services.bridges.autostart AND connector.launch_mode == "launcher"
+                           AND connector.enabled
+```
 
-**Status on `/bridges`.** The page shows the launcher-reported state
-(`running`, `failed`, `credential missing`, `not installed`, `unknown`, …)
-beside each connector with a *Restart* action, from the same table
-`/settings` renders for the static services.
+`services.bridges.autostart` is a registry bool (default true). Folder/binding
+enablement never controls whether the process runs: an enabled connector must
+keep refreshing even with no active bindings. `launch_mode` controls ownership,
+not forwarding permission; the bridge's effective-enabled rule is unchanged.
+`--core-only` suppresses bridge launches too.
 
-**Manual mode and duplicates.** With `services.bridges.autostart` off, the
-launcher runs the core and the static services only, and the copyable
-launch line in *Credentials and process identity* is the way in for
-bridges. With it on, a bridge also started by hand on the same host
-collides on the state-file lock and exits with code 3; the launcher then
-reports **failed** with the lock message, which is the signal that two
-launchers are configured (the pid is in the bridge's own log line, which
-the launcher does not read). Across hosts the lock cannot help, as the
-state section already says.
+Persist `restart_nonce` on the connector row, not as dynamic `app_setting` keys.
+Restart replaces it; every transition of the desired launch gate from false to
+true replaces it too, including autostart and launch-mode changes. Update gate
+and affected nonces atomically, locking affected connector rows in UUID order;
+the global autostart handler must not commit its setting separately from those
+rows. Policy, binding, folder, and name edits do not
+change it. Restart does not enable a connector. For manual connectors the UI
+instructs the operator to restart their process instead of queuing a launcher
+restart that cannot take effect.
 
-Disabling a connector has two effects, and both are wanted: the launcher
-stops the process, and — in manual mode, where the launcher is not running
-it — the bridge's own config refresh sees `enabled: false` and pauses, as
-the live-configuration contract describes. Neither replaces the other.
+A supervised connector disable stops its process; a manual connector disable
+pauses its workers while its config refresh continues. Both preserve matching
+state for the next activation. Binding disable only pauses that binding in
+either mode, including the Telegram inbound-discard exception below. Process
+shutdown is not binding deletion: do not delete remote progress bubbles or prune
+binding state merely because SIGTERM arrived. A launcher stop has 10 seconds of
+grace and may interrupt a 30-second removal cleanup; retain safe checkpoints and
+report orphaned progress state on the next start as specified below.
+
+**Exit codes.** Exit 2 for local startup validation failure or a platform's
+confirmed credential rejection, and 3 for a held state lock. Config HTTP 404,
+timeouts, schema errors, missing rooms, and live policy changes follow the
+pause/refresh contract below; they do not become permanent process failures.
+Rate limits/network errors are not proof of a rejected credential. Assigning
+these codes and graceful worker shutdown are implementation work; existing
+`SystemExit("message")` paths exit 1.
+
+**Status and manual ownership.** `/bridges` shows the launcher's process status
+and Restart action using the stable `bridge:<uuid>` key, alongside desired
+connector enablement and launch mode. `running` means a PID exists; it does not
+prove fresh config or successful forwarding. Detailed bridge transport/cleanup
+errors remain in bridge logs unless a separate health-reporting API is added.
+Manual connectors have externally managed process status, not inferred failure.
+A duplicate using the same state path loses its lock and exits 3. If the manual
+process loses, the healthy supervised process stays `running`; only a failed
+launcher-owned attempt appears as launcher `failed`. Different state paths or
+hosts do not share that lock, so ownership changes require an explicit handoff.
 
 ## Live configuration contract
 
@@ -626,16 +670,18 @@ separate design.
   preview causes DELETE to return 409 with blockers and removes no rooms or
   folders. Concurrent subtree moves and binding creation cannot leave dangling
   references; bypassing the preview cannot bypass the deletion guard.
-  Exercise both mutation orders with two database sessions; the losing order
-  fails on the `RESTRICT` foreign key, not on an application check, and a
-  direct `db.session.delete(room)` with a binding present raises. A stale
-  tree version on PUT is a 409. A concurrent folder policy edit during config
+  Exercise both mutation orders with two database sessions: room deletion
+  loses if the binding commits first; binding insertion loses if the room was
+  deleted first. A direct `db.session.delete(room)` with a binding present
+  raises. Two simultaneous tree PUTs with one token cannot both commit; the
+  second checks the token after acquiring the connector lock and returns 409.
+  Concurrent folder deletion and binding moves leave no dangling placement. A concurrent folder policy edit during config
   serialization yields one complete snapshot, never a mixture of the old
   policy and new membership.
-- Copied launch commands use distinct state files and preserve already exported
-  credentials. If `.env` loading ships, it resolves the same file from the
-  service directory, repo root, and an unrelated working directory; importing
-  the bridge alone loads no secrets and launcher values retain precedence.
+- Manual and supervised commands on the same host use the same chosen absolute
+  state path for one connector and distinct paths for different connectors.
+  Importing the bridge loads no secrets; launcher/file precedence and rotation
+  match the launcher contract. Ownership changes never start two processes.
 - Allowlist removal, direction changes, and disablement reach both workers
   during idle SSE and platform backoff; stale config pauses within the stated
   limit, including between message chunks and during adapter retries. A stalled
@@ -662,11 +708,12 @@ separate design.
   fresh database, an existing database without bridge tables, and repeated
   initialization with saved bridge rows; required constraints/indexes exist
   and existing data survives.
-- Under the launcher: a connector's desired-state entry never contains a
-  credential value; its child environment holds exactly `RAINBOX_URL`,
-  `BRIDGE_CONNECTOR`, the platform's state-file variable, and the one
-  credential `token_env` names. Toggling a connector changes only that
-  child within one poll. Killing the core leaves every bridge running and
-  reconnecting with catch-up. A rejected token exits with code 2 and a held
-  state lock with code 3, and neither respawns. The launcher's own
-  guarantees are tested in its own design's checks, not repeated here.
+- Under the launcher: desired entries include disabled/manual connectors, use
+  stable `bridge:<uuid>` keys and catalogue kinds, and never contain credential
+  values. Child environments contain the launcher's baseline, `RAINBOX_URL`,
+  `BRIDGE_CONNECTOR`, the validated absolute state path, and the selected token.
+  Gate off/on between polls changes the persisted nonce; editing a binding or
+  policy does not. Connector disable stops the owned process, binding disable
+  does not, and neither triggers removal cleanup. Core downtime leaves the
+  process alive but pauses forwarding when bridge config expires. HTTP 404
+  remains recoverable; rejected credentials exit 2 and lock contention exits 3.

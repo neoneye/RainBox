@@ -2,331 +2,377 @@
 
 **Date:** 2026-09-10
 
-**Status:** design; nothing implemented yet.
+**Status:** design; nothing implemented yet. Paths and APIs below are proposed
+unless identified as current behavior.
 
-**Roadmap:** this comes first. When the launcher runs the core and the
-static services reliably, the chat-bridge settings design
-(`2026-09-09-bridge-settings-design.md`) resumes on top of it; until then
-the Discord and Telegram bridges keep being started by hand exactly as
-their READMEs describe.
+**Roadmap:** ship the core and static services first, then add dynamic bridge
+entries from the [bridge settings design](2026-09-09-bridge-settings-design.md).
+Bridges continue to start manually until that second phase is ready.
 
-## Problem
+## Decision and current behavior
 
-Starting rainbox today means starting several processes by hand: `main.py`
-(the core: agent supervisor plus webserver), and whichever side services
-are wanted — Kokoro TTS, Whisper STT, dots.tts, the reranker, the Discord
-and Telegram bridges — each from its own directory with its own venv.
-`source/notes/voice-and-services.md` says it plainly: "The main app does
-not start these services; each is started by hand." Two consequences:
-
-- Turning a service on or off is a terminal task, not a setting.
-- Every rainbox process is a Python interpreter named "Python" in Activity
-  Monitor, with no common parent, so a process at 100 % CPU is hard to
-  attribute.
-
-The core cannot simply become the parent of everything: it is large, it is
-multithreaded, and the operator wants to restart it rarely because agents
-may be mid-turn. Making it the parent would also mean that restarting or
-losing the core takes every service down with it.
-
-## Decision
-
-A small top-level **launcher** (`source/launcher.py`) is the root of the
-process tree. Its only job is to start processes, keep the ones that should
-be running running, stop the ones that should not, and report what it sees.
-It starts the core the same way it starts a service, so the core is a
-*sibling* of the services, not their parent.
+A small `source/launcher.py` starts the core and enabled services as siblings.
+The core continues to own its agents. Operator settings describe which services
+should run; the launcher owns processes, credentials, restart backoff, and local
+state paths. Restarting a service never requires restarting the core.
 
 ```text
-launcher.py            (stdlib only, single-threaded, ~15 MB)
-├── main.py            (core: supervisor thread + webserver)
-│   ├── python -m agents …
-│   └── python -m agents …
+launcher.py
+├── main.py                         core and webserver
+│   └── python -m agents …          owned by the core
 ├── voice_tts_kokoro/venv/bin/python server.py
 ├── voice_stt_whisper/venv/bin/python server.py
 └── reranker/venv/bin/python server.py
 ```
 
-That tree is what Activity Monitor's hierarchical view and
-`ps -o pid,ppid,%cpu,command` show, because each child's parent is the
-launcher. What the operator turns on and off lives in the core's settings
-and is rendered on `/settings` as ordinary toggles; the launcher asks the
-core what should be running and reports back what is.
+Today the side services start manually, as documented in
+`source/notes/voice-and-services.md`. The launcher does not install dependencies,
+load models, or guarantee service readiness. A live PID can still be loading a
+model or failing requests. The current core shuts down by force-killing its
+remaining agents; `TERM_GRACE` applies to its watchdog, not to a graceful drain
+of all agent turns. The launcher must not promise to preserve turns when the
+operator restarts the core.
 
-`main.py`'s own supervisor is unchanged: it still spawns and watches agents
-over their socketpairs (`python -m agents --socket-fd N`). Agents stay
-children of the core because the core is what hands them work.
-
-## Why the launcher is small, and why it must exec
-
-The launcher imports nothing from the application — no Flask, no
-SQLAlchemy, no `db`, no `requests` — only the standard library, and a test
-asserts its module set. That, not the spawn call, is what keeps its
-footprint minimal.
-
-It creates children with `subprocess.Popen(argv, cwd=…, env=…,
-start_new_session=True)`, which forks and immediately execs the service's
-own interpreter. CPython picks `vfork`/`posix_spawn` or `fork`+`exec`
-depending on the arguments; the child's parent pid is the launcher in
-every case, so the mechanism does not affect what Activity Monitor shows.
-Two things the launcher deliberately does not do:
-
-- **Fork without exec.** A forked child shares the parent's pages
-  copy-on-write, so forking a process with an application loaded yields a
-  child as large as the parent until it execs; and forking a multithreaded
-  Python process on macOS without an immediate exec is unsafe (only the
-  calling thread survives; locks held by other threads stay held), which is
-  why Python's own `multiprocessing` defaults to spawn on macOS. The
-  launcher stays single-threaded — one `select`/`poll` loop — and every
-  child is a fresh interpreter.
-- **Serve HTTP.** The launcher has no server and no database connection.
-  It *pulls* what to run from the core and *pushes* what it sees, both as an
-  HTTP client over `127.0.0.1` using `urllib` from the standard library.
-
-`start_new_session=True` matters for Ctrl-C: a terminal delivers `SIGINT`
-to the whole foreground process group, which would hit every child at once
-and bypass the ordered shutdown below. In its own session a child gets no
-terminal signals; the launcher receives the `SIGINT` and stops its children
-in order.
-
-## Starting the launcher
+## Runtime and launch command
 
 ```bash
 cd source
 venv/bin/python launcher.py [--state-dir <dir>] [--core-only]
 ```
 
-- It is started with the root venv's interpreter and has no requirements of
-  its own. `sys.executable` is what it runs the core with, so the core gets
-  the venv the operator chose for the launcher.
-- `--state-dir` (default `<repo>/var/services/`, gitignored) is where the
-  launcher keeps runtime facts: its own lock file and, later, the bridges'
-  state files. Where a host keeps runtime state is the launcher's fact, not
-  the database's.
-- `--core-only` runs the core and nothing else; useful while developing the
-  launcher itself.
-- One launcher per state dir: it takes an exclusive OS lock on
-  `<state-dir>/launcher.lock` for its lifetime and exits with code 3 if the
-  lock is held.
+- Resolve the source directory from `__file__`, not the working directory.
+  Run the core with `sys.executable` and absolute `main.py`, with `cwd=source/`.
+- Use the standard library plus a shared, data-only service catalogue. No Flask,
+  SQLAlchemy, model stack, or `requests` imports. Measure memory during validation;
+  an approximately 15 MB footprint is a target, not a platform-independent fact.
+- `--state-dir` defaults to `<repo>/var/services/`; create it with owner-only
+  permissions and add `var/services/` to `.gitignore` during implementation.
+  Canonicalize it once. Acquire an OS lock on a stable `launcher.lock` before
+  any spawn and hold it for the launcher's lifetime. Never unlink the lock file
+  to release it. Exit 3 if it is held.
+- `--core-only` suppresses every service entry regardless of its DB toggle.
+  The status page must show this override rather than suggest a toggle is broken.
+- Spawn with `Popen(argv, cwd=…, env=…, start_new_session=True, shell=False,
+  stdin=DEVNULL, close_fds=True)`. Use absolute executable/script paths, resolved
+  from the local catalogue. Preserve a venv interpreter's invocation path even
+  if it is itself a symlink; resolving it to the base Python can lose the venv.
+  Stdout/stderr are inherited. Do not use `preexec_fn` or fork without exec.
 
-This is also the command a future launchd job would run to start rainbox
-at login; nothing else in the tree needs to know about launchd.
+Each service gets its own process group/session. Terminal Ctrl-C reaches the
+launcher, which performs the shutdown sequence below. Exact fork/spawn selection
+is Python's implementation detail; the relevant contract is documented by
+[Python's subprocess API](https://docs.python.org/3/library/subprocess.html).
 
-## Bootstrap and the control loop
+The single-threaded loop polls/reaps children and uses monotonic deadlines,
+without long sleeps or blocking waits. HTTP uses stdlib `urllib`, with proxies and redirects disabled
+for the fixed `http://127.0.0.1:5000` control endpoint. Bound each request to one
+second of elapsed time and each response to 1 MiB; a socket inactivity timeout
+alone must not let a trickling response block supervision indefinitely. Check
+shutdown and child deadlines before starting a request. Deadline handling may
+be delayed by at most one outstanding HTTP request.
 
-1. Read `.env` from the repo root with the launcher's **own parser**, not
-   `python-dotenv` (stdlib rule). The parser handles the subset
-   `.env.example` uses: `KEY=value`, single and double quotes, `#` comments,
-   blank lines. A test feeds `.env.example` and a fixture of edge cases to
-   both parsers and asserts identical results, so the launcher and the core
-   (which loads the same file through `source/env_file.py`) can never
-   disagree about a value. Values from the launcher's own environment win
-   over the file, matching `load_dotenv(..., override=False)`.
-2. Start the core unconditionally: `sys.executable main.py` with
-   `cwd=source/` and the core's full environment (the core is the one child
-   that gets everything, because it is the one that needs provider keys and
-   `DATABASE_URL`).
-3. Poll `GET /services/api/desired` on the core until it answers, then every
-   5 seconds. The response lists every service that should be running (see
-   *Desired-state contract*). The launcher knows nothing about what a
-   service *is*; it runs what it is told.
-4. Reconcile:
-   - desired and not running → spawn;
-   - running and not desired (toggled off) → `SIGTERM`, then `SIGKILL`
-     after 10 s (the same grace and escalation `main.py` gives its agents,
-     `TERM_GRACE`);
-   - `restart_nonce` changed → stop as above, then spawn; this is what a
-     *Restart* button does;
-   - exited unexpectedly → respawn with exponential backoff (2 s, 4 s, …
-     capped at 60 s); five crashes inside two minutes → **failed**, no
-     respawn until the operator toggles it off and on or presses *Restart*;
-   - exited with a *deterministic* failure code (see *Exit codes*) →
-     **failed** immediately, no backoff loop, because respawning cannot fix
-     it.
-5. After every change, `POST /services/api/status` with the full table
-   `{key: {state, pid, since, last_exit, message}}`; also re-post it every
-   30 s as a heartbeat, so a core that restarted learns the current picture
-   without waiting for a change.
-6. On its own `SIGINT`/`SIGTERM`: `SIGTERM` every service first and the core
-   last, so a service unwinding an in-flight request still has a live core
-   to finish against; wait 10 s; `SIGKILL` the rest; release the lock; exit.
-   The core's own shutdown kills its agents as it does today.
+## Environment and credential ownership
 
-When the core is unreachable the launcher **keeps the services it has
-running as they are** and keeps restarting the core. Losing the core is
-never a reason to stop a service; the last valid desired state stands until
-a new one arrives. (This is the opposite of the rule the chat bridges apply
-to their *own* configuration, where stale config pauses traffic; a bridge
-protects a third party's channel, the launcher protects uptime.)
+The launcher does **not** parse repo-root `.env`. The core already loads that
+file through `source/env_file.py` and keeps its existing environment precedence.
+This avoids maintaining a second, subtly different dotenv parser.
 
-Because the core is a child, a core restart is just step 4 for the entry
-`core`. Services keep running, notice their connections drop, back off, and
-reconnect, which every rainbox side service already does.
+Core environment: inherit the launcher's startup environment, plus the instance
+marker described below. This is not secret isolation from the core: anything
+exported to the launcher can reach the core and its agents, and provider loading
+reads the whole repo-root `.env`. Do not put bridge-only credentials there if
+they must stay out of the core.
+
+Service environment: build from an explicit baseline (`PATH`, `HOME`, `LANG`,
+`LC_*`, `TMPDIR` when present), catalogue-approved nonsecret values, and, for a
+bridge, exactly its named credential. Never forward `PYTHONPATH`, `PYTHONHOME`,
+loader-injection variables, database URLs, or arbitrary parent variables through
+this service path. Additional model-cache/proxy settings require catalogue
+entries; the UI must not accept arbitrary environment maps.
+
+For supervised bridges, use `<state-dir>/credentials.env`, an owner-readable
+file read only by the launcher. It is optional for the static-services phase;
+a missing file matters only when a requested credential is unavailable.
+The launcher parses a deliberately limited format:
+
+- One `NAME=value` per line; names match `[A-Za-z_][A-Za-z0-9_]*`.
+- Blank lines and lines whose first non-whitespace character is `#` are ignored.
+- Strip whitespace around the name and value; one matching pair of single or
+  double quotes may surround the value. Characters inside quotes are literal.
+- No interpolation, escapes, multiline values, `export`, or inline comments.
+  An unquoted `#` is part of the value. Reject malformed quoting and duplicate
+  names with a line-number error, never echo the line's contents.
+
+At **every spawn**, resolve a credential as startup launcher environment value
+if its name is present, otherwise the freshly parsed credentials-file value.
+An explicitly empty value means missing and does not fall through. Environment
+wins consistently; the file never overrides an exported value just on restart.
+Show the selected source (environment/file) without its value. File rotation
+reaches the next Restart when the file is the selected source; changing an
+exported value requires restarting the launcher. Running children keep their
+current environment. Invalid file syntax prevents file-backed spawns, not the
+core or already-running services. Neither source is copied into DB, argv, status,
+or the desired-state API. A child may still deliberately read local files:
+environment filtering is not an OS sandbox.
+
+## Bootstrap and core identity
+
+The core is always desired and is not part of the service list. Generate a
+fresh launcher UUID and a fresh core-instance UUID for each core spawn. Pass
+them as `RAINBOX_LAUNCHER_ID` and `RAINBOX_CORE_INSTANCE_ID` to the core;
+`/services/api/desired` echoes them and the core PID.
+Do not accept a response from a different instance, even at the right port.
+Status POSTs must carry the matching markers. These identify this launcher's
+child, not authenticate the existing unauthenticated localhost API.
+
+Before spawning the core, check whether its fixed port is already occupied;
+if so, stop bootstrap with a clear diagnostic and do not adopt or signal that
+process. The check is advisory: a bind race can still occur, and the instance
+check prevents reconciling against an unrelated core that won the race.
+
+Start the core before polling desired state. Until the first complete valid
+snapshot, start no side services. Thereafter poll every 5 seconds, with at most
+one request outstanding. Errors, 404s, wrong instance markers, malformed data,
+unknown schema versions, duplicate keys, and truncated/oversized responses leave
+the last valid snapshot intact. They never mean “disable everything.”
+
+Keep already-known service desired state during core downtime, including normal
+crash recovery for those services. Start no newly discovered services without a
+valid snapshot. Bridge processes separately pause message traffic when their
+own configuration expires; the launcher keeping a process alive grants no
+permission to keep forwarding.
 
 ## Desired-state contract
 
-```text
-GET /services/api/desired
-  -> {
-       schema_version: 1,
-       services: [
-         {key: "voice_tts_kokoro", dir: "voice_tts_kokoro",
-          argv: ["venv/bin/python", "server.py"],
-          env: {"KOKORO_PORT": "5005"},
-          restart_nonce: "…"},
-         …
-       ]
-     }
+```json
+{
+  "schema_version": 1,
+  "launcher_id": "<launcher-uuid>",
+  "core_instance_id": "<core-instance-uuid>",
+  "core_pid": 123,
+  "core_restart_nonce": "<persisted-nonce>",
+  "services": [
+    {
+      "key": "voice_tts_kokoro",
+      "kind": "voice_tts_kokoro",
+      "enabled": true,
+      "restart_nonce": "<persisted-nonce>",
+      "env": {}
+    }
+  ]
+}
 ```
 
-- `dir` is relative to `source/`; `argv[0]` is relative to `dir`. A missing
-  `argv[0]` (no venv) is reported as **not installed** and not spawned.
-- `env` is the complete non-secret environment the child needs beyond the
-  baseline. The launcher builds each child's environment **from scratch**:
-  `PATH`, `HOME`, `LANG`/`LC_*`, `TMPDIR`, then exactly these keys. Unlike an
-  agent, which inherits `dict(os.environ)` from the core, a service sees
-  nothing it was not given.
-- `token_env` (optional) names one variable whose *value* the launcher must
-  supply from `.env` or its own environment. The response carries only the
-  name; the core does not have the value and must not. The launcher
-  re-reads `.env` at each spawn and prefers the file over its own
-  environment, so a rotated credential reaches a service on *Restart*
-  without restarting anything else. A name present in neither place is
-  reported as **credential missing**, by variable name, and not spawned.
-  (No static service needs this today; it exists for the bridges.)
-- `restart_nonce` is an opaque string. The core persists it per service as
-  an internal setting (`services.<key>.restart_nonce`, `internal=True` so
-  `/settings` does not list it); a *Restart* action rewrites it. Persisting
-  it is what stops a core restart from looking like "every nonce changed"
-  and restarting every service.
-- The core builds the list from its **service registry** plus its settings.
-  The registry is code, the same shape as `SETTINGS` in
-  `source/db/settings.py`: one entry per known service with its key, `dir`,
-  `argv`, `env`, and the setting that switches it. The registry also adds
-  a bool setting `services.<key>.enabled` (default `false`) per entry, which
-  `/settings` renders as a toggle like any other bool. The `core` entry is
-  implicit: always desired, never toggleable, but restartable.
+`GET /services/api/desired` returns a complete, coherent snapshot including
+**disabled** entries. Missing static entries invalidate it. A missing dynamic
+bridge key in a valid snapshot means removal. Validate the whole response before
+reconciling any part of it; unknown kinds invalidate the response and report
+that launcher/core versions disagree.
 
-Initial registry: `voice_tts_kokoro`, `voice_stt_whisper`,
-`voice_tts_dotstts`, `reranker`. Their discovery URLs (`KOKORO_TTS_URL`,
-`WHISPER_STT_URL`, `DOTS_TTS_URL`) and default ports (5005, 5006, 5007) are
-unchanged; the launcher runs the process that answers there. The bridges
-are **not** in the initial registry: their configuration design adds them
-as dynamic entries later.
+The local data-only catalogue fixes each kind's directory, argv, allowed
+nonsecret environment keys, and defaults. The core imports the same catalogue
+to build its registry and settings. HTTP cannot provide arbitrary paths, argv,
+or new executable kinds. A service key identifies one process; static keys
+match their kind, and future bridge keys are `bridge:<connector-uuid>`.
 
-## Status contract
+The later bridge extension permits `token_env` and `state_file: {env, name}`
+only for registered bridge kinds. Validate the credential name, the catalogue's
+state-variable name, and the UUID-derived basename, then join it under the
+canonical state directory. Reject path traversal and collisions with explicit
+`env` values. Static services reject these extra fields. The bridge spec defines
+the exact entry; both readers use this same envelope and validation rules.
 
-```text
-POST /services/api/status
-  {launcher: {pid, state_dir, started_at},
-   services: {key: {state, pid, since, last_exit, message}}}
+`source/db/settings.py` registers `services.<key>.enabled` (default false) and
+internal persisted `services.<key>.restart_nonce` for static services, plus
+internal `services.core.restart_nonce`. Restart is a POST action that writes a
+new nonce; it never executes a process inside the core. Consume a new nonce in
+launcher memory **before** starting its stop/restart sequence. On the first
+valid snapshot after launcher startup, adopt the existing core nonce as the
+baseline; the just-started core must not restart merely because it has a nonce.
+An ordinary core restart preserves the remembered nonces for every service.
+Repeated snapshots therefore cannot trigger repeated restarts. Restart does not
+implicitly enable a disabled service. Every transition from disabled to enabled
+also changes its nonce atomically, so a quick off/on between polls can reset a
+failed service. Changes received while stopping coalesce to the newest desired
+entry; finish stopping before starting at most one replacement.
+
+A nonsecret launch-environment change is a restart-requiring edit: the core
+updates that entry and its nonce in one transaction, and the UI labels it as a
+restart. Ordinary bridge policies and bindings stay out of this environment and
+do not change the process nonce. New executables/catalogue changes require a
+launcher deployment; they are not live settings.
+
+### Initial catalogue
+
+| Kind | Directory under `source/` | Current bind | Supported configuration inputs |
+|---|---|---|---|
+| `voice_tts_kokoro` | `voice_tts_kokoro` | `127.0.0.1:5005` | None initially |
+| `voice_stt_whisper` | `voice_stt_whisper` | `127.0.0.1:5006` | `WHISPER_MODEL`, `WHISPER_COMPUTE_TYPE`, `WHISPER_CPU_THREADS` |
+| `voice_tts_dotstts` | `voice_tts_dotstts` | `127.0.0.1:5007` | None initially |
+| `reranker` | `reranker` | `127.0.0.1:5008` | `RERANKER_MAX_LENGTH`, `RERANKER_BATCH_SIZE`, `RERANKER_DEVICE` |
+
+All currently run `venv/bin/python server.py`. Ports are hard-coded in their
+entrypoints: `KOKORO_PORT` is not an existing setting. Preserve current defaults;
+validate any supported override in the registry. Discovery URLs on the core
+(`KOKORO_TTS_URL`, `WHISPER_STT_URL`, `DOTS_TTS_URL`) are independent: starting a
+local service does not rewrite a core URL that points elsewhere. The UI should
+show the local bind address and explain this distinction. Bridges are added in
+a later catalogue extension.
+
+## Reconciliation, failures, and shutdown
+
+Each process has one state record, its owned PID/process group, observed nonce,
+last exit, crash timestamps, and optional next-retry/stop deadline. A successful
+spawn means `running` (PID alive), not “HTTP ready.” Missing interpreter/script
+is `not installed`; permission/exec-format errors are `failed` with an actionable
+launcher diagnostic. No venv creation or package installation happens here.
+Before a restart, validate executable and credential prerequisites; if invalid,
+keep a currently running child and report the blocked restart. A disable/removal
+still stops it. After a valid replacement is prepared, stop the old child before
+spawning; never run two copies to test the replacement.
+For a blocked restart, retain state `running` and its PID, put the reason in
+`message`, and consume that nonce as attempted. A fresh Restart retries the
+prerequisites; repeated snapshots do not keep reading a broken credential file.
+
+| Observation | Action |
+|---|---|
+| Enabled, stopped, prerequisites available | Spawn once. |
+| Disabled, removed, or launcher shutting down | Cancel pending retries and stop the owned process; no replacement. |
+| New nonce while enabled | Clear failure/backoff, preflight prerequisites, then stop if running and start with latest configuration and credentials. |
+| Exit while an intentional stop is pending | Complete that stop regardless of numeric code; do not count it as a crash. |
+| Exit 2 or 3 without a pending stop | `failed`, no automatic respawn. |
+| Any other unexpected exit, including 0 or a signal | `backoff`, retry after 2, 4, 8, … seconds up to 60; the fifth unexpected exit in a rolling 120 seconds latches `failed`. |
+| Missing credential or installation | Report the blocked state; retry prerequisites on a new nonce or disabled-to-enabled transition. |
+
+Exit 0 is not evidence that SIGTERM caused the exit. A desired daemon that exits
+0 spontaneously still needs crash recovery. Reset the backoff exponent after
+120 seconds of continuous running; intentional restarts clear the crash window.
+Use exit codes 2 (deterministic configuration/credential failure) and 3 (held
+ownership lock) only where services explicitly implement that convention.
+Existing `SystemExit("message")` exits 1; current services do not uniformly
+implement these codes. Converting entrypoints and testing those paths is
+implementation work, not an already-provided property.
+
+The **core** uses the same crash budget. If it fails deterministically or
+exhausts its budget, keep other services at last-known desired state and log a
+prominent local diagnostic; recovery is restarting the launcher after fixing
+the cause, since the core's Restart button is unavailable. Do not claim the core
+restarts forever while also specifying a finite crash budget.
+
+For ordinary service stops, send SIGTERM to its owned process group, allow
+10 seconds, then SIGKILL remaining group members. Reap the direct child; ensure
+its old group is gone before replacement, including when the leader crashed
+but descendants remain. Signals target only groups created by this live
+launcher, never PIDs loaded from stale files. Use [process-group
+signals](https://docs.python.org/3/library/os.html#os.killpg) for service trees.
+For a core stop, initially signal its PID so its supervisor can handle agents;
+if descendants survive or its grace expires, kill the owned core group. Current
+agents inherit that group; detached grandchildren are outside this guarantee.
+
+Launcher shutdown is **two phases**, with respawns disabled from the start:
+
+1. Stop all side-service groups together; keep the core alive while they drain.
+   At 10 seconds escalate remaining services and reap their direct children.
+2. Only after phase 1, signal the core, give it a separate 10-second grace, then
+   kill any remaining core group and reap it. Release the lock and exit.
+
+A second termination signal requests immediate escalation. This ordering keeps
+the HTTP core available during the service grace; merely sending it SIGTERM a
+few milliseconds after the services would not. Abrupt launcher death (SIGKILL,
+crash, power loss) cannot run this sequence. Children in separate sessions may
+survive; do not adopt or kill them using persisted PID numbers on the next run.
+Report port/lock conflicts and require the operator to stop known survivors
+before restarting. Automatic orphan adoption is out of scope.
+
+## Status and operator controls
+
+```json
+{
+  "schema_version": 1,
+  "launcher_id": "<launcher-uuid>",
+  "core_instance_id": "<core-instance-uuid>",
+  "sequence": 7,
+  "launcher": {"pid": 122, "state_dir": "<absolute-dir>", "started_at": "<UTC>"},
+  "services": {
+    "voice_tts_kokoro": {
+      "state": "running", "pid": 124, "since": "<UTC>",
+      "last_exit": null, "message": null
+    }
+  }
+}
 ```
 
-States: `running`, `starting`, `stopping`, `stopped`, `failed`,
-`credential missing`, `not installed`. The core keeps the last table and its
-arrival time and renders it beside each toggle on `/settings`, with a
-*Restart* button. It shows every service as **unknown** when no status has
-arrived for 90 s — no launcher, or a launcher that died — and shows the
-`core` entry's own state so the page can say when the core is running
-unlaunched. A webapp served by `tools.serve_ui` shows `unknown` always.
+POST the full table to `/services/api/status` after changes (coalesced) and every
+30 seconds, including `core` and disabled services. Status failures do not block
+reconciliation. The core accepts only its instance markers and increasing
+sequence numbers; receipt time is local to the core, not supplied by the client.
+Status stays in memory. A restarted core learns it on the next successful post.
 
-Status is ephemeral: it lives in the core's memory, never in Postgres.
+States: `starting`, `running`, `stopping`, `stopped`, `backoff`, `failed`,
+`credential missing`, `not installed`. Include next-retry time for `backoff` and
+credential source for credential-related states, never a credential value.
+`/settings` displays the desired toggle separately from observed state, with a
+POST Restart action. `running` describes liveness only. With no heartbeat for
+90 seconds, show observed state as `unknown`; do not alter the desired toggle.
+A directly started core can identify itself as unmanaged from its missing
+instance markers. `tools.serve_ui` must not accept launcher status or desired
+requests as a supervisor instance; it displays unmanaged/unknown.
 
-## Exit codes
+Inherited child output may interleave and is not currently guaranteed to have
+service prefixes. The launcher logs service key, PID, spawn, exit, and signals
+itself; it does not read child output or promise to expose child error text.
+Activity Monitor hierarchy and the key-to-PID status table are the supported
+way to identify children. Process-name symlinks are an optional later experiment,
+not a prerequisite or a reason to risk bypassing a service venv.
 
-Stdout and stderr are inherited, so every service's log lines land in the
-launcher's terminal, prefixed by the service itself — which also means the
-launcher never *reads* them. The only thing it learns from a child is its
-exit status, so services use a small convention:
+A port conflict means an unmanaged instance or another application may be there,
+not necessarily a second launcher. Only the process this launcher owns appears
+in its status table. A manually started duplicate failing does not change the
+healthy supervised child's state; the reverse ownership order may cause the
+supervised attempt to fail. State-dir locks cannot prevent duplicate launchers
+using different directories from competing for the same fixed core port.
 
-| Exit code | Meaning | Launcher reaction |
-|---|---|---|
-| `0` | clean exit after `SIGTERM` | `stopped` |
-| `2` | configuration or credential rejected | `failed`, no respawn; the service's own log line has the detail |
-| `3` | a lock the service needs is held by another process | `failed`, "locked by another process; see its log for the pid"; no respawn |
-| anything else, or death by signal | crash | respawn with backoff; five in two minutes → `failed` |
+## Implementation and acceptance
 
-Codes 2 and 3 get no backoff loop because respawning cannot fix them. The
-existing services and bridges already exit through `SystemExit` for these
-conditions and only need the codes assigned.
+Proposed files: `source/launcher.py`, `source/test_launcher.py`, data-only
+`source/services/definitions.py`, core-side `source/services/registry.py`,
+`source/webapp/services_api.py`, and settings registration in
+`source/db/settings.py`. Import the new view module in `source/webapp/__init__.py`.
+Update `.gitignore`, `.env.example`'s guidance about launcher-only credentials,
+`source/README.md`, and `source/notes/voice-and-services.md` when this ships.
+No service toggle should appear until its endpoint and registry are wired up.
 
-## Telling the processes apart
+Verify with fake HTTP peers/children, temporary files, and a controllable clock;
+real models, platform tokens, and network services are unnecessary:
 
-Every rainbox process is a Python interpreter, and Activity Monitor names a
-process after its executable, so without help they all read "Python". The
-hierarchy is the first fix: under the launcher, a process at 100 % CPU is
-one hop from a named parent, and `ps -o pid,ppid,%cpu,command` shows each
-child's full argv (`server.py`, `-m agents`, `bridge.py`).
+- Import/spawn catalogue code under an isolated interpreter and prove no
+  application/dependency imports. Verify child parent/group IDs and venv identity.
+- Validate supported credential grammar, duplicate/malformed lines, explicit
+  empty values, consistent environment precedence, file rotation, source labels,
+  and the absence of unrelated credentials in each service environment.
+- Wrong-instance, malformed, duplicate, truncated, and oversized desired payloads
+  cause no partial reconcile. Slow/unavailable HTTP cannot prevent reaping,
+  freshness/status updates, or shutdown deadlines beyond one request bound.
+- Toggle/restart affects only the selected process. An off/on between polls
+  changes its nonce; a restart during stopping coalesces. Core restart consumes
+  its nonce once, preserves services, and restores their status within 30 seconds
+  of reachable HTTP. Core failure exhaustion leaves services running and a local
+  recovery diagnostic.
+- Expected signal exits do not count as crashes; unexpected exit 0 does. Check
+  rolling crash windows, backoff reset, deterministic exits, spawn errors, and
+  disabled services cancelling scheduled retries.
+- A fake child with a grandchild verifies group cleanup after leader death and
+  the two shutdown phases; the core remains alive throughout service grace.
+  Sidecar locks survive stale files and reject a concurrent owner. Abrupt launcher
+  death is tested for the documented survivor/conflict behavior, not adoption.
+- Status rejects old instance/sequence reports, expires after 90 seconds, and
+  distinguishes unmanaged mode and `--core-only` suppression from failure.
+- Check static service bind addresses against entrypoints and exercise the
+  implemented exit conventions in each isolated service suite.
+- A malformed replacement credential or missing executable leaves an existing
+  child running with a blocked-restart message; a new nonce retries after repair.
 
-A second fix is worth one experiment before relying on it: exec each
-service through a symlink named for it
-(`bin/rainbox-kokoro -> voice_tts_kokoro/venv/bin/python`), so `argv[0]` —
-and, if Activity Monitor uses the exec path rather than the resolved
-binary, its Process Name column — reads `rainbox-kokoro`. Whether Activity
-Monitor honors the symlink name is not something to assert from memory;
-run it once and keep it only if it shows.
-
-## Manual mode and duplicates
-
-Nothing forbids starting a service by hand while the launcher runs. For a
-service with a port, the second instance fails to bind and exits nonzero;
-the launcher sees a crash and backs off, and the `/settings` row shows
-**failed** — the signal that two launchers are configured. Services that
-own a state file use exit code 3 for the same purpose. Across hosts nothing
-here can help; the launcher is single-host by design.
-
-## Files
-
-```text
-source/launcher.py            the launcher; stdlib only
-source/test_launcher.py       parser, reconcile, exit-code mapping, env
-                              construction, ordered shutdown — with a fake
-                              core (a tiny HTTP server in the test) and
-                              fake children (sleep / exit-with-code scripts)
-source/services/registry.py   the service registry (core side)
-source/webapp/services_api.py /services/api/desired and /status
-source/db/settings.py         services.<key>.enabled toggles,
-                              services.<key>.restart_nonce (internal)
-var/services/                 launcher state dir (gitignored)
-```
-
-`source/README.md`'s layout table gains `launcher.py`;
-`source/notes/voice-and-services.md` is the operator's file and is theirs
-to update once this ships.
-
-## Acceptance checks
-
-- The launcher's imported module set is stdlib-only (asserted by a test that
-  runs it under `-X importtime` or inspects `sys.modules` after import).
-- Every child's parent pid is the launcher's; every child is in its own
-  session; `SIGINT` to the launcher's terminal reaches no child directly.
-- A child's environment contains the baseline keys plus exactly the
-  declared `env` plus the one `token_env` value, and nothing else from the
-  launcher's environment.
-- The `.env` parser agrees with `python-dotenv` on `.env.example` and on the
-  edge-case fixture; launcher-environment values win over file values; a
-  rotated file value reaches a child on *Restart* without restarting the
-  launcher or the core.
-- Toggling a service on `/settings` changes only that child within one poll;
-  the core's pid, webserver, and running agents are untouched. *Restart*
-  restarts only its service. A core restart does not restart any service
-  (persisted nonces).
-- Killing the core: services keep running; the launcher restarts the core;
-  the new core learns the status table within 30 s.
-- Exit code 2 and 3 produce `failed` with no respawn; other exits respawn
-  with backoff; five crashes in two minutes produce `failed`. Missing venv
-  and missing credential are reported, not spawned, not crash-looped.
-- Ordered shutdown: services first, core last, 10 s grace, `SIGKILL` for
-  the rest, lock released; a second launcher on the same state dir exits
-  with code 3 while the first runs and starts after it exits.
-- The core reports `unknown` for every service 90 s after the last status
-  post; `tools.serve_ui` reports `unknown` always.
-
-## Out of scope
-
-- Bridge connectors as dynamic entries (the bridge settings design).
-- Health checks over HTTP; liveness is "the process is alive".
-- Capturing or rotating child logs.
-- Multi-host operation and launchd/systemd integration beyond "this is the
-  command to run".
-- Per-service resource limits or priorities.
+Out of scope: bridge implementation in phase 1, health checks/model readiness,
+log capture/rotation, automatic dependency installation, orphan adoption,
+multi-host supervision, resource limits, and launchd/systemd integration beyond
+running the same launcher command.
