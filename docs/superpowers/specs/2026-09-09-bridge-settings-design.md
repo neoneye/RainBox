@@ -17,7 +17,10 @@ checkpoints in each bridge's local state file.
 
 The core (`source/main.py`) should not need a restart for ordinary bridge
 configuration changes: agents may be mid-turn. Each connector runs in its own
-bridge process, which can be restarted independently. Installing the initial
+bridge process, which can be restarted independently. By default the
+supervisor in `source/main.py` starts every enabled connector's process and
+stops it when it is disabled (see *Supervised services*); running a bridge by
+hand stays possible for a bridge on another host. Installing the initial
 schema and application code still requires the normal deployment procedure;
 live editing is a property of the implemented feature, not a way to hot-load
 new core code.
@@ -237,6 +240,9 @@ folders changes its effective policy and must be shown as such.
 
 Run one process per connector, selected by **UUID**, for example
 `BRIDGE_CONNECTOR=<connector-uuid>`. A rename cannot break startup or reload.
+With autostart on (the default) the supervisor issues this launch itself; the
+copyable command below is for the manual mode, a bridge host other than the
+core's, or debugging one connector in a terminal while autostart is off.
 The `/bridges` tree gives each connector the same **Copy ID** kebab item the
 chat and cron trees have. The detail panel also offers a copyable launch command
 for the connector's platform, labeled with its required working directory
@@ -279,7 +285,11 @@ win over file values; the loader already guarantees that
 (`load_dotenv(..., override=False)`). The helper loads all keys in the shared
 file, not just this connector's credential. Keep launcher-supplied
 credentials as the default when each process should receive only its own
-secret; reusing the shared loader does not provide that isolation.
+secret; reusing the shared loader does not provide that isolation. Under
+supervision that isolation comes for free: the supervisor copies exactly one
+variable, the one `token_env` names, into the child's environment (see
+*Supervised services*), so the shared `.env` is read by the core alone and a
+bridge process never sees another bot's token.
 
 Keeping credential values out of JSON does not make configuration harmless.
 The core API is currently unauthenticated and bound to localhost; connector
@@ -290,6 +300,140 @@ and keep realm/token-reference changes outside ordinary live policy edits.
 The bridge should receive only its own credential in its launch environment.
 Never return credential values, environment dumps, or token-bearing URLs in
 config responses or logs. `token_env` names and binding metadata may be returned.
+
+## Transport between bridge and core
+
+The bridge is not a child of the core in any protocol sense, even when the
+supervisor launched it. Everything between them is plain HTTP over the
+loopback TCP socket on `127.0.0.1`, in two forms:
+
+- **Request and response, JSON.** Find the room, post an inbound message,
+  fetch a row by id, and fetch the resolved config snapshot from
+  `GET /bridge/api/connectors/<uuid>/config`.
+- **One long-lived streaming response, Server-Sent Events.** The bridge holds
+  `GET /chat/stream` open and reads `data:` lines as the core emits them —
+  the same stream the browser uses. Behind it the core listens on a
+  Postgres NOTIFY channel and forwards each payload.
+
+No pipe, no RPC framework, no message broker, no shared files, no database
+connection: the bridge's state file is private to the bridge, and the bridge
+never holds `DATABASE_URL`. The core exposes nothing to a bridge that a
+browser on the same machine could not already reach, so a bridge inherits the
+existing localhost trust boundary instead of adding a channel.
+
+This is deliberately *not* the mechanism the supervisor uses for its agents.
+`main.py` spawns each agent as `python -m agents --socket-fd N` over a
+`socketpair()`, writes the agent's config down that socket, and reads
+heartbeats and status back up it. Agents need config injected because they
+have no other way to receive it; a bridge fetches its config over HTTP and
+reports liveness through its logs, so the supervisor's only levers on a
+bridge are the ones it has on any child: its exit status, and signals.
+
+## Supervised services
+
+`main.py` becomes the launcher for the side processes the operator has turned
+on, so starting the core starts everything that should be running, and a
+toggle in the UI starts or stops one process without touching anything else.
+
+### The service registry
+
+A code-side registry, the same shape as `SETTINGS` in `source/db/settings.py`,
+lists every service the supervisor knows how to run. Each entry gives a
+stable key, the working directory, the argv relative to that directory, the
+interpreter (the service's *own* venv: `<dir>/venv/bin/python`), an optional
+port to report, and the environment variables the child needs.
+
+Two kinds of entry:
+
+- **Static services** (`voice_tts_kokoro`, `voice_stt_whisper`,
+  `voice_tts_dotstts`, `reranker`): one fixed entry each. Each gets a
+  registry setting `services.<key>.enabled` (bool, default `false`), which
+  the `/settings` page renders as a toggle like any other bool. Their
+  discovery URLs (`KOKORO_TTS_URL` and friends) are unchanged; the supervisor
+  simply runs the process that answers there.
+- **Bridge connectors**: one entry per `bridge_connector` row, derived at
+  reconcile time. Its switch is the row's own `enabled` flag on `/bridges`,
+  gated by a single registry setting `services.bridges.autostart` (bool,
+  default `true`) for the operator who runs bridges elsewhere.
+
+The default for static services is off and for bridge autostart is on
+because a bridge's whole existence is expressed by a DB row the operator
+created deliberately, while the voice services are optional heavyweights
+whose venvs may not even be installed.
+
+### Reconcile loop
+
+The supervisor loop already ticks for cron every 5 seconds
+(`CRON_TICK_INTERVAL`); the service reconcile rides the same tick:
+
+- desired and not running → spawn;
+- running and no longer desired (toggled off, row deleted, autostart off) →
+  `SIGTERM`, then `SIGKILL` after `TERM_GRACE` (10 s), the escalation the
+  agents already get;
+- exited unexpectedly → respawn with exponential backoff (2 s, 4 s, … capped
+  at 60 s); five crashes inside two minutes marks the entry **failed** and
+  stops respawning until the operator toggles it off and on or presses
+  *Restart*;
+- shutdown of `main.py` → `SIGTERM` every service, wait `TERM_GRACE`,
+  `SIGKILL` the rest, in the same place the remaining agents are killed today.
+
+A toggle therefore takes effect within one tick, and never restarts the
+core. Startup order does not matter: a bridge that comes up before the
+webserver answers simply backs off and retries, which its loops already do.
+
+### What the child receives
+
+Unlike an agent, which inherits `dict(os.environ)`, a service gets a
+**minimal environment built from scratch**: `PATH`, `HOME`, `LANG`/`LC_*`,
+`TMPDIR`, then only what its registry entry declares. For a bridge that is:
+
+| Variable | Value |
+|---|---|
+| `RAINBOX_URL` | `http://127.0.0.1:5000` |
+| `BRIDGE_CONNECTOR` | the connector uuid |
+| `<PLATFORM>_STATE_FILE` | `<state dir>/bridge-<connector-uuid>.json`, so two connectors can never share a file |
+| the variable `token_env` names | the credential value, and nothing else from the core's environment |
+
+Spawn with `subprocess.Popen(argv, cwd=<dir>, env=<that>)`, since
+`posix_spawn` has no working-directory argument; stdout and stderr are
+inherited, so a service's log lines land in the same terminal as the
+supervisor's, prefixed by the service itself as today.
+
+The credential is read **fresh at each spawn**: parse the repo-root `.env`
+for that one key and prefer it over the core's own environment copy. The
+core loaded `.env` once at import with `override=False`, so after a token
+rotation its copy is stale; reading the file at spawn is what lets *Restart*
+on `/bridges` pick up the rotated value without restarting the core. A key
+present in neither place means the entry is **credential missing**, named
+by variable, and is not spawned. A missing venv means **not installed**, and
+is not spawned either; neither condition counts as a crash.
+
+### Status
+
+The webserver runs inside `main.py`'s process (`make_server` in `main()`), so
+the supervisor keeps an in-memory table `{key: {state, pid, since,
+last_exit, message}}` behind a lock and the `/bridges` and `/settings`
+handlers read it directly. States: `running`, `stopped`, `starting`,
+`stopping`, `failed`, `credential missing`, `not installed`, and `unknown` —
+the last is what a webapp served *without* a supervisor in its process
+(`tools.serve_ui`) reports for every service. `/bridges` shows the state
+beside each connector with a *Restart* action; `/settings` shows it beside
+each static toggle.
+
+### Manual mode and duplicates
+
+With `services.bridges.autostart` off, nothing above runs for bridges and
+the copyable launch line is the way in. With it on, a bridge also started by
+hand on the same host collides on the state-file lock and exits; the
+supervisor's entry then shows **failed** with the lock holder's pid in its
+message, which is the signal that two launchers are configured. Across
+hosts the lock cannot help, as the state section already says.
+
+Disabling a connector now has two effects, and both are wanted: the
+supervisor stops the process, and — in manual mode, where there is no
+supervisor — the bridge's own config refresh sees `enabled: false` and
+pauses, as the live-configuration contract describes. Neither replaces the
+other.
 
 ## Live configuration contract
 
@@ -564,3 +708,13 @@ separate design.
   fresh database, an existing database without bridge tables, and repeated
   initialization with saved bridge rows; required constraints/indexes exist
   and existing data survives.
+- Supervision: toggling a connector or a static service changes only that
+  child within one tick; the core's pid, webserver, and running agents are
+  untouched. A child's environment contains exactly the declared variables
+  plus the one credential `token_env` names, and no other `*_TOKEN`/`*_KEY`
+  from the core's environment. A rotated `.env` value reaches the child on
+  *Restart* without restarting the core. Missing venv and missing credential
+  are reported states, not crash loops; five crashes in two minutes stop
+  respawning and show *failed*. Shutting down `main.py` terminates every
+  service with the agents' grace and escalation. A webapp without a
+  supervisor reports every service as `unknown` rather than guessing.
