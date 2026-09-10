@@ -451,7 +451,7 @@ Update `.gitignore`, `.env.example`'s guidance about launcher-only credentials,
 `source/README.md`, and `source/notes/voice-and-services.md` when this ships.
 No service toggle should appear until its endpoint and registry are wired up.
 
-Verify with a fake core on a socketpair, fake children, temporary files, and a controllable clock;
+Verify with a fake core on a socketpair, fake children, temporary files, and a controllable clock. The launcher's socket operations live in one small `CoreChannel` class that the launcher takes as a constructor argument, so a test subclass — not a patched socket, whose methods are read-only — simulates a slow core (`send` raises `BlockingIOError`) or a gone one (`OSError`);
 real models, platform tokens, and network services are unnecessary:
 
 - Import/spawn catalogue code under an isolated interpreter and prove no
