@@ -339,3 +339,15 @@ def test_api_accepts_a_reranker_backend(client):
     assert resp.status_code == 200
     assert (db.get_setting("memory.recall_filter_backend")
             == "reranker:mmarco-mMiniLMv2-L12-H384-v1")
+
+
+def test_settings_page_shows_launcher_status_and_restart(client):
+    """Service toggles carry the launcher's observed state and a Restart
+    action; the launcher card says whether this core is managed at all."""
+    body = client.get("/settings").get_data(as_text=True)
+    assert 'data-restart="core"' in body
+    assert "/services/api/status" in body
+    assert "/services/api/restart/" in body
+    assert "data-service-state" in body
+    assert "services.voice_tts_kokoro.enabled" in body
+    assert "services.voice_tts_kokoro.restart_nonce" not in body  # internal: never listed
