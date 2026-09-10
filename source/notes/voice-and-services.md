@@ -1,7 +1,7 @@
 # Voice & side services
 
 rainbox keeps heavyweight or credentialed integrations **out of the main
-process**: speech-to-text, text-to-speech, and the Telegram bridge each run as
+process**: speech-to-text, text-to-speech, and the Telegram and Discord bridges each run as
 a separate small HTTP service with its own venv, and the web app talks to
 them over localhost HTTP. The multimodal demo is the odd one out — it lives in
 the web app but proxies to an LLM provider backend.
@@ -24,6 +24,7 @@ service is down (a health banner, not a crash).
 | Kokoro TTS | `http://127.0.0.1:5005` | `KOKORO_TTS_URL` (webapp) |
 | dots.tts clone | `http://127.0.0.1:5007` | `DOTS_TTS_URL` (webapp) |
 | Telegram bridge | outbound-only | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_IDS` (required); `TELEGRAM_ROOM_NAME`, `TELEGRAM_STATE_FILE`, `RAINBOX_URL` |
+| Discord bridge | outbound-only | connector mode: `BRIDGE_CONNECTOR`, the token under the connector's `token_env` name, `DISCORD_STATE_FILE`, `RAINBOX_URL` (the launcher sets all four); legacy env mode: `DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID`, `DISCORD_ALLOWED_USER_IDS` |
 
 ## Whisper STT (`voice_stt_whisper/`)
 
@@ -75,6 +76,24 @@ API: `GET /health` → `{status, model_loaded, voices, device}`;
 `DELETE /voices/<id>`; `POST /tts` with
 `{text, voice, seed?, num_steps?, guidance_scale?, speaker_scale?}` →
 `audio/wav` (mono 16-bit PCM, 48 kHz).
+
+## Discord bridge (`discord_service/`)
+
+A two-way bridge between Discord text channels and rainbox chatrooms
+(`bridge.py`; deps: `requests` only). In **connector mode** the process
+serves one `bridge_connector` row edited on `/bridges`: its bindings
+(chatroom ↔ channel), allowlists, and forwarding policy come from
+`GET /bridge/api/connectors/<uuid>/config`, fetched when its `/chat/stream`
+connection opens and on every `bridge_config` event for that connector —
+never on a timer. The launcher starts one process per enabled connector
+with the credential named by the row's `token_env` (from its
+`credentials.env`) and a per-connector state file. Inbound: allowed users'
+messages are posted into the bound room as the human operator. Outbound:
+agent `message`/`notice` rows become Discord messages; `progress` rows
+become one bubble each, edited in place and deleted when the reply lands
+(`mirror_progress`). Design and contracts:
+`docs/superpowers/specs/2026-09-09-bridge-settings-design.md`; setup, the
+legacy env mode, and `import_legacy.py`: `discord_service/README.md`.
 
 ## Telegram bridge (`telegram_service/`)
 

@@ -117,6 +117,7 @@ Current architecture/operator docs:
 - [`notes/supervisor-design.md`](notes/supervisor-design.md) — the core runtime: inbox→journal queue, spawn-on-demand agents, heartbeat watchdog, recovery, routing.
 - [`notes/settings-design.md`](notes/settings-design.md) — typed operator settings: registry, DB → env → default provenance, the /settings page.
 - [`notes/git-design.md`](notes/git-design.md) — the /git page: repo pointers, guarded tree save, read-only inspection.
+- [`docs/superpowers/specs/2026-09-09-bridge-settings-design.md`](../docs/superpowers/specs/2026-09-09-bridge-settings-design.md) — the /bridges page and chat-bridge settings: connectors, folders, bindings, policy resolution, the live config contract a bridge process follows.
 - [`notes/profile-design.md`](notes/profile-design.md) — person profiles: field registry, sparse data JSONB, locale templates.
 - [`notes/evals-design.md`](notes/evals-design.md) — the evals framework internals: case model, scoring, gate/optimizer/monitor mechanics.
 
@@ -371,7 +372,7 @@ The demo only exercises `processing → completed`; `failed` and `stopped` exist
 | `providers/` | Ollama-first provider registry, with Jan and LM Studio support |
 | `tools/` | the no-LLM workspace_shell command runner |
 | `data/` | the base Q&A knowledge file (`question_answer.jsonl`) |
-| `voice_tts_kokoro/`, `voice_stt_whisper/`, `reranker/`, `telegram_service/`, `discord_service/` | standalone processes with their own venvs (TTS, STT, cross-encoder reranking, Telegram and Discord bridges) — the core talks to/with them over HTTP only |
+| `voice_tts_kokoro/`, `voice_stt_whisper/`, `reranker/`, `telegram_service/`, `discord_service/` | standalone processes with their own venvs (TTS, STT, cross-encoder reranking, Telegram and Discord bridges) — the core talks to/with them over HTTP only; the Discord bridge runs one process per connector configured on `/bridges` (`db/bridges.py`, `webapp/bridges_api.py`), started by the launcher |
 
 Tests are colocated inside each package next to the modules they test (`<pkg>/test_*.py`); the root `conftest.py` pins every pytest run to the `rainbox_claude` database.
 

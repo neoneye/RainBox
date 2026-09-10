@@ -2,8 +2,12 @@
 
 **Date:** 2026-09-09
 
-**Status:** design note; none of the proposed tables, endpoints, or live reload
-behavior is implemented yet.
+**Status:** implemented for Discord (migration steps 1–3 below): the three
+tables and `db/bridges.py`, the `/bridges` page and API, the config endpoint
+and `bridge_config` event, the launcher's dynamic `bridge:<uuid>` entries,
+the Discord bridge's connector mode (`discord_service/connector_bridge.py`)
+and `discord_service/import_legacy.py`. Telegram DB mode (step 4) and Zulip
+(step 5) are not implemented; those bridges keep their env modes.
 
 **Roadmap:** the [launcher](2026-09-10-launcher-design.md) is implemented
 (`source/main.py`, merged 2026-09-10) and this design resumes on top of it;

@@ -1,6 +1,6 @@
 # Bridge Settings Implementation Plan
 
-**Status:** in progress on the `bridge-settings` branch (2026-09-11), against
+**Status:** implemented on the `bridge-settings` branch (2026-09-11; tasks 1–6 done), against
 `docs/superpowers/specs/2026-09-09-bridge-settings-design.md`, migration
 steps 1–3 (tables/API/UI, launcher extension, Discord DB mode + import).
 Telegram DB mode (step 4) and Zulip (step 5) are follow-ups by the design's

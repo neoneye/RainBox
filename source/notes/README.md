@@ -64,7 +64,7 @@ history); `proposals/` holds design-time intent and reviews.
   retrieval, dynamic handlers, shields; links to the design-only
   [follow-up navigation and gap-discovery proposal](proposals/2026-07-21-qa-followup-questions.md).
 - [voice-and-services.md](voice-and-services.md) — the side services map:
-  Whisper STT, Kokoro TTS, Telegram bridge, multimodal demo proxy.
+  Whisper STT, Kokoro TTS, Telegram and Discord bridges, multimodal demo proxy.
 - [llm-providers.md](llm-providers.md) — the Ollama-first provider registry
   (also Jan and LM Studio): sync, resolution, probes, adding a provider.
 - [deep-research.md](deep-research.md) — the research pipeline: pluggable
@@ -98,7 +98,7 @@ history); `proposals/` holds design-time intent and reviews.
 - [chat-frontend-rules.md](chat-frontend-rules.md) — the /chat idle-cost
   rules (no polling, SSE, streaming) and template-editing gotchas.
 - [ui-left-panel-tree.md](ui-left-panel-tree.md) — the shared folder-tree
-  pattern (/chat, /cron, /kanban, /git) and its porting checklist.
+  pattern (/chat, /cron, /kanban, /git, /bridges) and its porting checklist.
 - [ui-tree-persistence.md](ui-tree-persistence.md) — how a tree page saves:
   the PUT never creates or deletes, create/delete are their own endpoints.
 - [ui-modals.md](ui-modals.md) — the app-wide modal pattern.
