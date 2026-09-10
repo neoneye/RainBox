@@ -212,7 +212,7 @@ function render(){
   lc.id = 's-launcher';
   lc.innerHTML =
     '<div class="s-head"><span class="s-key">launcher</span><span class="s-type">processes</span></div>'
-    + '<div class="s-desc">Side services run under <code>launcher.py</code>. The '
+    + '<div class="s-desc">Side services run under <code>main.py</code>. The '
     + '<code>services.*.enabled</code> toggles are the desired state; the observed state on each '
     + 'toggle is what the launcher last reported. Restart rewrites a nonce that the launcher acts on.</div>'
     + '<div class="s-row"><span class="s-env" data-launcher-state>checking launcher status…</span> '
@@ -334,7 +334,7 @@ async function refreshServiceStatus(){
   const ls = document.querySelector('[data-launcher-state]');
   if (ls){
     if (!d.managed){
-      ls.textContent = 'unmanaged: this core was not started by launcher.py, so toggles only change the stored setting';
+      ls.textContent = 'unmanaged: this core was not started by main.py (the launcher), so toggles only change the stored setting';
     } else if (d.stale){
       ls.textContent = 'managed, but no launcher report for 90 s: observed states are unknown';
     } else {

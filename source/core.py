@@ -1,0 +1,388 @@
+import argparse
+import json
+import logging
+import os
+import selectors
+import signal
+import socket
+import sys
+import threading
+import time
+import uuid
+from typing import TypedDict
+from uuid import UUID
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger(__name__)
+
+from werkzeug.serving import make_server  # noqa: E402
+
+import db  # noqa: E402
+from agents.config import (  # noqa: E402
+    ASSISTANT_RUN_SUMMARIZER_UUID,
+    AgentConfigEntry,
+    agent_config,
+)
+from webapp import app  # noqa: E402
+from webapp.core import sync_models_from_providers  # noqa: E402
+
+# Max time an agent may go without sending a status message before the
+# supervisor considers it hung and kills it. Agents emit background heartbeats
+# during handle(), so this measures a dead worker or broken status channel.
+HEARTBEAT_TIMEOUT: float = 60.0
+# After the watchdog fires, how long a SIGTERMed agent gets to unwind before
+# the supervisor escalates to SIGKILL. SIGKILL runs no `finally`, so a worker
+# killed outright leaves its HTTP connection to the inference server open —
+# the server never sees a disconnect and keeps generating, holding the GPU
+# long after the run is marked failed. SIGTERM raises inside the worker
+# instead, so the LLM stream closes on the way out. The grace has to cover a
+# main thread parked in a socket read: PEP 475 lets the raising handler break
+# that read, but the handler only runs once the interpreter regains control.
+TERM_GRACE: float = 10.0
+TICK_TIMEOUT: float = 1.0
+# When fully idle (no live agents, no pending work) the loop has nothing to
+# multiplex, so its select() timeout is the *only* thing setting how often it
+# re-queries Postgres. At TICK_TIMEOUT that's ~2 queries/second forever (visible
+# as ~1% CPU at rest). Back off to this longer interval when idle; a cold-idle
+# supervisor then picks up freshly-enqueued work within IDLE_TICK_TIMEOUT
+# instead of ~1s — the trade we accept to stop the idle polling.
+IDLE_TICK_TIMEOUT: float = 5.0
+CRON_TICK_INTERVAL: float = 5.0  # how often to check for due cron jobs (cron granularity is 1 min)
+ROOT_DIR: str = os.path.dirname(os.path.abspath(__file__))
+
+
+def _select_timeout(num_agents: int, found_work: bool) -> float:
+    """How long the supervisor's select() should block this pass.
+
+    Poll fast while there's something to service — any agent is alive (we're
+    multiplexing its socket and watching its heartbeat) or the just-finished
+    pass found inbox/routing/cron work — so spawns and routing stay responsive.
+    Otherwise back off so an idle supervisor isn't hammering Postgres."""
+    return TICK_TIMEOUT if (num_agents > 0 or found_work) else IDLE_TICK_TIMEOUT
+
+
+class Agent(TypedDict):
+    name: str
+    params: AgentConfigEntry
+    pid: int
+    uuid: UUID
+    sock: socket.socket
+    buffer: bytes
+    last_heartbeat: float
+    alive: bool
+    current_journal_id: UUID | None
+    death_reason: str | None
+    # monotonic deadline after which a SIGTERMed agent is SIGKILLed; None
+    # until the watchdog has asked it to stop.
+    term_deadline: float | None
+
+
+def spawn(name: str, params: AgentConfigEntry) -> Agent:
+    agent_uuid = params["uuid"]
+    parent_sock, agent_sock = socket.socketpair()
+    os.set_inheritable(agent_sock.fileno(), True)
+    argv = [
+        sys.executable, "-m", "agents",
+        "--socket-fd", str(agent_sock.fileno()),
+    ]
+    # Make the source root importable in the child regardless of its CWD.
+    env = dict(os.environ)
+    env["PYTHONPATH"] = ROOT_DIR + (
+        os.pathsep + env["PYTHONPATH"] if "PYTHONPATH" in env else ""
+    )
+    pid = os.posix_spawn(sys.executable, argv, env)
+    agent_sock.close()
+    config_msg = {"name": name, **params}
+    parent_sock.sendall((json.dumps(config_msg, default=str) + "\n").encode())
+    logger.info("spawned pid=%d name=%s uuid=%s", pid, name, agent_uuid)
+    return {
+        "name": name,
+        "params": params,
+        "pid": pid,
+        "uuid": agent_uuid,
+        "sock": parent_sock,
+        "buffer": b"",
+        "last_heartbeat": time.monotonic(),
+        "alive": True,
+        "current_journal_id": None,
+        "death_reason": None,
+        "term_deadline": None,
+    }
+
+
+def _recover_assistant_journal(journal_id: UUID, reason: str) -> None:
+    """Best-effort closure for an assistant worker that vanished mid-handle."""
+    try:
+        run = db.recover_interrupted_assistant_run(journal_id, reason)
+        if run is not None:
+            db.enqueue(
+                ASSISTANT_RUN_SUMMARIZER_UUID, {"run_uuid": str(run.uuid)}
+            )
+            logger.error(
+                "recovered interrupted assistant run %s journal=%s: %s",
+                run.uuid,
+                journal_id,
+                reason,
+            )
+        else:
+            db.fail_journal_if_processing(journal_id, {
+                "ok": False,
+                "status": "killed",
+                "error": reason,
+            })
+    except Exception:
+        logger.exception(
+            "failed to recover interrupted assistant journal %s", journal_id
+        )
+        db.session.rollback()
+
+
+def _recover_runs_from_previous_supervisor() -> None:
+    """On startup, no worker from the previous supervisor can be managed here."""
+    for run in db.list_active_assistant_runs():
+        if run.journal_id is not None:
+            _recover_assistant_journal(
+                run.journal_id,
+                "Supervisor restarted while the assistant run was active.",
+            )
+
+
+def supervisor_loop(stop_event: threading.Event) -> None:
+    uuid_to_role: dict[UUID, str] = {p["uuid"]: n for n, p in agent_config.items()}
+    sel = selectors.DefaultSelector()
+    agents: dict[str, Agent] = {}
+
+    last_cron_tick = 0.0
+
+    with app.app_context():
+        _recover_runs_from_previous_supervisor()
+        while not stop_event.is_set():
+            # Cron scheduler pass (throttled). Self-guarded: a cron bug must not
+            # take down the supervisor thread.
+            found_work = False
+            if time.monotonic() - last_cron_tick >= CRON_TICK_INTERVAL:
+                last_cron_tick = time.monotonic()
+                try:
+                    n = db.cron_tick()
+                    if n:
+                        found_work = True
+                        logger.info("cron: fired %d due job(s)", n)
+                except Exception:
+                    logger.exception("cron tick failed")
+                    db.session.rollback()
+
+            for journal_row in db.fetch_unrouted_terminal():
+                found_work = True
+                src_role = uuid_to_role.get(journal_row["agent_uuid"])
+                # The return address a dispatcher wrote into the turn payload,
+                # copied to result["_routing"] by Agent.run. It routes FAILED
+                # turns as well as completed ones, so a manager that dispatched
+                # the work can recover from a failure rather than waiting on a
+                # row that will never come back. Model output never chooses a
+                # routing target — only the payload the dispatcher wrote does.
+                result = journal_row["result"] or {}
+                dynamic_next = (result.get("_routing") or {}).get("return_to_agent_uuid")
+                next_uuid = UUID(dynamic_next) if dynamic_next else None
+                if next_uuid is not None:
+                    next_role = uuid_to_role.get(next_uuid, "?")
+                    payload = {
+                        "from": src_role,
+                        "from_journal_id": str(journal_row["id"]),
+                        "state": journal_row["state"],
+                        "input": journal_row["payload"],
+                        "result": journal_row["result"],
+                    }
+                    db.enqueue(next_uuid, payload)
+                    logger.info("routed journal_id=%s %s -> %s", journal_row["id"], src_role, next_role)
+                db.mark_routed(journal_row["id"])
+
+            uuids_with_work = db.agent_uuids_with_work()
+            if uuids_with_work:
+                found_work = True
+            for name, params in agent_config.items():
+                if params["uuid"] in uuids_with_work and name not in agents:
+                    ag = spawn(name, params)
+                    agents[name] = ag
+                    sel.register(ag["sock"], selectors.EVENT_READ, name)
+
+            # Block until an agent's socket is readable or the timeout elapses.
+            # With agents alive their sockets wake us; when idle the timeout is
+            # the only pacing, so back it off (see _select_timeout) to stop the
+            # at-rest Postgres polling.
+            for key, _ in sel.select(timeout=_select_timeout(len(agents), found_work)):
+                name = key.data
+                ag = agents[name]
+                chunk = ag["sock"].recv(4096)
+                if not chunk:
+                    ag["alive"] = False
+                    # A worker that exits after SIGTERM closes this socket on
+                    # its way out. That is the watchdog's kill completing, not
+                    # a surprise death — keep the reason already recorded.
+                    if ag["death_reason"] is None:
+                        ag["death_reason"] = (
+                            "Agent worker connection closed unexpectedly.")
+                    continue
+                ag["buffer"] += chunk
+                while b"\n" in ag["buffer"]:
+                    line, ag["buffer"] = ag["buffer"].split(b"\n", 1)
+                    if not line:
+                        continue
+                    msg = json.loads(line.decode())
+                    # Any message resets the silence-watchdog timer. Heartbeats
+                    # exist only to do that during a long handle(); don't log them.
+                    ag["last_heartbeat"] = time.monotonic()
+                    status = msg.get("status")
+                    if status in ("processing", "heartbeat") and msg.get("journal_id"):
+                        ag["current_journal_id"] = UUID(msg["journal_id"])
+                    elif status in ("completed", "failed"):
+                        ag["current_journal_id"] = None
+                    if msg.get("status") != "heartbeat":
+                        logger.info("agent %s -> %s", name, msg)
+
+            now = time.monotonic()
+            for name in list(agents):
+                ag = agents[name]
+                if (ag["alive"] and ag["term_deadline"] is None
+                        and now - ag["last_heartbeat"] > HEARTBEAT_TIMEOUT):
+                    # Ask first. The worker's SIGTERM handler raises, so its
+                    # `finally` blocks run and the LLM stream closes — without
+                    # that the inference server keeps generating against a
+                    # connection nobody is reading.
+                    logger.warning(
+                        "agent %s hung (no message in %.1fs); terminating",
+                        name, HEARTBEAT_TIMEOUT)
+                    try:
+                        os.kill(ag["pid"], signal.SIGTERM)
+                    except ProcessLookupError:
+                        ag["alive"] = False
+                    ag["term_deadline"] = now + TERM_GRACE
+                    ag["death_reason"] = (
+                        "Supervisor killed the agent after a heartbeat timeout "
+                        f"of {HEARTBEAT_TIMEOUT:g}s."
+                    )
+                elif (ag["alive"] and ag["term_deadline"] is not None
+                        and now > ag["term_deadline"]):
+                    # It did not unwind in time. Nothing left but SIGKILL, and
+                    # whatever it held open stays open until the OS reaps it.
+                    logger.warning(
+                        "agent %s did not exit %.0fs after SIGTERM; killing",
+                        name, TERM_GRACE)
+                    try:
+                        os.kill(ag["pid"], signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    ag["alive"] = False
+                    ag["death_reason"] = (
+                        "Supervisor killed the agent after a heartbeat timeout "
+                        f"of {HEARTBEAT_TIMEOUT:g}s; it ignored SIGTERM for "
+                        f"{TERM_GRACE:g}s and was force-killed, so its "
+                        "connection to the inference server was not closed."
+                    )
+
+            for name in list(agents):
+                ag = agents[name]
+                if not ag["alive"]:
+                    wait_status = None
+                    try:
+                        _, wait_status = os.waitpid(ag["pid"], 0)
+                    except ChildProcessError:
+                        pass
+                    reason = ag["death_reason"] or "Agent worker exited unexpectedly."
+                    if wait_status is not None:
+                        reason += f" Process exit code: {os.waitstatus_to_exitcode(wait_status)}."
+                    if ag["current_journal_id"] is not None:
+                        _recover_assistant_journal(ag["current_journal_id"], reason)
+                    try:
+                        sel.unregister(ag["sock"])
+                    except (KeyError, ValueError):
+                        pass
+                    ag["sock"].close()
+                    del agents[name]
+
+        logger.info("supervisor shutting down; killing %d remaining agent(s)", len(agents))
+        for ag in agents.values():
+            try:
+                os.kill(ag["pid"], signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        for name in list(agents):
+            ag = agents[name]
+            if ag["current_journal_id"] is not None:
+                _recover_assistant_journal(
+                    ag["current_journal_id"],
+                    "Supervisor shut down while the assistant run was active.",
+                )
+            try:
+                os.waitpid(ag["pid"], 0)
+            except ChildProcessError:
+                pass
+            try:
+                sel.unregister(ag["sock"])
+            except (KeyError, ValueError):
+                pass
+            ag["sock"].close()
+
+
+def main() -> None:
+    # Record the supervisor's start time in an env var so child agent processes
+    # (spawned via os.posix_spawn(..., os.environ)) inherit it and can answer
+    # "how long have you been running?" without relying on PPID ps tricks.
+    os.environ["PP3_SUPERVISOR_STARTED"] = str(time.time())
+
+    parser = argparse.ArgumentParser(description="rainbox core: supervisor + webserver (normally started by main.py, the launcher)")
+    parser.add_argument(
+        "--force-model-sync",
+        action="store_true",
+        help="Reconcile model_config rows with every registered provider "
+        "(availability, sizes, and the is_function_calling_model capability "
+        "flag), updating existing rows' arguments too, then exit without "
+        "starting the server.",
+    )
+    args = parser.parse_args()
+
+    if args.force_model_sync:
+        with app.app_context():
+            results = sync_models_from_providers(force_update_arguments=True)
+        unreachable = [pid for pid, s in results.items() if s is None]
+        if unreachable:
+            logger.warning("force sync: providers unreachable: %s", unreachable)
+        logger.info("force sync complete: %s", results)
+        return
+
+    root_uuid: UUID = uuid.uuid4()
+    logger.info("uuid: %s", root_uuid)
+    logger.info("name: root")
+
+    stop_event = threading.Event()
+    thread = threading.Thread(
+        target=supervisor_loop, args=(stop_event,), name="supervisor", daemon=False
+    )
+    thread.start()
+
+    # RAINBOX_CORE_PORT exists so a second core (a launcher smoke test against
+    # the sandbox DB) can run beside the operator's on 5000; the launcher reads
+    # the same variable and passes its whole environment to the core.
+    port = int(os.environ.get("RAINBOX_CORE_PORT", "5000"))
+    server = make_server("127.0.0.1", port, app, threaded=True)
+    logger.info("supervisor thread started; webserver on http://127.0.0.1:%d (Ctrl-C to quit)", port)
+
+    def shutdown_handler(signum: int, _frame: object) -> None:
+        logger.info("received signal %d; shutting down", signum)
+        stop_event.set()
+        threading.Thread(target=server.shutdown, name="shutdown", daemon=True).start()
+
+    signal.signal(signal.SIGINT, shutdown_handler)
+    signal.signal(signal.SIGTERM, shutdown_handler)
+
+    try:
+        server.serve_forever()
+    finally:
+        stop_event.set()
+        thread.join(timeout=HEARTBEAT_TIMEOUT + 2.0)
+        if thread.is_alive():
+            logger.warning("supervisor did not stop within timeout")
+        logger.info("bye")
+
+
+if __name__ == "__main__":
+    main()

@@ -2,10 +2,10 @@
 
 **Date:** 2026-09-10
 
-**Status:** phase 1 implemented (`source/launcher.py`, `source/services/`,
+**Status:** phase 1 implemented (`source/main.py` — the launcher IS the entrypoint; the core moved to `source/core.py`, `source/services/`,
 `source/webapp/services_api.py`, the `services.*` settings and the /settings
 launcher card). Two runtime facts beyond the text below: `RAINBOX_CORE_PORT`
-overrides the core's port for both `main.py` and the launcher, so a second
+overrides the core's port for both `core.py` and the launcher, so a second
 core can run beside the operator's for a smoke test; and a status post that
 fails at the transport level is retried after 2 seconds rather than at the
 next heartbeat, so a restarted core learns the table within seconds.
@@ -16,14 +16,14 @@ Bridges continue to start manually until that second phase is ready.
 
 ## Decision and current behavior
 
-A small `source/launcher.py` starts the core and enabled services as siblings.
+A small `source/main.py` — the launcher, and the way rainbox is started — runs the core (`source/core.py`) and enabled services as siblings.
 The core continues to own its agents. Operator settings describe which services
 should run; the launcher owns processes, credentials, restart backoff, and local
 state paths. Restarting a service never requires restarting the core.
 
 ```text
-launcher.py
-├── main.py                         core and webserver
+main.py  (launcher)
+├── core.py                         core and webserver
 │   └── python -m agents …          owned by the core
 ├── voice_tts_kokoro/venv/bin/python server.py
 ├── voice_stt_whisper/venv/bin/python server.py
@@ -42,11 +42,11 @@ operator restarts the core.
 
 ```bash
 cd source
-venv/bin/python launcher.py [--state-dir <dir>] [--core-only]
+venv/bin/python main.py [--state-dir <dir>] [--core-only]
 ```
 
 - Resolve the source directory from `__file__`, not the working directory.
-  Run the core with `sys.executable` and absolute `main.py`, with `cwd=source/`.
+  Run the core with `sys.executable` and absolute `core.py`, with `cwd=source/`.
 - Use the standard library plus a shared, data-only service catalogue. No Flask,
   SQLAlchemy, model stack, or `requests` imports. Measure memory during validation;
   an approximately 15 MB footprint is a target, not a platform-independent fact.
@@ -346,7 +346,7 @@ using different directories from competing for the same fixed core port.
 
 ## Implementation and acceptance
 
-Proposed files: `source/launcher.py`, `source/test_launcher.py`, data-only
+Files: `source/main.py` (launcher), `source/core.py` (core), `source/test_main.py`, `source/test_core.py`, data-only
 `source/services/definitions.py`, core-side `source/services/registry.py`,
 `source/webapp/services_api.py`, and settings registration in
 `source/db/settings.py`. Import the new view module in `source/webapp/__init__.py`.

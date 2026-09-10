@@ -3,7 +3,7 @@
 `core` builds the Flask `app` and the Flask-Admin views. The view modules
 register their routes against that shared `app` on import, so importing them
 here (after core) is what wires up the URL map. `app` is re-exported so
-`from webapp import app` keeps working for main.py.
+`from webapp import app` keeps working for core.py.
 """
 
 from .core import app  # noqa: F401  (creates the app + admin)

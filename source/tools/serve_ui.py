@@ -2,7 +2,7 @@
 
 For looking at a page in a browser — layout, drag-drop, a flow end to end —
 without the agent supervisor and without going near real data. Two deliberate
-differences from `main.py`:
+differences from `core.py`:
 
 - **Port 5055, not 5000**, so this never collides with the operator's own
   instance and neither process has to be stopped to run the other.
@@ -12,7 +12,7 @@ differences from `main.py`:
 
 Only the Flask app runs: no supervisor, no agents, no cron firing. Pages that
 need a live agent turn (a chat reply, an assistant run) will not complete
-here — use `main.py` for those.
+here — use `core.py` (or `main.py`, the launcher) for those.
 
 `RAINBOX_UI_PORT` and `RAINBOX_UI_DATABASE_URL` override the two defaults.
 """

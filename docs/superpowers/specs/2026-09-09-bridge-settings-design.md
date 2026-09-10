@@ -19,10 +19,10 @@ environment. Store operator-editable connectors, bindings, and policies in
 Postgres, exposed to bridges through the core's HTTP API. Keep delivery
 checkpoints in each bridge's local state file.
 
-The core (`source/main.py`) should not need a restart for ordinary bridge
+The core (`source/core.py`) should not need a restart for ordinary bridge
 configuration changes: agents may be mid-turn. Each connector runs in its own
 bridge process, which can be restarted independently. By default a small
-top-level launcher (`source/launcher.py`) starts the core and every enabled
+top-level launcher (`source/main.py`) starts the core and every enabled
 service assigned to it, and stops that service when disabled (see [Supervised
 by the launcher](#supervised-by-the-launcher)). Manual operation remains possible.
 Installing the initial schema and application code requires the normal deployment procedure;
@@ -340,7 +340,7 @@ endpoint (and an appropriate `RAINBOX_URL`); this design does not expose the
 unauthenticated core on an external interface or add remote supervision.
 
 This is deliberately *not* the mechanism the supervisor uses for its agents.
-`main.py` spawns each agent as `python -m agents --socket-fd N` over a
+`core.py` spawns each agent as `python -m agents --socket-fd N` over a
 `socketpair()`, writes the agent's config down that socket, and reads
 heartbeats and status back up it. Agents need config injected because they
 have no other way to receive it; a bridge fetches its config over HTTP and

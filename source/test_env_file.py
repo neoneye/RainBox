@@ -24,7 +24,7 @@ def test_values_are_loaded(tmp_path, monkeypatch):
 
 
 def test_the_real_environment_wins(tmp_path, monkeypatch):
-    """So `OPENROUTER_API_KEY=… python main.py` still overrides the file, and a
+    """So `OPENROUTER_API_KEY=… python core.py` still overrides the file, and a
     test that sets the variable can't be clobbered by the operator's real key."""
     path = tmp_path / ".env"
     path.write_text("PP3_ENVFILE_TEST=from-file\n")
