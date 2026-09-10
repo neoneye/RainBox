@@ -130,10 +130,17 @@ Do not accept a response from a different instance, even at the right port.
 Status POSTs must carry the matching markers. These identify this launcher's
 child, not authenticate the existing unauthenticated localhost API.
 
-Before spawning the core, check whether its fixed port is already occupied;
-if so, stop bootstrap with a clear diagnostic and do not adopt or signal that
-process. The check is advisory: a bind race can still occur, and the instance
-check prevents reconciling against an unrelated core that won the race.
+Before spawning the core, check whether the core could bind its port: attempt
+the same bind the core's server makes (the specific loopback address with
+`SO_REUSEADDR`, werkzeug's `allow_reuse_address`), not a connect. On macOS,
+ControlCenter's AirPlay Receiver listens on `*:5000` and answers loopback
+connects, yet the core's `127.0.0.1:5000` bind succeeds beside it and loopback
+traffic reaches the more specific socket — a connect probe would refuse to
+start on every Mac with AirPlay Receiver on. If the bind fails, stop bootstrap
+with a diagnostic that says whether the occupant answers the rainbox control
+API (an unmanaged core) or is another application, and do not adopt or signal
+it. The check is advisory: a bind race can still occur, and the instance check
+prevents reconciling against an unrelated core that won the race.
 
 Start the core before polling desired state. Until the first complete valid
 snapshot, start no side services. Thereafter poll every 5 seconds, with at most

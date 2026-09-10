@@ -477,9 +477,34 @@ class Launcher:
         self._lock_fh = fh  # held for the launcher's lifetime; never unlinked
 
     def core_port_in_use(self) -> bool:
+        """Whether the core could NOT bind its port right now: attempt the
+        same bind the core's server makes (specific address, SO_REUSEADDR —
+        werkzeug's `allow_reuse_address`). A connect probe is wrong on macOS,
+        where ControlCenter's AirPlay Receiver listens on *:5000 and answers
+        loopback connects, yet a 127.0.0.1:5000 bind beside it succeeds and
+        loopback traffic reaches the more specific socket."""
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(0.2)
-            return s.connect_ex(self.core_addr) == 0
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                s.bind(self.core_addr)
+                s.listen(1)
+            except OSError as exc:
+                if exc.errno in (errno.EADDRINUSE, errno.EACCES):
+                    return True
+                raise
+            return False
+
+    def describe_port_occupant(self) -> str:
+        """For the refusal message: an unmanaged rainbox core answers the
+        control endpoint (409 without markers, 200 with); anything else is
+        some other application."""
+        try:
+            status, _ = http_json(self.core_addr, "GET", "/services/api/desired", deadline_s=0.5)
+        except ControlError:
+            return "another application (it does not speak the rainbox control API)"
+        if status in (200, 409):
+            return "an unmanaged rainbox core (started by hand, not by the launcher)"
+        return f"an HTTP server that is not a rainbox core (HTTP {status})"
 
     # --- spawning --------------------------------------------------------------
 
@@ -920,9 +945,9 @@ def main(argv: list[str] | None = None) -> int:
     launcher.acquire_lock()
     if launcher.core_port_in_use():
         logger.error(
-            "something already listens on %s:%d — an unmanaged core or another "
-            "application. Stop it first; the launcher never adopts or signals a "
-            "process it did not start.", *launcher.core_addr)
+            "the core cannot bind %s:%d: it is held by %s. Stop it first; the "
+            "launcher never adopts or signals a process it did not start.",
+            *launcher.core_addr, launcher.describe_port_occupant())
         return EXIT_CONFIG_REJECTED
     logger.info("launcher %s; state dir %s; core-only=%s", launcher.launcher_id, launcher.state_dir, launcher.core_only)
     return launcher.run()

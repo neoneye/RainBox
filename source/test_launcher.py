@@ -11,6 +11,7 @@ from __future__ import annotations
 import http.server
 import json
 import os
+import socket
 import subprocess
 import sys
 import threading
@@ -636,3 +637,44 @@ def test_shutdown_requested_during_the_poll_spawns_nothing(lch: L.Launcher, core
     poll_now(lch)
     assert lch.shutting_down and svc(lch).proc is None and not svc(lch).desired
     assert lch.tick(lch.clock_obj.t) is False  # nothing to stop: shutdown completes
+
+
+def _free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def test_port_check_mirrors_the_core_bind_not_a_connect(tree: Path):
+    """A wildcard listener (macOS AirPlay Receiver on *:5000) answers
+    connects but does not stop the core binding 127.0.0.1:port; a listener on
+    the loopback address itself does."""
+    port = _free_port()
+    l = L.Launcher(state_dir=tree / "state6", catalogue={}, source_dir=tree,
+                   core_addr=("127.0.0.1", port), spawn_core=False, base_env=_base_env())
+    assert l.core_port_in_use() is False
+    wildcard = socket.socket()
+    wildcard.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    wildcard.bind(("0.0.0.0", port))
+    wildcard.listen(1)
+    try:
+        assert l.core_port_in_use() is False  # the core can still bind beside it
+    finally:
+        wildcard.close()
+    loop = socket.socket()
+    loop.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    loop.bind(("127.0.0.1", port))
+    loop.listen(1)
+    try:
+        assert l.core_port_in_use() is True
+        assert "another application" in l.describe_port_occupant()
+    finally:
+        loop.close()
+
+
+def test_port_occupant_that_is_a_core_is_named(tree: Path, core: FakeCore):
+    core.desired = lambda: None  # a hand-started core answers 409
+    l = L.Launcher(state_dir=tree / "state7", catalogue={}, source_dir=tree,
+                   core_addr=core.addr, spawn_core=False, base_env=_base_env())
+    assert l.core_port_in_use() is True
+    assert "unmanaged rainbox core" in l.describe_port_occupant()
