@@ -367,6 +367,7 @@ The demo only exercises `processing → completed`; `failed` and `stopped` exist
 | `llm/` | provider-backed LlamaIndex connectivity and the /model test worker |
 | `backup/` | encrypted DB backup (`python -m backup.dump`) and remote upload |
 | `providers/` | Ollama-first provider registry, with Jan and LM Studio support |
+| `launcher.py`, `services/` | the top-level launcher that starts the core and the side services enabled on /settings as siblings, and the data-only service catalogue both sides read (`docs/superpowers/specs/2026-09-10-launcher-design.md`) |
 | `tools/` | the no-LLM workspace_shell command runner |
 | `data/` | the base Q&A knowledge file (`question_answer.jsonl`) |
 | `voice_tts_kokoro/`, `voice_stt_whisper/`, `reranker/`, `telegram_service/`, `discord_service/` | standalone processes with their own venvs (TTS, STT, cross-encoder reranking, Telegram and Discord bridges) — the core talks to/with them over HTTP only |
