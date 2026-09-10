@@ -5,7 +5,10 @@
 **Status:** design note; none of the proposed tables, endpoints, or live reload
 behavior is implemented yet.
 
-**Roadmap:** the [launcher](2026-09-10-launcher-design.md) comes first;
+**Roadmap:** the [launcher](2026-09-10-launcher-design.md) is implemented
+(`source/main.py`, merged 2026-09-10) and this design resumes on top of it;
+the *Supervised by the launcher* section lists the launcher-side extension
+this phase adds. Originally the launcher came first;
 this design resumes once it runs the core and the static services reliably.
 The process-management mechanism lives there and is only summarized here.
 
@@ -293,10 +296,11 @@ as the same bot; verify and retain the authenticated bot identity in local state
 so a different bot cannot inherit the previous bot's checkpoints.
 
 The bridges do **not** load `.env`. Under supervision the launcher supplies the
-credential from its startup environment or its private
-`<state-dir>/credentials.env`, with environment precedence at every spawn. File
-rotation applies on Restart only when the file is the selected source. Manual
-runs receive credentials from their launch environment. The [launcher design's
+credential at every spawn from its private `<state-dir>/credentials.env`
+first, and only for a name the file does not set, from its own startup
+environment — so editing the file and pressing Restart rotates the token
+without restarting the launcher. Manual runs receive credentials from their
+launch environment. The [launcher design's
 environment contract](2026-09-10-launcher-design.md#environment-and-credential-ownership)
 is the authority; do not add a second bridge-side dotenv loader.
 
@@ -349,9 +353,12 @@ heartbeats and status back up it. Agents need config injected because they
 have no other way to receive it; a bridge fetches its config over HTTP when
 the stream tells it to — at connect and on a `bridge_config` event — and
 owns its own transport/config recovery. Nothing in the bridge polls for
-configuration; like the launcher, it sleeps until something happens. The launcher observes process liveness
-and exit status and sends signals; the core's agent supervisor does not own or
-control bridge processes. Child logs are not read by the launcher.
+configuration; like the launcher, it sleeps until something happens. The
+launcher observes process liveness and exit status and sends signals; the
+core's agent supervisor does not own or control bridge processes. The
+launcher reads a bridge's stdout/stderr like any child's and prints each
+line prefixed with the entry's label (see below), so several bridges' logs
+stay attributable on one terminal.
 
 ## Supervised by the launcher
 
@@ -365,6 +372,7 @@ key from a complete desired snapshot.
 {
   "key": "bridge:<connector-uuid>",
   "kind": "discord_bridge",
+  "label": "discord mainbot",
   "enabled": true,
   "restart_nonce": "<connector-restart-nonce>",
   "env": {
@@ -386,6 +394,55 @@ validates that the key UUID, `BRIDGE_CONNECTOR`, and state basename agree, rejec
 path separators/traversal in the basename, and supplies the absolute
 `<state-dir>/bridge-<uuid>.json` through the named variable. It never edits bridge
 state itself. `env` cannot also supply or override that state-file variable.
+`label` is display-only — the connector's name, sanitized to one printable
+line — used for the log-line prefix and the status table; the `key` stays the
+stable identity, so a rename changes the prefix and nothing else.
+
+### What this adds to the launcher as built
+
+The launcher (`source/main.py`, `source/services/`) handles static services
+only. This phase extends it, all under existing seams:
+
+- **Catalogue.** `services/definitions.py` gains one `ServiceKind` per
+  adapter (`discord_bridge`, `telegram_bridge`) with `directory`, `argv`, the
+  adapter's state-file variable name, and `dynamic=True`; a dynamic kind
+  never appears as a static entry and has no `services.<key>.enabled`
+  setting of its own.
+- **Validation.** `validate_desired` accepts keys of the form
+  `bridge:<uuid>` whose kind is dynamic, and for those entries only,
+  `token_env`, `state_file`, and `label`; static entries still reject them.
+  The rule that every static kind must be present stays; dynamic entries
+  are whatever the snapshot lists, and a key absent from a valid snapshot
+  is a removal.
+- **Spawn.** For a dynamic entry the launcher resolves `token_env` through
+  its existing `resolve_credential` (file first, boot environment second)
+  and, when neither has it, reports the already-defined `credential missing`
+  state with the source it looked in and spawns nothing; it sets the
+  state-file variable to `<state-dir>/<name>`; everything else — the
+  filtered environment, the process group, exit-code mapping, backoff,
+  the crash budget, the two-phase shutdown — is unchanged.
+- **Status.** `LauncherStatus.view` currently lists the core and the static
+  keys; it must also carry every reported dynamic key so `/bridges` can show
+  its connectors. The label rides along for display.
+- **Restart.** `POST /services/api/restart/<key>` with a `bridge:<uuid>`
+  key rewrites the connector row's nonce rather than a settings key.
+
+### Which change goes down which channel
+
+Two different pushes serve two different processes, and a write must trigger
+the right one:
+
+| Change | Reaches | Over |
+|---|---|---|
+| connector `enabled`, `launch_mode`, `services.bridges.autostart`, a Restart, a launch-environment edit | the launcher | the control socket: `CHANNEL.push_desired()` in the committing request |
+| binding, folder, policy, connector name/realm edits that do not change the launch environment | the bridge process | the SSE stream: a `bridge_config` event from the same transaction |
+
+A change of the first kind also reaches the bridge indirectly — the launcher
+stops or restarts it. A change of the second kind never touches the process.
+The desired snapshot the core pushes must read the connector rows and the
+`services.*` settings in one consistent transaction (REPEATABLE READ, as the
+config endpoint already does), so an autostart flip cannot pair with a stale
+connector row.
 
 The entry's desired `enabled` is:
 
@@ -396,9 +453,10 @@ services.bridges.autostart AND connector.launch_mode == "launcher"
 
 `services.bridges.autostart` is a registry bool (default true). Folder/binding
 enablement never controls whether the process runs: an enabled connector must
-keep listening for change events even with no active bindings. `launch_mode` controls ownership,
-not forwarding permission; the bridge's effective-enabled rule is unchanged.
-`--core-only` suppresses bridge launches too.
+keep listening for change events even with no active bindings. `launch_mode`
+controls ownership, not forwarding permission; the bridge's effective-enabled
+rule is unchanged. `--core-only` suppresses bridge launches too, exactly as it
+does static services, and the status row says so.
 
 Persist `restart_nonce` on the connector row, not as dynamic `app_setting` keys.
 Restart replaces it; every transition of the desired launch gate from false to
