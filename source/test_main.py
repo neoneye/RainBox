@@ -678,3 +678,22 @@ def test_port_occupant_that_is_a_core_is_named(tree: Path, core: FakeCore):
                    core_addr=core.addr, spawn_core=False, base_env=_base_env())
     assert l.core_port_in_use() is True
     assert "unmanaged rainbox core" in l.describe_port_occupant()
+
+
+def test_idle_loop_sleeps_until_the_poll_not_a_timer(lch: L.Launcher, core: FakeCore):
+    """Idle, the next deadline is the desired-state poll (5 s), not a
+    sub-second timer; a pending backoff retry or stop escalation brings it
+    forward."""
+    clock = lch.clock_obj  # type: ignore[attr-defined]
+    core.desired = lambda: desired_for(lch, enabled=False)
+    poll_now(lch)
+    assert lch.next_deadline(clock.t) - clock.t == pytest.approx(L.POLL_INTERVAL, abs=0.01)
+    svc(lch).next_retry = clock.t + 1.5
+    assert lch.next_deadline(clock.t) - clock.t == pytest.approx(1.5)
+    svc(lch).next_retry = None
+    svc(lch).stop_deadline = clock.t + 0.7
+    assert lch.next_deadline(clock.t) - clock.t == pytest.approx(0.7)
+    svc(lch).stop_deadline = None
+    lch._status_dirty, lch._status_retry_at = True, clock.t + 2.0
+    assert lch.next_deadline(clock.t) - clock.t == pytest.approx(2.0)
+    assert lch.next_deadline(clock.t + 100) == clock.t + 100  # never in the past

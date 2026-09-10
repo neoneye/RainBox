@@ -21,6 +21,9 @@ Design: docs/superpowers/specs/2026-09-10-launcher-design.md. In short:
   it change and restarts the process. The core never executes anything.
 - A single-threaded loop over monotonic deadlines: reap, escalate, retry,
   poll, heartbeat, and a two-phase shutdown (services first, core last).
+  Idle, it sleeps until its next real deadline (the 5-second poll) and is
+  woken early only by a signal — SIGCHLD when a child exits, SIGTERM/SIGINT
+  to shut down — so it never spins on a timer.
 """
 from __future__ import annotations
 
@@ -88,6 +91,7 @@ CRASH_BUDGET: int = 5             # unexpected exits ...
 CRASH_WINDOW: float = 120.0       # ... within this many seconds latch `failed`
 BACKOFF_RESET_AFTER: float = 120.0
 STATUS_RETRY_AFTER: float = 2.0   # a failed status post is retried this soon
+MAX_SLEEP: float = 60.0           # longest the loop sleeps between passes
 
 # Variables that must never leak from the launcher into a service, whatever
 # the operator exported (loader injection, interpreter overrides, DB access).
@@ -903,6 +907,24 @@ class Launcher:
             self._post_status(now)
         return True
 
+    def next_deadline(self, now: float) -> float:
+        """The earliest moment the loop has something to do: the next desired
+        poll or heartbeat, a pending status retry, a stop escalation, a
+        backoff retry, a group drain, or a shutdown phase deadline. The loop
+        sleeps until then — an idle launcher wakes for its 5-second poll and
+        nothing else, because child exits arrive as SIGCHLD through the
+        wakeup fd rather than being polled for."""
+        candidates = [self._next_poll, self._next_heartbeat]
+        if self._status_dirty:
+            candidates.append(self._status_retry_at)
+        if self.phase_deadline is not None:
+            candidates.append(self.phase_deadline)
+        for rec in (self.core, *self.services.values()):
+            for t in (rec.stop_deadline, rec.next_retry, rec.group_drain_deadline):
+                if t is not None:
+                    candidates.append(t)
+        return max(now, min(candidates))
+
     def run(self) -> int:
         rfd, wfd = os.pipe()
         os.set_blocking(wfd, False)
@@ -914,11 +936,16 @@ class Launcher:
 
         signal.signal(signal.SIGINT, _on_signal)
         signal.signal(signal.SIGTERM, _on_signal)
+        # SIGCHLD needs no handler body: its arrival writes a byte to the
+        # wakeup fd, which is what ends the select() below so the child is
+        # reaped at once instead of at the next timer.
+        signal.signal(signal.SIGCHLD, lambda *_: None)
         try:
             while True:
                 if not self.tick():
                     break
-                r, _, _ = select.select([rfd], [], [], 0.25)
+                timeout = min(MAX_SLEEP, self.next_deadline(self.clock()) - self.clock())
+                r, _, _ = select.select([rfd], [], [], max(0.0, timeout))
                 if r:
                     os.read(rfd, 4096)
         finally:

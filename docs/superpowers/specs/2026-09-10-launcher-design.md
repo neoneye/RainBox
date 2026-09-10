@@ -344,6 +344,73 @@ healthy supervised child's state; the reverse ownership order may cause the
 supervised attempt to fail. State-dir locks cannot prevent duplicate launchers
 using different directories from competing for the same fixed core port.
 
+## Idle cost and shortcomings
+
+rainbox is meant to sit idle without waking the CPU or GPU. The launcher is a
+polling design, and polling has an idle cost; it was measured on 2026-09-10
+(macOS, Apple Silicon, sandbox database, `--core-only`, nothing enqueued),
+sampling `top` per process: context switches over 30 s as the wakeup count,
+and %CPU averaged over 60 s.
+
+| Process | Context switches / 30 s | CPU idle |
+|---|---|---|
+| core alone (`core.py`, unmanaged) | 144–194 (varies with its own 5 s ticks) | 0.09–0.14 % |
+| launcher, fixed 0.25 s timer (first implementation) | 160 | 0.14 CPU-s in 128 s |
+| launcher, deadline-driven loop (current) | 36 | 0.11 CPU-s in 136 s |
+| core under the launcher | +77 over core alone | 0.25–0.27 % |
+
+What the numbers say:
+
+- **The launcher itself is now cheap.** Its loop sleeps until its next real
+  deadline and is woken early only by signals (`SIGCHLD` for a child exit,
+  `SIGTERM`/`SIGINT` for shutdown), so an idle launcher wakes for its
+  5-second poll and nothing else. The first implementation used a fixed
+  0.25 s `select` timeout — four wakeups a second for no reason — which is
+  why that row exists: it is the kind of regression this project is meant
+  to avoid, and the deadline-driven loop replaced it.
+- **The core's idle got worse, not better.** Every `POLL_INTERVAL` (5 s) the
+  launcher makes one HTTP request that the core serves as a full Flask
+  request: a session, one `SELECT` over `app_setting`, JSON. Every
+  `HEARTBEAT_INTERVAL` (30 s) it posts the status table. That is seven
+  requests per 30 s, about 77 extra context switches and 0.1–0.15 %
+  CPU on the core — roughly double the core's own idle. Small in absolute
+  terms, but it is new work on a process whose idle was the baseline this
+  project protects, and it scales with nothing: it is paid whether or not a
+  single service is enabled.
+- **The 5-second poll exists for responsiveness, not correctness.** A toggle
+  on `/settings` takes effect within one poll. Nothing else needs the
+  interval; the core could tell the launcher when something changed.
+
+Remedy, not yet built (it changes the control contract, so it belongs in its
+own change):
+
+- **Long-poll the desired state and piggyback status on it.** One request:
+  `GET /services/api/desired?wait=55&status=<table>` — the core records the
+  status from the query body, then holds the response until a service
+  setting or nonce changes (a `threading.Event` set by
+  `set_service_setting` / `bump_restart_nonce`) or the wait expires. Idle,
+  that is one request a minute instead of seven per 30 s, and a toggle
+  applies in milliseconds instead of up to 5 s. The launcher's single thread
+  cannot block on a 55 s request without losing its 1 s reaping bound, so
+  the long-poll runs on one helper thread that hands the parsed snapshot to
+  the loop through the existing wakeup fd; the loop's own HTTP client keeps
+  its 1 s deadline for the fallback poll when the long-poll is down.
+- **Stretch the heartbeat once status rides on the long-poll**: the 90 s
+  staleness rule becomes "three missed long-polls", and the separate POST
+  disappears.
+
+Other shortcomings worth knowing:
+
+- Every idle wakeup in the core is its own (the 5 s `IDLE_TICK_TIMEOUT`
+  Postgres poll and the 5 s cron tick); the launcher neither fixes nor
+  worsens those.
+- `running` means the process is alive, not that the service answers; a
+  service loading a model for a minute is `running` the whole time.
+- The launcher does not install venvs or models; `not installed` is a
+  report, not an action.
+- Log lines of every child interleave on the launcher's terminal, unprefixed
+  unless the service prefixes its own.
+
 ## Implementation and acceptance
 
 Files: `source/main.py` (launcher), `source/core.py` (core), `source/test_main.py`, `source/test_core.py`, data-only
