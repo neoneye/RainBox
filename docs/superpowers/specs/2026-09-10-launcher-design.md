@@ -58,25 +58,40 @@ venv/bin/python main.py [--state-dir <dir>] [--core-only]
 - `--core-only` suppresses every service entry regardless of its DB toggle.
   The status page must show this override rather than suggest a toggle is broken.
 - Spawn with `Popen(argv, cwd=…, env=…, start_new_session=True, shell=False,
-  stdin=DEVNULL, close_fds=True)`. Use absolute executable/script paths, resolved
-  from the local catalogue. Preserve a venv interpreter's invocation path even
-  if it is itself a symlink; resolving it to the base Python can lose the venv.
-  Stdout/stderr are inherited. Do not use `preexec_fn` or fork without exec.
+  stdin=DEVNULL, stdout=PIPE, stderr=STDOUT, close_fds=True)` (plus
+  `pass_fds` for the core's control fd). Use absolute executable/script paths,
+  resolved from the local catalogue. Preserve a venv interpreter's invocation
+  path even if it is itself a symlink; resolving it to the base Python can
+  lose the venv. Do not use `preexec_fn` or fork without exec.
+- **Child output is piped, not inherited.** Each child's stdout and stderr
+  are one non-blocking pipe the loop selects on; every line is printed to
+  the launcher's stdout prefixed `[<key>] `, so a traceback from Kokoro and
+  one from Whisper can never interleave anonymously. A pipe stays open until
+  EOF, so a grandchild that inherited it is attributed to its parent's key.
+  Idle cost is nil: the loop wakes only when a child writes.
+- **POSIX only.** `select()` on a pipe, `SIGCHLD`, process groups, `fcntl`
+  locks — none of it exists on Windows, and neither does the core's
+  `posix_spawn`/socketpair agent protocol. rainbox is a macOS/Linux program;
+  the launcher says so at import and refuses to run elsewhere rather than
+  failing obscurely in the loop.
 
 Each service gets its own process group/session. Terminal Ctrl-C reaches the
 launcher, which performs the shutdown sequence below. Exact fork/spawn selection
 is Python's implementation detail; the relevant contract is documented by
 [Python's subprocess API](https://docs.python.org/3/library/subprocess.html).
 
-The single-threaded loop sleeps in `select()` on two descriptors — the
-control socket to the core and the signal wakeup pipe — with a timeout equal to
-its earliest own deadline (a stop escalation, a backoff retry, a group drain, a
-shutdown phase, the next inactivity log line). It wakes for a line from the
-core, for `SIGCHLD` (a child exited: reap it now), for `SIGTERM`/`SIGINT`, or
-for that deadline, and for nothing else. There is no timer tick and no HTTP:
-the launcher is not an HTTP client at all. Sends to the core are bounded by a
-2-second socket timeout; a core that will not take a status line is dead or
-wedged and its channel is dropped.
+The single-threaded loop sleeps in `select()` on the control socket to the
+core, the signal wakeup pipe, and every child's output pipe — with a timeout
+equal to its earliest own deadline (a stop escalation, a backoff retry, a
+group drain, a shutdown phase, the next inactivity log line). It wakes for a
+line from the core, for a child writing output, for `SIGCHLD` (a child
+exited: reap it now), for `SIGTERM`/`SIGINT`, or for that deadline, and for
+nothing else. There is no timer tick and no HTTP: the launcher is not an HTTP
+client at all. Sends to the core never block: a status line the socket cannot
+take yet stays pending, the socket joins the write set, and a newer table
+replaces a pending one whose bytes have not yet gone out. Backpressure never
+closes the channel (an inherited socketpair cannot be reopened); only a peer
+that is gone does.
 
 ## Environment and credential ownership
 
@@ -110,13 +125,15 @@ The launcher parses a deliberately limited format:
   An unquoted `#` is part of the value. Reject malformed quoting and duplicate
   names with a line-number error, never echo the line's contents.
 
-At **every spawn**, resolve a credential as startup launcher environment value
-if its name is present, otherwise the freshly parsed credentials-file value.
-An explicitly empty value means missing and does not fall through. Environment
-wins consistently; the file never overrides an exported value just on restart.
-Show the selected source (environment/file) without its value. File rotation
-reaches the next Restart when the file is the selected source; changing an
-exported value requires restarting the launcher. Running children keep their
+At **every spawn**, resolve a credential from the freshly parsed credentials
+file first, and only if the file does not set that name, from the launcher's
+startup environment. The file is the operator's source of truth for service
+credentials, so editing it and pressing Restart takes effect even when the
+same name was exported when the launcher booted — silently ignoring a file
+edit because of a variable set days ago would be the astonishing behavior.
+An empty value is unset at either level. Show the selected source
+(file/environment) without its value. Changing an exported value that the
+file does not override requires restarting the launcher. Running children keep their
 current environment. Invalid file syntax prevents file-backed spawns, not the
 core or already-running services. Neither source is copied into DB, argv, status,
 or the desired-state API. A child may still deliberately read local files:
@@ -141,16 +158,15 @@ either end means the peer is gone. When the core dies the launcher sees EOF
 is unmanaged from that moment. A core started without `--control-fd` (by hand,
 `tools.serve_ui`) is unmanaged and `/settings` says so.
 
-Before spawning the core, check whether the core could bind its port: attempt
-the same bind the core's server makes (the specific loopback address with
-`SO_REUSEADDR`, werkzeug's `allow_reuse_address`), not a connect. On macOS,
-ControlCenter's AirPlay Receiver listens on `*:5000` and answers loopback
-connects, yet the core's `127.0.0.1:5000` bind succeeds beside it and loopback
-traffic reaches the more specific socket — a connect probe would refuse to
-start on every Mac with AirPlay Receiver on. If the bind fails, stop bootstrap
-with a diagnostic and do not adopt or signal the occupant. The check is
-advisory: a bind race can still occur, and a core that lost the race exits
-nonzero and is reported like any crash.
+There is no port probe before spawning the core: any check the launcher
+made would be a time-of-check/time-of-use race against the core's own bind a
+moment later, and a false refusal is worse than a clean failure (an earlier
+connect-based probe refused to start on every Mac with AirPlay Receiver on,
+which answers loopback connects on `*:5000`). The core binds first thing in
+`main()`, before its supervisor thread or control channel exist, and exits
+with code 3 — the "held by another process" convention — when the address is
+in use, with a log line naming the port. The launcher reports that as
+`failed` without a respawn loop, exactly like a held lock.
 
 Until the first complete valid snapshot from the current core, start no side
 services. Malformed lines, unknown schema versions, unknown kinds, duplicate
@@ -326,8 +342,11 @@ once). Never on a timer: an idle system sends nothing.
 
 The table includes `core` and disabled services. The core accepts only
 increasing sequence numbers; receipt time is its own. Status stays in memory.
-A send the core does not take within 2 seconds drops the channel; the next
-core learns the table after its first snapshot.
+A slow core costs the launcher one buffered line, never the channel: the
+line waits until the socket is writable, a newer table replaces a pending
+line none of whose bytes have gone out, and a line partly on the wire is
+finished before the next. Only `EPIPE`/`ECONNRESET` — the peer is gone —
+closes the channel; the next core learns the table after its first snapshot.
 
 States: `starting`, `running`, `stopping`, `stopped`, `backoff`, `failed`,
 `credential missing`, `not installed`. Include next-retry time for `backoff` and
@@ -339,11 +358,11 @@ state as `unknown`; it never alters the desired toggle. A core started without
 `--control-fd` — by hand, or `tools.serve_ui` — is unmanaged from the start
 and displays exactly that.
 
-Inherited child output may interleave and is not currently guaranteed to have
-service prefixes. The launcher logs service key, PID, spawn, exit, and signals
-itself; it does not read child output or promise to expose child error text.
-Activity Monitor hierarchy and the key-to-PID status table are the supported
-way to identify children. Process-name symlinks are an optional later experiment,
+Child output is read by the launcher and printed with a `[<key>] ` prefix
+per line (see *Runtime*); the launcher additionally logs service key, PID,
+spawn, exit, and signals itself. Activity Monitor hierarchy and the
+key-to-PID status table identify children by process; the prefix identifies
+them by log line. Process-name symlinks are an optional later experiment,
 not a prerequisite or a reason to risk bypassing a service venv.
 
 A port conflict means an unmanaged instance or another application may be there,
@@ -403,8 +422,24 @@ Shortcomings that remain:
   service loading a model for a minute is `running` the whole time.
 - The launcher does not install venvs or models; `not installed` is a
   report, not an action.
-- Log lines of every child interleave on the launcher's terminal, unprefixed
-  unless the service prefixes its own.
+- **A launcher crash mid-transition aborts the transition.** The launcher
+  is stateless by design: it consumes a new restart nonce in memory before
+  it stops the old process, and on startup it adopts whatever nonce the
+  core's first snapshot carries as the baseline. If the launcher itself is
+  killed between consuming a nonce and spawning the replacement, the next
+  launcher sees the same nonce, treats it as already applied, and does not
+  finish the restart; the service stays as the crash left it (usually
+  stopped, which a snapshot with `enabled: true` starts again on the next
+  reconcile). Pressing Restart again completes it. Persisting consumed
+  nonces would close this window at the cost of launcher state on disk; not
+  worth it for a process that is not expected to crash.
+- **POSIX only**, as stated under *Runtime*.
+- **The credentials-file grammar is the launcher's own**, deliberately
+  smaller than dotenv's: one `NAME=value` per line, the value split at the
+  first `=` (so `API_KEY=foo=bar` is `foo=bar`), one optional pair of
+  matching quotes whose contents are literal (spaces inside are kept), no
+  escapes, no interpolation, no multiline values, no `export`. Anything
+  else is refused with a line number. Tests pin those cases.
 
 ## Implementation and acceptance
 
