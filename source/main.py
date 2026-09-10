@@ -63,6 +63,12 @@ from services.definitions import (
 
 logger = logging.getLogger("launcher")
 
+# The launcher is POSIX-only by construction — select() on a pipe, SIGCHLD,
+# process groups, fcntl locks — as is the core (posix_spawn, socketpair fds).
+# Say so at import rather than failing obscurely somewhere in the loop.
+if os.name != "posix":
+    raise SystemExit("main.py (the rainbox launcher) requires a POSIX system (macOS or Linux)")
+
 SOURCE_DIR: Path = Path(__file__).resolve().parent
 REPO_ROOT: Path = SOURCE_DIR.parent
 DEFAULT_STATE_DIR: Path = REPO_ROOT / "var" / "services"
@@ -87,8 +93,8 @@ CRASH_BUDGET: int = 5             # unexpected exits ...
 CRASH_WINDOW: float = 120.0       # ... within this many seconds latch `failed`
 BACKOFF_RESET_AFTER: float = 120.0
 MAX_SLEEP: float = 3600.0         # longest the loop sleeps between passes
-SEND_TIMEOUT: float = 2.0         # a status line the core will not take = a dead core
 MAX_LINE_BYTES: int = 1 << 20     # a control line longer than this is garbage
+MAX_OUTPUT_LINE: int = 1 << 16    # a child line without a newline is flushed at this size
 
 # Inactivity log: after this long with nothing to do, say so — then at the
 # next step, then every INACTIVITY_REPEAT. Long enough to prove liveness,
@@ -104,6 +110,13 @@ FORBIDDEN_ENV_KEYS: frozenset[str] = frozenset({
 })
 
 _ENV_NAME_OK = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _print_child_line(key: str, line: str) -> None:
+    """Default sink for child output: the launcher's own stdout, prefixed
+    with the service key so interleaved logs stay attributable."""
+    sys.stdout.write(f"[{key}] {line}\n")
+    sys.stdout.flush()
 
 
 # --- credentials file -------------------------------------------------------
@@ -277,6 +290,8 @@ class Proc:
     running_since: float | None = None
     group_drain_deadline: float | None = None
     credential_source: str | None = None
+    out_fd: int | None = None            # the child's stdout+stderr pipe, non-blocking
+    out_buf: bytes = b""
 
     def status(self) -> dict[str, Any]:
         rec: dict[str, Any] = {
@@ -298,6 +313,7 @@ class Launcher:
         core_argv: list[str] | None = None, spawn_core: bool = True,
         base_env: dict[str, str] | None = None,
         clock: Callable[[], float] = time.monotonic,
+        on_output: Callable[[str, str], None] | None = None,
     ) -> None:
         self.state_dir = Path(state_dir).resolve()
         self.core_only = core_only
@@ -323,6 +339,13 @@ class Launcher:
         self._status_dirty = True
         self._lock_fh = None
         self._signals = 0
+        self.on_output = on_output or _print_child_line
+        # Outbound status: the line being written (may be partially sent) and
+        # at most one newer complete table waiting behind it. A slow core
+        # costs us nothing but a buffered line; only a dead peer closes.
+        self._send_buf = b""
+        self._send_buf_started = False   # some bytes of _send_buf already went out
+        self._queued_status = b""
         # The control channel to the current core, and the read buffer.
         self.core_sock: socket.socket | None = None
         self._core_buf = b""
@@ -355,24 +378,6 @@ class Launcher:
         fh.flush()
         self._lock_fh = fh  # held for the launcher's lifetime; never unlinked
 
-    def core_port_in_use(self) -> bool:
-        """Whether the core could NOT bind its port right now: attempt the
-        same bind the core's server makes (specific address, SO_REUSEADDR —
-        werkzeug's `allow_reuse_address`). A connect probe is wrong on macOS,
-        where ControlCenter's AirPlay Receiver listens on *:5000 and answers
-        loopback connects, yet a 127.0.0.1:5000 bind beside it succeeds and
-        loopback traffic reaches the more specific socket."""
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            try:
-                s.bind(self.core_addr)
-                s.listen(1)
-            except OSError as exc:
-                if exc.errno in (errno.EADDRINUSE, errno.EACCES):
-                    return True
-                raise
-            return False
-
     # --- activity / inactivity log ---------------------------------------------
 
     def _note_activity(self, now: float) -> None:
@@ -400,14 +405,17 @@ class Launcher:
         return parse_credentials(path.read_text())
 
     def resolve_credential(self, name: str) -> tuple[str, str] | None:
-        """Startup environment first, then the credentials file re-read now.
-        An explicitly empty value is missing. Returns (source, value)."""
-        env_value = self.base_env.get(name)
-        if env_value is not None and env_value != "":
-            return ("environment", env_value)
+        """The credentials file, re-read now, is the source of truth; the
+        launcher's startup environment is the fallback for a name the file
+        does not set. So editing the file and pressing Restart takes effect
+        even if the same name was exported when the launcher booted. An empty
+        value counts as unset at either level. Returns (source, value)."""
         file_value = self._read_credentials().get(name)
         if file_value:
             return ("file", file_value)
+        env_value = self.base_env.get(name)
+        if env_value:
+            return ("environment", env_value)
         return None
 
     def _service_paths(self, kind: ServiceKind) -> tuple[Path, list[str]]:
@@ -448,7 +456,8 @@ class Launcher:
         try:
             proc = subprocess.Popen(
                 argv, cwd=str(cwd), env=env, start_new_session=True, shell=False,
-                stdin=subprocess.DEVNULL, close_fds=True, pass_fds=pass_fds,
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                close_fds=True, pass_fds=pass_fds,
             )
         except FileNotFoundError as exc:
             rec.state, rec.message = "not installed", f"missing {exc.filename}"
@@ -474,6 +483,11 @@ class Launcher:
             self._core_buf = b""
             self._core_snapshot_seen = False
         rec.proc, rec.pid, rec.pgid = proc, proc.pid, proc.pid
+        assert proc.stdout is not None
+        self._close_output(rec)
+        rec.out_fd = proc.stdout.fileno()
+        os.set_blocking(rec.out_fd, False)
+        rec.out_buf = b""
         rec.state, rec.since, rec.message = "running", _utc_now(), None
         rec.running_since = now
         rec.stop_requested, rec.pending_restart = False, False
@@ -552,24 +566,91 @@ class Launcher:
             self._status_dirty = True
 
     def _send_status(self) -> None:
-        """Push the full table down the channel. Event-driven: only after a
-        change, never on a timer. A send the core will not take within
-        SEND_TIMEOUT means the core is dead or wedged; the channel is dropped
-        and the next core learns the table after its first snapshot."""
+        """Queue the full table for the channel. Event-driven: only after a
+        change, never on a timer. The send is non-blocking: if the core is
+        slow to read, the newest table waits (an older unsent one is replaced
+        — only the latest picture matters) and the socket joins select()'s
+        write set. Backpressure never closes the channel; only a peer that is
+        gone does, and the next core learns the table after its first
+        snapshot."""
         self._status_dirty = False
-        sock = self.core_sock
-        if sock is None or not self._core_snapshot_seen:
+        if self.core_sock is None or not self._core_snapshot_seen:
             return
         self.sequence += 1
         line = (json.dumps(self.status_payload()) + "\n").encode()
-        try:
-            sock.setblocking(True)
-            sock.settimeout(SEND_TIMEOUT)
-            sock.sendall(line)
-            sock.setblocking(False)
-        except OSError as exc:
-            logger.warning("status not delivered (%s); dropping the core channel", exc)
-            self._close_core_channel()
+        if self._send_buf and self._send_buf_started:
+            self._queued_status = line   # a line already on the wire must finish; the newer table waits
+        else:
+            self._send_buf = line        # nothing of the old line went out: the newer table replaces it
+            self._queued_status = b""
+        self._flush_status()
+
+    @property
+    def wants_write(self) -> bool:
+        return self.core_sock is not None and bool(self._send_buf or self._queued_status)
+
+    def _flush_status(self) -> None:
+        """Write as much pending status as the socket takes right now."""
+        sock = self.core_sock
+        while sock is not None and (self._send_buf or self._queued_status):
+            if not self._send_buf:
+                self._send_buf, self._queued_status = self._queued_status, b""
+                self._send_buf_started = False
+            try:
+                n = sock.send(self._send_buf)
+            except BlockingIOError:
+                return  # the core will read later; select() wakes us when writable
+            except OSError as exc:
+                logger.warning("core channel gone on send (%s)", exc)
+                self._send_buf, self._queued_status = b"", b""
+                self._send_buf_started = False
+                self._close_core_channel()
+                return
+            self._send_buf = self._send_buf[n:]
+            self._send_buf_started = bool(self._send_buf)
+
+    # --- child output --------------------------------------------------------------
+
+    def _close_output(self, rec: Proc) -> None:
+        if rec.out_fd is not None:
+            if rec.out_buf:
+                self.on_output(rec.key, rec.out_buf.decode("utf-8", "replace"))
+            try:
+                os.close(rec.out_fd)
+            except OSError:
+                pass
+            rec.out_fd, rec.out_buf = None, b""
+
+    def _drain_outputs(self, now: float) -> None:
+        """Read whatever the children have written (non-blocking) and hand
+        each line to on_output with its service key, so interleaved logs stay
+        attributable. A pipe stays open until EOF — a grandchild that inherited
+        it keeps it open, and its lines carry the parent's key."""
+        for rec in (self.core, *self.services.values()):
+            fd = rec.out_fd
+            if fd is None:
+                continue
+            while True:
+                try:
+                    chunk = os.read(fd, 65536)
+                except BlockingIOError:
+                    break
+                except OSError:
+                    chunk = b""
+                if not chunk:
+                    self._close_output(rec)
+                    break
+                self._note_activity(now)
+                rec.out_buf += chunk
+                while b"\n" in rec.out_buf:
+                    line, rec.out_buf = rec.out_buf.split(b"\n", 1)
+                    self.on_output(rec.key, line.decode("utf-8", "replace"))
+                if len(rec.out_buf) >= MAX_OUTPUT_LINE:
+                    self.on_output(rec.key, rec.out_buf.decode("utf-8", "replace"))
+                    rec.out_buf = b""
+
+    def output_fds(self) -> list[int]:
+        return [rec.out_fd for rec in (self.core, *self.services.values()) if rec.out_fd is not None]
 
     def status_payload(self) -> dict[str, Any]:
         services = {key: rec.status() for key, rec in self.services.items()}
@@ -659,7 +740,7 @@ class Launcher:
             rec.state = "failed"
             rec.message = ("configuration or credential rejected (exit 2); see its log"
                            if rc == EXIT_CONFIG_REJECTED else
-                           "locked by another process (exit 3); see its log for the pid")
+                           "port or lock held by another process (exit 3); see its log")
             rec.pending_restart = False
             logger.error("%s failed deterministically: %s", rec.key, rec.message)
             return
@@ -851,7 +932,9 @@ class Launcher:
         """One pass. Returns False once shutdown has completed."""
         now = self.clock() if now is None else now
         self._reap(now)
+        self._drain_outputs(now)
         self._read_core(now)
+        self._flush_status()
         if self.shutting_down:
             self.core.desired = self.core.desired and self.shutdown_phase < 2
             for rec in (*self.services.values(), self.core):
@@ -892,9 +975,12 @@ class Launcher:
             while True:
                 if not self.tick():
                     break
-                fds = [rfd] + ([self.core_sock] if self.core_sock is not None else [])
+                rlist: list[Any] = [rfd, *self.output_fds()]
+                if self.core_sock is not None:
+                    rlist.append(self.core_sock)
+                wlist = [self.core_sock] if self.wants_write else []
                 timeout = min(MAX_SLEEP, self.next_deadline(self.clock()) - self.clock())
-                r, _, _ = select.select(fds, [], [], max(0.0, timeout))
+                r, _, _ = select.select(rlist, wlist, [], max(0.0, timeout))
                 if rfd in r:
                     os.read(rfd, 4096)
                     self._note_activity(self.clock())
@@ -903,6 +989,8 @@ class Launcher:
             os.close(rfd)
             os.close(wfd)
             self._close_core_channel()
+            for rec in (self.core, *self.services.values()):
+                self._close_output(rec)
         logger.info("bye")
         return self.exit_code
 
@@ -921,13 +1009,6 @@ def main(argv: list[str] | None = None) -> int:
     launcher = Launcher(state_dir=args.state_dir, core_only=args.core_only,
                         core_addr=core_addr_from_env())
     launcher.acquire_lock()
-    if launcher.core_port_in_use():
-        logger.error(
-            "the core cannot bind %s:%d: it is held by another process — an unmanaged "
-            "core.py started by hand, or another application. Stop it first; the "
-            "launcher never adopts or signals a process it did not start.",
-            *launcher.core_addr)
-        return EXIT_CONFIG_REJECTED
     logger.info("launcher pid %d; state dir %s; core-only=%s", os.getpid(), launcher.state_dir, launcher.core_only)
     return launcher.run()
 

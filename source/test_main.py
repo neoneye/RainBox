@@ -33,6 +33,9 @@ if out:
                       "env": dict(os.environ)}))
 if mode == "exit":
     sys.exit(int(os.environ.get("TEST_CODE", "1")))
+if mode == "print":
+    print("hello from stdout", flush=True)
+    print("warning on stderr", file=sys.stderr, flush=True)
 if mode == "grandchild":
     subprocess.Popen([sys.executable, "-c",
         "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)"])
@@ -208,6 +211,9 @@ def test_parse_credentials_grammar():
     assert L.parse_credentials(text) == {
         "A": "plain value with # hash", "B": "quoted # kept", "C": "single", "D": "", "E": "",
     }
+    assert L.parse_credentials("API_KEY=foo=bar") == {"API_KEY": "foo=bar"}
+    assert L.parse_credentials('PAD="  spaced  "') == {"PAD": "  spaced  "}
+    assert L.parse_credentials("URL=https://h/x?a=1&b=2#frag") == {"URL": "https://h/x?a=1&b=2#frag"}
     for bad in ("A=1\nA=2", "A=\"open", "1A=x", "novalue", "A='x'y", "A=\"a\"b\""):
         with pytest.raises(L.CredentialsError) as info:
             L.parse_credentials(bad)
@@ -544,6 +550,9 @@ def test_core_child_gets_the_launcher_selected_port_and_fd(tree: Path, monkeypat
         def __init__(self, argv, **kw):
             captured["argv"], captured["env"], captured["pass_fds"] = argv, kw["env"], kw["pass_fds"]
             self.pid = 424242
+            r, w = os.pipe()
+            os.close(w)
+            self.stdout = os.fdopen(r, "rb")
 
         def poll(self):
             return None
@@ -557,34 +566,6 @@ def test_core_child_gets_the_launcher_selected_port_and_fd(tree: Path, monkeypat
     fd = int(captured["argv"][captured["argv"].index("--control-fd") + 1])
     assert captured["pass_fds"] == (fd,)
     assert l.core_sock is not None
-
-
-def test_port_check_mirrors_the_core_bind_not_a_connect(tree: Path):
-    """A wildcard listener (macOS AirPlay Receiver on *:5000) answers
-    connects but does not stop the core binding 127.0.0.1:port; a listener on
-    the loopback address itself does."""
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
-    l = L.Launcher(state_dir=tree / "state6", catalogue={}, source_dir=tree,
-                   core_addr=("127.0.0.1", port), spawn_core=False, base_env=_base_env())
-    assert l.core_port_in_use() is False
-    wildcard = socket.socket()
-    wildcard.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    wildcard.bind(("0.0.0.0", port))
-    wildcard.listen(1)
-    try:
-        assert l.core_port_in_use() is False  # the core can still bind beside it
-    finally:
-        wildcard.close()
-    loop = socket.socket()
-    loop.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    loop.bind(("127.0.0.1", port))
-    loop.listen(1)
-    try:
-        assert l.core_port_in_use() is True
-    finally:
-        loop.close()
 
 
 # --- idle behaviour -----------------------------------------------------------
@@ -636,3 +617,70 @@ def test_inactivity_is_logged_at_1_10_60_minutes_then_hourly(lch: L.Launcher, co
     # Activity resets the ladder.
     push(lch, core, desired(enabled=False, nonce="n2"))
     assert lch.next_deadline(clock.t) - clock.t == pytest.approx(L.INACTIVITY_STEPS[0], abs=0.01)
+
+
+# --- backpressure, output, credentials ------------------------------------------
+
+
+def test_slow_core_never_loses_the_channel_and_gets_the_newest_table(lch: L.Launcher, core: FakeCore):
+    push(lch, core, desired(enabled=False))
+    n = len(core.drain())
+    real = lch.core_sock
+    assert real is not None
+
+    class Slow:
+        """The real socket, except that send() reports a full buffer."""
+        def __init__(self, inner): self._inner = inner
+        def __getattr__(self, name): return getattr(self._inner, name)
+        def send(self, data): raise BlockingIOError()
+
+    lch.core_sock = Slow(real)  # type: ignore[assignment]
+    lch._status_dirty = True
+    lch.tick(lch.clock_obj.t)  # type: ignore[attr-defined]
+    lch._status_dirty = True
+    lch.tick(lch.clock_obj.t)  # type: ignore[attr-defined]
+    assert lch.core_sock is not None and lch.wants_write   # kept, waiting for writable
+    assert len(core.drain()) == n
+    lch.core_sock = real
+    lch.tick(lch.clock_obj.t)  # type: ignore[attr-defined]
+    delivered = core.drain()[n:]
+    assert len(delivered) == 1                             # two changes coalesced to the newest table
+    assert delivered[0]["sequence"] == lch.sequence
+    assert not lch.wants_write
+
+
+def test_peer_gone_on_send_drops_the_channel(lch: L.Launcher, core: FakeCore):
+    push(lch, core, desired(enabled=False))
+    core.drain()
+    core.mine.close()
+    lch._status_dirty = True
+    lch.tick(lch.clock_obj.t)  # type: ignore[attr-defined]
+    assert lch.core_sock is None and not lch.wants_write
+
+
+def test_child_output_is_prefixed_with_its_key(tree: Path, core: FakeCore):
+    clock = FakeClock()
+    seen: list[tuple[str, str]] = []
+    l = L.Launcher(state_dir=tree / "state8", catalogue={"svc": KIND}, source_dir=tree,
+                   spawn_core=False, base_env=_base_env(), clock=clock, on_output=lambda k, line: seen.append((k, line)))
+    l.acquire_lock()
+    l.attach_core_socket(core.theirs)
+    l.clock_obj = clock  # type: ignore[attr-defined]
+    try:
+        push(l, core, desired(env={"TEST_MODE": "print"}))
+        wait_for(l, lambda: len(seen) >= 2)
+        assert ("svc", "hello from stdout") in seen and ("svc", "warning on stderr") in seen
+    finally:
+        _kill_all(l)
+
+
+def test_credentials_file_wins_over_the_boot_environment(tree: Path, core: FakeCore):
+    l = L.Launcher(state_dir=tree / "state9", catalogue={"svc": KIND}, source_dir=tree,
+                   spawn_core=False, base_env={**_base_env(), "BOT_TOKEN": "from-env", "ONLY_ENV": "e"})
+    l.acquire_lock()
+    assert l.resolve_credential("BOT_TOKEN") == ("environment", "from-env")
+    (l.state_dir / "credentials.env").write_text("BOT_TOKEN=from-file\nEMPTY=\n")
+    assert l.resolve_credential("BOT_TOKEN") == ("file", "from-file")   # an edit takes effect at once
+    assert l.resolve_credential("ONLY_ENV") == ("environment", "e")     # fallback for names the file lacks
+    assert l.resolve_credential("EMPTY") is None                        # empty = unset at either level
+    assert l.resolve_credential("NOPE") is None

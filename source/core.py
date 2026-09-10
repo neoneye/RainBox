@@ -1,4 +1,5 @@
 import argparse
+import errno
 import json
 import logging
 import os
@@ -24,6 +25,7 @@ from agents.config import (  # noqa: E402
     agent_config,
 )
 from services import registry as services_registry  # noqa: E402
+from services.definitions import EXIT_LOCK_HELD  # noqa: E402
 from webapp import app  # noqa: E402
 from webapp.core import sync_models_from_providers  # noqa: E402
 
@@ -359,6 +361,25 @@ def main() -> None:
     logger.info("uuid: %s", root_uuid)
     logger.info("name: root")
 
+    # Bind the port FIRST, before any thread or channel exists, so a port that
+    # is already taken is a clean, deterministic exit: code 3 is the "held by
+    # another process" convention the launcher reports without a respawn loop
+    # (services/definitions.EXIT_LOCK_HELD). No advisory probe beforehand —
+    # the bind itself is the only check that cannot race.
+    # RAINBOX_CORE_PORT exists so a second core (a launcher smoke test against
+    # the sandbox DB) can run beside the operator's on 5000; the launcher reads
+    # the same variable and passes it to the core explicitly.
+    port = int(os.environ.get("RAINBOX_CORE_PORT", "5000"))
+    try:
+        server = make_server("127.0.0.1", port, app, threaded=True)
+    except OSError as exc:
+        if exc.errno == errno.EADDRINUSE:
+            logger.error(
+                "127.0.0.1:%d is already in use — an unmanaged core.py started by "
+                "hand, or another application. Stop it first.", port)
+            sys.exit(EXIT_LOCK_HELD)
+        raise
+
     if args.control_fd is not None:
         # Managed by the launcher: adopt the inherited socket, push the first
         # desired-state snapshot, and read status lines until EOF.
@@ -371,12 +392,6 @@ def main() -> None:
         target=supervisor_loop, args=(stop_event,), name="supervisor", daemon=False
     )
     thread.start()
-
-    # RAINBOX_CORE_PORT exists so a second core (a launcher smoke test against
-    # the sandbox DB) can run beside the operator's on 5000; the launcher reads
-    # the same variable and passes its whole environment to the core.
-    port = int(os.environ.get("RAINBOX_CORE_PORT", "5000"))
-    server = make_server("127.0.0.1", port, app, threaded=True)
     logger.info("supervisor thread started; webserver on http://127.0.0.1:%d (Ctrl-C to quit)", port)
 
     def shutdown_handler(signum: int, _frame: object) -> None:

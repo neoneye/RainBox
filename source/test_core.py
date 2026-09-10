@@ -3,6 +3,8 @@
 Only the pure policy bits are tested here; the full supervisor_loop needs a DB
 and child processes and is exercised by hand (Run demo / chat).
 """
+import pytest
+
 from core import IDLE_TICK_TIMEOUT, TICK_TIMEOUT, _select_timeout
 
 
@@ -28,3 +30,19 @@ def test_fast_tick_when_agents_and_work():
 
 def test_idle_backoff_is_longer_than_fast_tick():
     assert IDLE_TICK_TIMEOUT > TICK_TIMEOUT
+
+
+def test_a_taken_port_is_a_clean_exit_3(monkeypatch):
+    """No advisory probe: the core's own bind is the check. EADDRINUSE exits
+    with the launcher's deterministic 'held by another process' code."""
+    import errno
+    import core
+
+    def taken(*a, **k):
+        raise OSError(errno.EADDRINUSE, "Address already in use")
+
+    monkeypatch.setattr(core, "make_server", taken)
+    monkeypatch.setattr("sys.argv", ["core.py"])
+    with pytest.raises(SystemExit) as info:
+        core.main()
+    assert info.value.code == 3
