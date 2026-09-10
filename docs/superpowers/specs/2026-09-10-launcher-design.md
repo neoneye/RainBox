@@ -66,9 +66,16 @@ venv/bin/python main.py [--state-dir <dir>] [--core-only]
 - **Child output is piped, not inherited.** Each child's stdout and stderr
   are one non-blocking pipe the loop selects on; every line is printed to
   the launcher's stdout prefixed `[<key>] `, so a traceback from Kokoro and
-  one from Whisper can never interleave anonymously. A pipe stays open until
-  EOF, so a grandchild that inherited it is attributed to its parent's key.
-  Idle cost is nil: the loop wakes only when a child writes.
+  one from Whisper can never interleave anonymously. A non-blocking read
+  returns whatever is there, not whole lines, so each child has a byte
+  buffer: complete lines are printed, the incomplete tail waits for the next
+  read. The launcher owns a `dup()` of the pipe's fd rather than the `Popen`
+  object's file (which would close the fd when the `Popen` is dropped on
+  reap, losing a fast crash's traceback and freeing the number for reuse),
+  and closes it only at EOF — never on reap — so bytes a child wrote just
+  before dying are still read. A pipe stays open until EOF, so a grandchild
+  that inherited it is attributed to its parent's key. Idle cost is nil: the
+  loop wakes only when a child writes.
 - **POSIX only.** `select()` on a pipe, `SIGCHLD`, process groups, `fcntl`
   locks — none of it exists on Windows, and neither does the core's
   `posix_spawn`/socketpair agent protocol. rainbox is a macOS/Linux program;
@@ -132,7 +139,11 @@ credentials, so editing it and pressing Restart takes effect even when the
 same name was exported when the launcher booted — silently ignoring a file
 edit because of a variable set days ago would be the astonishing behavior.
 An empty value is unset at either level. Show the selected source
-(file/environment) without its value. Changing an exported value that the
+(file/environment) without its value. Because the file is read at every
+spawn, a writer must replace it atomically — write `credentials.env.tmp`,
+then `os.replace()` — so a Restart that coincides with a save never reads a
+truncated file; editors that truncate-then-write are an accepted risk for a
+hand-edited file, and any UI that writes it must use the atomic form. Changing an exported value that the
 file does not override requires restarting the launcher. Running children keep their
 current environment. Invalid file syntax prevents file-backed spawns, not the
 core or already-running services. Neither source is copied into DB, argv, status,
@@ -347,6 +358,9 @@ line waits until the socket is writable, a newer table replaces a pending
 line none of whose bytes have gone out, and a line partly on the wire is
 finished before the next. Only `EPIPE`/`ECONNRESET` — the peer is gone —
 closes the channel; the next core learns the table after its first snapshot.
+During shutdown that is expected (the launcher is stopping the core while
+services still report state changes) and is logged at debug level, never
+raised into the loop.
 
 States: `starting`, `running`, `stopping`, `stopped`, `backoff`, `failed`,
 `credential missing`, `not installed`. Include next-retry time for `backoff` and

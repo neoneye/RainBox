@@ -36,6 +36,13 @@ if mode == "exit":
 if mode == "print":
     print("hello from stdout", flush=True)
     print("warning on stderr", file=sys.stderr, flush=True)
+if mode == "partial":
+    sys.stdout.write("Loading mo"); sys.stdout.flush()
+    time.sleep(0.4)
+    sys.stdout.write("del...\nDone\n"); sys.stdout.flush()
+if mode == "crash":
+    print("Traceback (most recent call last): boom", file=sys.stderr, flush=True)
+    sys.exit(1)
 if mode == "grandchild":
     subprocess.Popen([sys.executable, "-c",
         "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)"])
@@ -693,3 +700,49 @@ def test_credentials_file_wins_over_the_boot_environment(tree: Path, core: FakeC
     assert l.resolve_credential("ONLY_ENV") == ("environment", "e")     # fallback for names the file lacks
     assert l.resolve_credential("EMPTY") is None                        # empty = unset at either level
     assert l.resolve_credential("NOPE") is None
+
+
+def _launcher_with_output(tree: Path, core: FakeCore, seen: list):
+    clock = FakeClock()
+    l = L.Launcher(state_dir=tree / "state-out", catalogue={"svc": KIND}, source_dir=tree,
+                   spawn_core=False, base_env=_base_env(), clock=clock,
+                   on_output=lambda k, line: seen.append((k, line)))
+    l.acquire_lock()
+    l.attach_core_socket(core.theirs)
+    l.clock_obj = clock  # type: ignore[attr-defined]
+    return l
+
+
+def test_partial_writes_are_reassembled_into_whole_prefixed_lines(tree: Path, core: FakeCore):
+    seen: list[tuple[str, str]] = []
+    l = _launcher_with_output(tree, core, seen)
+    try:
+        push(l, core, desired(env={"TEST_MODE": "partial"}))
+        wait_for(l, lambda: ("svc", "Done") in seen)
+        assert ("svc", "Loading model...") in seen           # never "Loading mo" on its own
+        assert all(not line.startswith("del") for _, line in seen)
+    finally:
+        _kill_all(l)
+
+
+def test_output_written_just_before_a_fast_crash_is_not_lost(tree: Path, core: FakeCore):
+    seen: list[tuple[str, str]] = []
+    l = _launcher_with_output(tree, core, seen)
+    try:
+        push(l, core, desired(env={"TEST_MODE": "crash"}))
+        wait_for(l, lambda: svc(l).state == "backoff" and any("boom" in line for _, line in seen))
+        assert ("svc", "Traceback (most recent call last): boom") in seen
+    finally:
+        _kill_all(l)
+
+
+def test_epipe_during_shutdown_is_quiet_and_does_not_break_the_loop(lch: L.Launcher, core: FakeCore, caplog):
+    push(lch, core, desired(enabled=False))
+    core.drain()
+    lch.request_shutdown()
+    core.mine.close()                       # the core is going away, as in phase 2
+    lch._status_dirty = True
+    caplog.set_level("INFO", logger="launcher")
+    assert lch.tick(lch.clock_obj.t) is False  # shutdown completes; nothing raised
+    assert lch.core_channel is None
+    assert not [r for r in caplog.records if r.levelname == "WARNING" and "channel gone" in r.getMessage()]

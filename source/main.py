@@ -520,7 +520,12 @@ class Launcher:
         rec.proc, rec.pid, rec.pgid = proc, proc.pid, proc.pid
         assert proc.stdout is not None
         self._close_output(rec)
-        rec.out_fd = proc.stdout.fileno()
+        # Own the pipe independently of the Popen object: its stdout file
+        # object closes the fd when it is garbage-collected (we drop the
+        # Popen on reap), which would turn the crash traceback still sitting
+        # in the pipe into EBADF — and hand the fd number to the next child.
+        rec.out_fd = os.dup(proc.stdout.fileno())
+        proc.stdout.close()
         os.set_blocking(rec.out_fd, False)
         rec.out_buf = b""
         rec.state, rec.since, rec.message = "running", _utc_now(), None
@@ -632,7 +637,10 @@ class Launcher:
             except BlockingIOError:
                 return  # the core will read later; select() wakes us when writable
             except OSError as exc:
-                logger.warning("core channel gone on send (%s)", exc)
+                # EPIPE/ECONNRESET: the peer is gone. Expected while we are
+                # stopping the core ourselves; a warning otherwise.
+                (logger.debug if self.shutting_down else logger.warning)(
+                    "core channel gone on send (%s)", exc)
                 self._send_buf, self._queued_status = b"", b""
                 self._send_buf_started = False
                 self._close_core_channel()
