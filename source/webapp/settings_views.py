@@ -16,6 +16,7 @@ import logging
 from flask import Response, jsonify, render_template_string, request
 
 import db
+from services import registry as services_registry
 
 from .core import app
 
@@ -462,6 +463,11 @@ def settings_set_api() -> tuple[Response, int] | Response:
             # stamp stays independent), so the assistant's per-room context
             # marker fires.
             db.set_current_profile(data.get("value"))
+        elif services_registry.owns_setting(key):
+            # A service toggle or launch-environment edit is a restart-
+            # requiring change: the write also rewrites the service's restart
+            # nonce, so the launcher restarts (or resets a failed) process.
+            services_registry.set_service_setting(key, data.get("value"))
         else:
             db.set_setting(key, data.get("value"))
     except db.UnknownSetting:

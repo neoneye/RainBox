@@ -413,6 +413,17 @@ def set_setting(key: str, value: object) -> None:
     db.session.commit()
 
 
+def set_settings(values: dict[str, object]) -> None:
+    """Write several settings in ONE transaction (same coercion/validation
+    and env-only-secret rule as set_setting). Used where two keys must move
+    together — a service toggle and its restart nonce — so a crash between
+    them cannot leave a service enabled with a stale nonce. App context
+    required."""
+    for key, value in values.items():
+        _upsert_setting_row(_registry(key), value)
+    db.session.commit()
+
+
 def lock_setting_row(key: str) -> None:
     """Take the row lock on one `app_setting` row for the rest of the current
     transaction (SELECT ... FOR UPDATE; the reconciled registry guarantees
