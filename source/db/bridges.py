@@ -747,13 +747,13 @@ def bridge_connector_config(connector_uuid: UUID) -> dict[str, Any] | None:
         out_bindings = []
         for b in bindings:
             chain = _folder_chain(by_uuid, b.folder_uuid)
+            layers: list[tuple[str, dict[str, Any] | None]] = [("connector", row.policy)]
             if chain is None:
                 effective_enabled = False
-                layers: list[tuple[str, dict[str, Any] | None]] = [("connector", row.policy)]
                 note = "folder chain broken"
             else:
                 effective_enabled = bool(row.enabled and all(f.enabled for f in chain) and b.enabled)
-                layers = [("connector", row.policy)] + [(f"folder:{f.uuid}", f.policy) for f in chain]
+                layers.extend((f"folder:{f.uuid}", f.policy) for f in chain)
                 note = None
             layers.append(("binding", b.policy))
             policy, sources = adapter.resolve_policy(layers)

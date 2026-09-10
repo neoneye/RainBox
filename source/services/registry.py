@@ -50,6 +50,9 @@ def new_nonce() -> str:
     return os.urandom(16).hex()
 
 
+BRIDGE_KEY_PREFIX = "bridge:"
+
+
 def _known_key(service_key: str) -> bool:
     return service_key == CORE_KEY or service_key in STATIC_SERVICES
 
@@ -57,7 +60,18 @@ def _known_key(service_key: str) -> bool:
 def bump_restart_nonce(service_key: str) -> str:
     """Rewrite one service's (or the core's) restart nonce and push the new
     snapshot to the launcher, which restarts the process. Nothing executes
-    here."""
+    here. A `bridge:<uuid>` key rewrites the connector row's nonce instead
+    of a settings key."""
+    if service_key.startswith(BRIDGE_KEY_PREFIX):
+        from uuid import UUID
+        try:
+            connector_uuid = UUID(service_key[len(BRIDGE_KEY_PREFIX):])
+        except ValueError:
+            raise KeyError(service_key) from None
+        nonce = db.bridge_bump_connector_nonce(connector_uuid)
+        if nonce is None:
+            raise KeyError(service_key)
+        return nonce
     if not _known_key(service_key):
         raise KeyError(service_key)
     nonce = new_nonce()
@@ -66,11 +80,33 @@ def bump_restart_nonce(service_key: str) -> str:
     return nonce
 
 
+def bridges_autostart() -> bool:
+    return bool(db.get_setting(db.BRIDGES_AUTOSTART_KEY))
+
+
+def rainbox_url() -> str:
+    return f"http://127.0.0.1:{os.environ.get('RAINBOX_CORE_PORT', '5000')}"
+
+
 def set_service_setting(key: str, value: object) -> bool:
     """Write a `services.<key>.enabled` or `services.<key>.env.<VAR>` setting
     and, if the effective value changed, rewrite that service's nonce in the
     same transaction, then push the snapshot. Returns whether the nonce was
     bumped. KeyError for a key this function does not own."""
+    if key == db.BRIDGES_AUTOSTART_KEY:
+        # The global bridge launch gate: connectors whose gate flips off->on
+        # get a fresh nonce in the SAME transaction as the setting (rows
+        # locked in uuid order inside bridge_gate_transitions).
+        db.lock_setting_row(key)
+        before = bridges_autostart()
+        db.stage_setting(key, value)
+        db.session.flush()
+        after = bridges_autostart()
+        db.bridge_gate_transitions(before, after)
+        db.session.commit()
+        if after != before:
+            CHANNEL.push_desired()
+        return after != before
     service_key = _service_key_of(key)
     if service_key is None:
         raise KeyError(key)
@@ -102,7 +138,7 @@ def _service_key_of(setting_key: str) -> str | None:
 
 
 def owns_setting(setting_key: str) -> bool:
-    return _service_key_of(setting_key) is not None
+    return setting_key == db.BRIDGES_AUTOSTART_KEY or _service_key_of(setting_key) is not None
 
 
 def desired_snapshot() -> dict[str, Any]:
@@ -125,6 +161,10 @@ def desired_snapshot() -> dict[str, Any]:
             "restart_nonce": values.get(nonce_setting_key(svc.key)),
             "env": env,
         })
+    # Chat-bridge connectors ride along as dynamic entries (design:
+    # 2026-09-09-bridge-settings-design.md, "Supervised by the launcher").
+    services.extend(db.bridge_launcher_entries(
+        autostart=bool(values.get(db.BRIDGES_AUTOSTART_KEY)), rainbox_url=rainbox_url()))
     return {
         "type": "desired",
         "schema_version": SCHEMA_VERSION,

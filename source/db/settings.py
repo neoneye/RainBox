@@ -275,6 +275,9 @@ def _validate_positive_int(value: object) -> None:
         raise ValueError(f"must be a positive integer (got {value!r})")
 
 
+BRIDGES_AUTOSTART_KEY = "services.bridges.autostart"
+
+
 def _service_settings() -> dict[str, Setting]:
     """Registry entries generated from the service catalogue: a toggle per
     static service, an optional string per supported env variable, and an
@@ -310,6 +313,12 @@ def _service_settings() -> dict[str, Setting]:
     out[nonce_setting_key(CORE_KEY)] = Setting(
         nonce_setting_key(CORE_KEY), None, "string", None, internal=True,
         description="Restart nonce for the core; rewritten by Restart core.",
+    )
+    out[BRIDGES_AUTOSTART_KEY] = Setting(
+        BRIDGES_AUTOSTART_KEY, None, "bool", True,
+        description="Let the launcher start every enabled chat-bridge connector "
+                    "(/bridges) whose launch mode is 'launcher'. Off = you run "
+                    "bridges by hand; connectors keep their settings.",
     )
     return out
 

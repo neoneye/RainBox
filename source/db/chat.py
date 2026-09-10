@@ -659,10 +659,17 @@ def chatroom_folder_delete_preview(folder_uuid: UUID) -> dict[str, Any]:
             sa.select(sa.func.count()).select_from(ChatMessage)
             .where(ChatMessage.room_uuid.in_(room_uuids))
         ).scalar() or 0)
+    from db.bridges import bridge_room_blockers
+    blockers = bridge_room_blockers(list(room_uuids))
     return {
         "folder_name": folder.name,
         "room_count": len(room_uuids),
         "message_count": message_count,
+        # Chat bridges bound to rooms in this subtree block the delete: the
+        # RESTRICT key refuses it, this makes the refusal visible first.
+        "bindings": blockers,
+        "binding_count": len(blockers),
+        "can_delete": not blockers,
     }
 
 
@@ -699,7 +706,10 @@ def chatroom_delete_preview(room_uuid: UUID) -> dict[str, Any]:
         sa.select(sa.func.count()).select_from(ChatMessage)
         .where(ChatMessage.room_uuid == room_uuid)
     ).scalar() or 0)
-    return {"room_name": room.name, "message_count": message_count}
+    from db.bridges import bridge_room_blockers
+    blockers = bridge_room_blockers([room_uuid])
+    return {"room_name": room.name, "message_count": message_count,
+            "bindings": blockers, "binding_count": len(blockers), "can_delete": not blockers}
 
 
 def list_chatrooms() -> list[dict[str, Any]]:

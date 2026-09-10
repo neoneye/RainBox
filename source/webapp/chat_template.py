@@ -2196,7 +2196,17 @@ document.getElementById('chat-folder-input').addEventListener('keydown', e => {
 // ---- type-to-confirm destructive delete (folder or room) ----
 let deleteModalState = null;  // {kind:'folder'|'room', id, name}
 function fmtCount(n){ return Number(n).toLocaleString(); }
-function openDeleteModal(state, message, confirmName){
+// A preview whose can_delete is false names the chat bridges bound to the
+// room(s); the dialog explains and Delete stays disabled whatever is typed —
+// the server's RESTRICT key would refuse it anyway.
+function bridgeBlockerText(preview){
+  const names = (preview.bindings || []).map(b => b.connector_name + ' (' + b.address_key + ')');
+  return 'Cannot delete: ' + (names.length === 1 ? 'a chat bridge binding' : names.length + ' chat bridge bindings') +
+    ' on /bridges still reference' + (names.length === 1 ? 's' : '') + ' ' +
+    (preview.room_count != null ? 'rooms in this folder' : 'this room') + ': ' + names.join(', ') +
+    '. Remove the binding' + (names.length === 1 ? '' : 's') + ' first.';
+}
+function openDeleteModal(state, message, confirmName, blocked){
   deleteModalState = state;
   document.getElementById('chat-delete-title').textContent =
     state.kind === 'folder' ? 'Delete folder' : 'Delete room';
@@ -2206,7 +2216,7 @@ function openDeleteModal(state, message, confirmName){
   input.value = '';
   const confirmBtn = document.getElementById('chat-delete-confirm');
   confirmBtn.disabled = true;
-  input.oninput = () => { confirmBtn.disabled = (input.value !== confirmName); };
+  input.oninput = () => { confirmBtn.disabled = blocked || (input.value !== confirmName); };
   document.getElementById('ui-modal-backdrop').hidden = false;
   document.getElementById('chat-delete-modal').hidden = false;
   input.focus();
@@ -2223,11 +2233,12 @@ async function confirmDeleteFolder(folderId){
   try {
     preview = await getJSON('/chat/api/folders/' + folderId + '/delete-preview');
   } catch (e) { alert(e); return; }
-  const msg = 'Are you sure you want to delete ' +
+  const blocked = preview.can_delete === false;
+  const msg = blocked ? bridgeBlockerText(preview) : 'Are you sure you want to delete ' +
     fmtCount(preview.room_count) + (preview.room_count === 1 ? ' chatroom' : ' chatrooms') +
     ' containing ' + fmtCount(preview.message_count) +
     (preview.message_count === 1 ? ' message' : ' messages') + '? This cannot be undone.';
-  openDeleteModal({kind: 'folder', id: folderId, name: f.name}, msg, f.name);
+  openDeleteModal({kind: 'folder', id: folderId, name: f.name}, msg, f.name, blocked);
 }
 async function deleteRoom(uuid){
   const room = rooms.find(r => r.uuid === uuid);
@@ -2236,10 +2247,11 @@ async function deleteRoom(uuid){
   try {
     preview = await getJSON('/chat/api/rooms/' + uuid + '/delete-preview');
   } catch (e) { alert(e); return; }
-  const msg = 'Are you sure you want to delete # ' + preview.room_name + ' containing ' +
+  const blocked = preview.can_delete === false;
+  const msg = blocked ? bridgeBlockerText(preview) : 'Are you sure you want to delete # ' + preview.room_name + ' containing ' +
     fmtCount(preview.message_count) +
     (preview.message_count === 1 ? ' message' : ' messages') + '? This cannot be undone.';
-  openDeleteModal({kind: 'room', id: uuid, name: preview.room_name}, msg, preview.room_name);
+  openDeleteModal({kind: 'room', id: uuid, name: preview.room_name}, msg, preview.room_name, blocked);
 }
 async function performConfirmedDelete(){
   if (!deleteModalState) return;
@@ -2248,6 +2260,12 @@ async function performConfirmedDelete(){
   try {
     await flushPendingTreeSave();
     const r = await fetch(url, {method: 'DELETE'});
+    if (r.status === 409){
+      // A binding was added after the preview: the server refused. Say who.
+      const d = await r.json().catch(() => ({}));
+      const who = (d.blockers || []).map(b => b.connector_name + ' (' + b.address_key + ')').join(', ');
+      throw new Error((d.error || 'refused') + (who ? ': ' + who : ''));
+    }
     if (!r.ok) throw new Error('DELETE ' + url + ' -> ' + r.status);
   } catch (e) { alert(e); return; }
   if (kind === 'room') delete unread[id];

@@ -13,6 +13,7 @@ from uuid import UUID
 
 import psycopg
 from flask import Response, abort, jsonify, request, stream_with_context
+from sqlalchemy.exc import IntegrityError
 
 import db
 from agents.config import (
@@ -205,6 +206,13 @@ def chat_delete_folder(folder_uuid: str) -> Response:
         db.delete_chatroom_folder(fuuid)
     except LookupError:
         abort(404, "folder not found")
+    except IntegrityError:
+        # A bridge binding references a room in the subtree: the RESTRICT
+        # foreign key rolled the whole delete back. Report what blocks it.
+        db.session.rollback()
+        preview = db.chatroom_folder_delete_preview(fuuid)
+        return jsonify({"error": "rooms in this folder are bound by a chat bridge",
+                        "blockers": preview["bindings"]}), 409
     return jsonify({"id": str(fuuid), "deleted": True,
                     "version": db.chat_tree_version()})
 
@@ -236,7 +244,12 @@ def delete_chat_room(room_uuid: str) -> Response:
     ruuid = _parse_uuid(room_uuid)
     if db.get_chatroom(ruuid) is None:
         abort(404, "room not found")
-    db.delete_chatroom(ruuid)
+    try:
+        db.delete_chatroom(ruuid)
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"error": "this room is bound by a chat bridge",
+                        "blockers": db.bridge_room_blockers([ruuid])}), 409
     return jsonify({"uuid": str(ruuid), "deleted": True,
                     "version": db.chat_tree_version()})
 
