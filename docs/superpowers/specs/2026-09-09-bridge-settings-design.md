@@ -5,6 +5,10 @@
 **Status:** design note; none of the proposed tables, endpoints, or live reload
 behavior is implemented yet.
 
+**Roadmap:** the launcher (`2026-09-10-launcher-design.md`) comes first;
+this design resumes once it runs the core and the static services reliably.
+The process-management mechanism lives there and is only summarized here.
+
 **Applies to:** `source/discord_service/`, `source/telegram_service/`, and
 future bridges for Zulip, Signal, Slack.
 
@@ -332,192 +336,53 @@ have no other way to receive it; a bridge fetches its config over HTTP and
 reports liveness through its logs, so the supervisor's only levers on a
 bridge are the ones it has on any child: its exit status, and signals.
 
-## Supervised services
+## Supervised by the launcher
 
-A small top-level **launcher** (`source/launcher.py`) is the root of the
-process tree. Its only job is to start processes, keep the ones that should
-be running running, stop the ones that should not, and report what it sees.
-It starts the core (`main.py`) the same way it starts a bridge, so the core
-is a *sibling* of the services, not their parent: restarting or losing the
-core does not take a bridge down, and the launcher restarts the core like
-anything else.
+The launcher design (`2026-09-10-launcher-design.md`) owns the mechanism:
+a stdlib-only top-level process that starts the core and every enabled
+service as siblings, pulls the desired set from `GET /services/api/desired`,
+pushes status to `POST /services/api/status`, and maps exit codes to
+states. This section states only what a bridge connector adds to it.
 
-```text
-launcher.py            (stdlib only, single-threaded, ~15 MB)
-├── main.py            (core: supervisor thread + webserver)
-│   ├── python -m agents …
-│   └── python -m agents …
-├── discord_service/venv/bin/python bridge.py
-├── telegram_service/venv/bin/python bridge.py
-└── voice_tts_kokoro/venv/bin/python server.py
-```
-
-That tree is what Activity Monitor's hierarchical view and `ps -o
-pid,ppid,command` show, because each child's parent is the launcher.
-
-### Why the launcher is small, and why it must exec
-
-The launcher imports nothing from the application — no Flask, no
-SQLAlchemy, no `db` — only the standard library. That, not the spawn call,
-is what keeps its footprint minimal. It creates children with
-`subprocess.Popen(argv, cwd=…, env=…)`, which forks and immediately execs
-the service's own interpreter (CPython picks `vfork`/`posix_spawn` or
-`fork`+`exec` depending on the arguments; the parent pid is the launcher
-in every case). Two things it deliberately does not do:
-
-- **Fork without exec.** A forked child shares the parent's pages
-  copy-on-write, so forking a process with the application loaded yields a
-  child as large as the parent until it execs; and forking a multithreaded
-  Python process on macOS without an immediate exec is unsafe (only the
-  calling thread survives, locks held by other threads stay held), which is
-  why Python's own `multiprocessing` defaults to spawn on macOS. The
-  launcher stays single-threaded — a `select`/`poll` loop — and every child
-  is a fresh interpreter.
-- **Serve HTTP.** The launcher has no server. It *pulls* what to run from
-  the core and *pushes* what it sees, both as an HTTP client over
-  `127.0.0.1`, the same transport everything else here uses.
-
-`main.py`'s own supervisor is unchanged: it still spawns and watches agents
-over their socketpairs. Agents remain children of the core because the core
-is what hands them work.
-
-### Bootstrap and the control loop
-
-1. The launcher is started with the root venv's interpreter
-   (`venv/bin/python launcher.py` from `source/`): it has no requirements
-   of its own, and `sys.executable` is what it runs the core with, so the
-   core gets the venv the operator chose for the launcher. It reads `.env`
-   with its **own parser**, not `python-dotenv` — the launcher is stdlib-only
-   and a test asserts that. The parser handles the subset the repo's
-   `.env.example` uses (`KEY=value`, single/double quotes, `#` comments,
-   blank lines); a test feeds `.env.example` and a fixture of edge cases
-   to both parsers and asserts identical results, so the launcher and the
-   core can never disagree about a value. Then it starts the core
-   unconditionally.
-2. It polls `GET /services/api/desired` on the core until the core answers,
-   then every 5 seconds. The response lists every service that should be
-   running: `{key, kind, dir, argv, env: {name: value}, token_env,
-   restart_nonce}`. The core builds it from the service registry and the
-   `bridge_connector` rows; the launcher has no idea what a connector is.
-3. It reconciles: desired and not running → spawn; running and not desired
-   → `SIGTERM`, `SIGKILL` after 10 s; `restart_nonce` changed → stop, then
-   spawn (that is what *Restart* on `/bridges` and `/settings` does);
-   exited unexpectedly → respawn with exponential backoff (2 s, 4 s, …
-   capped at 60 s); five crashes inside two minutes → **failed**, no
-   respawn until the operator toggles it off and on or presses *Restart*.
-4. After every change it `POST`s `/services/api/status` with
-   `{key: {state, pid, since, last_exit, message}}`; it also re-posts the
-   full table every 30 s as a heartbeat, so a core that restarted learns the
-   current picture without waiting for a change.
-5. Its own `SIGINT`/`SIGTERM`: `SIGTERM` every service first and the core
-   last, so a bridge unwinding an in-flight post or state write still has a
-   live core to finish against; wait 10 s, `SIGKILL` the rest, exit. The
-   core's own shutdown then kills its agents as it does today.
-
-Because the core is a child, a core restart is just step 3 for the entry
-`core`; bridges keep running, notice the SSE stream drop, back off, and
-reconnect with catch-up, exactly the path they already take when the core
-goes away.
-
-### The service registry
-
-A code-side registry in the core, the same shape as `SETTINGS` in
-`source/db/settings.py`, lists every service the launcher may run: a stable
-key, the working directory, the argv relative to it, the interpreter (the
-service's *own* venv: `<dir>/venv/bin/python`), an optional port to report,
-and the environment it needs. Two kinds of entry:
-
-- **Static services** (`voice_tts_kokoro`, `voice_stt_whisper`,
-  `voice_tts_dotstts`, `reranker`): one fixed entry each, switched by a
-  registry setting `services.<key>.enabled` (bool, default `false`) that the
-  `/settings` page renders as a toggle like any other bool. Their discovery
-  URLs (`KOKORO_TTS_URL` and friends) are unchanged; the launcher simply
-  runs the process that answers there.
-- **Bridge connectors**: one entry per `bridge_connector` row, switched by
-  the row's own `enabled` flag on `/bridges`, gated by one registry setting
-  `services.bridges.autostart` (bool, default `true`) for the operator who
-  runs bridges elsewhere.
-
-The default for static services is off and for bridge autostart is on: a
-bridge's whole existence is a DB row the operator created deliberately,
-while the voice services are optional heavyweights whose venvs may not even
-be installed. A toggle takes effect on the launcher's next poll, and never
-restarts the core.
-
-### What the child receives
-
-Unlike an agent, which inherits `dict(os.environ)` from the core, a service
-gets a **minimal environment built from scratch**: `PATH`, `HOME`,
-`LANG`/`LC_*`, `TMPDIR`, then only what the desired-state entry declares.
-For a bridge that is:
+**Desired-state entry per connector.** The core derives one entry per
+`bridge_connector` row whose `enabled` flag is on, gated by one registry
+setting `services.bridges.autostart` (bool, default `true`) for the
+operator who runs bridges elsewhere. The entry's `dir` is the platform's
+service directory, `argv` its `venv/bin/python bridge.py`, and `env`:
 
 | Variable | Value |
 |---|---|
 | `RAINBOX_URL` | `http://127.0.0.1:5000` |
 | `BRIDGE_CONNECTOR` | the connector uuid |
-| `<PLATFORM>_STATE_FILE` | `<state dir>/bridge-<connector-uuid>.json`, so two connectors can never share a file; the core sends the file *name*, the launcher owns the directory (`--state-dir`, default `<repo>/var/services/`, gitignored) and prefixes it, since where a host keeps runtime state is the launcher's fact, not the database's |
-| the variable `token_env` names | the credential value, and nothing else from the launcher's environment |
+| `<PLATFORM>_STATE_FILE` | `bridge-<connector-uuid>.json`, which the launcher prefixes with its state dir, so two connectors can never share a file |
 
-The desired-state response carries the *name* in `token_env`, never the
-value; the core does not have it and must not. The launcher resolves the
-name against `.env`, **re-reading the file at each spawn** and preferring
-the file over its own environment, so a rotated token reaches a service on
-*Restart* without restarting anything else. A name present in neither place
-is reported as **credential missing**, by variable name, and not spawned.
-A missing venv is **not installed**, and not spawned. Neither counts as a
-crash. Stdout and stderr are inherited, so every service's log lines land in
-the launcher's terminal, prefixed by the service itself as today — which
-also means the launcher never *reads* them. The only thing it learns from a
-child is its exit status, so services use a small exit-code convention and
-the launcher maps codes to states instead of parsing logs:
+plus `token_env`, the *name* of the credential variable; the launcher
+supplies the value from `.env` at each spawn. A bridge therefore sees
+exactly one credential and never another bot's. Toggling `enabled` on
+`/bridges` takes effect on the launcher's next poll and never restarts the
+core; *Restart* on `/bridges` rewrites the connector's `restart_nonce`.
 
-| Exit code | Meaning | Launcher reaction |
-|---|---|---|
-| `0` | clean exit after `SIGTERM` | `stopped` |
-| `2` | configuration or credential rejected (bad connector, token refused by the platform, room missing) | `failed`, no respawn; the bridge's own log line has the detail |
-| `3` | state-file lock held by another process | `failed`, message "state file locked by another process; see its log for the pid"; no respawn |
-| anything else, or a signal | crash | respawn with backoff; five in two minutes → `failed` |
+**Exit codes the bridge must use.** `2` for a rejected configuration or
+credential (connector unknown, token refused by the platform, room
+missing) and `3` for a held state-file lock, so the launcher marks the
+connector **failed** without a respawn loop; any other exit is a crash and
+respawns with backoff. The current bridges already exit through
+`SystemExit` for these conditions and only need the codes assigned.
 
-The two deterministic failures get no backoff loop because respawning
-cannot fix them; the bridges already exit through `SystemExit` for exactly
-these conditions and only need the codes assigned.
+**Status on `/bridges`.** The page shows the launcher-reported state
+(`running`, `failed`, `credential missing`, `not installed`, `unknown`, …)
+beside each connector with a *Restart* action, from the same table
+`/settings` renders for the static services.
 
-### Status
-
-The core keeps the last table the launcher posted, with the time it
-arrived, and the `/bridges` and `/settings` handlers read it. States:
-`running`, `stopped`, `starting`, `stopping`, `failed`, `credential
-missing`, `not installed`, and `unknown` — the last is what the core shows
-for every service once no status has arrived for 90 s (no launcher, or a
-launcher that died), and what a webapp served by `tools.serve_ui` shows
-always. `/bridges` shows the state beside each connector with a *Restart*
-action; `/settings` shows it beside each static toggle; both show the
-`core` entry's own state so the page can say when it is running unlaunched.
-
-### Telling the processes apart
-
-Every rainbox process is a Python interpreter, and Activity Monitor names a
-process after its executable, so without help they all read "Python". The
-hierarchy is the first fix: under the launcher, a process at 100 % CPU is
-one hop from a named parent, and `ps -o pid,ppid,%cpu,command` shows each
-child's full argv (`bridge.py`, `-m agents`, `server.py`). A second fix is
-worth an experiment before relying on it: exec each service through a
-symlink named for it (`bin/rainbox-discord -> discord_service/venv/bin/python`),
-so `argv[0]` — and, if Activity Monitor uses the exec path rather than the
-resolved binary, its Process Name column — reads `rainbox-discord`. Whether
-Activity Monitor honors the symlink name is not something to assert from
-memory; run it once and keep it only if it shows.
-
-### Manual mode and duplicates
-
-With `services.bridges.autostart` off, the launcher runs the core and the
-static services only, and the copyable launch line is the way in for
+**Manual mode and duplicates.** With `services.bridges.autostart` off, the
+launcher runs the core and the static services only, and the copyable
+launch line in *Credentials and process identity* is the way in for
 bridges. With it on, a bridge also started by hand on the same host
 collides on the state-file lock and exits with code 3; the launcher then
-reports **failed** with the lock message above, which is the signal that two
-launchers are configured (the pid is in the bridge's own log line, which the
-launcher does not read). Across hosts the lock cannot help, as
-the state section already says.
+reports **failed** with the lock message, which is the signal that two
+launchers are configured (the pid is in the bridge's own log line, which
+the launcher does not read). Across hosts the lock cannot help, as the
+state section already says.
 
 Disabling a connector has two effects, and both are wanted: the launcher
 stops the process, and — in manual mode, where the launcher is not running
@@ -797,18 +662,11 @@ separate design.
   fresh database, an existing database without bridge tables, and repeated
   initialization with saved bridge rows; required constraints/indexes exist
   and existing data survives.
-- Supervision: toggling a connector or a static service changes only that
-  child within one launcher poll; the core's pid, webserver, and running
-  agents are untouched. Every service's parent pid is the launcher's. A
-  child's environment contains exactly the declared variables plus the one
-  credential `token_env` names, and no other `*_TOKEN`/`*_KEY` from the
-  launcher's environment; the desired-state response never contains a
-  credential value. A rotated `.env` value reaches the child on *Restart*
-  without restarting the core or the launcher. Killing the core leaves
-  every bridge running and reconnecting; the launcher restarts the core.
-  Missing venv and missing credential are reported states, not crash loops;
-  five crashes in two minutes stop respawning and show *failed*. Shutting
-  down the launcher terminates every child with the same grace and
-  escalation. A core that has heard nothing from a launcher for 90 s
-  reports every service as `unknown` rather than guessing. The launcher
-  imports only the standard library (a test asserts its module set).
+- Under the launcher: a connector's desired-state entry never contains a
+  credential value; its child environment holds exactly `RAINBOX_URL`,
+  `BRIDGE_CONNECTOR`, the platform's state-file variable, and the one
+  credential `token_env` names. Toggling a connector changes only that
+  child within one poll. Killing the core leaves every bridge running and
+  reconnecting with catch-up. A rejected token exits with code 2 and a held
+  state lock with code 3, and neither respawns. The launcher's own
+  guarantees are tested in its own design's checks, not repeated here.
