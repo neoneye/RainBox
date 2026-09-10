@@ -49,6 +49,11 @@ class ServiceKind:
     description: str
     core_url_env: str | None = None  # the core's discovery variable, if any
     env_specs: tuple[EnvVar, ...] = ()  # types for env_keys; a key without one is a free string
+    # A dynamic kind is instantiated per database row (chat-bridge connectors:
+    # key `bridge:<uuid>`), never as a static entry, and carries a credential
+    # by variable NAME and a per-instance state file through `state_file_env`.
+    dynamic: bool = False
+    state_file_env: str | None = None
 
     def env_spec(self, name: str) -> EnvVar:
         for spec in self.env_specs:
@@ -114,7 +119,27 @@ STATIC_SERVICES: dict[str, ServiceKind] = {
     ),
 }
 
+DYNAMIC_SERVICES: dict[str, ServiceKind] = {
+    "discord_bridge": ServiceKind(
+        kind="discord_bridge", directory="discord_service",
+        argv=("venv/bin/python", "bridge.py"), bind="outbound only",
+        env_keys=("RAINBOX_URL", "BRIDGE_CONNECTOR"),
+        description="Discord <-> chatroom bridge, one process per connector.",
+        dynamic=True, state_file_env="DISCORD_STATE_FILE",
+    ),
+    "telegram_bridge": ServiceKind(
+        kind="telegram_bridge", directory="telegram_service",
+        argv=("venv/bin/python", "bridge.py"), bind="outbound only",
+        env_keys=("RAINBOX_URL", "BRIDGE_CONNECTOR"),
+        description="Telegram <-> chatroom bridge, one process per connector.",
+        dynamic=True, state_file_env="TELEGRAM_STATE_FILE",
+    ),
+}
+
+ALL_KINDS: dict[str, ServiceKind] = {**STATIC_SERVICES, **DYNAMIC_SERVICES}
+
 CORE_KEY: str = "core"
+BRIDGE_KEY_PREFIX: str = "bridge:"
 
 
 def enabled_setting_key(service_key: str) -> str:

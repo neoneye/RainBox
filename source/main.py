@@ -51,13 +51,14 @@ from pathlib import Path
 from typing import Any, Callable
 
 from services.definitions import (
+    ALL_KINDS,
     BASELINE_ENV_KEYS,
     BASELINE_ENV_PREFIXES,
+    BRIDGE_KEY_PREFIX,
     CORE_KEY,
     EXIT_CONFIG_REJECTED,
     EXIT_LOCK_HELD,
     SCHEMA_VERSION,
-    STATIC_SERVICES,
     ServiceKind,
 )
 
@@ -110,6 +111,7 @@ FORBIDDEN_ENV_KEYS: frozenset[str] = frozenset({
 })
 
 _ENV_NAME_OK = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 
 def _print_child_line(key: str, line: str) -> None:
@@ -199,6 +201,9 @@ class DesiredEntry:
     enabled: bool
     restart_nonce: str | None
     env: dict[str, str]
+    label: str | None = None
+    token_env: str | None = None
+    state_file_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -235,10 +240,37 @@ def validate_desired(payload: Any, catalogue: dict[str, ServiceKind]) -> Snapsho
             raise ValueError(f"duplicate service key {key}")
         if kind not in catalogue:
             raise ValueError(f"unknown kind {kind!r}: launcher and core versions disagree")
-        if key != kind:
-            raise ValueError(f"static service key {key!r} must equal its kind")
-        if set(item) - {"key", "kind", "enabled", "restart_nonce", "env"}:
-            raise ValueError(f"unexpected fields on {key}")
+        spec = catalogue[kind]
+        label = token_env = state_name = None
+        if spec.dynamic:
+            # bridge:<uuid> entries: the uuid ties the key, BRIDGE_CONNECTOR,
+            # and the state-file name together; credentials travel by NAME.
+            if not key.startswith(BRIDGE_KEY_PREFIX) or not _UUID_RE.match(key[len(BRIDGE_KEY_PREFIX):]):
+                raise ValueError(f"dynamic key {key!r} must be bridge:<uuid>")
+            uuid_part = key[len(BRIDGE_KEY_PREFIX):]
+            if set(item) - {"key", "kind", "enabled", "restart_nonce", "env", "label", "token_env", "state_file"}:
+                raise ValueError(f"unexpected fields on {key}")
+            token_env = item.get("token_env")
+            if not isinstance(token_env, str) or not _ENV_NAME_OK.match(token_env):
+                raise ValueError(f"{key}: token_env must be an environment variable name")
+            sf = item.get("state_file")
+            if (not isinstance(sf, dict) or sf.get("env") != spec.state_file_env
+                    or sf.get("name") != f"bridge-{uuid_part}.json"):
+                raise ValueError(f"{key}: state_file must name {spec.state_file_env} and bridge-<uuid>.json")
+            state_name = sf["name"]
+            raw_label = item.get("label", key)
+            if not isinstance(raw_label, str) or not raw_label.isprintable() or len(raw_label) > 60:
+                raise ValueError(f"{key}: label must be one printable line")
+            label = raw_label.strip() or key
+            if not isinstance(item.get("env"), dict) or item["env"].get("BRIDGE_CONNECTOR") != uuid_part:
+                raise ValueError(f"{key}: env.BRIDGE_CONNECTOR must equal the key's uuid")
+            if spec.state_file_env in item["env"] or token_env in item["env"]:
+                raise ValueError(f"{key}: env may not carry the state-file or credential variable")
+        else:
+            if key != kind:
+                raise ValueError(f"static service key {key!r} must equal its kind")
+            if set(item) - {"key", "kind", "enabled", "restart_nonce", "env"}:
+                raise ValueError(f"unexpected fields on {key}")
         enabled = item.get("enabled")
         if not isinstance(enabled, bool):
             raise ValueError(f"{key}: enabled must be a boolean")
@@ -252,8 +284,8 @@ def validate_desired(payload: Any, catalogue: dict[str, ServiceKind]) -> Snapsho
         for var, value in env.items():
             if var not in allowed or not isinstance(value, str):
                 raise ValueError(f"{key}: env key {var!r} not allowed")
-        services[key] = DesiredEntry(key, kind, enabled, nonce, dict(env))
-    missing = set(catalogue) - set(services)
+        services[key] = DesiredEntry(key, kind, enabled, nonce, dict(env), label, token_env, state_name)
+    missing = {k for k, spec in catalogue.items() if not spec.dynamic} - set(services)
     if missing:
         raise ValueError(f"snapshot lacks static services: {sorted(missing)}")
     return Snapshot(core_pid=core_pid, core_restart_nonce=core_nonce, services=services)
@@ -326,6 +358,10 @@ class Proc:
     credential_source: str | None = None
     out_fd: int | None = None            # the child's stdout+stderr pipe, non-blocking
     out_buf: bytes = b""
+    label: str | None = None             # display/prefix name (dynamic entries)
+    token_env: str | None = None         # credential variable NAME (dynamic entries)
+    state_file_name: str | None = None   # basename under the state dir (dynamic entries)
+    removed: bool = False                # a dynamic key that vanished from the snapshot
 
     def status(self) -> dict[str, Any]:
         rec: dict[str, Any] = {
@@ -336,6 +372,8 @@ class Proc:
             rec["next_retry"] = self.next_retry
         if self.credential_source:
             rec["credential_source"] = self.credential_source
+        if self.label:
+            rec["label"] = self.label
         return rec
 
 
@@ -352,7 +390,7 @@ class Launcher:
     ) -> None:
         self.state_dir = Path(state_dir).resolve()
         self.core_only = core_only
-        self.catalogue = dict(STATIC_SERVICES if catalogue is None else catalogue)
+        self.catalogue = dict(ALL_KINDS if catalogue is None else catalogue)
         self.source_dir = Path(source_dir).resolve()
         self.core_addr = core_addr
         self.core_argv = core_argv or [sys.executable, str(self.source_dir / "core.py")]
@@ -365,7 +403,7 @@ class Launcher:
         self.snapshot_valid_once = False
         self.core = Proc(CORE_KEY, None, desired=True)
         self.services: dict[str, Proc] = {
-            key: Proc(key, kind) for key, kind in self.catalogue.items()
+            key: Proc(key, kind) for key, kind in self.catalogue.items() if not kind.dynamic
         }
         self.shutting_down = False
         self.shutdown_phase = 0
@@ -466,6 +504,11 @@ class Launcher:
         if not Path(argv[0]).exists() or not Path(argv[-1]).exists():
             rec.message = f"missing {argv[0] if not Path(argv[0]).exists() else argv[-1]}"
             return "not installed"
+        if rec.kind.dynamic and rec.token_env and self.resolve_credential(rec.token_env) is None:
+            rec.message = (f"{rec.token_env} is set neither in {self.state_dir / 'credentials.env'} "
+                           "nor in the launcher's environment")
+            rec.credential_source = None
+            return "credential missing"
         return None
 
     def _spawn(self, rec: Proc, now: float) -> None:
@@ -488,7 +531,19 @@ class Launcher:
         else:
             parent_sock = None
             cwd, argv = self._service_paths(rec.kind)
-            env = service_environment(self.base_env, rec.env)
+            credential = None
+            declared = dict(rec.env)
+            if rec.kind.dynamic:
+                assert rec.token_env and rec.state_file_name and rec.kind.state_file_env
+                found = self.resolve_credential(rec.token_env)
+                if found is None:  # vanished since preflight; the next wake re-checks
+                    rec.state, rec.credential_source = "credential missing", None
+                    self._status_dirty = True
+                    return
+                rec.credential_source, value = found
+                credential = (rec.token_env, value)
+                declared[rec.kind.state_file_env] = str(self.state_dir / rec.state_file_name)
+            env = service_environment(self.base_env, declared, credential)
         try:
             proc = subprocess.Popen(
                 argv, cwd=str(cwd), env=env, start_new_session=True, shell=False,
@@ -653,7 +708,7 @@ class Launcher:
     def _close_output(self, rec: Proc) -> None:
         if rec.out_fd is not None:
             if rec.out_buf:
-                self.on_output(rec.key, rec.out_buf.decode("utf-8", "replace"))
+                self.on_output(rec.label or rec.key, rec.out_buf.decode("utf-8", "replace"))
             try:
                 os.close(rec.out_fd)
             except OSError:
@@ -683,9 +738,9 @@ class Launcher:
                 rec.out_buf += chunk
                 while b"\n" in rec.out_buf:
                     line, rec.out_buf = rec.out_buf.split(b"\n", 1)
-                    self.on_output(rec.key, line.decode("utf-8", "replace"))
+                    self.on_output(rec.label or rec.key, line.decode("utf-8", "replace"))
                 if len(rec.out_buf) >= MAX_OUTPUT_LINE:
-                    self.on_output(rec.key, rec.out_buf.decode("utf-8", "replace"))
+                    self.on_output(rec.label or rec.key, rec.out_buf.decode("utf-8", "replace"))
                     rec.out_buf = b""
 
     def output_fds(self) -> list[int]:
@@ -817,17 +872,29 @@ class Launcher:
             self.core.crash_times, self.core.backoff_exp = [], 0
             if self.core.state == "failed":
                 self.core.state = "stopped"
+        # Dynamic keys: create a record for a new one; a known one missing
+        # from a valid snapshot is a removal (stop it, then forget it).
+        for key, entry in snap.services.items():
+            if key not in self.services:
+                self.services[key] = Proc(key, self.catalogue[entry.kind])
+                self._status_dirty = True
+        for key, rec in self.services.items():
+            if rec.kind is not None and rec.kind.dynamic and key not in snap.services and not rec.removed:
+                rec.removed, rec.desired = True, False
+                self._status_dirty = True
         for key, entry in snap.services.items():
             rec = self.services[key]
+            rec.removed = False
             rec.desired = entry.enabled and not self.core_only
             rec.env = dict(entry.env)
+            rec.label, rec.token_env, rec.state_file_name = entry.label, entry.token_env, entry.state_file_name
             if not rec.nonce_known:
                 rec.nonce, rec.nonce_known = entry.restart_nonce, True
             elif entry.restart_nonce != rec.nonce:
                 rec.nonce = entry.restart_nonce
                 rec.pending_restart = rec.desired
                 rec.crash_times, rec.backoff_exp, rec.next_retry = [], 0, None
-                if rec.state in ("failed", "backoff"):
+                if rec.state in ("failed", "backoff", "credential missing", "not installed"):
                     rec.state = "stopped"
                     rec.message = None
             if self.core_only and entry.enabled:
@@ -889,8 +956,13 @@ class Launcher:
             self._reconcile_one(self.core, now)
         if self.snapshot is None:
             return  # no side services before the first valid snapshot
-        for rec in self.services.values():
+        for rec in list(self.services.values()):
             self._reconcile_one(rec, now)
+            if (rec.removed and rec.proc is None and rec.out_fd is None
+                    and not self._group_alive(rec.pgid) and rec.group_drain_deadline is None):
+                del self.services[rec.key]
+                self._status_dirty = True
+                logger.info("%s removed", rec.label or rec.key)
 
     # --- shutdown ----------------------------------------------------------------
 

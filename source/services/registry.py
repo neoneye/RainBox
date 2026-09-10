@@ -30,6 +30,7 @@ from typing import Any
 
 import db
 from services.definitions import (
+    BRIDGE_KEY_PREFIX,
     CORE_KEY,
     SCHEMA_VERSION,
     STATIC_SERVICES,
@@ -48,9 +49,6 @@ STATES = frozenset({
 
 def new_nonce() -> str:
     return os.urandom(16).hex()
-
-
-BRIDGE_KEY_PREFIX = "bridge:"
 
 
 def _known_key(service_key: str) -> bool:
@@ -214,11 +212,13 @@ class LauncherStatus:
         """What /settings renders: managed?, and per-service observed state —
         `unknown` when unmanaged (no launcher on the channel) or for a service
         the launcher has not reported yet."""
-        keys = [CORE_KEY, *STATIC_SERVICES]
         with self._lock:
             payload = self._payload
             received_at = self._received_at
         reported = (payload or {}).get("services", {}) if managed else {}
+        # The core and the static kinds always appear; dynamic keys (bridge
+        # connectors, `bridge:<uuid>`) appear as the launcher reports them.
+        keys = [CORE_KEY, *STATIC_SERVICES, *sorted(k for k in reported if k.startswith(BRIDGE_KEY_PREFIX))]
         services: dict[str, Any] = {}
         for key in keys:
             rec = reported.get(key)
@@ -227,7 +227,7 @@ class LauncherStatus:
             else:
                 services[key] = {
                     k: rec.get(k) for k in
-                    ("state", "pid", "since", "last_exit", "message", "next_retry")
+                    ("state", "pid", "since", "last_exit", "message", "next_retry", "label", "credential_source")
                     if k in rec
                 }
         return {

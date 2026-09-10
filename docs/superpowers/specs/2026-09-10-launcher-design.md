@@ -10,9 +10,10 @@ core can run beside the operator's for a smoke test; and the control channel
 between launcher and core is a socketpair (`core.py --control-fd N`), not
 HTTP — see *Bootstrap and the control channel*.
 
-**Roadmap:** ship the core and static services first, then add dynamic bridge
-entries from the [bridge settings design](2026-09-09-bridge-settings-design.md).
-Bridges continue to start manually until that second phase is ready.
+**Dynamic entries:** besides the static catalogue, the snapshot carries one
+`bridge:<connector-uuid>` entry per chat-bridge connector row, from the
+[bridge settings design](2026-09-09-bridge-settings-design.md); the launcher
+creates and forgets those records as they come and go.
 
 ## Decision and current behavior
 
@@ -219,14 +220,22 @@ The local data-only catalogue fixes each kind's directory, argv, allowed
 nonsecret environment keys, and defaults. The core imports the same catalogue
 to build its registry and settings. The channel cannot provide arbitrary paths, argv,
 or new executable kinds. A service key identifies one process; static keys
-match their kind, and future bridge keys are `bridge:<connector-uuid>`.
+match their kind, and bridge keys are `bridge:<connector-uuid>`.
 
-The later bridge extension permits `token_env` and `state_file: {env, name}`
-only for registered bridge kinds. Validate the credential name, the catalogue's
-state-variable name, and the UUID-derived basename, then join it under the
-canonical state directory. Reject path traversal and collisions with explicit
-`env` values. Static services reject these extra fields. The bridge spec defines
-the exact entry; both readers use this same envelope and validation rules.
+Kinds marked `dynamic` in the catalogue (`discord_bridge`, `telegram_bridge`)
+are instantiated only under such keys, and their entries additionally carry
+`label`, `token_env`, and `state_file: {env, name}`. The launcher validates
+the credential name, that the state variable is the catalogue's
+`state_file_env`, that the basename is exactly `bridge-<uuid>.json`, that
+`env.BRIDGE_CONNECTOR` equals the key's uuid, and that `env` carries neither
+the state-file nor the credential variable; static services reject these
+fields. The state file is joined under the launcher's state directory. The
+credential is resolved by name at spawn time (`credentials.env`, then the
+launcher's own environment); when neither has it the record reports
+`credential missing` with the variable name and file path, and a later
+Restart (nonce change) retries. The label prefixes the child's output lines
+and rides the status table. A dynamic record whose key is absent from a valid
+snapshot is stopped, then dropped from the status table.
 
 `source/db/settings.py` registers `services.<key>.enabled` (default false) and
 internal persisted `services.<key>.restart_nonce` for static services, plus
