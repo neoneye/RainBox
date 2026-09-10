@@ -585,3 +585,32 @@ def test_second_signal_kills_orphaned_groups_before_exiting(lch: L.Launcher, cor
         done = not lch.tick(clock.t)
         time.sleep(0.05)
     assert done and not lch._group_alive(pgid)
+
+
+def test_dechunk_rejects_signed_sizes_and_truncation():
+    assert L._dechunk(b"3\r\nabc\r\n0\r\n\r\n") == b"abc"
+    assert L._dechunk(b"2;ext=1\r\nab\r\n0\r\n\r\n") == b"ab"
+    for bad in (b"-6\r\nabc\r\n0\r\n\r\n", b"3\r\nab", b"zz\r\n", b"3\r\nabcX\r\n0\r\n\r\n", b""):
+        with pytest.raises(L.ControlError):
+            L._dechunk(bad)
+
+
+def test_core_child_gets_the_launcher_selected_port(tree: Path, core: FakeCore, monkeypatch):
+    captured = {}
+
+    class FakePopen:
+        def __init__(self, argv, **kw):
+            captured["env"] = kw["env"]
+            self.pid = 424242
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(L.subprocess, "Popen", FakePopen)
+    l = L.Launcher(state_dir=tree / "state5", catalogue={"svc": KIND}, source_dir=tree,
+                   core_addr=("127.0.0.1", 5090), spawn_core=True, base_env=_base_env())
+    l.acquire_lock()
+    l.tick(0.0)
+    env = captured["env"]
+    assert env[L.CORE_PORT_ENV] == "5090"
+    assert env[L.LAUNCHER_ID_ENV] == l.launcher_id and env[L.CORE_INSTANCE_ID_ENV] == l.core_instance_id

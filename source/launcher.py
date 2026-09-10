@@ -176,21 +176,34 @@ class ControlError(Exception):
     """A control request to the core failed (transport, deadline, size)."""
 
 
+_HEX_SIZE = __import__("re").compile(rb"^[0-9A-Fa-f]{1,8}$")
+
+
 def _dechunk(data: bytes) -> bytes:
     """Decode a Transfer-Encoding: chunked body (sizes in hex, optional
-    extensions ignored, trailers dropped)."""
+    extensions ignored, trailers dropped). The size token must be plain
+    unsigned hex — int(x, 16) would accept "-6", which walked the cursor
+    backwards forever — every chunk must be fully present and CRLF-framed,
+    and the cursor strictly advances, so decoding is bounded by the (already
+    capped) input length."""
     out = bytearray()
     pos = 0
     while True:
         nl = data.find(b"\r\n", pos)
         if nl < 0:
-            raise ControlError("malformed chunked body")
-        size = int(data[pos:nl].split(b";", 1)[0].strip() or b"0", 16)
+            raise ControlError("malformed chunked body: missing size line")
+        token = data[pos:nl].split(b";", 1)[0].strip()
+        if not _HEX_SIZE.match(token):
+            raise ControlError("malformed chunked body: bad chunk size")
+        size = int(token, 16)
         pos = nl + 2
         if size == 0:
             return bytes(out)
-        out += data[pos:pos + size]
-        pos += size + 2
+        end = pos + size
+        if data[end:end + 2] != b"\r\n":
+            raise ControlError("malformed chunked body: truncated chunk")
+        out += data[pos:end]
+        pos = end + 2
 
 
 def http_json(
@@ -507,6 +520,11 @@ class Launcher:
             self.core_instance_id = uuid.uuid4().hex
             env[LAUNCHER_ID_ENV] = self.launcher_id
             env[CORE_INSTANCE_ID_ENV] = self.core_instance_id
+            # The port the launcher will poll, stated explicitly: the core
+            # loads .env (override=False) before reading RAINBOX_CORE_PORT,
+            # so a value set only in .env would otherwise send the core to a
+            # port the launcher never looks at.
+            env[CORE_PORT_ENV] = str(self.core_addr[1])
         else:
             cwd, argv = self._service_paths(rec.kind)
             env = service_environment(self.base_env, rec.env)

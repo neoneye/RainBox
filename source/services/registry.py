@@ -79,6 +79,11 @@ def set_service_setting(key: str, value: object) -> bool:
     service_key = _service_key_of(key)
     if service_key is None:
         raise KeyError(key)
+    # Row lock BEFORE the read: two concurrent writers of the same key must
+    # serialize through read/compare/write, or one could read a stale value,
+    # write its own, and wrongly call that "unchanged" — leaving the launcher
+    # holding the other writer's nonce and never applying this value.
+    db.lock_setting_row(key)
     before = db.get_setting(key)
     # Stage the write, compare the coerced effective value (the caller may
     # send "true" or True), stage the nonce if it changed, commit ONCE: a

@@ -158,3 +158,15 @@ def test_desired_snapshot_reads_one_statement(client, managed, monkeypatch):
     finally:
         event.remove(engine, "before_cursor_execute", before_cursor_execute)
     assert len(statements) == 1, statements
+
+
+def test_service_setting_locks_the_row_before_reading(client, managed, monkeypatch):
+    """The compare-then-write must serialize through the row lock, taken
+    before the previous value is read."""
+    order = []
+    real_lock, real_get = db.lock_setting_row, db.get_setting
+    monkeypatch.setattr(registry.db, "lock_setting_row", lambda k: (order.append(("lock", k)), real_lock(k))[1])
+    monkeypatch.setattr(registry.db, "get_setting", lambda k: (order.append(("read", k)), real_get(k))[1])
+    key = env_setting_key("reranker", "RERANKER_BATCH_SIZE")
+    registry.set_service_setting(key, "8")
+    assert order[0] == ("lock", key) and order[1] == ("read", key)
