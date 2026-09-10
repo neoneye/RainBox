@@ -32,6 +32,7 @@ import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 
 from db.models import BridgeBinding, BridgeConnector, BridgeFolder, Chatroom, db
+from services.definitions import DYNAMIC_SERVICES
 from services.bridge_adapters import (
     ADAPTERS,
     LAUNCH_MODES,
@@ -198,7 +199,11 @@ def bridge_load_tree() -> dict[str, Any]:
                                            "minimum": k.minimum, "maximum": k.maximum,
                                            "description": k.description}
                                           for k in a.policy_keys.values()],
-                          "state_file_env": a.state_file_env}
+                          "state_file_env": a.state_file_env,
+                          # Where a manual run of this platform's bridge lives
+                          # (relative to source/), for the copyable launch command.
+                          "directory": DYNAMIC_SERVICES[a.kind].directory if a.kind in DYNAMIC_SERVICES else None,
+                          "argv": list(DYNAMIC_SERVICES[a.kind].argv) if a.kind in DYNAMIC_SERVICES else None}
                       for p, a in ADAPTERS.items()},
         "version": bridge_tree_version(),
     }

@@ -172,6 +172,7 @@ NAV_TEMPLATE = """
       </div>
     </details>
     <a href="{{ url_for('git_page') }}" class="{{ 'pp-active' if request.endpoint == 'git_page' }}">Git</a>
+    <a href="{{ url_for('bridges_page') }}" class="{{ 'pp-active' if request.endpoint == 'bridges_page' }}">Bridges</a>
     <a href="{{ url_for('profile_page') }}" class="{{ 'pp-active' if request.endpoint == 'profile_page' }}">Profile</a>
     <a href="{{ url_for('settings_page') }}" class="{{ 'pp-active' if request.endpoint == 'settings_page' }}">Settings</a>
     <details class="pp-dd {{ 'pp-active' if request.endpoint in ('models_page', 'modelgroups_page', 'agent_models_page') }}">

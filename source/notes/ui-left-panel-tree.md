@@ -3,8 +3,9 @@
 Several pages have a left panel that shows a **tree of folders** (which nest
 arbitrarily deep) containing **leaf items**. `/chat` (folders → chatrooms),
 `/cron` (folders → jobs), `/kanban` (folders → boards), `/git`
-(folders → repos), `/prompt` (folders → system prompts), and `/profile`
-(folders → person profiles) all implement it;
+(folders → repos), `/prompt` (folders → system prompts), `/profile`
+(folders → person profiles), and `/bridges` (connectors → folders → bindings)
+all implement it;
 this doc describes the shared pattern and the reference implementations.
 `/kanban` is the placement-only variant whose tree layer (folders + board
 placement) is kept separate from board contents: `webapp/kanban_views.py`
@@ -22,6 +23,12 @@ a separate per-item PUT, so saving content never 409s an open tree. `/profile`
 blob (autosaved per-profile; a derived read-only `summary` rides on tree rows
 for the folder table but stays out of the version hash), plus virtual
 read-only built-in rows merged into the tree GET from a shipped file.
+`/bridges` (`webapp/bridges_views.py`, `static/bridges.js`,
+`webapp/bridges_api.py`, `db/bridges.py`) is the `/git` port with a third
+node kind: connectors are the roots, folders and bindings never leave their
+connector (drag targets check it), enabled flags and policies are per-item
+PUTs outside the version hash, and the leaf pane is read-mostly (room and
+address are fixed after creation).
 
 Folder create/rename/delete dialogs use the app-wide modal pattern — see
 [`ui-modals.md`](ui-modals.md).

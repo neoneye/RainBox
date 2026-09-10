@@ -41,6 +41,7 @@ from . import persona_views  # noqa: F401,E402
 from . import settings_views  # noqa: F401,E402
 from . import services_api  # noqa: F401,E402
 from . import bridges_api  # noqa: F401,E402
+from . import bridges_views  # noqa: F401,E402
 from . import memory_views  # noqa: F401,E402
 from . import memory_api  # noqa: F401,E402
 from . import memory_developer_views  # noqa: F401,E402
