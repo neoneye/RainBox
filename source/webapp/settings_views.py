@@ -206,7 +206,7 @@ function render(){
   const list = document.getElementById('s-list');
   list.innerHTML = '';
   // The launcher card: desired state lives in the services.*.enabled toggles
-  // below; observed state is what the launcher last reported (every 30 s).
+  // below; observed state is what the launcher last sent over its control socket.
   const lc = document.createElement('div');
   lc.className = 's-card';
   lc.id = 's-launcher';
@@ -214,7 +214,8 @@ function render(){
     '<div class="s-head"><span class="s-key">launcher</span><span class="s-type">processes</span></div>'
     + '<div class="s-desc">Side services run under <code>main.py</code>. The '
     + '<code>services.*.enabled</code> toggles are the desired state; the observed state on each '
-    + 'toggle is what the launcher last reported. Restart rewrites a nonce that the launcher acts on.</div>'
+    + 'toggle is what the launcher last sent over its control socket. Restart rewrites a nonce '
+    + 'that the launcher acts on at once.</div>'
     + '<div class="s-row"><span class="s-env" data-launcher-state>checking launcher status…</span> '
     + '<button data-restart="core">Restart core</button></div>';
   list.appendChild(lc);
@@ -322,8 +323,8 @@ function render(){
 }
 
 // ---- launcher status --------------------------------------------------------
-// Observed state from GET /services/api/status: unmanaged (no launcher started
-// this core), stale (no report for 90 s), or per-service states. Never a
+// Observed state from GET /services/api/status: unmanaged (no launcher holds
+// this core's control socket) or per-service states. Never a
 // reason to change a toggle; that is desired state and stays as saved.
 async function refreshServiceStatus(){
   let d;
@@ -335,8 +336,6 @@ async function refreshServiceStatus(){
   if (ls){
     if (!d.managed){
       ls.textContent = 'unmanaged: this core was not started by main.py (the launcher), so toggles only change the stored setting';
-    } else if (d.stale){
-      ls.textContent = 'managed, but no launcher report for 90 s: observed states are unknown';
     } else {
       const core = d.services && d.services.core ? d.services.core.state : 'unknown';
       ls.textContent = 'managed; core ' + core

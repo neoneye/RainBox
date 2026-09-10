@@ -1,20 +1,30 @@
-"""Core-side half of service supervision: the desired-state snapshot the
-launcher polls, the restart nonces it consumes, and the status it reports.
-Imports `db`; the launcher never imports this module.
+"""Core-side half of service supervision: the control channel to the
+launcher, the desired-state snapshot pushed down it, the restart nonces the
+launcher consumes, and the status it reports back. Imports `db`; the launcher
+never imports this module.
 
-The core knows it is launcher-managed by two environment markers the
-launcher sets on the core it spawns, `RAINBOX_LAUNCHER_ID` and
-`RAINBOX_CORE_INSTANCE_ID`. A core started any other way (by hand,
-`tools.serve_ui`) has neither, refuses desired/status traffic as
-"unmanaged", and the /settings page says so instead of showing toggles
-that would do nothing.
+The channel is one end of a `socketpair()` the launcher created before
+spawning the core, handed over as an inherited fd (`core.py --control-fd N`),
+exactly the way the core hands agents theirs. Both directions are JSON lines
+and both are event-driven — nothing on either side polls:
+
+- core -> launcher: `{"type": "desired", ...snapshot}` once at startup and
+  again whenever a service setting or restart nonce changes;
+- launcher -> core: `{"type": "status", ...table}` whenever a process changes.
+
+EOF is liveness: when the launcher dies the reader sees EOF and the core is
+unmanaged from that moment; when the core dies the launcher sees EOF (and
+SIGCHLD). A core started without `--control-fd` (by hand, `tools.serve_ui`)
+is unmanaged, and /settings says so instead of showing toggles that would do
+nothing.
 """
 from __future__ import annotations
 
+import json
+import logging
 import os
+import socket
 import threading
-import time
-import uuid
 from datetime import UTC, datetime
 from typing import Any
 
@@ -28,12 +38,7 @@ from services.definitions import (
     nonce_setting_key,
 )
 
-LAUNCHER_ID_ENV = "RAINBOX_LAUNCHER_ID"
-CORE_INSTANCE_ID_ENV = "RAINBOX_CORE_INSTANCE_ID"
-
-# Observed state older than this is shown as `unknown`: the launcher heartbeats
-# every 30 s, so three missed beats means no launcher, or a dead one.
-STATUS_STALE_AFTER: float = 90.0
+logger = logging.getLogger(__name__)
 
 STATES = frozenset({
     "starting", "running", "stopping", "stopped", "backoff", "failed",
@@ -41,18 +46,8 @@ STATES = frozenset({
 })
 
 
-def instance_markers() -> dict[str, str] | None:
-    """{launcher_id, core_instance_id} when this core was spawned by a
-    launcher, else None."""
-    lid = os.environ.get(LAUNCHER_ID_ENV, "").strip()
-    cid = os.environ.get(CORE_INSTANCE_ID_ENV, "").strip()
-    if not lid or not cid:
-        return None
-    return {"launcher_id": lid, "core_instance_id": cid}
-
-
 def new_nonce() -> str:
-    return uuid.uuid4().hex
+    return os.urandom(16).hex()
 
 
 def _known_key(service_key: str) -> bool:
@@ -60,36 +55,30 @@ def _known_key(service_key: str) -> bool:
 
 
 def bump_restart_nonce(service_key: str) -> str:
-    """Rewrite one service's (or the core's) restart nonce. The launcher
-    restarts the process when it sees the change; nothing executes here."""
+    """Rewrite one service's (or the core's) restart nonce and push the new
+    snapshot to the launcher, which restarts the process. Nothing executes
+    here."""
     if not _known_key(service_key):
         raise KeyError(service_key)
     nonce = new_nonce()
     db.set_settings({nonce_setting_key(service_key): nonce})
+    CHANNEL.push_desired()
     return nonce
 
 
 def set_service_setting(key: str, value: object) -> bool:
     """Write a `services.<key>.enabled` or `services.<key>.env.<VAR>` setting
     and, if the effective value changed, rewrite that service's nonce in the
-    same transaction — an enable or an environment edit is a restart-requiring
-    change, and a quick off/on between two launcher polls must still reset a
-    failed service. Returns whether the nonce was bumped. KeyError for a key
-    this function does not own."""
+    same transaction, then push the snapshot. Returns whether the nonce was
+    bumped. KeyError for a key this function does not own."""
     service_key = _service_key_of(key)
     if service_key is None:
         raise KeyError(key)
     # Row lock BEFORE the read: two concurrent writers of the same key must
     # serialize through read/compare/write, or one could read a stale value,
-    # write its own, and wrongly call that "unchanged" — leaving the launcher
-    # holding the other writer's nonce and never applying this value.
+    # write its own, and wrongly call that "unchanged".
     db.lock_setting_row(key)
     before = db.get_setting(key)
-    # Stage the write, compare the coerced effective value (the caller may
-    # send "true" or True), stage the nonce if it changed, commit ONCE: a
-    # crash between the two cannot leave a changed environment without the
-    # nonce that restarts its service, and a concurrent desired-state read
-    # sees both or neither.
     db.stage_setting(key, value)
     db.session.flush()
     after = db.get_setting(key)
@@ -97,11 +86,12 @@ def set_service_setting(key: str, value: object) -> bool:
     if changed:
         db.stage_setting(nonce_setting_key(service_key), new_nonce())
     db.session.commit()
+    if changed:
+        CHANNEL.push_desired()
     return changed
 
 
 def _service_key_of(setting_key: str) -> str | None:
-    """The service a public `services.*` setting belongs to, or None."""
     for svc in STATIC_SERVICES.values():
         if setting_key == enabled_setting_key(svc.key):
             return svc.key
@@ -116,16 +106,10 @@ def owns_setting(setting_key: str) -> bool:
 
 
 def desired_snapshot() -> dict[str, Any]:
-    """What the launcher should be running, as one coherent snapshot. Includes
-    disabled entries (so a missing key can later mean removal), never a
+    """What the launcher should be running, as one coherent snapshot from one
+    statement over the settings table. Includes disabled entries, never a
     credential value, never a path or argv — the launcher resolves kinds
-    against its own copy of the catalogue."""
-    markers = instance_markers()
-    if markers is None:
-        raise RuntimeError("unmanaged core: no launcher instance markers")
-    # One statement for every services.* key, so an edit committed while we
-    # assemble the response cannot yield an old env with a new nonce (which
-    # the launcher would apply once and then never revisit).
+    against its own copy of the catalogue. App context required."""
     values = db.get_settings_snapshot("services.")
     services = []
     for svc in STATIC_SERVICES.values():
@@ -142,8 +126,8 @@ def desired_snapshot() -> dict[str, Any]:
             "env": env,
         })
     return {
+        "type": "desired",
         "schema_version": SCHEMA_VERSION,
-        **markers,
         "core_pid": os.getpid(),
         "core_restart_nonce": values.get(nonce_setting_key(CORE_KEY)),
         "services": services,
@@ -151,28 +135,19 @@ def desired_snapshot() -> dict[str, Any]:
 
 
 class LauncherStatus:
-    """The last status table the launcher posted, in memory only. Accepts a
-    report only from the launcher that spawned this core (matching markers)
-    and only if its sequence number increases; receipt time is ours."""
+    """The last status table the launcher sent, in memory only."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._payload: dict[str, Any] | None = None
-        self._received_mono: float | None = None
         self._received_at: str | None = None
         self._last_sequence: int = -1
 
     def accept(self, payload: Any) -> None:
-        markers = instance_markers()
-        if markers is None:
-            raise PermissionError("unmanaged core")
         if not isinstance(payload, dict):
             raise ValueError("status must be a JSON object")
         if payload.get("schema_version") != SCHEMA_VERSION:
             raise ValueError("unsupported schema_version")
-        if (payload.get("launcher_id") != markers["launcher_id"]
-                or payload.get("core_instance_id") != markers["core_instance_id"]):
-            raise ValueError("instance markers do not match this core")
         seq = payload.get("sequence")
         if not isinstance(seq, int) or isinstance(seq, bool):
             raise ValueError("sequence must be an integer")
@@ -187,31 +162,24 @@ class LauncherStatus:
                 raise ValueError("stale sequence")
             self._last_sequence = seq
             self._payload = payload
-            self._received_mono = time.monotonic()
             self._received_at = datetime.now(UTC).isoformat()
 
     def reset(self) -> None:
         with self._lock:
             self._payload = None
-            self._received_mono = None
             self._received_at = None
             self._last_sequence = -1
 
-    def view(self, now: float | None = None) -> dict[str, Any]:
-        """What /settings renders: managed?, stale?, and per-service observed
-        state — `unknown` when unmanaged or when no report has arrived within
-        STATUS_STALE_AFTER."""
-        managed = instance_markers() is not None
+    def view(self, managed: bool) -> dict[str, Any]:
+        """What /settings renders: managed?, and per-service observed state —
+        `unknown` when unmanaged (no launcher on the channel) or for a service
+        the launcher has not reported yet."""
         keys = [CORE_KEY, *STATIC_SERVICES]
         with self._lock:
             payload = self._payload
-            received_mono = self._received_mono
             received_at = self._received_at
-        now = time.monotonic() if now is None else now
-        stale = (payload is None or received_mono is None
-                 or now - received_mono > STATUS_STALE_AFTER)
+        reported = (payload or {}).get("services", {}) if managed else {}
         services: dict[str, Any] = {}
-        reported = (payload or {}).get("services", {}) if not stale else {}
         for key in keys:
             rec = reported.get(key)
             if rec is None:
@@ -222,14 +190,133 @@ class LauncherStatus:
                     ("state", "pid", "since", "last_exit", "message", "next_retry")
                     if k in rec
                 }
-        launcher = (payload or {}).get("launcher") if not stale else None
         return {
             "managed": managed,
-            "stale": stale,
-            "received_at": received_at if not stale else None,
-            "launcher": launcher,
+            "received_at": received_at if managed else None,
+            "launcher": (payload or {}).get("launcher") if managed else None,
             "services": services,
         }
 
 
-STATUS = LauncherStatus()
+class ControlChannel:
+    """The core's end of the launcher socket. `attach(fd)` adopts the
+    inherited descriptor; `start(app)` pushes the initial snapshot and runs
+    the reader thread; `push_desired()` sends a fresh snapshot (called from
+    request threads after a settings write — one short line under a lock)."""
+
+    def __init__(self) -> None:
+        self._sock: socket.socket | None = None
+        self._send_lock = threading.Lock()
+        self._app: Any = None
+        self._reader: threading.Thread | None = None
+        self.status = LauncherStatus()
+
+    # --- lifecycle -------------------------------------------------------------
+
+    def attach(self, fd: int) -> None:
+        self._sock = socket.socket(fileno=fd)
+        self._sock.settimeout(None)
+
+    def attach_socket(self, sock: socket.socket) -> None:
+        self._sock = sock
+
+    def start(self, app: Any) -> None:
+        """Push the initial snapshot, then read status lines until EOF."""
+        if self._sock is None:
+            return
+        self._app = app
+        self.push_desired()
+        self._reader = threading.Thread(target=self._read_loop, name="control-reader", daemon=True)
+        self._reader.start()
+
+    def close(self) -> None:
+        sock, self._sock = self._sock, None
+        if sock is not None:
+            try:
+                sock.close()
+            except OSError:
+                pass
+        self.status.reset()
+
+    @property
+    def managed(self) -> bool:
+        return self._sock is not None
+
+    # --- traffic ----------------------------------------------------------------
+
+    def push_desired(self) -> None:
+        """Send the current snapshot. Needs an app context for the settings
+        read; request threads have one, the startup push pushes its own.
+        A send failure means the launcher is gone: detach, log once."""
+        if self._sock is None:
+            return
+        try:
+            if self._app is not None and not _has_app_context():
+                with self._app.app_context():
+                    snapshot = desired_snapshot()
+            else:
+                snapshot = desired_snapshot()
+        except Exception:
+            logger.exception("control: could not build the desired snapshot")
+            return
+        self._send(snapshot)
+
+    def _send(self, message: dict[str, Any]) -> None:
+        sock = self._sock
+        if sock is None:
+            return
+        line = (json.dumps(message) + "\n").encode()
+        with self._send_lock:
+            try:
+                sock.settimeout(2.0)
+                sock.sendall(line)
+                sock.settimeout(None)
+            except OSError as exc:
+                logger.warning("control: launcher channel lost on send (%s); now unmanaged", exc)
+                self.close()
+
+    def _read_loop(self) -> None:
+        sock = self._sock
+        if sock is None:
+            return
+        buf = b""
+        while True:
+            try:
+                chunk = sock.recv(65536)
+            except OSError:
+                chunk = b""
+            if not chunk:
+                logger.warning("control: launcher channel closed; now unmanaged")
+                self.close()
+                return
+            buf += chunk
+            while b"\n" in buf:
+                raw, buf = buf.split(b"\n", 1)
+                self._handle_line(raw)
+
+    def _handle_line(self, raw: bytes) -> None:
+        try:
+            message = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            logger.warning("control: unparseable line from the launcher")
+            return
+        if not isinstance(message, dict):
+            return
+        if message.get("type") == "status":
+            try:
+                self.status.accept(message)
+            except ValueError as exc:
+                logger.warning("control: status rejected: %s", exc)
+        else:
+            logger.warning("control: unknown message type %r", message.get("type"))
+
+    def view(self) -> dict[str, Any]:
+        return self.status.view(managed=self.managed)
+
+
+def _has_app_context() -> bool:
+    from flask import has_app_context
+    return has_app_context()
+
+
+CHANNEL = ControlChannel()

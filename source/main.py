@@ -3,45 +3,48 @@
     cd source && venv/bin/python main.py [--state-dir DIR] [--core-only]
 
 The launcher is the root of rainbox's process tree and the way rainbox is
-started. It starts the core (`core.py`: supervisor + webserver) and every side service the operator has enabled on /settings, as
-*siblings*, keeps them running, stops what is disabled, and reports what it
-sees. It never becomes the core: it imports only the standard library plus the
-data-only catalogue in `services/definitions.py`, so its footprint stays small
-and a restart of the core never takes a service down.
+started. It starts the core (`core.py`: supervisor + webserver) and every side
+service the operator has enabled on /settings, as *siblings*, keeps them
+running, stops what is disabled, and reports what it sees. It never becomes
+the core: it imports only the standard library plus the data-only catalogue
+in `services/definitions.py`, so its footprint stays small and a restart of
+the core never takes a service down.
 
 Design: docs/superpowers/specs/2026-09-10-launcher-design.md. In short:
 
 - Children are spawned with fork+exec (`subprocess.Popen`, own session), never
   fork alone; each child's parent pid is this process, which is what makes
   Activity Monitor's hierarchy legible.
-- The core is told it is managed through two environment markers; it echoes
-  them from `GET /services/api/desired`, and this launcher accepts a snapshot
-  only from the core it spawned.
+- The core gets one end of a `socketpair()` as an inherited fd (`core.py
+  --control-fd N`), the same way the core hands its agents theirs. Both
+  directions are JSON lines and both are pushes: the core sends a desired-
+  state snapshot at startup and whenever a service setting changes; the
+  launcher sends its status table whenever a process changes. EOF on that
+  socket is liveness. Nothing polls.
 - Restarts are nonces: the core rewrites a service's nonce, the launcher sees
   it change and restarts the process. The core never executes anything.
-- A single-threaded loop over monotonic deadlines: reap, escalate, retry,
-  poll, heartbeat, and a two-phase shutdown (services first, core last).
-  Idle, it sleeps until its next real deadline (the 5-second poll) and is
-  woken early only by a signal — SIGCHLD when a child exits, SIGTERM/SIGINT
-  to shut down — so it never spins on a timer.
+- One single-threaded loop, asleep in `select()` on the core socket and the
+  signal pipe until something happens: a line from the core, `SIGCHLD` for a
+  child exit, `SIGTERM`/`SIGINT` to shut down, or one of its own deadlines
+  (a stop escalation, a backoff retry, a shutdown phase). Idle, its only
+  timed wakeups are the inactivity log lines at 1, 10, and 60 minutes and
+  then hourly — enough to see it is alive without flooding the log.
 """
 from __future__ import annotations
 
 import argparse
 import errno
 import fcntl
-import http.client
-import io
 import json
 import logging
 import os
+import re
 import select
 import signal
 import socket
 import subprocess
 import sys
 import time
-import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -77,21 +80,21 @@ def core_addr_from_env(env: dict[str, str] | None = None) -> tuple[str, int]:
 
 CORE_ADDR: tuple[str, int] = ("127.0.0.1", 5000)
 
-LAUNCHER_ID_ENV = "RAINBOX_LAUNCHER_ID"
-CORE_INSTANCE_ID_ENV = "RAINBOX_CORE_INSTANCE_ID"
-
-POLL_INTERVAL: float = 5.0        # desired-state poll
-HEARTBEAT_INTERVAL: float = 30.0  # full status re-post
 TERM_GRACE: float = 10.0          # SIGTERM -> SIGKILL, same as core.py's agents
-HTTP_DEADLINE: float = 1.0        # elapsed-time bound per control request
-HTTP_MAX_BYTES: int = 1 << 20     # 1 MiB response cap
 BACKOFF_BASE: float = 2.0
 BACKOFF_CAP: float = 60.0
 CRASH_BUDGET: int = 5             # unexpected exits ...
 CRASH_WINDOW: float = 120.0       # ... within this many seconds latch `failed`
 BACKOFF_RESET_AFTER: float = 120.0
-STATUS_RETRY_AFTER: float = 2.0   # a failed status post is retried this soon
-MAX_SLEEP: float = 60.0           # longest the loop sleeps between passes
+MAX_SLEEP: float = 3600.0         # longest the loop sleeps between passes
+SEND_TIMEOUT: float = 2.0         # a status line the core will not take = a dead core
+MAX_LINE_BYTES: int = 1 << 20     # a control line longer than this is garbage
+
+# Inactivity log: after this long with nothing to do, say so — then at the
+# next step, then every INACTIVITY_REPEAT. Long enough to prove liveness,
+# sparse enough not to flood the log.
+INACTIVITY_STEPS: tuple[float, ...] = (60.0, 600.0, 3600.0)
+INACTIVITY_REPEAT: float = 3600.0
 
 # Variables that must never leak from the launcher into a service, whatever
 # the operator exported (loader injection, interpreter overrides, DB access).
@@ -100,7 +103,7 @@ FORBIDDEN_ENV_KEYS: frozenset[str] = frozenset({
     "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "LD_PRELOAD", "LD_LIBRARY_PATH",
 })
 
-_ENV_NAME_OK = __import__("re").compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_ENV_NAME_OK = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 # --- credentials file -------------------------------------------------------
@@ -173,133 +176,6 @@ def service_environment(
     return env
 
 
-# --- HTTP (stdlib, elapsed-time bounded) ------------------------------------
-
-
-class ControlError(Exception):
-    """A control request to the core failed (transport, deadline, size)."""
-
-
-_HEX_SIZE = __import__("re").compile(rb"^[0-9A-Fa-f]{1,8}$")
-
-
-def _dechunk(data: bytes) -> bytes:
-    """Decode a Transfer-Encoding: chunked body (sizes in hex, optional
-    extensions ignored, trailers dropped). The size token must be plain
-    unsigned hex — int(x, 16) would accept "-6", which walked the cursor
-    backwards forever — every chunk must be fully present and CRLF-framed,
-    and the cursor strictly advances, so decoding is bounded by the (already
-    capped) input length."""
-    out = bytearray()
-    pos = 0
-    while True:
-        nl = data.find(b"\r\n", pos)
-        if nl < 0:
-            raise ControlError("malformed chunked body: missing size line")
-        token = data[pos:nl].split(b";", 1)[0].strip()
-        if not _HEX_SIZE.match(token):
-            raise ControlError("malformed chunked body: bad chunk size")
-        size = int(token, 16)
-        pos = nl + 2
-        if size == 0:
-            return bytes(out)
-        end = pos + size
-        if data[end:end + 2] != b"\r\n":
-            raise ControlError("malformed chunked body: truncated chunk")
-        out += data[pos:end]
-        pos = end + 2
-
-
-def http_json(
-    addr: tuple[str, int], method: str, path: str, body: Any = None, *,
-    deadline_s: float = HTTP_DEADLINE, max_bytes: int = HTTP_MAX_BYTES,
-    clock: Callable[[], float] = time.monotonic,
-) -> tuple[int, Any]:
-    """One request to the fixed loopback control endpoint, with ONE deadline
-    across connecting, sending, the status line and headers, and the body.
-    http.client would bound only each socket read, so a peer trickling
-    header bytes could hold the single-threaded launcher indefinitely; this
-    minimal HTTP/1.1 client re-arms the socket timeout with the remaining
-    budget before every operation and gives up when it is spent. No proxies,
-    no redirects, `Connection: close`, body capped at `max_bytes`;
-    Content-Length, chunked, and read-to-close bodies are all handled."""
-    started = clock()
-
-    def remaining() -> float:
-        left = deadline_s - (clock() - started)
-        if left <= 0:
-            raise ControlError(f"{method} {path}: exceeded {deadline_s:.1f}s")
-        return left
-
-    payload = None if body is None else json.dumps(body).encode()
-    head = (f"{method} {path} HTTP/1.1\r\nHost: {addr[0]}:{addr[1]}\r\n"
-            f"Accept: application/json\r\nConnection: close\r\n")
-    if payload is not None:
-        head += f"Content-Type: application/json\r\nContent-Length: {len(payload)}\r\n"
-    request = head.encode() + b"\r\n" + (payload or b"")
-
-    def recv(sock: socket.socket) -> bytes:
-        sock.settimeout(remaining())
-        return sock.recv(65536)
-
-    try:
-        sock = socket.create_connection(addr, timeout=remaining())
-    except OSError as exc:
-        raise ControlError(f"{method} {path}: connect: {exc}") from None
-    try:
-        sock.settimeout(remaining())
-        sock.sendall(request)
-        buf = b""
-        while b"\r\n\r\n" not in buf:
-            chunk = recv(sock)
-            if not chunk:
-                raise ControlError(f"{method} {path}: closed before headers")
-            buf += chunk
-            if len(buf) > max_bytes:
-                raise ControlError(f"{method} {path}: headers over {max_bytes} bytes")
-        header_blob, rest = buf.split(b"\r\n\r\n", 1)
-        status_line, _, header_lines = header_blob.partition(b"\r\n")
-        parts = status_line.split(None, 2)
-        if len(parts) < 2 or not parts[1].isdigit():
-            raise ControlError(f"{method} {path}: bad status line")
-        status = int(parts[1])
-        headers = http.client.parse_headers(io.BytesIO(header_lines + b"\r\n\r\n"))
-        chunked = "chunked" in (headers.get("Transfer-Encoding") or "").lower()
-        length_text = headers.get("Content-Length")
-        raw = rest
-        if length_text is not None and not chunked:
-            if not length_text.strip().isdigit():
-                raise ControlError(f"{method} {path}: bad Content-Length")
-            length = int(length_text)
-            if length > max_bytes:
-                raise ControlError(f"{method} {path}: response over {max_bytes} bytes")
-            while len(raw) < length:
-                chunk = recv(sock)
-                if not chunk:
-                    raise ControlError(f"{method} {path}: body shorter than Content-Length")
-                raw += chunk
-            raw = raw[:length]
-        else:
-            while True:
-                chunk = recv(sock)
-                if not chunk:
-                    break
-                raw += chunk
-                if len(raw) > max_bytes:
-                    raise ControlError(f"{method} {path}: response over {max_bytes} bytes")
-            if chunked:
-                raw = _dechunk(raw)
-    except (OSError, http.client.HTTPException, ValueError) as exc:
-        raise ControlError(f"{method} {path}: {type(exc).__name__}: {exc}") from None
-    finally:
-        sock.close()
-    try:
-        data = json.loads(raw.decode("utf-8")) if raw else None
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        raise ControlError(f"{method} {path}: response is not JSON") from None
-    return status, data
-
-
 # --- desired-state validation -------------------------------------------------
 
 
@@ -319,18 +195,13 @@ class Snapshot:
     services: dict[str, DesiredEntry]
 
 
-def validate_desired(
-    payload: Any, launcher_id: str, core_instance_id: str,
-    catalogue: dict[str, ServiceKind],
-) -> Snapshot:
-    """The whole response is validated before any of it is acted on; anything
+def validate_desired(payload: Any, catalogue: dict[str, ServiceKind]) -> Snapshot:
+    """The whole message is validated before any of it is acted on; anything
     off leaves the last valid snapshot in force."""
     if not isinstance(payload, dict):
         raise ValueError("not an object")
     if payload.get("schema_version") != SCHEMA_VERSION:
         raise ValueError("unsupported schema_version")
-    if payload.get("launcher_id") != launcher_id or payload.get("core_instance_id") != core_instance_id:
-        raise ValueError("instance markers do not match this launcher's core")
     core_pid = payload.get("core_pid")
     if not isinstance(core_pid, int) or isinstance(core_pid, bool):
         raise ValueError("core_pid")
@@ -437,8 +308,6 @@ class Launcher:
         self.spawn_core = spawn_core
         self.base_env = dict(os.environ if base_env is None else base_env)
         self.clock = clock
-        self.launcher_id = uuid.uuid4().hex
-        self.core_instance_id = uuid.uuid4().hex
         self.started_at = _utc_now()
         self.sequence = 0
         self.snapshot: Snapshot | None = None
@@ -451,12 +320,18 @@ class Launcher:
         self.shutdown_phase = 0
         self.phase_deadline: float | None = None
         self.exit_code = 0
-        self._next_poll = 0.0
-        self._next_heartbeat = 0.0
         self._status_dirty = True
-        self._status_retry_at = 0.0
         self._lock_fh = None
         self._signals = 0
+        # The control channel to the current core, and the read buffer.
+        self.core_sock: socket.socket | None = None
+        self._core_buf = b""
+        self._core_snapshot_seen = False  # this core has sent its first snapshot
+        # Inactivity log bookkeeping.
+        now = self.clock()
+        self._last_activity = now
+        self._inactivity_step = 0
+        self._next_inactivity_log = now + INACTIVITY_STEPS[0]
 
     # --- lock / port -----------------------------------------------------------
 
@@ -498,17 +373,23 @@ class Launcher:
                 raise
             return False
 
-    def describe_port_occupant(self) -> str:
-        """For the refusal message: an unmanaged rainbox core answers the
-        control endpoint (409 without markers, 200 with); anything else is
-        some other application."""
-        try:
-            status, _ = http_json(self.core_addr, "GET", "/services/api/desired", deadline_s=0.5)
-        except ControlError:
-            return "another application (it does not speak the rainbox control API)"
-        if status in (200, 409):
-            return "an unmanaged rainbox core (started by hand, not by the launcher)"
-        return f"an HTTP server that is not a rainbox core (HTTP {status})"
+    # --- activity / inactivity log ---------------------------------------------
+
+    def _note_activity(self, now: float) -> None:
+        self._last_activity = now
+        self._inactivity_step = 0
+        self._next_inactivity_log = now + INACTIVITY_STEPS[0]
+
+    def _inactivity_tick(self, now: float) -> None:
+        if now < self._next_inactivity_log:
+            return
+        idle = now - self._last_activity
+        logger.info("no activity for %d minutes", int(round(idle / 60.0)))
+        self._inactivity_step += 1
+        if self._inactivity_step < len(INACTIVITY_STEPS):
+            self._next_inactivity_log = self._last_activity + INACTIVITY_STEPS[self._inactivity_step]
+        else:
+            self._next_inactivity_log = self._next_inactivity_log + INACTIVITY_REPEAT
 
     # --- spawning --------------------------------------------------------------
 
@@ -544,34 +425,54 @@ class Launcher:
         return None
 
     def _spawn(self, rec: Proc, now: float) -> None:
+        pass_fds: tuple[int, ...] = ()
+        child_sock: socket.socket | None = None
         if rec.kind is None:
-            argv = list(self.core_argv)
+            # The core gets its end of a fresh socketpair as an inherited fd;
+            # our end replaces whatever channel the previous core had.
+            self._close_core_channel()
+            parent_sock, child_sock = socket.socketpair()
+            os.set_inheritable(child_sock.fileno(), True)
+            argv = [*self.core_argv, "--control-fd", str(child_sock.fileno())]
             cwd = self.source_dir
             env = dict(self.base_env)
-            self.core_instance_id = uuid.uuid4().hex
-            env[LAUNCHER_ID_ENV] = self.launcher_id
-            env[CORE_INSTANCE_ID_ENV] = self.core_instance_id
-            # The port the launcher will poll, stated explicitly: the core
-            # loads .env (override=False) before reading RAINBOX_CORE_PORT,
-            # so a value set only in .env would otherwise send the core to a
-            # port the launcher never looks at.
+            # The port the launcher probes, stated explicitly: the core loads
+            # .env (override=False) before reading RAINBOX_CORE_PORT, so a value
+            # set only in .env would otherwise send it elsewhere.
             env[CORE_PORT_ENV] = str(self.core_addr[1])
+            pass_fds = (child_sock.fileno(),)
         else:
+            parent_sock = None
             cwd, argv = self._service_paths(rec.kind)
             env = service_environment(self.base_env, rec.env)
         try:
             proc = subprocess.Popen(
                 argv, cwd=str(cwd), env=env, start_new_session=True, shell=False,
-                stdin=subprocess.DEVNULL, close_fds=True,
+                stdin=subprocess.DEVNULL, close_fds=True, pass_fds=pass_fds,
             )
         except FileNotFoundError as exc:
             rec.state, rec.message = "not installed", f"missing {exc.filename}"
             self._status_dirty = True
+            if parent_sock is not None:
+                parent_sock.close()
+            if child_sock is not None:
+                child_sock.close()
             return
         except OSError as exc:
             rec.state, rec.message = "failed", f"spawn error: {exc}"
             self._status_dirty = True
+            if parent_sock is not None:
+                parent_sock.close()
+            if child_sock is not None:
+                child_sock.close()
             return
+        if child_sock is not None:
+            child_sock.close()  # the child holds its own copy now
+        if parent_sock is not None:
+            parent_sock.setblocking(False)
+            self.core_sock = parent_sock
+            self._core_buf = b""
+            self._core_snapshot_seen = False
         rec.proc, rec.pid, rec.pgid = proc, proc.pid, proc.pid
         rec.state, rec.since, rec.message = "running", _utc_now(), None
         rec.running_since = now
@@ -579,6 +480,108 @@ class Launcher:
         rec.stop_deadline, rec.next_retry = None, None
         self._status_dirty = True
         logger.info("spawned %s pid=%d", rec.key, proc.pid)
+
+    # --- the control channel -------------------------------------------------------
+
+    def attach_core_socket(self, sock: socket.socket) -> None:
+        """Tests: adopt a channel to a fake core instead of spawning one."""
+        self._close_core_channel()
+        sock.setblocking(False)
+        self.core_sock = sock
+        self._core_buf = b""
+        self._core_snapshot_seen = False
+
+    def _close_core_channel(self) -> None:
+        sock, self.core_sock = self.core_sock, None
+        if sock is not None:
+            try:
+                sock.close()
+            except OSError:
+                pass
+        self._core_buf = b""
+        self._core_snapshot_seen = False
+
+    def _read_core(self, now: float) -> None:
+        """Drain whatever the core has sent (non-blocking); EOF closes the
+        channel — the core is gone or going, SIGCHLD reaps it."""
+        sock = self.core_sock
+        if sock is None:
+            return
+        while True:
+            try:
+                chunk = sock.recv(65536)
+            except BlockingIOError:
+                break
+            except OSError:
+                chunk = b""
+            if not chunk:
+                logger.info("core control channel closed")
+                self._close_core_channel()
+                self._note_activity(now)
+                return
+            self._note_activity(now)
+            self._core_buf += chunk
+            if len(self._core_buf) > MAX_LINE_BYTES:
+                logger.warning("core sent an oversized control line; closing the channel")
+                self._close_core_channel()
+                return
+            while b"\n" in self._core_buf:
+                raw, self._core_buf = self._core_buf.split(b"\n", 1)
+                self._handle_core_line(raw, now)
+
+    def _handle_core_line(self, raw: bytes, now: float) -> None:
+        try:
+            message = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            logger.warning("unparseable control line from the core")
+            return
+        if not isinstance(message, dict) or message.get("type") != "desired":
+            logger.warning("unknown control message from the core: %r", message.get("type") if isinstance(message, dict) else message)
+            return
+        try:
+            snap = validate_desired(message, self.catalogue)
+        except ValueError as exc:
+            logger.warning("desired snapshot rejected: %s", exc)
+            return
+        first_from_this_core = not self._core_snapshot_seen
+        self._core_snapshot_seen = True
+        self._apply_snapshot(snap, now)
+        if first_from_this_core:
+            # A freshly started core has no status table yet: send the whole
+            # picture as soon as it is listening.
+            self._status_dirty = True
+
+    def _send_status(self) -> None:
+        """Push the full table down the channel. Event-driven: only after a
+        change, never on a timer. A send the core will not take within
+        SEND_TIMEOUT means the core is dead or wedged; the channel is dropped
+        and the next core learns the table after its first snapshot."""
+        self._status_dirty = False
+        sock = self.core_sock
+        if sock is None or not self._core_snapshot_seen:
+            return
+        self.sequence += 1
+        line = (json.dumps(self.status_payload()) + "\n").encode()
+        try:
+            sock.setblocking(True)
+            sock.settimeout(SEND_TIMEOUT)
+            sock.sendall(line)
+            sock.setblocking(False)
+        except OSError as exc:
+            logger.warning("status not delivered (%s); dropping the core channel", exc)
+            self._close_core_channel()
+
+    def status_payload(self) -> dict[str, Any]:
+        services = {key: rec.status() for key, rec in self.services.items()}
+        services[CORE_KEY] = self.core.status()
+        return {
+            "type": "status",
+            "schema_version": SCHEMA_VERSION,
+            "sequence": self.sequence,
+            "launcher": {"pid": os.getpid(), "state_dir": str(self.state_dir),
+                         "started_at": self.started_at, "core_only": self.core_only},
+            "services": services,
+        }
 
     # --- stopping ----------------------------------------------------------------
 
@@ -630,6 +633,7 @@ class Launcher:
             rc = rec.proc.poll()
             if rc is None:
                 continue
+            self._note_activity(now)
             self._handle_exit(rec, rc, now)
 
     def _handle_exit(self, rec: Proc, rc: int, now: float) -> None:
@@ -638,6 +642,8 @@ class Launcher:
         rec.running_since = None
         was_intentional = rec.stop_requested
         rec.stop_requested, rec.stop_deadline = False, None
+        if rec.kind is None:
+            self._close_core_channel()
         # The leader is gone; give any survivors in its group the same grace.
         if self._group_alive(rec.pgid):
             self._signal_group(rec, signal.SIGTERM)
@@ -707,56 +713,6 @@ class Launcher:
             if self.core_only and entry.enabled:
                 rec.message = "suppressed by --core-only"
 
-    def _poll_desired(self, now: float) -> None:
-        self._next_poll = now + POLL_INTERVAL
-        try:
-            status, data = http_json(self.core_addr, "GET", "/services/api/desired")
-        except ControlError as exc:
-            logger.debug("desired: %s", exc)
-            return
-        if status != 200:
-            logger.debug("desired: HTTP %s", status)
-            return
-        try:
-            snap = validate_desired(data, self.launcher_id, self.core_instance_id, self.catalogue)
-        except ValueError as exc:
-            logger.warning("desired snapshot rejected: %s", exc)
-            return
-        self._apply_snapshot(snap, now)
-
-    def _post_status(self, now: float) -> None:
-        """Post the full table. A failed post (the core is still starting, or
-        restarting) keeps the table dirty and retries after STATUS_RETRY_AFTER,
-        so a fresh core learns the picture in seconds, not at the next
-        heartbeat; a non-2xx answer (stale sequence, markers of an older core)
-        is not retried since resending the same thing cannot help."""
-        self._next_heartbeat = now + HEARTBEAT_INTERVAL
-        self.sequence += 1
-        try:
-            status, _ = http_json(self.core_addr, "POST", "/services/api/status",
-                                  self.status_payload())
-        except ControlError as exc:
-            logger.debug("status: %s", exc)
-            self._status_dirty = True
-            self._status_retry_at = now + STATUS_RETRY_AFTER
-            return
-        self._status_dirty = False
-        if status >= 300:
-            logger.debug("status: HTTP %s", status)
-
-    def status_payload(self) -> dict[str, Any]:
-        services = {key: rec.status() for key, rec in self.services.items()}
-        services[CORE_KEY] = self.core.status()
-        return {
-            "schema_version": SCHEMA_VERSION,
-            "launcher_id": self.launcher_id,
-            "core_instance_id": self.core_instance_id,
-            "sequence": self.sequence,
-            "launcher": {"pid": os.getpid(), "state_dir": str(self.state_dir),
-                         "started_at": self.started_at, "core_only": self.core_only},
-            "services": services,
-        }
-
     def _reconcile_one(self, rec: Proc, now: float) -> None:
         # Group survivors after the leader died: escalate at the deadline.
         if rec.group_drain_deadline is not None:
@@ -820,6 +776,7 @@ class Launcher:
 
     def request_shutdown(self) -> None:
         self._signals += 1
+        self._note_activity(self.clock())
         if self._signals >= 2:
             logger.warning("second signal: killing everything now")
             # Every group this launcher still owns — including one whose
@@ -876,10 +833,25 @@ class Launcher:
 
     # --- the loop ------------------------------------------------------------------
 
+    def next_deadline(self, now: float) -> float:
+        """The earliest moment the loop has something to do: a pending stop
+        escalation, backoff retry, group drain, shutdown phase deadline, or
+        the next inactivity log line. Everything else arrives as an event on
+        the core socket or the signal pipe."""
+        candidates = [self._next_inactivity_log]
+        if self.phase_deadline is not None:
+            candidates.append(self.phase_deadline)
+        for rec in (self.core, *self.services.values()):
+            for t in (rec.stop_deadline, rec.next_retry, rec.group_drain_deadline):
+                if t is not None:
+                    candidates.append(t)
+        return max(now, min(candidates))
+
     def tick(self, now: float | None = None) -> bool:
         """One pass. Returns False once shutdown has completed."""
         now = self.clock() if now is None else now
         self._reap(now)
+        self._read_core(now)
         if self.shutting_down:
             self.core.desired = self.core.desired and self.shutdown_phase < 2
             for rec in (*self.services.values(), self.core):
@@ -890,40 +862,16 @@ class Launcher:
                     rec.group_drain_deadline, rec.pgid = None, None
             done = self._shutdown_tick(now)
             if done:
-                self._post_status(now)
+                self._send_status()
                 return False
             if self._status_dirty:
-                self._post_status(now)
+                self._send_status()
             return True
         self._reconcile(now)
-        if now >= self._next_poll:
-            self._poll_desired(now)
-            # A signal may have arrived while the request was waiting; the
-            # shutdown path owns desired flags from here on.
-            if self.shutting_down:
-                return True
-            self._reconcile(now)
-        if (self._status_dirty and now >= self._status_retry_at) or now >= self._next_heartbeat:
-            self._post_status(now)
-        return True
-
-    def next_deadline(self, now: float) -> float:
-        """The earliest moment the loop has something to do: the next desired
-        poll or heartbeat, a pending status retry, a stop escalation, a
-        backoff retry, a group drain, or a shutdown phase deadline. The loop
-        sleeps until then — an idle launcher wakes for its 5-second poll and
-        nothing else, because child exits arrive as SIGCHLD through the
-        wakeup fd rather than being polled for."""
-        candidates = [self._next_poll, self._next_heartbeat]
         if self._status_dirty:
-            candidates.append(self._status_retry_at)
-        if self.phase_deadline is not None:
-            candidates.append(self.phase_deadline)
-        for rec in (self.core, *self.services.values()):
-            for t in (rec.stop_deadline, rec.next_retry, rec.group_drain_deadline):
-                if t is not None:
-                    candidates.append(t)
-        return max(now, min(candidates))
+            self._send_status()
+        self._inactivity_tick(now)
+        return True
 
     def run(self) -> int:
         rfd, wfd = os.pipe()
@@ -938,20 +886,23 @@ class Launcher:
         signal.signal(signal.SIGTERM, _on_signal)
         # SIGCHLD needs no handler body: its arrival writes a byte to the
         # wakeup fd, which is what ends the select() below so the child is
-        # reaped at once instead of at the next timer.
+        # reaped at once instead of at a timer.
         signal.signal(signal.SIGCHLD, lambda *_: None)
         try:
             while True:
                 if not self.tick():
                     break
+                fds = [rfd] + ([self.core_sock] if self.core_sock is not None else [])
                 timeout = min(MAX_SLEEP, self.next_deadline(self.clock()) - self.clock())
-                r, _, _ = select.select([rfd], [], [], max(0.0, timeout))
-                if r:
+                r, _, _ = select.select(fds, [], [], max(0.0, timeout))
+                if rfd in r:
                     os.read(rfd, 4096)
+                    self._note_activity(self.clock())
         finally:
             signal.set_wakeup_fd(-1)
             os.close(rfd)
             os.close(wfd)
+            self._close_core_channel()
         logger.info("bye")
         return self.exit_code
 
@@ -972,11 +923,12 @@ def main(argv: list[str] | None = None) -> int:
     launcher.acquire_lock()
     if launcher.core_port_in_use():
         logger.error(
-            "the core cannot bind %s:%d: it is held by %s. Stop it first; the "
+            "the core cannot bind %s:%d: it is held by another process — an unmanaged "
+            "core.py started by hand, or another application. Stop it first; the "
             "launcher never adopts or signals a process it did not start.",
-            *launcher.core_addr, launcher.describe_port_occupant())
+            *launcher.core_addr)
         return EXIT_CONFIG_REJECTED
-    logger.info("launcher %s; state dir %s; core-only=%s", launcher.launcher_id, launcher.state_dir, launcher.core_only)
+    logger.info("launcher pid %d; state dir %s; core-only=%s", os.getpid(), launcher.state_dir, launcher.core_only)
     return launcher.run()
 
 

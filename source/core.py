@@ -23,6 +23,7 @@ from agents.config import (  # noqa: E402
     AgentConfigEntry,
     agent_config,
 )
+from services import registry as services_registry  # noqa: E402
 from webapp import app  # noqa: E402
 from webapp.core import sync_models_from_providers  # noqa: E402
 
@@ -338,6 +339,11 @@ def main() -> None:
         "flag), updating existing rows' arguments too, then exit without "
         "starting the server.",
     )
+    parser.add_argument(
+        "--control-fd", type=int, default=None,
+        help="inherited socket to the launcher (main.py passes it); without it "
+             "the core runs unmanaged and /settings says so",
+    )
     args = parser.parse_args()
 
     if args.force_model_sync:
@@ -352,6 +358,13 @@ def main() -> None:
     root_uuid: UUID = uuid.uuid4()
     logger.info("uuid: %s", root_uuid)
     logger.info("name: root")
+
+    if args.control_fd is not None:
+        # Managed by the launcher: adopt the inherited socket, push the first
+        # desired-state snapshot, and read status lines until EOF.
+        services_registry.CHANNEL.attach(args.control_fd)
+        services_registry.CHANNEL.start(app)
+        logger.info("control channel to the launcher attached (fd %d)", args.control_fd)
 
     stop_event = threading.Event()
     thread = threading.Thread(
@@ -381,6 +394,7 @@ def main() -> None:
         thread.join(timeout=HEARTBEAT_TIMEOUT + 2.0)
         if thread.is_alive():
             logger.warning("supervisor did not stop within timeout")
+        services_registry.CHANNEL.close()
         logger.info("bye")
 
 
