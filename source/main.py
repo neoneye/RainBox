@@ -259,6 +259,40 @@ def validate_desired(payload: Any, catalogue: dict[str, ServiceKind]) -> Snapsho
     return Snapshot(core_pid=core_pid, core_restart_nonce=core_nonce, services=services)
 
 
+# --- the control channel ------------------------------------------------------
+
+
+class CoreChannel:
+    """The launcher's end of the control socketpair: the socket operations
+    the loop needs, and nothing else. Subclass it to change behaviour — the
+    tests subclass it to simulate a core that is slow to read (send raises
+    BlockingIOError) or gone (send raises OSError) without touching a real
+    socket's methods, which cannot be patched."""
+
+    def __init__(self, sock: socket.socket) -> None:
+        sock.setblocking(False)
+        self._sock = sock
+
+    def fileno(self) -> int:
+        return self._sock.fileno()
+
+    def send(self, data: bytes) -> int:
+        """Non-blocking send; BlockingIOError when the socket is full,
+        OSError when the peer is gone."""
+        return self._sock.send(data)
+
+    def recv(self, size: int) -> bytes:
+        """Non-blocking receive; BlockingIOError when nothing is waiting,
+        b"" at EOF."""
+        return self._sock.recv(size)
+
+    def close(self) -> None:
+        try:
+            self._sock.close()
+        except OSError:
+            pass
+
+
 # --- process records ---------------------------------------------------------
 
 
@@ -314,6 +348,7 @@ class Launcher:
         base_env: dict[str, str] | None = None,
         clock: Callable[[], float] = time.monotonic,
         on_output: Callable[[str, str], None] | None = None,
+        channel_cls: type[CoreChannel] = CoreChannel,
     ) -> None:
         self.state_dir = Path(state_dir).resolve()
         self.core_only = core_only
@@ -340,6 +375,7 @@ class Launcher:
         self._lock_fh = None
         self._signals = 0
         self.on_output = on_output or _print_child_line
+        self.channel_cls = channel_cls
         # Outbound status: the line being written (may be partially sent) and
         # at most one newer complete table waiting behind it. A slow core
         # costs us nothing but a buffered line; only a dead peer closes.
@@ -347,7 +383,7 @@ class Launcher:
         self._send_buf_started = False   # some bytes of _send_buf already went out
         self._queued_status = b""
         # The control channel to the current core, and the read buffer.
-        self.core_sock: socket.socket | None = None
+        self.core_channel: CoreChannel | None = None
         self._core_buf = b""
         self._core_snapshot_seen = False  # this core has sent its first snapshot
         # Inactivity log bookkeeping.
@@ -478,8 +514,7 @@ class Launcher:
         if child_sock is not None:
             child_sock.close()  # the child holds its own copy now
         if parent_sock is not None:
-            parent_sock.setblocking(False)
-            self.core_sock = parent_sock
+            self.core_channel = self.channel_cls(parent_sock)
             self._core_buf = b""
             self._core_snapshot_seen = False
         rec.proc, rec.pid, rec.pgid = proc, proc.pid, proc.pid
@@ -500,30 +535,26 @@ class Launcher:
     def attach_core_socket(self, sock: socket.socket) -> None:
         """Tests: adopt a channel to a fake core instead of spawning one."""
         self._close_core_channel()
-        sock.setblocking(False)
-        self.core_sock = sock
+        self.core_channel = self.channel_cls(sock)
         self._core_buf = b""
         self._core_snapshot_seen = False
 
     def _close_core_channel(self) -> None:
-        sock, self.core_sock = self.core_sock, None
-        if sock is not None:
-            try:
-                sock.close()
-            except OSError:
-                pass
+        channel, self.core_channel = self.core_channel, None
+        if channel is not None:
+            channel.close()
         self._core_buf = b""
         self._core_snapshot_seen = False
 
     def _read_core(self, now: float) -> None:
         """Drain whatever the core has sent (non-blocking); EOF closes the
         channel — the core is gone or going, SIGCHLD reaps it."""
-        sock = self.core_sock
-        if sock is None:
+        channel = self.core_channel
+        if channel is None:
             return
         while True:
             try:
-                chunk = sock.recv(65536)
+                chunk = channel.recv(65536)
             except BlockingIOError:
                 break
             except OSError:
@@ -574,7 +605,7 @@ class Launcher:
         gone does, and the next core learns the table after its first
         snapshot."""
         self._status_dirty = False
-        if self.core_sock is None or not self._core_snapshot_seen:
+        if self.core_channel is None or not self._core_snapshot_seen:
             return
         self.sequence += 1
         line = (json.dumps(self.status_payload()) + "\n").encode()
@@ -587,17 +618,17 @@ class Launcher:
 
     @property
     def wants_write(self) -> bool:
-        return self.core_sock is not None and bool(self._send_buf or self._queued_status)
+        return self.core_channel is not None and bool(self._send_buf or self._queued_status)
 
     def _flush_status(self) -> None:
         """Write as much pending status as the socket takes right now."""
-        sock = self.core_sock
-        while sock is not None and (self._send_buf or self._queued_status):
+        channel = self.core_channel
+        while channel is not None and (self._send_buf or self._queued_status):
             if not self._send_buf:
                 self._send_buf, self._queued_status = self._queued_status, b""
                 self._send_buf_started = False
             try:
-                n = sock.send(self._send_buf)
+                n = channel.send(self._send_buf)
             except BlockingIOError:
                 return  # the core will read later; select() wakes us when writable
             except OSError as exc:
@@ -976,9 +1007,9 @@ class Launcher:
                 if not self.tick():
                     break
                 rlist: list[Any] = [rfd, *self.output_fds()]
-                if self.core_sock is not None:
-                    rlist.append(self.core_sock)
-                wlist = [self.core_sock] if self.wants_write else []
+                if self.core_channel is not None:
+                    rlist.append(self.core_channel)
+                wlist = [self.core_channel] if self.wants_write else []
                 timeout = min(MAX_SLEEP, self.next_deadline(self.clock()) - self.clock())
                 r, _, _ = select.select(rlist, wlist, [], max(0.0, timeout))
                 if rfd in r:

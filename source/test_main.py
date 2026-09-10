@@ -307,7 +307,7 @@ def test_core_eof_closes_the_channel(lch: L.Launcher, core: FakeCore):
     wait_for(lch, lambda: svc(lch).state == "running")
     core.mine.close()
     lch.tick(lch.clock_obj.t)  # type: ignore[attr-defined]
-    assert lch.core_sock is None
+    assert lch.core_channel is None
     assert svc(lch).state == "running"  # losing the core never stops a service
 
 
@@ -527,7 +527,7 @@ def test_two_phase_shutdown_stops_services_before_the_core(tree: Path):
     l.clock_obj = clock  # type: ignore[attr-defined]
     try:
         l.tick(clock.t)
-        assert l.core.state == "running" and l.core_sock is not None
+        assert l.core.state == "running" and l.core_channel is not None
         wait_for(l, lambda: l.services["svc"].state == "running")  # the snapshot arrived
         time.sleep(0.5)  # let both children install their SIGTERM handlers
         l.request_shutdown()
@@ -565,7 +565,7 @@ def test_core_child_gets_the_launcher_selected_port_and_fd(tree: Path, monkeypat
     assert captured["env"][L.CORE_PORT_ENV] == "5090"
     fd = int(captured["argv"][captured["argv"].index("--control-fd") + 1])
     assert captured["pass_fds"] == (fd,)
-    assert l.core_sock is not None
+    assert l.core_channel is not None
 
 
 # --- idle behaviour -----------------------------------------------------------
@@ -622,26 +622,35 @@ def test_inactivity_is_logged_at_1_10_60_minutes_then_hourly(lch: L.Launcher, co
 # --- backpressure, output, credentials ------------------------------------------
 
 
-def test_slow_core_never_loses_the_channel_and_gets_the_newest_table(lch: L.Launcher, core: FakeCore):
+class SlowChannel(L.CoreChannel):
+    """A CoreChannel whose send() reports a full socket while `blocked`."""
+    blocked = False
+
+    def send(self, data: bytes) -> int:
+        if self.blocked:
+            raise BlockingIOError()
+        return super().send(data)
+
+
+def test_slow_core_never_loses_the_channel_and_gets_the_newest_table(tree: Path, core: FakeCore):
+    clock = FakeClock()
+    lch = L.Launcher(state_dir=tree / "state-slow", catalogue={"svc": KIND}, source_dir=tree,
+                     spawn_core=False, base_env=_base_env(), clock=clock, channel_cls=SlowChannel)
+    lch.acquire_lock()
+    lch.attach_core_socket(core.theirs)
+    lch.clock_obj = clock  # type: ignore[attr-defined]
     push(lch, core, desired(enabled=False))
     n = len(core.drain())
-    real = lch.core_sock
-    assert real is not None
-
-    class Slow:
-        """The real socket, except that send() reports a full buffer."""
-        def __init__(self, inner): self._inner = inner
-        def __getattr__(self, name): return getattr(self._inner, name)
-        def send(self, data): raise BlockingIOError()
-
-    lch.core_sock = Slow(real)  # type: ignore[assignment]
+    channel = lch.core_channel
+    assert isinstance(channel, SlowChannel)
+    channel.blocked = True
     lch._status_dirty = True
     lch.tick(lch.clock_obj.t)  # type: ignore[attr-defined]
     lch._status_dirty = True
     lch.tick(lch.clock_obj.t)  # type: ignore[attr-defined]
-    assert lch.core_sock is not None and lch.wants_write   # kept, waiting for writable
+    assert lch.core_channel is channel and lch.wants_write   # kept, waiting for writable
     assert len(core.drain()) == n
-    lch.core_sock = real
+    channel.blocked = False
     lch.tick(lch.clock_obj.t)  # type: ignore[attr-defined]
     delivered = core.drain()[n:]
     assert len(delivered) == 1                             # two changes coalesced to the newest table
@@ -655,7 +664,7 @@ def test_peer_gone_on_send_drops_the_channel(lch: L.Launcher, core: FakeCore):
     core.mine.close()
     lch._status_dirty = True
     lch.tick(lch.clock_obj.t)  # type: ignore[attr-defined]
-    assert lch.core_sock is None and not lch.wants_write
+    assert lch.core_channel is None and not lch.wants_write
 
 
 def test_child_output_is_prefixed_with_its_key(tree: Path, core: FakeCore):
