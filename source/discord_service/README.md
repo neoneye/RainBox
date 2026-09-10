@@ -1,9 +1,21 @@
 # Discord bridge service
 
-A standalone process that bridges one Discord text channel and one rainbox
-chatroom, two-way. Kept separate from the main project (own venv) so no
+A standalone process that bridges Discord text channels and rainbox
+chatrooms, two-way. Kept separate from the main project (own venv) so no
 Discord-related dependency enters the main venv. Talks to the core over HTTP
-only (the chat JSON API + SSE stream); the core never imports this code.
+only (the chat JSON API + SSE stream + the bridge config endpoint); the core
+never imports this code.
+
+Two modes, exclusive:
+
+- **Connector mode** (`BRIDGE_CONNECTOR=<uuid>`): the process serves one
+  connector row from `/bridges` — any number of bindings (chatroom ↔
+  channel), each with its own allowlist and forwarding policy, edited live.
+  The launcher (`python main.py` in `source/`) starts one such process per
+  enabled connector. This is the normal way to run it; see *Connector mode*.
+- **Legacy env mode** (no `BRIDGE_CONNECTOR`): one channel, one room, all
+  settings from `DISCORD_*` variables; kept for the transition (*Run (legacy
+  env mode)* below, and `import_legacy.py` to move off it).
 
 It is deliberately **not** a request/response bot: nothing here waits for a
 Discord message in order to answer it. The room drives Discord — whenever a
@@ -41,7 +53,63 @@ input at all (see *Troubleshooting* below).
    venv/bin/pip install -r requirements.txt
    ```
 
-## Run
+## Connector mode
+
+1. On `/bridges`: **+ Connector** (platform Discord, a credential variable
+   NAME such as `DISCORD_TOKEN_MAINBOT`), then **+ Binding** per chatroom ↔
+   channel pair (channel id from Discord's *Copy Channel ID*). Set
+   `allowed_senders` (numeric user ids) on the connector, a folder, or the
+   binding — the nearest level wins; enable the binding and the connector.
+2. Put the token VALUE under that variable name in the launcher's
+   `<state-dir>/credentials.env` (default state dir `source/var/services/`),
+   then press **Restart** on the connector — or run the manual command the
+   connector pane shows. The database never holds the token.
+
+The process fetches `GET /bridge/api/connectors/<uuid>/config` when its
+`/chat/stream` connection opens and again on every `bridge_config` event
+naming its connector (the core emits one from the transaction that commits
+any connector/folder/binding change), never on a timer. While the stream is
+down or an event is pending, the snapshot is stale and no message is sent or
+posted; delivery resumes from the persisted cursors once a fresh snapshot is
+published. Each remote request (every chunk, every 429 retry) re-checks the
+snapshot's freshness and the binding's effective enablement and direction.
+
+| Env var (connector mode) | Required | Meaning |
+|---|---|---|
+| `BRIDGE_CONNECTOR` | yes | the connector's uuid (selects this mode) |
+| *the connector's `token_env`* | yes | the bot token, under whatever NAME the row says; read from this process's environment only |
+| `RAINBOX_URL` | no (`http://127.0.0.1:5000`) | core webapp base URL |
+| `DISCORD_STATE_FILE` | no (`./bridge-<uuid>.json`) | per-connector state (schema 2): bot identity, per-binding cursors and progress maps; the launcher sets `<state-dir>/bridge-<uuid>.json` |
+
+State ownership: an exclusive OS lock on `<state-file>.lock` is held for the
+process lifetime, so a duplicate for the same connector exits **3**. Local
+validation failures and a confirmed credential rejection (401/403 on
+`/users/@me`) exit **2**; the launcher does not respawn either. A state file
+written by a different bot id is refused (exit 2) rather than reused.
+Removing a binding retires its worker and deletes its recorded progress
+bubbles best-effort (30 s total, one attempt each, only while the connector
+is enabled and the snapshot fresh), then prunes its state; a connector
+disable pauses everything and keeps state. Config 404, timeouts, and bad
+responses pause traffic and retry — they never make the process fail or
+fall back to the legacy variables.
+
+### Moving a legacy setup over
+
+From `discord_service/` with the legacy `DISCORD_*` environment (the token is
+not read):
+
+```bash
+venv/bin/python import_legacy.py --name "Main Bot" --state-dir /absolute/path/to/source/var/services
+```
+
+It resolves `DISCORD_ROOM_NAME` to exactly one room, creates a disabled
+connector and binding with the legacy allowlist and poll interval, and, if
+`state.json` exists, writes `bridge-<uuid>.json` in the state dir with the
+cursors and progress map under the new binding (the legacy file stays for
+rollback). Then stop the legacy process, enable on `/bridges`, add the token
+to `credentials.env`, and start. Never run both modes for the same bot.
+
+## Run (legacy env mode)
 
 With rainbox running (`python main.py` from `source/`):
 
@@ -96,6 +164,8 @@ startup means the token is wrong.
 ## Tests
 
 From the repo's source root: `venv/bin/python -m pytest -q discord_service/`
-(in-memory fakes; no network, no token). The root-wide run must ignore this
+(in-memory fakes; no network, no token): `test_discord_bridge.py` (env
+mode), `test_connector_bridge.py` (connector mode), `test_import_legacy.py`,
+and the two client tests. The root-wide run must ignore this
 directory (`--ignore=discord_service`, like `telegram_service`): both define
 a `bridge` module.

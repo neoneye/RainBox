@@ -1,7 +1,11 @@
-"""Discord <-> rainbox chatroom bridge — entrypoint and loop logic.
+"""Discord <-> rainbox chatroom bridge — entrypoint and legacy (env-mode) loop logic.
 
 Run `python bridge.py` from inside discord_service/ with its venv active and
-the core webapp running. See README.md for setup. Two worker threads:
+the core webapp running. See README.md for setup. Two modes, exclusive:
+with `BRIDGE_CONNECTOR` set the process is configured from the core's
+bridge tables (connector_bridge.py; the launcher runs it this way); without
+it, this module's legacy env mode binds ONE channel to ONE room from
+`DISCORD_*` variables. Env mode: two worker threads:
 inbound (poll the channel -> POST chat message) and outbound (SSE -> Discord
 messages: replies and notices as new messages, progress bubbles edited in
 place and deleted when the core reaps them). All loop logic takes injected
@@ -381,6 +385,11 @@ def outbound_loop(
 
 
 def main() -> None:
+    if (os.environ.get("BRIDGE_CONNECTOR") or "").strip():
+        # Connector mode: DB configuration, never the legacy env variables.
+        import connector_bridge
+        connector_bridge.run()
+        return
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     # Deferred so `import bridge` stays stdlib-only for tests.
     from discord_api import DiscordClient

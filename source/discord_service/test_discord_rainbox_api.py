@@ -70,4 +70,4 @@ def test_iter_sse_events_parses_data_lines_only():
         ": connected", "", 'data: {"room_uuid": "u1", "message_id": 3}', "",
         ": keepalive", "data: not json",
     ])])
-    assert list(c.iter_sse_events()) == [{"room_uuid": "u1", "message_id": 3}]
+    assert list(c.iter_sse_events()) == [{"event": "stream_open"}, {"room_uuid": "u1", "message_id": 3}]

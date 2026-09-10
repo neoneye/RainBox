@@ -3,8 +3,9 @@ platform, which policy keys exist with what defaults and types, and how a
 policy resolves through connector -> folders -> binding.
 
 Standard library only, like `services.definitions`: the core imports it to
-validate rows and resolve config snapshots, and a bridge process imports it
-(by path) to validate the snapshot it receives. Nothing here touches a
+validate rows and resolve config snapshots. A bridge process does not import
+it — the config endpoint's wire schema (`schema_version`) is the contract,
+and each bridge validates what it receives itself. Nothing here touches a
 database or a network.
 
 Design: docs/superpowers/specs/2026-09-09-bridge-settings-design.md

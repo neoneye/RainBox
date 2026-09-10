@@ -60,17 +60,19 @@ class DiscordClient:
         self._sleep = sleep
 
     def _request(
-        self, method: str, path: str, *, ok_404: bool = False, **kwargs: Any
+        self, method: str, path: str, *, ok_404: bool = False,
+        retry: bool = True, timeout: float = 30.0, **kwargs: Any
     ) -> Any:
         """One call. A 429 is honored once (sleep the body's retry_after,
-        capped, then retry); a second 429 or any other error status raises
-        DiscordAPIError with the body's message and code."""
+        capped, then retry) unless `retry` is False; a second 429 or any
+        other error status raises DiscordAPIError with the body's message
+        and code."""
         url = f"{API_BASE}{path}"
         for attempt in (1, 2):
             resp = self._session.request(
-                method, url, headers=self._headers, timeout=30, **kwargs
+                method, url, headers=self._headers, timeout=timeout, **kwargs
             )
-            if resp.status_code == 429 and attempt == 1:
+            if resp.status_code == 429 and attempt == 1 and retry:
                 try:
                     retry_after = float((resp.json() or {}).get("retry_after", 1.0))
                 except Exception:
@@ -132,4 +134,13 @@ class DiscordClient:
         """Delete one message; already gone (404) is fine."""
         self._request(
             "DELETE", f"/channels/{channel_id}/messages/{message_id}", ok_404=True
+        )
+
+    def delete_message_once(self, channel_id: str, message_id: str, timeout: float) -> None:
+        """Removal cleanup: one attempt with its own timeout and NO 429
+        retry/sleep (the caller's cleanup deadline owns the budget); 404
+        counts as done."""
+        self._request(
+            "DELETE", f"/channels/{channel_id}/messages/{message_id}",
+            ok_404=True, retry=False, timeout=timeout,
         )

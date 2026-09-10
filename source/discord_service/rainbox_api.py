@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 # every SSE_HEARTBEAT_SECONDS (webapp/chat_api.py), so a healthy stream never
 # goes quiet this long; if it does, the connection is dead and we reconnect.
 SSE_READ_TIMEOUT = 90.0
+# Bound on one config snapshot fetch (design: "Live configuration contract").
+CONFIG_TIMEOUT = 5.0
 
 
 class RainboxClient:
@@ -61,16 +63,33 @@ class RainboxClient:
         resp.raise_for_status()
         return resp.json()
 
+    def get_connector_config(self, connector_uuid: str) -> dict[str, Any] | None:
+        """The connector's resolved config snapshot (connector mode), or
+        None when the core says the connector does not exist (404). Bounded
+        to CONFIG_TIMEOUT so a wedged fetch cannot hold traffic on a stale
+        snapshot; any other failure raises."""
+        resp = self._session.get(
+            f"{self._base}/bridge/api/connectors/{connector_uuid}/config",
+            timeout=CONFIG_TIMEOUT,
+        )
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        return resp.json()
+
     def iter_sse_events(self) -> Iterator[dict[str, Any]]:
-        """Yield parsed JSON payloads from /chat/stream. Blocks while
-        streaming; raises (requests exceptions) on disconnect/timeout —
-        the caller reconnects with backoff."""
+        """Yield parsed JSON payloads from /chat/stream, preceded by one
+        synthetic `{"event": "stream_open"}` once the connection is up (a
+        connector-mode bridge refetches its config at that point). Blocks
+        while streaming; raises (requests exceptions) on disconnect/timeout
+        — the caller reconnects with backoff."""
         resp = self._session.get(
             f"{self._base}/chat/stream",
             stream=True,
             timeout=(10, SSE_READ_TIMEOUT),
         )
         resp.raise_for_status()
+        yield {"event": "stream_open"}
         for raw in resp.iter_lines(decode_unicode=True):
             if not isinstance(raw, str):
                 continue
