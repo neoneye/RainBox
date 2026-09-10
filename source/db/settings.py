@@ -24,6 +24,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from db.models import AppSetting, db
+from services.definitions import (
+    CORE_KEY,
+    STATIC_SERVICES,
+    enabled_setting_key,
+    env_setting_key,
+    nonce_setting_key,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -263,6 +270,53 @@ SETTINGS: dict[str, Setting] = {
 }
 
 
+def _validate_positive_int(value: object) -> None:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise ValueError(f"must be a positive integer (got {value!r})")
+
+
+def _service_settings() -> dict[str, Setting]:
+    """Registry entries generated from the service catalogue: a toggle per
+    static service, an optional string per supported env variable, and an
+    internal restart nonce per service (and one for the core). The nonce is
+    what a Restart button rewrites; the launcher restarts a process when its
+    nonce changes, so the core never executes anything itself. Keeping the
+    nonce persisted (not in memory) is what stops a core restart from looking
+    like "every nonce changed"."""
+    out: dict[str, Setting] = {}
+    for svc in STATIC_SERVICES.values():
+        out[enabled_setting_key(svc.key)] = Setting(
+            enabled_setting_key(svc.key), None, "bool", False,
+            description=f"Run {svc.key} under the launcher ({svc.description} "
+                        f"binds {svc.bind}). The launcher starts or stops the "
+                        "process on its next poll; the core is untouched.",
+        )
+        for var in svc.env_keys:
+            spec = svc.env_spec(var)
+            out[env_setting_key(svc.key, var)] = Setting(
+                env_setting_key(svc.key, var), None, spec.type, None,
+                validate=_validate_positive_int if spec.type == "int" and spec.positive else None,
+                choices=spec.choices,
+                description=f"{spec.description + ' ' if spec.description else ''}"
+                            f"Value of {var} in {svc.key}'s launch environment "
+                            "(empty = the service's own default). Changing it "
+                            "restarts the service.",
+            )
+        out[nonce_setting_key(svc.key)] = Setting(
+            nonce_setting_key(svc.key), None, "string", None, internal=True,
+            description=f"Restart nonce for {svc.key}; rewritten by Restart and "
+                        "by enable/env changes, consumed by the launcher.",
+        )
+    out[nonce_setting_key(CORE_KEY)] = Setting(
+        nonce_setting_key(CORE_KEY), None, "string", None, internal=True,
+        description="Restart nonce for the core; rewritten by Restart core.",
+    )
+    return out
+
+
+SETTINGS.update(_service_settings())
+
+
 def _registry(key: str) -> Setting:
     try:
         return SETTINGS[key]
@@ -286,13 +340,32 @@ def _coerce(spec: Setting, text: str) -> object:
 
 
 def _is_unset(spec: Setting, text: str | None) -> bool:
-    """For strings/json an empty value is 'unset' (use fallback); for bool/int
-    only None is unset (so `false`/`0` stay explicit)."""
+    """NULL or blank is 'unset' (use fallback) for every type. Explicit
+    bool/int values (`false`, `0`) are never blank, so they stay explicit; a
+    blank left behind by a key that was once string-typed must not turn into
+    int("") on every read."""
     if text is None:
         return True
-    if spec.type in ("string", "json"):
-        return text.strip() == ""
-    return False
+    return text.strip() == ""
+
+
+def _stored_is_readable(spec: Setting, text: str | None) -> bool:
+    """Whether a stored/env text is set AND parses as the declared type. A
+    value that does not parse (a key retyped after it was saved, or a row
+    edited by hand) is treated as unset — with a warning — instead of making
+    every reader of the registry raise; the /settings page and the launcher's
+    desired-state endpoint must keep working so the operator can repair it,
+    and a repair writes over the row without needing to read it first."""
+    if _is_unset(spec, text):
+        return False
+    try:
+        _coerce(spec, text)  # type: ignore[arg-type]
+    except (ValueError, TypeError):
+        logger.warning(
+            "setting %s holds a value that is not a valid %s; treating it as "
+            "unset until it is corrected on /settings", spec.key, spec.type)
+        return False
+    return True
 
 
 def get_setting(key: str) -> object:
@@ -301,13 +374,13 @@ def get_setting(key: str) -> object:
     spec = _registry(key)
 
     row = db.session.query(AppSetting).filter_by(key=key).one_or_none()
-    if row is not None and not _is_unset(spec, row.value):
-        return _coerce(spec, row.value)
+    if row is not None and _stored_is_readable(spec, row.value):
+        return _coerce(spec, row.value)  # type: ignore[arg-type]
 
     if spec.env:
         env_val = os.environ.get(spec.env)
-        if env_val is not None and not _is_unset(spec, env_val):
-            return _coerce(spec, env_val)
+        if _stored_is_readable(spec, env_val):
+            return _coerce(spec, env_val)  # type: ignore[arg-type]
 
     if spec.dynamic_default is not None:
         return spec.dynamic_default()
@@ -366,6 +439,47 @@ def set_setting(key: str, value: object) -> None:
     see the threat model in notes/backup.md). Clearing one (value=None) is fine."""
     _upsert_setting_row(_registry(key), value)
     db.session.commit()
+
+
+def stage_setting(key: str, value: object) -> None:
+    """Upsert one setting WITHOUT committing (same coercion/validation and
+    env-only-secret rule as set_setting). The caller owns the transaction:
+    stage several, then commit once, so keys that must move together — a
+    service toggle and its restart nonce — cannot be split by a crash or
+    observed half-written by a concurrent reader. App context required."""
+    _upsert_setting_row(_registry(key), value)
+
+
+def set_settings(values: dict[str, object]) -> None:
+    """Write several settings in ONE transaction. App context required."""
+    for key, value in values.items():
+        stage_setting(key, value)
+    db.session.commit()
+
+
+def get_settings_snapshot(prefix: str) -> dict[str, object]:
+    """Every registry key starting with `prefix`, resolved with the usual
+    DB -> env -> default precedence, but read from ONE statement so the
+    values are one database snapshot: a reader assembling several keys into
+    a coherent picture (the launcher's desired state) must not see key A
+    from before an edit and key B from after it. App context required."""
+    specs = [spec for spec in SETTINGS.values() if spec.key.startswith(prefix)]
+    rows = {
+        r.key: r.value for r in db.session.query(AppSetting)
+        .filter(AppSetting.key.startswith(prefix)).all()
+    }
+    out: dict[str, object] = {}
+    for spec in specs:
+        text = rows.get(spec.key)
+        if _stored_is_readable(spec, text):
+            out[spec.key] = _coerce(spec, text)  # type: ignore[arg-type]
+            continue
+        env_text = os.environ.get(spec.env) if spec.env else None
+        if spec.env and _stored_is_readable(spec, env_text):
+            out[spec.key] = _coerce(spec, env_text)  # type: ignore[arg-type]
+            continue
+        out[spec.key] = spec.dynamic_default() if spec.dynamic_default else spec.default
+    return out
 
 
 def lock_setting_row(key: str) -> None:
@@ -462,9 +576,9 @@ def mark_facts_invalidated(reason: str | None = None) -> str:
 
 def _source(spec: Setting) -> str:
     row = db.session.query(AppSetting).filter_by(key=spec.key).one_or_none()
-    if row is not None and not _is_unset(spec, row.value):
+    if row is not None and _stored_is_readable(spec, row.value):
         return "db"
-    if spec.env and not _is_unset(spec, os.environ.get(spec.env)):
+    if spec.env and _stored_is_readable(spec, os.environ.get(spec.env)):
         return "env"
     return "default"
 

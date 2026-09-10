@@ -193,7 +193,7 @@ never report itself as blocked. A blocked page disables every Start control,
 says which suite is running, and keeps polling so it re-enables itself when that
 run ends.
 
-This covers the benchmark pages only. The supervisor in `main.py` spawns
+This covers the benchmark pages only. The supervisor in `core.py` spawns
 assistant agent processes on its own schedule and does not consult the slot, so
 an assistant turn can still overlap a benchmark run.
 
@@ -204,7 +204,7 @@ model can't be aborted — it pegs CPU/GPU until the provider's timeout, and
 `_stop_event` is only checked *between* trials. So each row runs in its own
 **child process** the runner can SIGKILL — the same idea as the `/model` test
 probes (see [LLM Providers → /model test probes](llm-providers.md)) and the
-agent supervisor in `main.py`.
+agent supervisor in `core.py`.
 
 - **`benchmarks/subproc.py`** — `stream_target_subprocess(worker, request,
   on_event, stop_event)` spawns the worker, sends `request` as one JSON line on

@@ -16,6 +16,7 @@ import logging
 from flask import Response, jsonify, render_template_string, request
 
 import db
+from services import registry as services_registry
 
 from .core import app
 
@@ -204,6 +205,20 @@ function renderShieldChecklist(s){
 function render(){
   const list = document.getElementById('s-list');
   list.innerHTML = '';
+  // The launcher card: desired state lives in the services.*.enabled toggles
+  // below; observed state is what the launcher last sent over its control socket.
+  const lc = document.createElement('div');
+  lc.className = 's-card';
+  lc.id = 's-launcher';
+  lc.innerHTML =
+    '<div class="s-head"><span class="s-key">launcher</span><span class="s-type">processes</span></div>'
+    + '<div class="s-desc">Side services run under <code>main.py</code>. The '
+    + '<code>services.*.enabled</code> toggles are the desired state; the observed state on each '
+    + 'toggle is what the launcher last sent over its control socket. Restart rewrites a nonce '
+    + 'that the launcher acts on at once.</div>'
+    + '<div class="s-row"><span class="s-env" data-launcher-state>checking launcher status…</span> '
+    + '<button data-restart="core">Restart core</button></div>';
+  list.appendChild(lc);
   SETTINGS.forEach(s => {
     const card = document.createElement('div');
     card.className = 's-card';
@@ -224,6 +239,12 @@ function render(){
         + '</div>'
         + (s.env ? '<div class="s-env">env fallback: <code>' + escapeHtml(s.env) + '</code></div>' : '');
     }
+    if (s.key.startsWith('services.') && s.key.endsWith('.enabled')){
+      const svcKey = s.key.slice('services.'.length, -'.enabled'.length);
+      body += '<div class="s-row" data-service="' + escapeHtml(svcKey) + '">'
+        + '<span class="s-env">observed: <span data-service-state>…</span></span> '
+        + '<button data-restart="' + escapeHtml(svcKey) + '">Restart</button></div>';
+    }
     card.innerHTML =
       '<div class="s-head"><span class="s-key">' + escapeHtml(s.key) + '</span>'
       + '<span class="s-type">' + escapeHtml(s.value_type) + '</span></div>'
@@ -233,6 +254,15 @@ function render(){
   });
   list.querySelectorAll('[data-edit]').forEach(btn =>
     btn.addEventListener('click', () => openEdit(btn.getAttribute('data-edit'))));
+  list.querySelectorAll('[data-restart]').forEach(btn =>
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      try {
+        await fetch('/services/api/restart/' + encodeURIComponent(btn.getAttribute('data-restart')), {method: 'POST'});
+      } catch (e) { /* the status refresh will show the outcome */ }
+      finally { btn.disabled = false; refreshServiceStatus(); }
+    }));
+  refreshServiceStatus();
   list.querySelectorAll('[data-save-shields]').forEach(btn =>
     btn.addEventListener('click', async () => {
       const out = btn.parentElement.querySelector('[data-shields-result]');
@@ -291,6 +321,37 @@ function render(){
       }
     }));
 }
+
+// ---- launcher status --------------------------------------------------------
+// Observed state from GET /services/api/status: unmanaged (no launcher holds
+// this core's control socket) or per-service states. Never a
+// reason to change a toggle; that is desired state and stays as saved.
+async function refreshServiceStatus(){
+  let d;
+  try {
+    const r = await fetch('/services/api/status');
+    d = await r.json();
+  } catch (e) { return; }
+  const ls = document.querySelector('[data-launcher-state]');
+  if (ls){
+    if (!d.managed){
+      ls.textContent = 'unmanaged: this core was not started by main.py (the launcher), so toggles only change the stored setting';
+    } else {
+      const core = d.services && d.services.core ? d.services.core.state : 'unknown';
+      ls.textContent = 'managed; core ' + core
+        + (d.launcher && d.launcher.core_only ? ' (launcher started with --core-only: services are suppressed)' : '');
+    }
+  }
+  document.querySelectorAll('[data-service]').forEach(row => {
+    const rec = ((d.services || {})[row.getAttribute('data-service')]) || {state: 'unknown'};
+    let text = rec.state;
+    if (rec.pid) text += ' (pid ' + rec.pid + ')';
+    if (rec.message) text += ' — ' + rec.message;
+    const el = row.querySelector('[data-service-state]');
+    if (el) el.textContent = text;
+  });
+}
+setInterval(refreshServiceStatus, 10000);
 
 // ---- edit overlay ----------------------------------------------------------
 let editKey = null;
@@ -462,6 +523,11 @@ def settings_set_api() -> tuple[Response, int] | Response:
             # stamp stays independent), so the assistant's per-room context
             # marker fires.
             db.set_current_profile(data.get("value"))
+        elif services_registry.owns_setting(key):
+            # A service toggle or launch-environment edit is a restart-
+            # requiring change: the write also rewrites the service's restart
+            # nonce, so the launcher restarts (or resets a failed) process.
+            services_registry.set_service_setting(key, data.get("value"))
         else:
             db.set_setting(key, data.get("value"))
     except db.UnknownSetting:

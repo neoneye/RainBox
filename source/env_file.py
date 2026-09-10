@@ -6,7 +6,7 @@ OpenRouter API key) live in a gitignored `.env` at the repo root, next to
 
 `load_env_file()` is called at import of `providers/__init__.py` — the one
 choke point every process that builds an LLM passes through (the web app,
-`main.py`, the benchmark runners, and the killable `llm/models_test_worker.py`
+`core.py`, the benchmark runners, and the killable `llm/models_test_worker.py`
 subprocess all import `providers`, directly or through `llm`). Provider
 configuration already reads the environment (`OLLAMA_BASE_URL`, `JAN_BASE_URL`,
 `LMS`), so the file is a fallback layer under that, not a new mechanism.
@@ -31,7 +31,7 @@ def load_env_file(path: Path | None = None) -> Path | None:
     path that was loaded, or None when the file doesn't exist.
 
     Variables already present in the environment always win: `.env` fills gaps,
-    so `OPENROUTER_API_KEY=… python main.py` still overrides the file, and a
+    so `OPENROUTER_API_KEY=… python core.py` still overrides the file, and a
     test that sets the variable can't be clobbered by the operator's real key.
     """
     global _loaded

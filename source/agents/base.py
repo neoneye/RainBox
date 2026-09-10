@@ -8,7 +8,7 @@
 #    not unbounded, though — a stalled read is bounded by the httpx read
 #    timeout (OpenAILike.timeout, default 60s; llm.py), and a wedged process is
 #    bounded by the supervisor's heartbeat SIGKILL (HEARTBEAT_TIMEOUT in
-#    main.py). So a strict in-process bound (asyncio/signal/thread) is
+#    core.py). So a strict in-process bound (asyncio/signal/thread) is
 #    redundant here. Two real follow-ups remain:
 #      - OpenAILike.max_retries defaults to 3 and prepare_llm doesn't override
 #        it on the agent path, so a flaky connection retries 3x before
@@ -137,7 +137,7 @@ class Agent:
     """
 
     # How often the background heartbeat fires while handle() runs. Must stay
-    # well under the supervisor's HEARTBEAT_TIMEOUT in main.py (60s) so a slow
+    # well under the supervisor's HEARTBEAT_TIMEOUT in core.py (60s) so a slow
     # turn (e.g. a reasoning model thinking for >60s) isn't SIGKILLed. Class
     # attribute so tests can shrink it.
     HEARTBEAT_INTERVAL: float = 20.0

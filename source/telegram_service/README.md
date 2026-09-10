@@ -30,7 +30,7 @@ to support it.
 
 ## Run
 
-With `main.py` (the core) already running:
+With rainbox running (`python main.py` from `source/`):
 
 ```bash
 cd telegram_service

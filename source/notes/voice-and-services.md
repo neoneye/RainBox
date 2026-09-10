@@ -9,8 +9,10 @@ the web app but proxies to an LLM provider backend.
 Why separate processes: the voice models need their own dependency worlds
 (faster-whisper's CTranslate2; Kokoro's torch — neither belongs in the main
 venv), and the Telegram bridge holds a network credential the core app never
-sees. The main app does **not** start these services; each is started by hand
-and discovered via an env var. All demo pages degrade gracefully when a
+sees. The launcher (`main.py`) starts whichever of them are enabled on `/settings`,
+as sibling processes of the core (`docs/superpowers/specs/2026-09-10-launcher-design.md`);
+each can still be started by hand, and the core discovers them via an env var
+either way. All demo pages degrade gracefully when a
 service is down (a health banner, not a crash).
 
 ## Port / env map

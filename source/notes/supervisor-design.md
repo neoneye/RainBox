@@ -1,6 +1,6 @@
 # Supervisor — design
 
-The supervisor is rainbox's core runtime: one OS process (`python main.py`)
+The supervisor is rainbox's core runtime: one OS process (`core.py`, started as a child of the launcher by `python main.py`)
 runs the Flask webserver and the supervisor loop side by side, and every agent
 is a short-lived child OS process the supervisor spawns when that agent has
 work and reaps when its inbox is empty. Work flows through a Postgres-backed
@@ -11,20 +11,32 @@ the supervisor's job is to spawn, watch, kill, recover, and route.
 
 | Piece | File |
 |-------|------|
-| Supervisor loop, spawn, watchdog, routing, shutdown | `main.py` |
+| Supervisor loop, spawn, watchdog, routing, shutdown | `core.py` |
 | Queue operations (`enqueue`, `take_item`, `journal_update`, routing reads) | `db/queue.py` (re-exported from the `db` facade) |
 | `Inbox` / `Journal` tables | `db/models.py` |
 | Agent child-process entrypoint (`python -m agents --socket-fd N`) | `agents/__main__.py` |
 | Agent class hierarchy (`Agent` → `ModelGroupAgent` → `StructuredLLMAgent`) | `agents/base.py` |
 | Role registry (`agent_config`), class dispatch (`AGENT_CLASS_PATHS`) | `agents/config.py` |
+| Control channel to the launcher (`core.py --control-fd N`): desired-state pushes down, status lines up | `services/registry.py` (`ControlChannel`) |
 
-`main()` (`main.py`) starts the supervisor as a non-daemon thread, then serves
+`main()` (`core.py`) starts the supervisor as a non-daemon thread, then serves
 the webapp on `127.0.0.1:5000` (werkzeug `make_server`, threaded) — the two
 share one process and one `agent_config`, which is why the app must run via
 `python main.py`: the web endpoints only *enqueue*; the supervisor thread is
 what makes anything execute. The same loop also hosts the cron scheduler
 (`db.cron_tick()` throttled to `CRON_TICK_INTERVAL` = 5 s, self-guarded so a
 cron bug cannot take down the thread — see `notes/cron-design.md`).
+
+When started by the launcher (`python main.py`), `core.py` also receives
+`--control-fd N`: one end of a `socketpair()` the launcher created, inherited
+across the exec exactly like an agent's `--socket-fd`. The core adopts it in
+`main()` (`services.registry.CHANNEL`), pushes a desired-state snapshot down
+it once `init_db` has run and again whenever a `services.*` setting or restart
+nonce changes, and a daemon thread reads the launcher's status lines up it
+until EOF. EOF means the launcher is gone and the core is unmanaged from that
+moment (`/settings` says so). Started without the flag — by hand, or by
+`tools.serve_ui` — the core is unmanaged from the start. Nothing on this
+channel polls; see `docs/superpowers/specs/2026-09-10-launcher-design.md`.
 
 ## The queue: inbox → journal
 
@@ -69,7 +81,7 @@ most one process per role. A uuid not in `agent_config` never spawns (the
 cron system user exploits this: it authors chat events but is deliberately
 unrunnable).
 
-`spawn()` (`main.py`) creates a `socketpair`, marks the child end inheritable,
+`spawn()` (`core.py`) creates a `socketpair`, marks the child end inheritable,
 and `os.posix_spawn`s `python -m agents --socket-fd N` with `PYTHONPATH` set
 to the source root. The supervisor then sends exactly one newline-terminated
 JSON config message (`{name, uuid, description, next, …}`) down the socket.
@@ -84,7 +96,7 @@ supervisor sees the socket EOF, `waitpid`s the child, unregisters and closes
 the socket, and forgets the agent. New work later means a fresh spawn with a
 fresh `setup()`.
 
-**Loop pacing** (`_select_timeout`, `main.py`): the loop blocks in `select()`
+**Loop pacing** (`_select_timeout`, `core.py`): the loop blocks in `select()`
 on the live agents' sockets — `TICK_TIMEOUT` (1 s) while any agent is alive or
 the pass found inbox/routing/cron work, backing off to `IDLE_TICK_TIMEOUT`
 (5 s) when fully idle so an at-rest supervisor is not hammering Postgres.
@@ -108,7 +120,7 @@ serializes socket writes between the heartbeat thread and the main loop.
 
 **Recovery.** When a worker dies with a `current_journal_id` — watchdog kill,
 unexpected exit, or supervisor shutdown — `_recover_assistant_journal`
-(`main.py`) settles the orphan: if the journal belongs to an assistant run,
+(`core.py`) settles the orphan: if the journal belongs to an assistant run,
 `db.recover_interrupted_assistant_run` (`db/assistant.py`) fails the running
 step with a reason (including the active model and its timeout), finishes the
 run as `killed`, posts a failure notice, and enqueues the run summarizer;
@@ -123,7 +135,7 @@ here.
 The supervisor is the only router; model output never chooses a routing
 target. Each pass, `fetch_unrouted_terminal()` (`db/queue.py`) returns
 terminal journal rows (`completed` *or* `failed`) with `routed_at` still NULL,
-oldest first. For each row (`main.py`):
+oldest first. For each row (`core.py`):
 
 1. **Dynamic return address first.** A manager writes `return_to_agent_uuid`
    into the *inbox payload* of the turn it delegates; `Agent.run` copies it
@@ -196,7 +208,7 @@ the `/agentmodel` page when it sources its model elsewhere or runs no LLM.
 
 ## Shutdown
 
-SIGINT/SIGTERM (`main.py`) sets the stop event and shuts the webserver down
+SIGINT/SIGTERM (`core.py`) sets the stop event and shuts the webserver down
 from a helper thread. The supervisor loop exits, SIGKILLs every remaining
 agent, runs journal recovery for any in-flight `current_journal_id`
 ("Supervisor shut down while the assistant run was active."), `waitpid`s the

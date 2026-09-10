@@ -43,7 +43,7 @@ input at all (see *Troubleshooting* below).
 
 ## Run
 
-With `main.py` (the core) already running:
+With rainbox running (`python main.py` from `source/`):
 
 ```bash
 cd discord_service

@@ -68,7 +68,7 @@ document is the design of record; this section is the as-built delta.
   (kind `chat_unstructured`) and the `conversation` manager role added.
 - **Dynamic return-address routing** — `Agent.run()` copies the manager-authored
   `return_to_agent_uuid` into `result["_routing"]` on success *and* failure;
-  `main.py` routes terminal rows via `db_queue.fetch_unrouted_terminal`, dynamic
+  `core.py` routes terminal rows via `db_queue.fetch_unrouted_terminal`, dynamic
   address first, static `next` success-only.
 - **The manager** — `agent_conversation.py` (`ConversationManagerAgent`, pure
   `next_speaker` / `evaluate_stop`): tick claim, idempotent advance, human-
@@ -452,11 +452,11 @@ concepts attach.
 | Agent identity / speaker in a room | `ChatUser` (`name`, `user_type` ∈ {human, agent}); messages carry `sender_uuid` | `db_models.py` (`ChatUser`, `ChatMessage`) |
 | "Run this agent" | `db.enqueue(agent_uuid, payload)` → `inbox` row | `db_queue.py:enqueue` |
 | Agent does work | drain loop: `take_item` → `handle()` → `journal_update` | `agent.py` run loop; `db_queue.py` |
-| Agent-to-agent handoff (linear) | supervisor routing pass: completed journal → `agent_config[role]["next"]` → `enqueue` | `main.py` routing pass |
-| Isolation + liveness | one child process per role, SIGKILL after `HEARTBEAT_TIMEOUT=60s` of silence | `main.py` spawn/watchdog logic |
+| Agent-to-agent handoff (linear) | supervisor routing pass: completed journal → `agent_config[role]["next"]` → `enqueue` | `core.py` routing pass |
+| Isolation + liveness | one child process per role, SIGKILL after `HEARTBEAT_TIMEOUT=60s` of silence | `core.py` spawn/watchdog logic |
 | Posting a turn / progress / diagnostics | `post_chat_message(room, sender, text, content_type, kind, streaming)`, `post_progress` | `db_chat.py` |
 | Live UI updates | `NOTIFY` on post/update → SSE `/chat/stream` → browser upsert | `db_chat.py`, `webapp/chat_api.py` |
-| Periodic / triggered runs | cron tick fires jobs (`message` / `command` / `backup`) | `main.py` cron pass, `db_cron.py` |
+| Periodic / triggered runs | cron tick fires jobs (`message` / `command` / `backup`) | `core.py` cron pass, `db_cron.py` |
 | Default model selection + fallback | `ModelGroupAgent` resolves a priority-ordered group; tries each in order | `agent.py` (`ModelGroupAgent`), `db_model_config.py` |
 
 ### Five hard truths that shape the design
@@ -698,7 +698,7 @@ agent_cls = agent_classes.get(kind, ModelGroupAgent)
 ```
 
 Every existing role keeps working: its role name already equals its
-implementation key, so `get("agent_kind", name)` is a no-op for them. `main.py`'s
+implementation key, so `get("agent_kind", name)` is a no-op for them. `core.py`'s
 `spawn()` must include `agent_kind` in the JSON config line it sends the child.
 
 ### 2. Persona resolver and record
@@ -881,7 +881,7 @@ tick.
 | --- | --- |
 | `agent_config.py` | add `agent_kind` to `AgentConfigEntry`; add `persona_egon` / `persona_benny` roles with `next = None`; add the `conversation` manager role |
 | `agent.py` | dispatch on `config.get("agent_kind", config["name"])`; copy safe dynamic routing keys from payload to `result["_routing"]` on success and failure |
-| `main.py` | include `agent_kind` in the spawned config line; route completed/failed rows with `result["_routing"]["return_to_agent_uuid"]`, and use static `next` only for completed rows |
+| `core.py` | include `agent_kind` in the spawned config line; route completed/failed rows with `result["_routing"]["return_to_agent_uuid"]`, and use static `next` only for completed rows |
 | `db_queue.py` | expose unrouted terminal rows with `state` and `result`, including failed rows that carry dynamic `_routing` |
 | `agent_chat_unstructured.py` | system prompt = persona or the existing constant |
 | `persona.py` *(new)* | `Persona` dataclass + `resolve_persona_for_agent` + JSONL loader/validator |
@@ -2001,7 +2001,7 @@ confusion.
   instead of dynamic registration, they must still be excluded from
   `CHAT_RESPONDER_UUIDS`, but they may appear in admin/model-binding screens;
   that is acceptable for the walking skeleton, not for a polished off state.
-- **Local demo (walking skeleton).** With the single `main.py` running
+- **Local demo (walking skeleton).** With the single `core.py` running
   (supervisor + webserver): ensure the two persona roles are bound to a model
   group on `/agent_models`; create room R containing `persona_egon` and
   `persona_benny`; hit the admin "start run" endpoint for the `egon-benny`
@@ -2030,12 +2030,12 @@ are not obvious from the design above.
   shows the resulting transcript.
 - **Restart matrix — what a code/data change requires.** Agents run as *fresh
   child processes per turn*, but the webserver + supervisor are one long-lived
-  `main.py` process:
+  `core.py` process:
   - **Live immediately (no restart):** persona prompt bodies
     (`agent_profiles/prompts/*.md`) and the manager's per-tick logic
     (`agent_conversation.evaluate_stop`, scheduling) — each turn/tick is a new
     subprocess that re-reads them.
-  - **Needs a `main.py` restart:** anything the webapp or supervisor execute —
+  - **Needs a `core.py` restart:** anything the webapp or supervisor execute —
     the `/conversation/api` endpoints and their `db_conversation` helpers
     (`create`/`resume`/`stop`/`reconcile`), `agent_config` role/UUID changes, the
     routing pass, and the page templates. Conversation *templates* are read by the
@@ -2175,7 +2175,7 @@ Beyond per-phase acceptance, the feature is worth keeping if:
 
 ### Internal (the primitives this builds on)
 
-- Supervisor loop, routing pass, spawn keying, watchdog: `main.py`
+- Supervisor loop, routing pass, spawn keying, watchdog: `core.py`
 - Inbox/journal queue: `db_queue.py` (`enqueue`, `take_item`, `journal_update`,
   `fetch_unrouted_completed`, `mark_routed`, `agent_uuids_with_work`)
 - Agent base + drain loop + model-group fallback + KNOWN ISSUES: `agent.py`
@@ -2185,7 +2185,7 @@ Beyond per-phase acceptance, the feature is worth keeping if:
 - Human-only trigger guard + responder set + SSE: `webapp/chat_api.py`
 - Hardcoded system prompts to replace with persona data:
   `agent_chat_unstructured.py`, `agent_chat_structured.py`, `router_agent.py`
-- Cron scheduler (single-step option): `db_cron.py`, `main.py` cron pass
+- Cron scheduler (single-step option): `db_cron.py`, `core.py` cron pass
 - Stop-flag + SIGKILL precedent for in-flight work: `benchmark_runner.py`
 
 ## How wild could this get? (feasible moonshots)

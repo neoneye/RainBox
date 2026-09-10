@@ -15,7 +15,7 @@ substrate. The full test suite was not run for this review.
 single-user demo*. `make_app()` even documents it: the session secret defaults
 to a fixed `"rainbox-dev"` string, "This is a local single-user demo, so a
 fixed dev default is fine; override with SECRET_KEY for anything exposed beyond
-localhost" (`db/__init__.py:48-51`). `main.py` binds the server to
+localhost" (`db/__init__.py:48-51`). `core.py` binds the server to
 `127.0.0.1:5000`. Under that trust model — one operator, one machine, nothing
 listening off-box — most of what follows is accepted risk, not a live exploit.
 
@@ -78,7 +78,7 @@ authentication exists.
   at `webapp/core.py:252-258`.
 - No `is_accessible()` override on any view.
 - No login route anywhere in the app.
-- No global `before_request` guard (`db/__init__.py:make_app`, `main.py`).
+- No global `before_request` guard (`db/__init__.py:make_app`, `core.py`).
 - No CSRF layer in the webapp route surface. `WTForms` is present as a
   transitive dependency but Flask-WTF CSRF is not wired; admin view tests set
   `WTF_CSRF_ENABLED=False`, confirming it is not enforced.

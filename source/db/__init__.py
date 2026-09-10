@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 def make_app() -> Flask:
     """Build a Flask app wired to the Postgres database.
 
-    Used by webapp.py directly and by main.py/agent.py to obtain an
+    Used by webapp.py directly and by core.py/agent.py to obtain an
     app context they can push for db.session access."""
     _root = Path(__file__).parent.parent  # source/
     # Flask(__name__) inside a package resolves root_path to db/, so the

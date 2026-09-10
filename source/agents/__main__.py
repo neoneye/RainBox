@@ -6,7 +6,7 @@ Config-read discards the socket remainder. main() reads the config line
 with `config_line, _ = buf.split("\n", 1)` and drops `_`. This is safe
 *today* only because (a) the supervisor sends exactly one newline-
 terminated config message and never writes to the agent again
-(the config sendall in main.py spawn()), and (b) the agent never reads
+(the config sendall in core.py spawn()), and (b) the agent never reads
 `sock` again — run() pulls work from Postgres (db.take_item), and the
 socket is used only for outbound status (sock.sendall). If either ever
 changes (supervisor sends follow-up commands, or the agent starts reading

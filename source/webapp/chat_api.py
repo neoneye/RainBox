@@ -68,7 +68,7 @@ def _maybe_trigger_chat_agents(
     belongs to the room, when a *human* posts in it. The human-only guard is
     what prevents an infinite loop: an agent's own reply (sender_type 'agent',
     and posted directly, not via this endpoint) never re-triggers anything.
-    Requires main.py (the supervisor) to be running and a model group assigned
+    Requires core.py (the supervisor) to be running and a model group assigned
     to each responder agent for a reply to appear.
 
     The triggering message's uuid is carried in the payload so each enqueued

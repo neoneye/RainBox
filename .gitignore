@@ -3,3 +3,6 @@
 
 # Superpowers brainstorming companion scratch (mockups, session state)
 .superpowers/
+
+# Launcher runtime state (lock file, launcher-only credentials)
+var/services/

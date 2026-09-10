@@ -2,8 +2,13 @@
 
 **Date:** 2026-09-10
 
-**Status:** design; nothing implemented yet. Paths and APIs below are proposed
-unless identified as current behavior.
+**Status:** phase 1 implemented (`source/main.py` — the launcher IS the entrypoint; the core moved to `source/core.py`, `source/services/`,
+`source/webapp/services_api.py`, the `services.*` settings and the /settings
+launcher card). Two runtime facts beyond the text below: `RAINBOX_CORE_PORT`
+overrides the core's port for both `core.py` and the launcher, so a second
+core can run beside the operator's for a smoke test; and the control channel
+between launcher and core is a socketpair (`core.py --control-fd N`), not
+HTTP — see *Bootstrap and the control channel*.
 
 **Roadmap:** ship the core and static services first, then add dynamic bridge
 entries from the [bridge settings design](2026-09-09-bridge-settings-design.md).
@@ -11,14 +16,14 @@ Bridges continue to start manually until that second phase is ready.
 
 ## Decision and current behavior
 
-A small `source/launcher.py` starts the core and enabled services as siblings.
+A small `source/main.py` — the launcher, and the way rainbox is started — runs the core (`source/core.py`) and enabled services as siblings.
 The core continues to own its agents. Operator settings describe which services
 should run; the launcher owns processes, credentials, restart backoff, and local
 state paths. Restarting a service never requires restarting the core.
 
 ```text
-launcher.py
-├── main.py                         core and webserver
+main.py  (launcher)
+├── core.py                         core and webserver
 │   └── python -m agents …          owned by the core
 ├── voice_tts_kokoro/venv/bin/python server.py
 ├── voice_stt_whisper/venv/bin/python server.py
@@ -37,11 +42,11 @@ operator restarts the core.
 
 ```bash
 cd source
-venv/bin/python launcher.py [--state-dir <dir>] [--core-only]
+venv/bin/python main.py [--state-dir <dir>] [--core-only]
 ```
 
 - Resolve the source directory from `__file__`, not the working directory.
-  Run the core with `sys.executable` and absolute `main.py`, with `cwd=source/`.
+  Run the core with `sys.executable` and absolute `core.py`, with `cwd=source/`.
 - Use the standard library plus a shared, data-only service catalogue. No Flask,
   SQLAlchemy, model stack, or `requests` imports. Measure memory during validation;
   an approximately 15 MB footprint is a target, not a platform-independent fact.
@@ -53,23 +58,47 @@ venv/bin/python launcher.py [--state-dir <dir>] [--core-only]
 - `--core-only` suppresses every service entry regardless of its DB toggle.
   The status page must show this override rather than suggest a toggle is broken.
 - Spawn with `Popen(argv, cwd=…, env=…, start_new_session=True, shell=False,
-  stdin=DEVNULL, close_fds=True)`. Use absolute executable/script paths, resolved
-  from the local catalogue. Preserve a venv interpreter's invocation path even
-  if it is itself a symlink; resolving it to the base Python can lose the venv.
-  Stdout/stderr are inherited. Do not use `preexec_fn` or fork without exec.
+  stdin=DEVNULL, stdout=PIPE, stderr=STDOUT, close_fds=True)` (plus
+  `pass_fds` for the core's control fd). Use absolute executable/script paths,
+  resolved from the local catalogue. Preserve a venv interpreter's invocation
+  path even if it is itself a symlink; resolving it to the base Python can
+  lose the venv. Do not use `preexec_fn` or fork without exec.
+- **Child output is piped, not inherited.** Each child's stdout and stderr
+  are one non-blocking pipe the loop selects on; every line is printed to
+  the launcher's stdout prefixed `[<key>] `, so a traceback from Kokoro and
+  one from Whisper can never interleave anonymously. A non-blocking read
+  returns whatever is there, not whole lines, so each child has a byte
+  buffer: complete lines are printed, the incomplete tail waits for the next
+  read. The launcher owns a `dup()` of the pipe's fd rather than the `Popen`
+  object's file (which would close the fd when the `Popen` is dropped on
+  reap, losing a fast crash's traceback and freeing the number for reuse),
+  and closes it only at EOF — never on reap — so bytes a child wrote just
+  before dying are still read. A pipe stays open until EOF, so a grandchild
+  that inherited it is attributed to its parent's key. Idle cost is nil: the
+  loop wakes only when a child writes.
+- **POSIX only.** `select()` on a pipe, `SIGCHLD`, process groups, `fcntl`
+  locks — none of it exists on Windows, and neither does the core's
+  `posix_spawn`/socketpair agent protocol. rainbox is a macOS/Linux program;
+  the launcher says so at import and refuses to run elsewhere rather than
+  failing obscurely in the loop.
 
 Each service gets its own process group/session. Terminal Ctrl-C reaches the
 launcher, which performs the shutdown sequence below. Exact fork/spawn selection
 is Python's implementation detail; the relevant contract is documented by
 [Python's subprocess API](https://docs.python.org/3/library/subprocess.html).
 
-The single-threaded loop polls/reaps children and uses monotonic deadlines,
-without long sleeps or blocking waits. HTTP uses stdlib `urllib`, with proxies and redirects disabled
-for the fixed `http://127.0.0.1:5000` control endpoint. Bound each request to one
-second of elapsed time and each response to 1 MiB; a socket inactivity timeout
-alone must not let a trickling response block supervision indefinitely. Check
-shutdown and child deadlines before starting a request. Deadline handling may
-be delayed by at most one outstanding HTTP request.
+The single-threaded loop sleeps in `select()` on the control socket to the
+core, the signal wakeup pipe, and every child's output pipe — with a timeout
+equal to its earliest own deadline (a stop escalation, a backoff retry, a
+group drain, a shutdown phase, the next inactivity log line). It wakes for a
+line from the core, for a child writing output, for `SIGCHLD` (a child
+exited: reap it now), for `SIGTERM`/`SIGINT`, or for that deadline, and for
+nothing else. There is no timer tick and no HTTP: the launcher is not an HTTP
+client at all. Sends to the core never block: a status line the socket cannot
+take yet stays pending, the socket joins the write set, and a newer table
+replaces a pending one whose bytes have not yet gone out. Backpressure never
+closes the channel (an inherited socketpair cannot be reopened); only a peer
+that is gone does.
 
 ## Environment and credential ownership
 
@@ -103,52 +132,69 @@ The launcher parses a deliberately limited format:
   An unquoted `#` is part of the value. Reject malformed quoting and duplicate
   names with a line-number error, never echo the line's contents.
 
-At **every spawn**, resolve a credential as startup launcher environment value
-if its name is present, otherwise the freshly parsed credentials-file value.
-An explicitly empty value means missing and does not fall through. Environment
-wins consistently; the file never overrides an exported value just on restart.
-Show the selected source (environment/file) without its value. File rotation
-reaches the next Restart when the file is the selected source; changing an
-exported value requires restarting the launcher. Running children keep their
+At **every spawn**, resolve a credential from the freshly parsed credentials
+file first, and only if the file does not set that name, from the launcher's
+startup environment. The file is the operator's source of truth for service
+credentials, so editing it and pressing Restart takes effect even when the
+same name was exported when the launcher booted — silently ignoring a file
+edit because of a variable set days ago would be the astonishing behavior.
+An empty value is unset at either level. Show the selected source
+(file/environment) without its value. Because the file is read at every
+spawn, a writer must replace it atomically — write `credentials.env.tmp`,
+then `os.replace()` — so a Restart that coincides with a save never reads a
+truncated file; editors that truncate-then-write are an accepted risk for a
+hand-edited file, and any UI that writes it must use the atomic form. Changing an exported value that the
+file does not override requires restarting the launcher. Running children keep their
 current environment. Invalid file syntax prevents file-backed spawns, not the
 core or already-running services. Neither source is copied into DB, argv, status,
 or the desired-state API. A child may still deliberately read local files:
 environment filtering is not an OS sandbox.
 
-## Bootstrap and core identity
+## Bootstrap and the control channel
 
-The core is always desired and is not part of the service list. Generate a
-fresh launcher UUID and a fresh core-instance UUID for each core spawn. Pass
-them as `RAINBOX_LAUNCHER_ID` and `RAINBOX_CORE_INSTANCE_ID` to the core;
-`/services/api/desired` echoes them and the core PID.
-Do not accept a response from a different instance, even at the right port.
-Status POSTs must carry the matching markers. These identify this launcher's
-child, not authenticate the existing unauthenticated localhost API.
+The core is always desired and is not part of the service list. Before
+spawning it the launcher creates a `socketpair()`, marks the child end
+inheritable, and passes it as `core.py --control-fd N` — the same mechanism
+the core uses to hand each agent its socket. The launcher keeps the other end.
+Both directions carry JSON lines and both are **pushes**:
 
-Before spawning the core, check whether its fixed port is already occupied;
-if so, stop bootstrap with a clear diagnostic and do not adopt or signal that
-process. The check is advisory: a bind race can still occur, and the instance
-check prevents reconciling against an unrelated core that won the race.
+- core → launcher: `{"type": "desired", …}` once when the core has finished
+  `init_db` and again whenever a service setting or restart nonce changes;
+- launcher → core: `{"type": "status", …}` whenever a process changes state.
 
-Start the core before polling desired state. Until the first complete valid
-snapshot, start no side services. Thereafter poll every 5 seconds, with at most
-one request outstanding. Errors, 404s, wrong instance markers, malformed data,
-unknown schema versions, duplicate keys, and truncated/oversized responses leave
-the last valid snapshot intact. They never mean “disable everything.”
+The socket is identity and liveness at once: only the child that inherited
+this fd can speak on it, so there are no instance markers to check, and EOF on
+either end means the peer is gone. When the core dies the launcher sees EOF
+(and `SIGCHLD`); when the launcher dies the core's reader sees EOF and the core
+is unmanaged from that moment. A core started without `--control-fd` (by hand,
+`tools.serve_ui`) is unmanaged and `/settings` says so.
 
-Keep already-known service desired state during core downtime, including normal
-crash recovery for those services. Start no newly discovered services without a
-valid snapshot. Bridge processes separately pause message traffic when their
-own configuration expires; the launcher keeping a process alive grants no
-permission to keep forwarding.
+There is no port probe before spawning the core: any check the launcher
+made would be a time-of-check/time-of-use race against the core's own bind a
+moment later, and a false refusal is worse than a clean failure (an earlier
+connect-based probe refused to start on every Mac with AirPlay Receiver on,
+which answers loopback connects on `*:5000`). The core binds first thing in
+`main()`, before its supervisor thread or control channel exist, and exits
+with code 3 — the "held by another process" convention — when the address is
+in use, with a log line naming the port. The launcher reports that as
+`failed` without a respawn loop, exactly like a held lock.
+
+Until the first complete valid snapshot from the current core, start no side
+services. Malformed lines, unknown schema versions, unknown kinds, duplicate
+keys, and oversized lines leave the last valid snapshot intact; they never mean
+"disable everything". Keep already-known service desired state during core
+downtime, including normal crash recovery for those services. Bridge processes
+separately pause message traffic when their own configuration expires; the
+launcher keeping a process alive grants no permission to keep forwarding.
 
 ## Desired-state contract
 
+One JSON line from the core, pushed at startup and on every change:
+
 ```json
 {
+  "type": "desired",
   "schema_version": 1,
-  "launcher_id": "<launcher-uuid>",
-  "core_instance_id": "<core-instance-uuid>",
   "core_pid": 123,
   "core_restart_nonce": "<persisted-nonce>",
   "services": [
@@ -163,15 +209,15 @@ permission to keep forwarding.
 }
 ```
 
-`GET /services/api/desired` returns a complete, coherent snapshot including
-**disabled** entries. Missing static entries invalidate it. A missing dynamic
-bridge key in a valid snapshot means removal. Validate the whole response before
-reconciling any part of it; unknown kinds invalidate the response and report
-that launcher/core versions disagree.
+A snapshot is complete and coherent — it comes from one statement over the
+settings table — and includes **disabled** entries. Missing static entries
+invalidate it. A missing dynamic bridge key in a valid snapshot means removal.
+Validate the whole line before reconciling any part of it; unknown kinds
+invalidate it and report that launcher/core versions disagree.
 
 The local data-only catalogue fixes each kind's directory, argv, allowed
 nonsecret environment keys, and defaults. The core imports the same catalogue
-to build its registry and settings. HTTP cannot provide arbitrary paths, argv,
+to build its registry and settings. The channel cannot provide arbitrary paths, argv,
 or new executable kinds. A service key identifies one process; static keys
 match their kind, and future bridge keys are `bridge:<connector-uuid>`.
 
@@ -192,7 +238,7 @@ baseline; the just-started core must not restart merely because it has a nonce.
 An ordinary core restart preserves the remembered nonces for every service.
 Repeated snapshots therefore cannot trigger repeated restarts. Restart does not
 implicitly enable a disabled service. Every transition from disabled to enabled
-also changes its nonce atomically, so a quick off/on between polls can reset a
+also changes its nonce atomically, so a quick off/on between two snapshots can reset a
 failed service. Changes received while stopping coalesce to the newest desired
 entry; finish stopping before starting at most one replacement.
 
@@ -286,13 +332,16 @@ before restarting. Automatic orphan adoption is out of scope.
 
 ## Status and operator controls
 
+One JSON line from the launcher, pushed after every change and after the first
+snapshot from a freshly started core (so a new core learns the whole table at
+once). Never on a timer: an idle system sends nothing.
+
 ```json
 {
+  "type": "status",
   "schema_version": 1,
-  "launcher_id": "<launcher-uuid>",
-  "core_instance_id": "<core-instance-uuid>",
   "sequence": 7,
-  "launcher": {"pid": 122, "state_dir": "<absolute-dir>", "started_at": "<UTC>"},
+  "launcher": {"pid": 122, "state_dir": "<absolute-dir>", "started_at": "<UTC>", "core_only": false},
   "services": {
     "voice_tts_kokoro": {
       "state": "running", "pid": 124, "since": "<UTC>",
@@ -302,27 +351,32 @@ before restarting. Automatic orphan adoption is out of scope.
 }
 ```
 
-POST the full table to `/services/api/status` after changes (coalesced) and every
-30 seconds, including `core` and disabled services. Status failures do not block
-reconciliation. The core accepts only its instance markers and increasing
-sequence numbers; receipt time is local to the core, not supplied by the client.
-Status stays in memory. A restarted core learns it on the next successful post.
+The table includes `core` and disabled services. The core accepts only
+increasing sequence numbers; receipt time is its own. Status stays in memory.
+A slow core costs the launcher one buffered line, never the channel: the
+line waits until the socket is writable, a newer table replaces a pending
+line none of whose bytes have gone out, and a line partly on the wire is
+finished before the next. Only `EPIPE`/`ECONNRESET` — the peer is gone —
+closes the channel; the next core learns the table after its first snapshot.
+During shutdown that is expected (the launcher is stopping the core while
+services still report state changes) and is logged at debug level, never
+raised into the loop.
 
 States: `starting`, `running`, `stopping`, `stopped`, `backoff`, `failed`,
 `credential missing`, `not installed`. Include next-retry time for `backoff` and
 credential source for credential-related states, never a credential value.
 `/settings` displays the desired toggle separately from observed state, with a
-POST Restart action. `running` describes liveness only. With no heartbeat for
-90 seconds, show observed state as `unknown`; do not alter the desired toggle.
-A directly started core can identify itself as unmanaged from its missing
-instance markers. `tools.serve_ui` must not accept launcher status or desired
-requests as a supervisor instance; it displays unmanaged/unknown.
+POST Restart action. `running` describes liveness only. When the channel is
+closed (EOF, or a failed send) the core is unmanaged and shows every observed
+state as `unknown`; it never alters the desired toggle. A core started without
+`--control-fd` — by hand, or `tools.serve_ui` — is unmanaged from the start
+and displays exactly that.
 
-Inherited child output may interleave and is not currently guaranteed to have
-service prefixes. The launcher logs service key, PID, spawn, exit, and signals
-itself; it does not read child output or promise to expose child error text.
-Activity Monitor hierarchy and the key-to-PID status table are the supported
-way to identify children. Process-name symlinks are an optional later experiment,
+Child output is read by the launcher and printed with a `[<key>] ` prefix
+per line (see *Runtime*); the launcher additionally logs service key, PID,
+spawn, exit, and signals itself. Activity Monitor hierarchy and the
+key-to-PID status table identify children by process; the prefix identifies
+them by log line. Process-name symlinks are an optional later experiment,
 not a prerequisite or a reason to risk bypassing a service venv.
 
 A port conflict means an unmanaged instance or another application may be there,
@@ -332,9 +386,78 @@ healthy supervised child's state; the reverse ownership order may cause the
 supervised attempt to fail. State-dir locks cannot prevent duplicate launchers
 using different directories from competing for the same fixed core port.
 
+## Idle cost and shortcomings
+
+rainbox is meant to sit idle without waking the CPU or GPU, so the launcher's
+idle cost was measured (macOS, Apple Silicon, sandbox database, `--core-only`,
+nothing enqueued), sampling `top` per process: context switches over 30 s as
+the wakeup count, %CPU averaged over 60 s. Three implementations were
+measured on 2026-09-10; the third is the current one.
+
+| Process | Context switches / 30 s | CPU idle |
+|---|---|---|
+| core alone (`core.py`, unmanaged) | 144–194 (its own 5 s ticks) | 0.09–0.14 % |
+| launcher, fixed 0.25 s timer + HTTP polling | 160 | 0.14 CPU-s in 128 s |
+| launcher, deadline loop + HTTP polling every 5 s | 36 | 0.11 CPU-s in 136 s |
+| **launcher, socket channel (current)** | **8** | **0.07 CPU-s in 153 s** |
+| core under HTTP polling | +77 over core alone | 0.25–0.27 % |
+| **core under the socket channel** | **167 — inside the core-alone range** | **0.02 %** |
+
+What the numbers say:
+
+- **The first two designs were the kind of regression this project exists to
+  avoid.** A quarter-second timer woke the launcher four times a second for
+  nothing, and 5-second HTTP polling put seven Flask requests per 30 s on the
+  core — a session, a `SELECT`, JSON each — roughly doubling the core's idle
+  CPU, paid whether or not any service was enabled.
+- **The socket channel removed both.** Nothing polls in either direction: the
+  core pushes a snapshot when a setting changes, the launcher pushes status
+  when a process changes, `SIGCHLD` delivers child exits, and the loop sleeps
+  in `select()` until one of those happens. The launcher's remaining 8
+  wakeups per 30 s are the inactivity log and the sampler itself; the core's
+  idle is back to what it was without a launcher. A toggle on `/settings`
+  now applies in milliseconds instead of within 5 s.
+- **Liveness is free.** Two timed signals a heartbeat used to buy — "is the
+  launcher alive?", "is the core alive?" — come from EOF on the socket and
+  from `SIGCHLD`, at zero idle cost.
+
+The one timed wakeup left is deliberate: the **inactivity log**. After 1
+minute with nothing to do the launcher logs `no activity for 1 minutes`, then
+again at 10 minutes, then at 60, then every 60 minutes — enough to see in the
+log that it is alive, sparse enough never to flood it. Any activity (a line
+from the core, a child exit, a signal) resets the ladder to 1 minute.
+
+Shortcomings that remain:
+
+- Every idle wakeup in the core is its own: the 5 s `IDLE_TICK_TIMEOUT`
+  Postgres poll and the 5 s cron tick. The launcher neither fixes nor worsens
+  them; they are the next thing to look at if idle cost matters further.
+- `running` means the process is alive, not that the service answers; a
+  service loading a model for a minute is `running` the whole time.
+- The launcher does not install venvs or models; `not installed` is a
+  report, not an action.
+- **A launcher crash mid-transition aborts the transition.** The launcher
+  is stateless by design: it consumes a new restart nonce in memory before
+  it stops the old process, and on startup it adopts whatever nonce the
+  core's first snapshot carries as the baseline. If the launcher itself is
+  killed between consuming a nonce and spawning the replacement, the next
+  launcher sees the same nonce, treats it as already applied, and does not
+  finish the restart; the service stays as the crash left it (usually
+  stopped, which a snapshot with `enabled: true` starts again on the next
+  reconcile). Pressing Restart again completes it. Persisting consumed
+  nonces would close this window at the cost of launcher state on disk; not
+  worth it for a process that is not expected to crash.
+- **POSIX only**, as stated under *Runtime*.
+- **The credentials-file grammar is the launcher's own**, deliberately
+  smaller than dotenv's: one `NAME=value` per line, the value split at the
+  first `=` (so `API_KEY=foo=bar` is `foo=bar`), one optional pair of
+  matching quotes whose contents are literal (spaces inside are kept), no
+  escapes, no interpolation, no multiline values, no `export`. Anything
+  else is refused with a line number. Tests pin those cases.
+
 ## Implementation and acceptance
 
-Proposed files: `source/launcher.py`, `source/test_launcher.py`, data-only
+Files: `source/main.py` (launcher), `source/core.py` (core), `source/test_main.py`, `source/test_core.py`, data-only
 `source/services/definitions.py`, core-side `source/services/registry.py`,
 `source/webapp/services_api.py`, and settings registration in
 `source/db/settings.py`. Import the new view module in `source/webapp/__init__.py`.
@@ -342,7 +465,7 @@ Update `.gitignore`, `.env.example`'s guidance about launcher-only credentials,
 `source/README.md`, and `source/notes/voice-and-services.md` when this ships.
 No service toggle should appear until its endpoint and registry are wired up.
 
-Verify with fake HTTP peers/children, temporary files, and a controllable clock;
+Verify with a fake core on a socketpair, fake children, temporary files, and a controllable clock. The launcher's socket operations live in one small `CoreChannel` class that the launcher takes as a constructor argument, so a test subclass — not a patched socket, whose methods are read-only — simulates a slow core (`send` raises `BlockingIOError`) or a gone one (`OSError`);
 real models, platform tokens, and network services are unnecessary:
 
 - Import/spawn catalogue code under an isolated interpreter and prove no
@@ -350,14 +473,14 @@ real models, platform tokens, and network services are unnecessary:
 - Validate supported credential grammar, duplicate/malformed lines, explicit
   empty values, consistent environment precedence, file rotation, source labels,
   and the absence of unrelated credentials in each service environment.
-- Wrong-instance, malformed, duplicate, truncated, and oversized desired payloads
-  cause no partial reconcile. Slow/unavailable HTTP cannot prevent reaping,
-  freshness/status updates, or shutdown deadlines beyond one request bound.
-- Toggle/restart affects only the selected process. An off/on between polls
-  changes its nonce; a restart during stopping coalesces. Core restart consumes
-  its nonce once, preserves services, and restores their status within 30 seconds
-  of reachable HTTP. Core failure exhaustion leaves services running and a local
-  recovery diagnostic.
+- Malformed, duplicate, unknown-kind, and oversized desired lines cause no
+  partial reconcile. A closed or wedged core channel cannot prevent reaping or
+  shutdown deadlines; a send is bounded by its 2 s timeout.
+- Toggle/restart affects only the selected process. An off/on between two
+  snapshots changes its nonce; a restart during stopping coalesces. Core
+  restart consumes its nonce once, preserves services, and the new core
+  receives the full status table right after its first snapshot. Core failure
+  exhaustion leaves services running and a local recovery diagnostic.
 - Expected signal exits do not count as crashes; unexpected exit 0 does. Check
   rolling crash windows, backoff reset, deterministic exits, spawn errors, and
   disabled services cancelling scheduled retries.
@@ -365,8 +488,10 @@ real models, platform tokens, and network services are unnecessary:
   the two shutdown phases; the core remains alive throughout service grace.
   Sidecar locks survive stale files and reject a concurrent owner. Abrupt launcher
   death is tested for the documented survivor/conflict behavior, not adoption.
-- Status rejects old instance/sequence reports, expires after 90 seconds, and
-  distinguishes unmanaged mode and `--core-only` suppression from failure.
+- Status rejects stale sequence numbers; EOF on the channel makes the core
+  unmanaged at once; unmanaged mode and `--core-only` suppression are
+  distinguished from failure. Idle, the launcher sends nothing and its only
+  timed wakeups are the inactivity log lines at 1, 10, 60 minutes, then hourly.
 - Check static service bind addresses against entrypoints and exercise the
   implemented exit conventions in each isolated service suite.
 - A malformed replacement credential or missing executable leaves an existing

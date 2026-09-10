@@ -126,7 +126,7 @@ RainBox today is a local, Postgres-backed assistant workbench:
   kanban.
 - Process-isolated agents spawned by the supervisor via `os.posix_spawn` over a
   `socketpair`, with JSONL status/heartbeat messages and a watchdog that
-  `SIGKILL`s on a missed heartbeat (`HEARTBEAT_TIMEOUT = 60.0s`, `source/main.py`).
+  `SIGKILL`s on a missed heartbeat (`HEARTBEAT_TIMEOUT = 60.0s`, `source/core.py`).
 - Multiple chat responder agents — the registry in `source/agents/__main__.py`
   lists ~19 agent types — including structured/unstructured chat, router, Q&A,
   query-router/filter-router, workspace shell, MCP agent, tool demo, and the

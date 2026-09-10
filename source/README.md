@@ -9,7 +9,7 @@ Unlike other frameworks where the agents runs in the same process, being fragile
 
 At its base is an **OS-process supervisor for AI agents**, built from POSIX primitives without a workflow framework. On top of it sit the parts that get used daily: an assistant with its own ReAct loop and inspectable trace, a long-term memory store with hybrid retrieval, group chat over SSE, a kanban board, a cron scheduler, and local speech in and out.
 
-A single executable (`main.py`) runs a Flask webserver and an idle-by-default supervisor in the same process. When work shows up in an agent's inbox (Postgres-backed), the supervisor spawns that agent as a child process via `posix_spawn`, hands it an inherited `socketpair` for JSONL communication, and multiplexes it via a `selectors` loop. Each agent drains its inbox, journals each item through `processing → completed`, then exits when idle; the supervisor reaps it and does **not** respawn until new work appears. A heartbeat watchdog SIGKILLs unresponsive processes or broken status channels. Ctrl-C stops both the webserver and the supervisor cleanly.
+`main.py` is the launcher: it starts the core and whichever side services are enabled on `/settings`, as sibling processes it supervises. The core (`core.py`) runs a Flask webserver and an idle-by-default supervisor in the same process. When work shows up in an agent's inbox (Postgres-backed), the supervisor spawns that agent as a child process via `posix_spawn`, hands it an inherited `socketpair` for JSONL communication, and multiplexes it via a `selectors` loop. Each agent drains its inbox, journals each item through `processing → completed`, then exits when idle; the supervisor reaps it and does **not** respawn until new work appears. A heartbeat watchdog SIGKILLs unresponsive processes or broken status channels. Ctrl-C stops both the webserver and the supervisor cleanly.
 
 The roles `chat_structured`, `chat_unstructured`, `tool_demo`, `workspace_shell`, `mcp`, and `assistant` back the group-chat feature; `workspace_shell` (deterministic command runner) skips the LLM completion path, while the others make **real LLM calls** when configured with model groups. The `edit_document*` roles are payload-driven document-editing planners: they consume `{document, instructions}` inbox payloads, return validated patch data in the journal result, and progressively experiment with richer patch schemas, status/comment fields, EOF handling, and reasoning fields. They plan edits but do not apply them directly.
 
@@ -21,7 +21,7 @@ The webapp also hosts a **group chat** (`/chat`): one human operator and the age
 
 ## Setup
 
-`main.py` talks to Postgres via Flask-SQLAlchemy, so you need the venv installed and a Postgres database created.
+The core talks to Postgres via Flask-SQLAlchemy, so you need the venv installed and a Postgres database created.
 
 Install Python deps:
 
@@ -82,12 +82,12 @@ One command:
 python3 main.py
 ```
 
-That starts the webserver on `http://127.0.0.1:5000` **and** the supervisor (in a background daemon thread). The supervisor is idle until work shows up — no agent processes are spawned at startup.
+That is the launcher: it starts the core (`core.py`) as a child, and any side service enabled on `/settings`. The core runs the webserver on `http://127.0.0.1:5000` **and** the supervisor (in a background daemon thread). `python3 core.py` runs the core alone, unmanaged. The supervisor is idle until work shows up — no agent processes are spawned at startup.
 
 Startup also reconciles the `model_config` table with every registered provider (availability, file sizes where available, and the `is_function_calling_model` capability flag for newly-discovered models). To also refresh **existing** rows' capability arguments from provider-reported capabilities, run a one-shot sync that exits without starting the server:
 
 ```
-python3 main.py --force-model-sync
+python3 core.py --force-model-sync
 ```
 
 In a browser:
@@ -126,8 +126,9 @@ Press **Ctrl-C** in the terminal to stop. The SIGINT handler asks the webserver 
 
 ## How it's structured
 
-- `main.py` — entrypoint. Starts the Flask webserver on the main thread (via `werkzeug.serving.make_server`) and the supervisor on a non-daemon background thread. Installs SIGINT/SIGTERM handlers for clean shutdown. Owns the `spawn()` helper and the supervisor's `selectors` loop. The `--force-model-sync` flag runs the provider model sync (refreshing existing rows' capability flag) and exits without starting the server.
-- `webapp/` — Flask app as a package, split by feature so no single file is large (see [The `webapp/` package](#the-webapp-package) below). Defines the `app` object that `main.py` imports.
+- `main.py` — the launcher (`docs/superpowers/specs/2026-09-10-launcher-design.md`): stdlib-only, starts `core.py` and the enabled side services as siblings and supervises them. It hands the core one end of a `socketpair()` (`core.py --control-fd N`, the same way the core hands agents theirs); the core pushes a desired-state snapshot when a `services.*` setting changes and the launcher pushes its status table when a process changes, so nothing polls and the launcher sleeps in `select()` until a line, a `SIGCHLD`, or a signal arrives. Every child's stdout and stderr are piped through the launcher and printed one line at a time with a `[key]` prefix, so interleaved service logs stay attributable. Idle, it logs `no activity for N minutes` at 1, 10, and 60 minutes, then hourly.
+- `core.py` — the core. Starts the Flask webserver on the main thread (via `werkzeug.serving.make_server`) and the supervisor on a non-daemon background thread. Installs SIGINT/SIGTERM handlers for clean shutdown. Owns the `spawn()` helper and the supervisor's `selectors` loop. The `--force-model-sync` flag runs the provider model sync (refreshing existing rows' capability flag) and exits without starting the server.
+- `webapp/` — Flask app as a package, split by feature so no single file is large (see [The `webapp/` package](#the-webapp-package) below). Defines the `app` object that `core.py` imports.
 - `agents/` — the child agent process (`python -m agents`) **and** the agent class hierarchy. `Agent` (in `agents/base.py`) owns the inbox-drain lifecycle (pop item → journal `processing` → `handle()` → `completed`/`failed` → emit socket status → exit when idle), with `setup()`/`handle()` hooks. `ModelGroupAgent` resolves the agent's bound model group in `setup()`. `StructuredLLMAgent` makes one schema-validated LLM call per item (system prompt + a per-item user prompt → a Pydantic model, falling back through the group's models). `agents/__main__.py` reads the socket config and picks the subclass for the role via `agents/config.AGENT_CLASS_PATHS` (`resolve_agent_class` imports only the selected module, so an agent process does not load every other agent's dependencies; a role absent from the table falls back to `ModelGroupAgent`). Takes `--socket-fd` and nothing else.
 - `agents/config.py` — the role declarations: each role's uuid, the description shown on /agentmodel and /user, the model-capability constraints it needs (structured output, function calling), and its kanban authority. Also `AGENT_CLASS_PATHS`, which `resolve_agent_class` uses to import one agent module and no others.
 - `agents/chat_structured.py` — `StructuredChatAgent` (role `chat_structured`), a `StructuredLLMAgent` that filters diagnostic rows out of the chat history, retrieves relevant memory claims, renders an IRC-style transcript with an optional memory context block, asks the model for `{reply_format, reply_content}` (`reply_format ∈ {"markdown","json"}`), normalizes JSON replies, and posts the result back into the room.
@@ -151,7 +152,7 @@ Press **Ctrl-C** in the terminal to stop. The SIGINT handler asks the webserver 
 - `benchmarks/editdocument.py` / `benchmarks/editdocument_runner.py` — second benchmark stack, scoped to document-editing agents. Mirrors `benchmarks/basic.py`/`benchmarks/runner.py` shape.
 - `agents/patch_apply.py` — `apply_patches(document, patches) -> str`. Materializes a list of `replace_lines` patches (the encoding `validate_patches` accepts) into the post-edit document. Standalone helper used by the benchmark.
 
-`main.py` launches `python -m agents` via `posix_spawn`; the agent's socket fd is inherited across the exec. Each process pushes a Flask app context to get `db.session` access; each agent only touches journal rows tagged with its own `uuid`, so there is no cross-agent contention.
+`core.py` launches `python -m agents` via `posix_spawn`; the agent's socket fd is inherited across the exec. Each process pushes a Flask app context to get `db.session` access; each agent only touches journal rows tagged with its own `uuid`, so there is no cross-agent contention.
 
 ### The `webapp/` package
 
@@ -167,7 +168,7 @@ The Flask app is a package split by feature so no single file gets large. It use
 - `webapp/chat_api.py` — the chat JSON API (`/chat/api/rooms`, `/chat/api/agents`, `/chat/api/rooms/<uuid>/messages`, `/chat/api/messages/<uuid>/feedback`) and the SSE endpoint `/chat/stream` (a dedicated `psycopg` connection that `LISTEN`s and forwards `NOTIFY` events). Also enqueues a job for each responder agent (`chat_structured`, `chat_unstructured`, `tool_demo`, `workspace_shell`, `mcp`, `assistant`) that belongs to a room when a human posts in it (the enqueue payload carries the triggering message's uuid so `workspace_shell` runs that exact command). Feedback capture writes `FeedbackEvent` rows and downvotes can write `RetrievalEvent(stage='downvoted')` rows for same-turn retrieval context.
 - `webapp/__init__.py` — imports `core` (which builds `app`), then imports the view modules to register their routes, and re-exports `app` so `from webapp import app` still works.
 
-### `main.py` (entrypoint)
+### `core.py` (the core)
 
 The process generates an ephemeral `root_uuid` and starts two pieces of work:
 
@@ -356,7 +357,8 @@ The demo only exercises `processing → completed`; `failed` and `stopped` exist
 
 | Package | What lives there |
 |---|---|
-| `main.py` | entrypoint: webserver + supervisor + signal handling |
+| `main.py`, `services/` | the launcher: starts `core.py` and the side services enabled on /settings as siblings; `services/` is the data-only catalogue both sides read (`docs/superpowers/specs/2026-09-10-launcher-design.md`) |
+| `core.py` | the core: webserver + supervisor + signal handling |
 | `agents/` | the agent child process (`python -m agents`), base class hierarchy, and every role implementation |
 | `db/` | Flask-SQLAlchemy models and all Postgres helpers (`import db` is the facade) |
 | `webapp/` | Flask app package, split by feature |

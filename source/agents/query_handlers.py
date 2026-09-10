@@ -204,14 +204,14 @@ def get_current_datetime(ctx: QueryContext) -> str:
 def get_process_uptime(ctx: QueryContext) -> str:
     """Report the supervisor's uptime.
 
-    `main.py` records its start time in the `PP3_SUPERVISOR_STARTED` env var
+    `core.py` records its start time in the `PP3_SUPERVISOR_STARTED` env var
     before spawning agents (and `os.posix_spawn(..., os.environ)` propagates it
     to each child), so the handler just reads it back. Avoids the PPID `ps`
     dance which is fragile (zombie/orphan parent, permissions, etc.)."""
     raw = os.environ.get("PP3_SUPERVISOR_STARTED")
     if not raw:
         return (
-            "(supervisor start time not recorded — restart main.py so "
+            "(supervisor start time not recorded — restart the core (core.py) so "
             "PP3_SUPERVISOR_STARTED gets set)"
         )
     try:

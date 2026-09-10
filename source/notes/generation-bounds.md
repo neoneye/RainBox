@@ -12,7 +12,7 @@ same engine.
 
 The observed failure: a heartbeat-timeout SIGKILL left a `llama-server`
 generating at full GPU with the run already marked failed and nothing left in
-the system that knew about the request. SIGTERM-then-SIGKILL (see `main.py`
+the system that knew about the request. SIGTERM-then-SIGKILL (see `core.py`
 `TERM_GRACE`) fixes the common case, because the worker now unwinds and closes
 the stream. It does not fix the case where the unwind does not finish in time,
 and it does not fix a server that ignores the disconnect.
