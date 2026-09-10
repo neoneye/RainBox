@@ -28,6 +28,7 @@ import argparse
 import errno
 import fcntl
 import http.client
+import io
 import json
 import logging
 import os
@@ -175,50 +176,109 @@ class ControlError(Exception):
     """A control request to the core failed (transport, deadline, size)."""
 
 
+def _dechunk(data: bytes) -> bytes:
+    """Decode a Transfer-Encoding: chunked body (sizes in hex, optional
+    extensions ignored, trailers dropped)."""
+    out = bytearray()
+    pos = 0
+    while True:
+        nl = data.find(b"\r\n", pos)
+        if nl < 0:
+            raise ControlError("malformed chunked body")
+        size = int(data[pos:nl].split(b";", 1)[0].strip() or b"0", 16)
+        pos = nl + 2
+        if size == 0:
+            return bytes(out)
+        out += data[pos:pos + size]
+        pos += size + 2
+
+
 def http_json(
     addr: tuple[str, int], method: str, path: str, body: Any = None, *,
     deadline_s: float = HTTP_DEADLINE, max_bytes: int = HTTP_MAX_BYTES,
     clock: Callable[[], float] = time.monotonic,
 ) -> tuple[int, Any]:
-    """One request to the fixed loopback control endpoint. No proxies, no
-    redirects (http.client follows none). The socket timeout bounds each
-    blocking read and the elapsed-time check between chunks bounds the whole
-    request, so a trickling response cannot hold supervision hostage; the
-    body is capped at `max_bytes`."""
+    """One request to the fixed loopback control endpoint, with ONE deadline
+    across connecting, sending, the status line and headers, and the body.
+    http.client would bound only each socket read, so a peer trickling
+    header bytes could hold the single-threaded launcher indefinitely; this
+    minimal HTTP/1.1 client re-arms the socket timeout with the remaining
+    budget before every operation and gives up when it is spent. No proxies,
+    no redirects, `Connection: close`, body capped at `max_bytes`;
+    Content-Length, chunked, and read-to-close bodies are all handled."""
     started = clock()
+
+    def remaining() -> float:
+        left = deadline_s - (clock() - started)
+        if left <= 0:
+            raise ControlError(f"{method} {path}: exceeded {deadline_s:.1f}s")
+        return left
+
     payload = None if body is None else json.dumps(body).encode()
-    headers = {"Accept": "application/json"}
+    head = (f"{method} {path} HTTP/1.1\r\nHost: {addr[0]}:{addr[1]}\r\n"
+            f"Accept: application/json\r\nConnection: close\r\n")
     if payload is not None:
-        headers["Content-Type"] = "application/json"
-    conn = http.client.HTTPConnection(addr[0], addr[1], timeout=deadline_s)
+        head += f"Content-Type: application/json\r\nContent-Length: {len(payload)}\r\n"
+    request = head.encode() + b"\r\n" + (payload or b"")
+
+    def recv(sock: socket.socket) -> bytes:
+        sock.settimeout(remaining())
+        return sock.recv(65536)
+
     try:
-        conn.request(method, path, body=payload, headers=headers)
-        resp = conn.getresponse()
-        chunks: list[bytes] = []
-        size = 0
-        while True:
-            if clock() - started > deadline_s:
-                raise ControlError(f"{method} {path}: exceeded {deadline_s:.1f}s")
-            # read1: at most ONE underlying socket read, so the elapsed-time
-            # check above runs between every arrival; plain read(n) would
-            # block until n bytes or EOF and a trickle would never trip it.
-            chunk = resp.read1(65536)
+        sock = socket.create_connection(addr, timeout=remaining())
+    except OSError as exc:
+        raise ControlError(f"{method} {path}: connect: {exc}") from None
+    try:
+        sock.settimeout(remaining())
+        sock.sendall(request)
+        buf = b""
+        while b"\r\n\r\n" not in buf:
+            chunk = recv(sock)
             if not chunk:
-                break
-            size += len(chunk)
-            if size > max_bytes:
+                raise ControlError(f"{method} {path}: closed before headers")
+            buf += chunk
+            if len(buf) > max_bytes:
+                raise ControlError(f"{method} {path}: headers over {max_bytes} bytes")
+        header_blob, rest = buf.split(b"\r\n\r\n", 1)
+        status_line, _, header_lines = header_blob.partition(b"\r\n")
+        parts = status_line.split(None, 2)
+        if len(parts) < 2 or not parts[1].isdigit():
+            raise ControlError(f"{method} {path}: bad status line")
+        status = int(parts[1])
+        headers = http.client.parse_headers(io.BytesIO(header_lines + b"\r\n\r\n"))
+        chunked = "chunked" in (headers.get("Transfer-Encoding") or "").lower()
+        length_text = headers.get("Content-Length")
+        raw = rest
+        if length_text is not None and not chunked:
+            length = int(length_text)
+            if length > max_bytes:
                 raise ControlError(f"{method} {path}: response over {max_bytes} bytes")
-            chunks.append(chunk)
-        raw = b"".join(chunks)
-    except (OSError, http.client.HTTPException) as exc:
+            while len(raw) < length:
+                chunk = recv(sock)
+                if not chunk:
+                    break
+                raw += chunk
+            raw = raw[:length]
+        else:
+            while True:
+                chunk = recv(sock)
+                if not chunk:
+                    break
+                raw += chunk
+                if len(raw) > max_bytes:
+                    raise ControlError(f"{method} {path}: response over {max_bytes} bytes")
+            if chunked:
+                raw = _dechunk(raw)
+    except (OSError, http.client.HTTPException, ValueError) as exc:
         raise ControlError(f"{method} {path}: {type(exc).__name__}: {exc}") from None
     finally:
-        conn.close()
+        sock.close()
     try:
         data = json.loads(raw.decode("utf-8")) if raw else None
     except (UnicodeDecodeError, json.JSONDecodeError):
         raise ControlError(f"{method} {path}: response is not JSON") from None
-    return resp.status, data
+    return status, data
 
 
 # --- desired-state validation -------------------------------------------------
@@ -598,7 +658,7 @@ class Launcher:
     def _poll_desired(self, now: float) -> None:
         self._next_poll = now + POLL_INTERVAL
         try:
-            status, data = http_json(self.core_addr, "GET", "/services/api/desired", clock=self.clock)
+            status, data = http_json(self.core_addr, "GET", "/services/api/desired")
         except ControlError as exc:
             logger.debug("desired: %s", exc)
             return
@@ -622,7 +682,7 @@ class Launcher:
         self.sequence += 1
         try:
             status, _ = http_json(self.core_addr, "POST", "/services/api/status",
-                                  self.status_payload(), clock=self.clock)
+                                  self.status_payload())
         except ControlError as exc:
             logger.debug("status: %s", exc)
             self._status_dirty = True
@@ -710,9 +770,12 @@ class Launcher:
         self._signals += 1
         if self._signals >= 2:
             logger.warning("second signal: killing everything now")
+            # Every group this launcher still owns — including one whose
+            # leader already exited but whose descendants linger.
             for rec in (*self.services.values(), self.core):
-                if rec.proc is not None:
+                if rec.pgid is not None:
                     self._signal_group(rec, signal.SIGKILL)
+            self.shutting_down = True
             self.shutdown_phase = 3
             return
         if self.shutting_down:
@@ -752,7 +815,11 @@ class Launcher:
                 self._signal_group(self.core, signal.SIGKILL)
             return False
         if self.shutdown_phase == 3:
-            return all(r.proc is None for r in (*self.services.values(), self.core))
+            for rec in (*self.services.values(), self.core):
+                if rec.pgid is not None and self._group_alive(rec.pgid):
+                    self._signal_group(rec, signal.SIGKILL)
+            return all(r.proc is None and not self._group_alive(r.pgid)
+                       for r in (*self.services.values(), self.core))
         return False
 
     # --- the loop ------------------------------------------------------------------

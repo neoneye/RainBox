@@ -413,15 +413,45 @@ def set_setting(key: str, value: object) -> None:
     db.session.commit()
 
 
+def stage_setting(key: str, value: object) -> None:
+    """Upsert one setting WITHOUT committing (same coercion/validation and
+    env-only-secret rule as set_setting). The caller owns the transaction:
+    stage several, then commit once, so keys that must move together — a
+    service toggle and its restart nonce — cannot be split by a crash or
+    observed half-written by a concurrent reader. App context required."""
+    _upsert_setting_row(_registry(key), value)
+
+
 def set_settings(values: dict[str, object]) -> None:
-    """Write several settings in ONE transaction (same coercion/validation
-    and env-only-secret rule as set_setting). Used where two keys must move
-    together — a service toggle and its restart nonce — so a crash between
-    them cannot leave a service enabled with a stale nonce. App context
-    required."""
+    """Write several settings in ONE transaction. App context required."""
     for key, value in values.items():
-        _upsert_setting_row(_registry(key), value)
+        stage_setting(key, value)
     db.session.commit()
+
+
+def get_settings_snapshot(prefix: str) -> dict[str, object]:
+    """Every registry key starting with `prefix`, resolved with the usual
+    DB -> env -> default precedence, but read from ONE statement so the
+    values are one database snapshot: a reader assembling several keys into
+    a coherent picture (the launcher's desired state) must not see key A
+    from before an edit and key B from after it. App context required."""
+    specs = [spec for spec in SETTINGS.values() if spec.key.startswith(prefix)]
+    rows = {
+        r.key: r.value for r in db.session.query(AppSetting)
+        .filter(AppSetting.key.startswith(prefix)).all()
+    }
+    out: dict[str, object] = {}
+    for spec in specs:
+        text = rows.get(spec.key)
+        if not _is_unset(spec, text):
+            out[spec.key] = _coerce(spec, text)  # type: ignore[arg-type]
+            continue
+        env_text = os.environ.get(spec.env) if spec.env else None
+        if spec.env and not _is_unset(spec, env_text):
+            out[spec.key] = _coerce(spec, env_text)  # type: ignore[arg-type]
+            continue
+        out[spec.key] = spec.dynamic_default() if spec.dynamic_default else spec.default
+    return out
 
 
 def lock_setting_row(key: str) -> None:

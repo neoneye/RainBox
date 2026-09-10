@@ -80,15 +80,19 @@ def set_service_setting(key: str, value: object) -> bool:
     if service_key is None:
         raise KeyError(key)
     before = db.get_setting(key)
-    values: dict[str, object] = {key: value}
-    # Compare the effective value after coercion: the caller may send "true"
-    # or True; get_setting normalizes both.
-    db.set_settings(values)
+    # Stage the write, compare the coerced effective value (the caller may
+    # send "true" or True), stage the nonce if it changed, commit ONCE: a
+    # crash between the two cannot leave a changed environment without the
+    # nonce that restarts its service, and a concurrent desired-state read
+    # sees both or neither.
+    db.stage_setting(key, value)
+    db.session.flush()
     after = db.get_setting(key)
-    if after == before:
-        return False
-    db.set_settings({nonce_setting_key(service_key): new_nonce()})
-    return True
+    changed = after != before
+    if changed:
+        db.stage_setting(nonce_setting_key(service_key), new_nonce())
+    db.session.commit()
+    return changed
 
 
 def _service_key_of(setting_key: str) -> str | None:
@@ -114,25 +118,29 @@ def desired_snapshot() -> dict[str, Any]:
     markers = instance_markers()
     if markers is None:
         raise RuntimeError("unmanaged core: no launcher instance markers")
+    # One statement for every services.* key, so an edit committed while we
+    # assemble the response cannot yield an old env with a new nonce (which
+    # the launcher would apply once and then never revisit).
+    values = db.get_settings_snapshot("services.")
     services = []
     for svc in STATIC_SERVICES.values():
         env: dict[str, str] = {}
         for var in svc.env_keys:
-            val = db.get_setting(env_setting_key(svc.key, var))
+            val = values.get(env_setting_key(svc.key, var))
             if val not in (None, ""):
                 env[var] = str(val)
         services.append({
             "key": svc.key,
             "kind": svc.kind,
-            "enabled": bool(db.get_setting(enabled_setting_key(svc.key))),
-            "restart_nonce": db.get_setting(nonce_setting_key(svc.key)),
+            "enabled": bool(values.get(enabled_setting_key(svc.key))),
+            "restart_nonce": values.get(nonce_setting_key(svc.key)),
             "env": env,
         })
     return {
         "schema_version": SCHEMA_VERSION,
         **markers,
         "core_pid": os.getpid(),
-        "core_restart_nonce": db.get_setting(nonce_setting_key(CORE_KEY)),
+        "core_restart_nonce": values.get(nonce_setting_key(CORE_KEY)),
         "services": services,
     }
 

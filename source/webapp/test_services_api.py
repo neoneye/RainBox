@@ -124,3 +124,37 @@ def test_status_goes_unknown_after_90_seconds(client, managed):
     assert fresh["services"]["core"]["state"] == "running" and not fresh["stale"]
     old = registry.STATUS.view(now=time.monotonic() + registry.STATUS_STALE_AFTER + 1)
     assert old["stale"] and old["services"]["core"] == {"state": "unknown"}
+
+
+def test_service_setting_and_nonce_commit_together(client, managed, monkeypatch):
+    """A crash after the value write but before the nonce write must be
+    impossible: both are staged and committed once."""
+    key = env_setting_key("reranker", "RERANKER_DEVICE")
+    commits = []
+    real_commit = db.session.commit
+    monkeypatch.setattr(db.session, "commit", lambda: (commits.append(1), real_commit())[1])
+    assert registry.set_service_setting(key, "cpu") is True
+    assert commits == [1]
+    nonce = db.get_setting(nonce_setting_key("reranker"))
+    assert nonce and db.get_setting(key) == "cpu"
+    commits.clear()
+    assert registry.set_service_setting(key, "cpu") is False  # unchanged: no nonce
+    assert commits == [1] and db.get_setting(nonce_setting_key("reranker")) == nonce
+
+
+def test_desired_snapshot_reads_one_statement(client, managed, monkeypatch):
+    """The snapshot must come from one query, not one per key."""
+    statements = []
+    from sqlalchemy import event
+    engine = db.session.get_bind()
+
+    def before_cursor_execute(conn, cursor, statement, params, context, executemany):
+        if "app_setting" in statement.lower():
+            statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", before_cursor_execute)
+    try:
+        registry.desired_snapshot()
+    finally:
+        event.remove(engine, "before_cursor_execute", before_cursor_execute)
+    assert len(statements) == 1, statements

@@ -89,6 +89,27 @@ class FakeCore:
                     return self._send(200, json.dumps(d).encode())
                 if self.path == "/big":
                     return self._send(200, b"[" + b"1," * 600000 + b"1]")
+                if self.path == "/trickle-headers":
+                    # status line at once, then one header byte per 100 ms
+                    self.wfile.write(b"HTTP/1.1 200 OK\r\n")
+                    self.wfile.flush()
+                    for ch in b"X-Slow: " + b"y" * 40:
+                        try:
+                            self.wfile.write(bytes([ch]))
+                            self.wfile.flush()
+                        except OSError:
+                            return
+                        time.sleep(0.1)
+                    return
+                if self.path == "/chunked":
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Transfer-Encoding", "chunked")
+                    self.end_headers()
+                    for piece in (b'{"a":', b" [1,", b"2]}"):
+                        self.wfile.write(b"%x\r\n%s\r\n" % (len(piece), piece))
+                    self.wfile.write(b"0\r\n\r\n")
+                    return
                 if self.path == "/trickle":
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
@@ -268,6 +289,12 @@ def test_http_json_bounds_size_and_elapsed_time(core: FakeCore):
     assert time.monotonic() - t0 < 2.0
     status, data = L.http_json(core.addr, "GET", "/nothing")
     assert status == 404 and data == {}
+    # Headers trickling within each socket timeout must not evade the deadline.
+    t0 = time.monotonic()
+    with pytest.raises(L.ControlError):
+        L.http_json(core.addr, "GET", "/trickle-headers", deadline_s=0.5)
+    assert time.monotonic() - t0 < 2.0
+    assert L.http_json(core.addr, "GET", "/chunked") == (200, {"a": [1, 2]})
 
 
 # --- supervision with real children -------------------------------------------
@@ -538,3 +565,23 @@ def test_failed_status_post_is_retried_soon_not_at_the_heartbeat(tree: Path, cor
     clock.t += L.STATUS_RETRY_AFTER
     l.tick(clock.t)                       # retried well before the 30 s heartbeat
     assert len(core.statuses) == 1 and not l._status_dirty
+
+
+def test_second_signal_kills_orphaned_groups_before_exiting(lch: L.Launcher, core: FakeCore):
+    clock = lch.clock_obj  # type: ignore[attr-defined]
+    core.desired = lambda: desired_for(lch, env={"TEST_MODE": "grandchild"})
+    poll_now(lch)
+    wait_for(lch, lambda: svc(lch).state == "backoff")
+    time.sleep(0.3)
+    lch.tick(clock.t)
+    pgid = svc(lch).pgid
+    assert svc(lch).proc is None and lch._group_alive(pgid)  # leader gone, grandchild lingers
+    lch.request_shutdown()
+    lch.request_shutdown()  # second Ctrl-C
+    assert lch.shutdown_phase == 3
+    deadline = time.monotonic() + 5
+    done = False
+    while time.monotonic() < deadline and not done:
+        done = not lch.tick(clock.t)
+        time.sleep(0.05)
+    assert done and not lch._group_alive(pgid)
