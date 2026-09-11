@@ -7,6 +7,22 @@ This is an operator walkthrough: each step says what to do, what you should
 see, and what it proves. Budget about 30 minutes. Stop at any step that does
 not match and read *Troubleshooting* at the end.
 
+**The short version**, if you only want the checklist:
+
+1. Add `RAINBOX_CREDENTIAL_KEY` to `.env` (once), start `main.py`, check
+   `/settings` says *managed*.
+2. `/bridges` → **+ Connector** (Discord, variable name `DISCORD_TOKEN_MAINBOT`).
+3. **Set token…** on the pane, paste the bot token.
+4. Tick **Enabled** → pane says `running`, terminal shows `[Main Bot]` lines.
+5. **+ Binding** (room + channel id), set `allowed_senders` to your user id,
+   tick **Enabled** on the binding → terminal says `binding … activated`.
+6. Post in Discord → it lands in the room, the reply comes back. Use the
+   room's *Bridge troubleshooting* buttons to watch a progress bubble.
+7. Flip policies on `/bridges` while it runs; nothing restarts, everything
+   applies within a second.
+
+Each phase below is one of those steps, with what to expect and what it proves.
+
 ## What you need before starting
 
 - A Discord bot token that has **not** been pasted anywhere (reset it in the
@@ -25,7 +41,20 @@ The token is pasted once into a write-only field on `/bridges`; it is
 sealed under `RAINBOX_CREDENTIAL_KEY` before it is stored and nothing ever
 displays it again.
 
-## Phase A — start the launcher on this branch (3 min)
+## Phase A — the sealing key, then the launcher (4 min)
+
+Bot tokens are stored sealed in Postgres under a key that lives only in the
+repo-root `.env`. Add it once (skip if `.env` already has a
+`RAINBOX_CREDENTIAL_KEY` line):
+
+```bash
+cd ~/git/rainbox && printf 'RAINBOX_CREDENTIAL_KEY=%s\n' "$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')" >> .env
+```
+
+Keep that line with your backups: a database restored without it holds
+tokens nobody can open, and you would paste them again.
+
+Now start the launcher on this branch:
 
 ```bash
 cd ~/git/rainbox && git checkout bridge-settings && cd source && venv/bin/python main.py
@@ -41,7 +70,8 @@ Open http://127.0.0.1:5000/settings. The **launcher** card at the top must say
 *managed; core running*. If it says *unmanaged*, you started `core.py`, not
 `main.py`, and nothing will start a bridge — restart with the command above.
 
-**Proves:** the launcher owns the core and can start side processes.
+**Proves:** the launcher owns the core and can start side processes, and
+the core has the key (Phase C would otherwise show a warning).
 
 ## Phase B — create a connector (2 min)
 
@@ -63,26 +93,21 @@ Expect:
 
 **Proves:** the row is stored and the page reads it back; no token involved.
 
-## Phase C — the sealing key, once (2 min)
+## Phase C — paste the token (1 min)
 
-Credentials are stored sealed, under a key that lives only in the
-repo-root `.env`. If `RAINBOX_CREDENTIAL_KEY` is not there yet, add it:
+On the connector pane press **Set token…**, paste the bot token, Save.
+Expect the *Token* row to say `set` with a timestamp and the toast
+"Token saved". The field is a password input inside a modal and is cleared
+when the modal closes.
 
-```bash
-cd ~/git/rainbox && printf 'RAINBOX_CREDENTIAL_KEY=%s\n' "$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')" >> .env
-```
+If the pane shows a warning about `RAINBOX_CREDENTIAL_KEY` instead, the core
+did not see the key: check the `.env` line from Phase A and restart the
+launcher.
 
-Then restart the launcher (Ctrl-C, Phase A command again) so the core reads
-it. Keep this line with your backups: a database restored without it holds
-tokens nobody can open, and the connector pane will ask for them again.
-
-Back on the connector pane, press **Set token…**, paste the bot token,
-Save. Expect the *Token* row to say `set` with a timestamp. The toast says
-"Token saved". If the pane shows a warning about `RAINBOX_CREDENTIAL_KEY`
-instead, the core did not see the key: check `.env` and restart.
-
-**Proves:** the value went in write-only. Reload the page or open the admin
-panel's Bridges views: nothing shows it.
+**Proves:** the value went in write-only. Reload the page, open the
+connector's JSON at `/bridges/api/connectors/<uuid>` (the id is on the
+pane), or open Admin Panel → Bridges → Bridge Credential: none of them
+shows the token, only that one is set and when.
 
 ## Phase D — enable it and watch it start (2 min)
 
@@ -214,8 +239,10 @@ venv/bin/python import_legacy.py --name "Main Bot" --state-dir ~/git/rainbox/var
 ```
 
 It creates the connector and binding **disabled**, copies the allowlist and
-poll interval, and wraps `state.json` into the new state file. Continue at
-Phase C with `--token-env`'s name (default `DISCORD_BOT_TOKEN`), then Phase D.
+poll interval, and wraps `state.json` into the new state file. Then Phase C
+(paste the token on the new connector's pane) and Phase D onwards; the
+bridge process will read the token as `--token-env`'s name (default
+`DISCORD_BOT_TOKEN`).
 
 ## Troubleshooting
 
