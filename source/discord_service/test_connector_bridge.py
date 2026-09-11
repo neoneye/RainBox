@@ -647,3 +647,46 @@ def test_failed_activation_is_retried_by_the_applier(tmp_path, monkeypatch):
         time.sleep(0.02)
     stop.set(); t.join(2)
     assert b.store.binding(B1)["discord_after"] == "40"   # activated on the retry, no config change needed
+
+
+def test_each_binding_polls_at_its_own_interval(tmp_path):
+    """A 0.5 s binding and a 5 s binding on one connector: over ~1.3 s the
+    fast one is polled several times, the slow one exactly once."""
+    stop = threading.Event()
+    dc = FakeDiscord({"777": [], "888": []})
+    calls: dict[str, int] = {"777": 0, "888": 0}
+    orig = dc.get_messages
+
+    def counting(channel_id, after, limit=100):
+        calls[channel_id] += 1
+        return orig(channel_id, after, limit)
+    dc.get_messages = counting
+    b = _bridge(tmp_path, dc, FakeRainbox(), snapshot=_payload(bindings=[
+        _binding(policy=_policy(poll_seconds=0.5)),
+        _binding(uuid=B2, room=ROOM2, channel="888", policy=_policy(poll_seconds=5))]))
+    b.store.set_binding(B1, _rec())
+    b.store.set_binding(B2, _rec(room=ROOM2, channel="888"))
+    threading.Timer(1.3, stop.set).start()
+    inbound_loop(b, stop)
+    assert calls["888"] == 1 and calls["777"] >= 2
+
+
+def test_inbound_loop_wakes_on_a_published_snapshot(tmp_path):
+    """While the only active binding sleeps on a 300 s interval, a new
+    snapshot that adds a binding is polled within a fraction of a second."""
+    stop = threading.Event()
+    dc = FakeDiscord({"777": [], "888": [_dmsg("9", content="new")]})
+    rb = FakeRainbox()
+    b = _bridge(tmp_path, dc, rb, snapshot=_payload(bindings=[_binding(policy=_policy(poll_seconds=300))]))
+    b.store.set_binding(B1, _rec())
+    b.store.set_binding(B2, _rec(room=ROOM2, channel="888"))
+
+    def add_binding():
+        snap = parse_snapshot(_payload(bindings=[
+            _binding(policy=_policy(poll_seconds=300)),
+            _binding(uuid=B2, room=ROOM2, channel="888", policy=_policy(poll_seconds=300))], revision="r2"), CONN)
+        b.config.publish(snap, b.config.epoch)
+    threading.Timer(0.3, add_binding).start()
+    threading.Timer(0.9, stop.set).start()
+    inbound_loop(b, stop)
+    assert rb.posted == [(ROOM2, "new")]

@@ -28,6 +28,8 @@ import threading
 from datetime import UTC, datetime
 from typing import Any
 
+import sqlalchemy as sa
+
 import db
 from services.definitions import (
     BRIDGE_KEY_PREFIX,
@@ -140,10 +142,23 @@ def owns_setting(setting_key: str) -> bool:
 
 
 def desired_snapshot() -> dict[str, Any]:
-    """What the launcher should be running, as one coherent snapshot from one
-    statement over the settings table. Includes disabled entries, never a
-    credential value, never a path or argv — the launcher resolves kinds
-    against its own copy of the catalogue. App context required."""
+    """What the launcher should be running, as one coherent snapshot: the
+    settings table, the connector rows, and their sealed credentials are all
+    read inside ONE REPEATABLE READ read-only transaction, so a concurrent
+    commit (an autostart flip racing a connector edit) can never mix an old
+    setting with new rows. Includes disabled entries, never a path or argv —
+    the launcher resolves kinds against its own copy of the catalogue. The
+    only place a credential value is ever serialized. App context required."""
+    db.session.rollback()  # the isolation level applies to a fresh transaction
+    conn = db.session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
+    conn.execute(sa.text("SET TRANSACTION READ ONLY"))
+    try:
+        return _desired_snapshot_in_transaction()
+    finally:
+        db.session.rollback()
+
+
+def _desired_snapshot_in_transaction() -> dict[str, Any]:
     values = db.get_settings_snapshot("services.")
     services = []
     for svc in STATIC_SERVICES.values():
@@ -246,7 +261,7 @@ class ControlChannel:
 
     def __init__(self) -> None:
         self._sock: socket.socket | None = None
-        self._send_lock = threading.Lock()
+        self._send_lock = threading.RLock()   # re-entrant: push_desired builds AND sends under it
         self._app: Any = None
         self._reader: threading.Thread | None = None
         self.status = LauncherStatus()
@@ -290,16 +305,20 @@ class ControlChannel:
         A send failure means the launcher is gone: detach, log once."""
         if self._sock is None:
             return
-        try:
-            if self._app is not None and not _has_app_context():
-                with self._app.app_context():
+        # Build and send under one lock: two concurrent pushes then reach the
+        # launcher in the order their snapshots were read, so the last line
+        # it sees is the newest state, never a stale read that lost the race.
+        with self._send_lock:
+            try:
+                if self._app is not None and not _has_app_context():
+                    with self._app.app_context():
+                        snapshot = desired_snapshot()
+                else:
                     snapshot = desired_snapshot()
-            else:
-                snapshot = desired_snapshot()
-        except Exception:
-            logger.exception("control: could not build the desired snapshot")
-            return
-        self._send(snapshot)
+            except Exception:
+                logger.exception("control: could not build the desired snapshot")
+                return
+            self._send(snapshot)
 
     def _send(self, message: dict[str, Any]) -> None:
         sock = self._sock

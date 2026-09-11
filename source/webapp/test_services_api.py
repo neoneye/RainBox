@@ -271,3 +271,21 @@ def test_status_view_carries_reported_bridge_keys_only_while_reported(client, ma
     managed.send(_status(2, core="running"))  # the connector row was removed
     view = _wait_status(lambda v: key not in v["services"])
     assert set(view["services"]) == {"core", *STATIC_SERVICES}
+
+
+def test_desired_snapshot_is_read_in_one_repeatable_read_transaction(client, monkeypatch):
+    """Settings, connector rows, and credentials must come from one
+    REPEATABLE READ read-only transaction (a racing autostart flip cannot
+    pair with newer rows), and the session is left clean afterwards."""
+    import sqlalchemy as sa
+    seen = {}
+    real = db.bridge_launcher_entries
+
+    def spy(**kw):
+        seen["isolation"] = db.session.execute(sa.text("SHOW transaction_isolation")).scalar_one()
+        seen["read_only"] = db.session.execute(sa.text("SHOW transaction_read_only")).scalar_one()
+        return real(**kw)
+    monkeypatch.setattr(db, "bridge_launcher_entries", spy)
+    registry.desired_snapshot()
+    assert seen == {"isolation": "repeatable read", "read_only": "on"}
+    assert db.session.execute(sa.text("SHOW transaction_isolation")).scalar_one() != "repeatable read"  # ended

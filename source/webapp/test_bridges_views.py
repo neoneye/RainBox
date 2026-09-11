@@ -70,8 +70,10 @@ def test_credentials_never_appear_in_the_page_or_command():
     assert 'type="password" id="br-credential-input"' in b
     assert "/credential'" in b and "brRenderCredential" in b
     assert "document.getElementById('br-credential-input').value = '';   // never keep it around" in b
-    # Values are single-quoted for the shell so display names never become syntax.
+    # Values are single-quoted for the shell so display names never become syntax,
+    # and the command carries the core's actual URL (RAINBOX_CORE_PORT honoured).
     assert "brShellQuote" in b
+    assert "'RAINBOX_URL=' + brShellQuote(brCoreUrl)" in b
 
 
 def test_admin_views_for_bridge_rows_are_read_only():

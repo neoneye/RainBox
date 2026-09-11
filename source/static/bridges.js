@@ -25,6 +25,7 @@ let brExpanded = {};     // connector uuid / folder id -> false when collapsed (
 let brDrag = null;       // {type:'connector'|'folder'|'binding', id, connectorId} while a node is dragged
 let brStatus = null;     // last GET /services/api/status payload
 let brRooms = null;      // chatrooms for the binding modal, fetched on demand
+let brCoreUrl = 'http://127.0.0.1:5000';   // what this core listens on (from the tree GET)
 
 // ---- inlined Lucide icons (https://lucide.dev), self-contained ----
 const BR_ICON_FOLDER = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>';
@@ -252,9 +253,10 @@ function brLaunchCommand(c, stateDir){
   if (!plat.directory || !plat.argv || !stateDir) return null;
   const stateFile = stateDir.replace(/\/+$/, '') + '/bridge-' + c.uuid + '.json';
   return 'cd source/' + plat.directory + '/\n' +
-    'BRIDGE_CONNECTOR=' + brShellQuote(c.uuid) + ' ' + plat.state_file_env + '=' + brShellQuote(stateFile) +
-    ' ' + plat.argv.join(' ') + '\n' +
-    '# ' + c.token_env + ' must already be set in the launch environment (a manual run gets no value from the database); RAINBOX_URL defaults to http://127.0.0.1:5000';
+    'RAINBOX_URL=' + brShellQuote(brCoreUrl) + ' BRIDGE_CONNECTOR=' + brShellQuote(c.uuid) + ' ' +
+    plat.state_file_env + '=' + brShellQuote(stateFile) + ' ' + plat.argv.join(' ') + '\n' +
+    '# ' + c.token_env + ' must already be set in the launch environment (a manual run gets no value from the database); ' +
+    'RAINBOX_URL is where this core listens — change it for a bridge on another host';
 }
 function brPolicyTable(kind, id, node){
   const sel = brNodeOf(kind, id);
@@ -1315,6 +1317,7 @@ async function brLoadTree(){
     brFolders = (data && data.folders) || [];
     brBindings = (data && data.bindings) || [];
     brPlatforms = (data && data.platforms) || {};
+    if (data && data.core_url) brCoreUrl = data.core_url;
     brTreeVersion = (data && data.version) || null;
   } catch (e) {
     // Hydration failed: keep version null so a PUT of this empty state is

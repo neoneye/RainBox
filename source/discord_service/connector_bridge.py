@@ -811,40 +811,54 @@ class Applier:
                 self._attempt, self._retry_at = 0, None
 
 
-def inbound_loop(bridge: Bridge, stop: threading.Event) -> None:
-    """Poll every active inbound binding's channel; sleep on the shortest
-    poll interval, or until the config changes when nothing is active."""
-    attempt = 0
+def inbound_loop(bridge: Bridge, stop: threading.Event, clock: Callable[[], float] = time.monotonic) -> None:
+    """Poll each active inbound binding's channel at ITS OWN interval: every
+    binding carries a next-poll deadline (its poll_seconds after a good
+    poll, a per-binding backoff after a failed one), the loop sleeps until
+    the earliest deadline, and a published snapshot wakes it at once so a
+    new binding, a shorter interval, or a direction change is not left
+    waiting behind a long sleep."""
+    next_poll: dict[str, float] = {}
+    attempts: dict[str, int] = {}
     seen = 0
     while not stop.is_set():
         snap, fresh = bridge.config.current()
-        active = [b for b in (snap.active() if snap and fresh else []) if b.policy.inbound]
+        active = {b.uuid: b for b in (snap.active() if snap and fresh else []) if b.policy.inbound}
+        for gone in [u for u in next_poll if u not in active]:
+            next_poll.pop(gone, None)
+            attempts.pop(gone, None)
         if not active:
             seen = bridge.config.wait_change(seen, stop, 60.0)
             continue
-        for b in active:
-            with bridge.binding_lock(b.uuid):
-                if not bridge.may_act(b.uuid, "in"):
+        now = clock()
+        for uuid, b in active.items():
+            if next_poll.get(uuid, now) > now:
+                continue   # not due yet
+            with bridge.binding_lock(uuid):
+                if not bridge.may_act(uuid, "in"):
+                    next_poll[uuid] = now + b.policy.poll_seconds
                     continue
-                rec = bridge.store.binding(b.uuid)
+                rec = bridge.store.binding(uuid)
                 if rec is None or not bridge.record_matches(b, rec):
+                    next_poll[uuid] = now + b.policy.poll_seconds   # not activated (yet): look again later
                     continue
-                bridge.acting_for(b.uuid, "in")
+                bridge.acting_for(uuid, "in")
                 try:
                     messages = bridge.discord.get_messages(b.channel_id, after=rec.get("discord_after", "0"))
                     bridge.process_inbound(b, rec, messages)
-                    attempt = 0
+                    attempts[uuid] = 0
+                    next_poll[uuid] = clock() + b.policy.poll_seconds
                 except Paused as exc:
                     logger.info("%s", exc)
+                    next_poll[uuid] = clock() + b.policy.poll_seconds
                 except Exception as exc:
-                    attempt += 1
-                    bridge.log_error(f"binding {b.uuid} inbound error (attempt {attempt})", exc)
+                    attempts[uuid] = attempts.get(uuid, 0) + 1
+                    bridge.log_error(f"binding {uuid} inbound error (attempt {attempts[uuid]})", exc)
+                    next_poll[uuid] = clock() + _backoff(attempts[uuid])
                 finally:
                     bridge.acting_for(None)
-        if attempt:
-            stop.wait(_backoff(attempt))
-        else:
-            stop.wait(min(b.policy.poll_seconds for b in active))
+        earliest = min(next_poll.get(u, clock()) for u in active)
+        seen = bridge.config.wait_change(seen, stop, max(0.0, earliest - clock()))
 
 
 def outbound_loop(bridge: Bridge, stop: threading.Event) -> None:

@@ -57,7 +57,9 @@ def _err(status: int, message: str, **extra: object) -> tuple[Response, int]:
 @app.route("/bridges/api/tree", methods=["GET", "PUT"])
 def bridges_tree() -> Response | tuple[Response, int]:
     if request.method == "GET":
-        return jsonify(db.bridge_load_tree())
+        # `core_url` is what this core actually listens on (RAINBOX_CORE_PORT
+        # honoured), for the copyable manual launch command.
+        return jsonify({**db.bridge_load_tree(), "core_url": services_registry.rainbox_url()})
     data = _body()
     if data is None:
         return _err(400, "request body must be a JSON object")

@@ -101,6 +101,7 @@ def test_tree_and_binding_lifecycle_with_blockers(client):
     assert r.status_code == 409 and r.get_json()["blockers"] == {"folder_count": 1, "binding_count": 1}
     # Tree: move the binding out of the folder with the current token.
     tree = c.get("/bridges/api/tree").get_json()
+    assert tree["core_url"].startswith("http://127.0.0.1:")
     for x in tree["bindings"]:
         if x["uuid"] == binding["uuid"]:
             x["folderId"] = None
