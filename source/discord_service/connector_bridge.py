@@ -826,9 +826,14 @@ def inbound_loop(bridge: Bridge, stop: threading.Event, clock: Callable[[], floa
     while not stop.is_set():
         snap, fresh = bridge.config.current()
         active = {b.uuid: b for b in (snap.active() if snap and fresh else []) if b.policy.inbound}
-        for gone in [u for u in next_poll if u not in active]:
-            for table in (next_poll, last_poll, interval, attempts):
-                table.pop(gone, None)
+        if fresh and snap is not None:
+            # Scheduler state (deadline, last poll, backoff) is dropped only
+            # when a FRESH snapshot says the binding is gone or inactive; a
+            # stale interval (every refresh passes through one) keeps it, so
+            # a config event or reconnect never turns into an extra poll.
+            for gone in [u for u in next_poll if u not in active]:
+                for table in (next_poll, last_poll, interval, attempts):
+                    table.pop(gone, None)
         if not active:
             seen = bridge.config.wait_change(seen, stop, 60.0)
             continue

@@ -1379,7 +1379,12 @@ function brSavePush(){
       });
       const j = await r.json().catch(() => null);
       if (r.status === 409){
-        await brReloadAndRepaint('Bridge tree was changed elsewhere — reloaded. Your last edit was not saved.');
+        // Either a stale token (someone else saved first) or a refusal of
+        // this edit itself (a rename to a name another connector holds):
+        // the server names the second kind with `blockers`.
+        await brReloadAndRepaint(j && j.blockers
+          ? 'Save refused: ' + (j.error || 'conflict') + ' — reloaded. Your last edit was not saved.'
+          : 'Bridge tree was changed elsewhere — reloaded. Your last edit was not saved.');
         return;
       }
       if (!r.ok){

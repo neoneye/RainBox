@@ -349,6 +349,12 @@ def bridge_save_tree(connectors: list, folders: list, bindings: list, *,
         for cu in touched:
             _notify_config(cu)
         db.session.commit()
+    except IntegrityError:
+        # The only unique constraint a tree save can hit is the connector
+        # name (a rename to a name another connector holds): a 409 the page
+        # shows, never a 500.
+        db.session.rollback()
+        raise BridgeBlocked("a connector with that name already exists", {"conflict": "connector_name"}) from None
     except Exception:
         db.session.rollback()
         raise

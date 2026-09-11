@@ -71,6 +71,8 @@ def bridges_tree() -> Response | tuple[Response, int]:
                             data.get("bindings", []), base_version=version)
     except db.BridgeTreeConflict as exc:
         return _err(409, str(exc), version=db.bridge_tree_version())
+    except db.BridgeBlocked as exc:
+        return _err(409, str(exc), blockers=exc.blockers, version=db.bridge_tree_version())
     except db.BridgeTreeError as exc:
         return _err(400, str(exc))
     return jsonify({"ok": True, "version": db.bridge_tree_version()})

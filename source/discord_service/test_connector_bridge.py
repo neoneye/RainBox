@@ -735,3 +735,30 @@ def test_a_longer_poll_interval_does_not_cause_a_premature_poll(tmp_path):
     threading.Timer(1.2, stop.set).start()
     inbound_loop(b, stop)
     assert calls["n"] == 1           # the wake-up re-anchors on the last poll + 300 s; no extra poll
+
+
+def test_a_refresh_cycle_does_not_reset_an_unchanged_bindings_schedule(tmp_path):
+    """invalidate + publish of the same config (a bridge_config event, a
+    reconnect) must not poll a 300 s binding again: scheduler state survives
+    the stale interval and is pruned only by a fresh snapshot."""
+    stop = threading.Event()
+    dc = FakeDiscord({"777": []})
+    calls = {"n": 0}
+    orig = dc.get_messages
+
+    def counting(channel_id, after, limit=100):
+        calls["n"] += 1
+        return orig(channel_id, after, limit)
+    dc.get_messages = counting
+    b = _bridge(tmp_path, dc, FakeRainbox(), snapshot=_payload(bindings=[_binding(policy=_policy(poll_seconds=300))]))
+    b.store.set_binding(B1, _rec())
+    same = b.config.snapshot
+
+    def refresh():
+        b.config.invalidate("bridge_config event")
+        time.sleep(0.15)                       # the loop wakes and sees a stale, empty active set
+        b.config.publish(same, b.config.epoch)
+    threading.Timer(0.2, refresh).start()
+    threading.Timer(1.0, stop.set).start()
+    inbound_loop(b, stop)
+    assert calls["n"] == 1

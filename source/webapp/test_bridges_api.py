@@ -110,7 +110,18 @@ def test_tree_and_binding_lifecycle_with_blockers(client):
     assert r.status_code == 200
     stale = c.put("/bridges/api/tree", json={"connectors": tree["connectors"], "folders": tree["folders"],
                                              "bindings": tree["bindings"], "version": tree["version"]})
-    assert stale.status_code == 409 and stale.get_json()["version"]
+    assert stale.status_code == 409 and stale.get_json()["version"] and "blockers" not in stale.get_json()
+    # A rename to another connector's name through the tree save is a 409
+    # with blockers (the page reloads and says why), never a 500.
+    other = _connector(c, made)
+    fresh = c.get("/bridges/api/tree").get_json()
+    for x in fresh["connectors"]:
+        if x["uuid"] == cu:
+            x["name"] = other["name"]
+    dup = c.put("/bridges/api/tree", json={"connectors": fresh["connectors"], "folders": fresh["folders"],
+                                           "bindings": fresh["bindings"], "version": fresh["version"]})
+    assert dup.status_code == 409 and dup.get_json()["blockers"] == {"conflict": "connector_name"}
+    assert c.get(f"/bridges/api/connectors/{cu}").get_json()["connector"]["name"] == conn["name"]   # rolled back
     assert c.put("/bridges/api/tree", json={"connectors": [], "folders": [], "bindings": []}).status_code == 400
     # Content edits do not move the token.
     v = c.get("/bridges/api/tree").get_json()["version"]
