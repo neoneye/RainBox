@@ -173,7 +173,13 @@ row lock for bridge-tree edits:
   even when application checks race. `RESTRICT` is not a deferred commit-time
   check: the statement can fail
   before commit. Catch failures from flush/execute as well as commit, roll back
-  the failed transaction, and query current blockers in a new transaction
+  the failed transaction, and query current blockers in a new transaction.
+  The unique connector name is handled the same way: a tree save that renames
+  a connector to a name another one holds is a 409 the page explains, never
+  a 500. The admin panel's views of the three tables and of
+  `bridge_credential` are read-only — create, edit, and delete disabled —
+  because every write must pass through the API's validation, blockers,
+  restart nonce, `bridge_config` notify, and launcher push
   before returning HTTP 409. See [PostgreSQL foreign-key constraints](https://www.postgresql.org/docs/current/ddl-constraints.html#DDL-CONSTRAINTS-FK).
 - **Plain uuid columns with a version token for placement.** `folder_uuid`
   and `parent_uuid` stay plain columns validated app-side, the cron/chat
@@ -250,7 +256,7 @@ The UI shows the effective value and which level supplied it.
 |---|---|
 | `allowed_senders` | `[]`: deny all inbound. A list of platform user-ID strings, not usernames or rainbox UUIDs. A child can replace its parent's list; the UI must show this clearly. |
 | `forward_kinds` | Discord: `["message","notice","progress"]`; Telegram: `["message"]`. Only supported agent row kinds can be forwarded; human, thinking, and debug rows remain excluded. |
-| `poll_seconds` | Discord: `2`; finite number in `[0.5, 300]`. Controls channel polling, not config refresh. Reject for adapters that do not use per-binding polling. |
+| `poll_seconds` | Discord: `2`; finite number in `[0.5, 300]`. Controls channel polling, not config refresh. Reject for adapters that do not use per-binding polling. Each binding is polled on its own schedule: a deadline of last poll + interval (a per-binding backoff after a failed poll); a changed interval re-anchors the deadline on the last poll, so a shorter one may be due at once and a longer one never causes an extra poll; the scheduler sleeps until the earliest deadline or a published snapshot, and its state survives the stale interval every refresh passes through — it is pruned only when a fresh snapshot shows the binding gone or inactive. |
 | `mirror_progress` | Discord: `true`; edits one remote bubble per progress row. When false, sends each supported progress update separately. Unsupported by the current Telegram adapter. Ignored when `progress` is excluded. |
 | `direction` | `both`; accepted values `both`, `in`, `out`, relative to rainbox. |
 
@@ -291,7 +297,8 @@ The `/bridges` tree gives each connector the same **Copy ID** kebab item the
 chat and cron trees have. The detail panel also offers a copyable launch command
 for the connector's platform, labeled with its required working directory
 (`source/discord_service/` or `source/telegram_service/` on the bridge host).
-Include `BRIDGE_CONNECTOR` and a distinct state-file path derived from its UUID,
+Include `RAINBOX_URL` as the address this core actually listens on
+(`RAINBOX_CORE_PORT` honoured; the tree GET carries it), `BRIDGE_CONNECTOR`, and a distinct state-file path derived from its UUID,
 using the platform's existing state-file variable. On the launcher's host use
 its reported absolute state directory, so manual and supervised runs use the
 same `bridge-<uuid>.json` and lock. If the host/path is unknown, require an explicit
@@ -310,7 +317,11 @@ generated argument values. Connector display names never become shell syntax.
 such as `DISCORD_TOKEN_MAINBOT`; the connector row never holds a value.
 
 The value is set on the connector pane (a write-only field: saving replaces
-it, nothing ever displays it) and stored in `bridge_credential`: AES-256-GCM
+it, nothing ever displays it); it must be one printable line — a NUL or
+control character is refused at the API and again by the launcher's
+snapshot validator, since no such value could enter a child's environment,
+and a spawn the OS still refuses fails that one entry, never the launcher.
+It is stored in `bridge_credential`: AES-256-GCM
 over the value, under a key derived (HKDF-SHA256) from
 `RAINBOX_CREDENTIAL_KEY` and a random per-row salt, with a random per-row
 nonce; the row is deleted with its connector. `GET` of a connector reports
@@ -588,8 +599,16 @@ enabled on stale policy. Never restore freshness from a timestamp in the
 state file. This bounds stale allowlist/enablement use to the interval
 between a change and the event's delivery, which is the NOTIFY round trip;
 it does not promise revocation while the stream is down, because nothing is
-delivered then. Readiness/status must distinguish disabled, stale
-configuration, invalid configuration, and transport failure. SSE reconnect
+delivered then. A fetch made while the stream is closed is kept as the
+latest known data but never marked fresh (and none is requested while
+closed); only the reconnect's fetch restores freshness. Workers read policy
+from the current snapshot per message and per row, not from a binding
+captured when a poll began, so a sender revoked mid-poll is dropped on the
+very next message. A binding whose activation failed transiently (the
+high-water-mark reads) is retried by re-applying the current snapshot with
+capped backoff; no configuration change is needed. Readiness/status must
+distinguish disabled, stale configuration, invalid configuration, and
+transport failure. SSE reconnect
 still triggers catch-up from persisted cursors.
 
 Delete-and-create may happen between two config fetches: the bridge can observe

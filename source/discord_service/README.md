@@ -75,7 +75,15 @@ any connector/folder/binding change), never on a timer. While the stream is
 down or an event is pending, the snapshot is stale and no message is sent or
 posted; delivery resumes from the persisted cursors once a fresh snapshot is
 published. Each remote request (every chunk, every 429 retry) re-checks the
-snapshot's freshness and the binding's effective enablement and direction.
+snapshot's freshness and the binding's effective enablement and direction,
+and policy (the allowlist, the forwarded kinds) is read from the current
+snapshot per message and per row, so a change applies to the very next one.
+
+Each binding's channel is polled on its own `poll_seconds` schedule: the
+loop sleeps until the earliest binding is due or a new snapshot is
+published, a changed interval re-anchors that binding's next poll on its
+last one, and a failed poll backs off that binding alone (2, 4, … 60 s).
+A refresh (event or reconnect) never causes an extra poll.
 
 | Env var (connector mode) | Required | Meaning |
 |---|---|---|

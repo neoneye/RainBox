@@ -20,6 +20,7 @@ not match and read *Troubleshooting* at the end.
    room's *Bridge troubleshooting* buttons to watch a progress bubble.
 7. Flip policies on `/bridges` while it runs; nothing restarts, everything
    applies within a second.
+8. Try the refusals: a duplicate name, a two-line token, an admin edit.
 
 Each phase below is one of those steps, with what to expect and what it proves.
 
@@ -187,6 +188,8 @@ pid on the connector pane must **not** change — nothing restarts.
 | Set `direction` back to inherit | both ways again |
 | Create a folder, drag the binding into it, untick **Enabled** on the folder | binding pane shows *off in effect: a level above is disabled*; traffic stops |
 | Tick the folder again | traffic resumes |
+| Edit `poll_seconds` on the binding → `30` | a Discord message now takes up to 30 s to reach the room (the bridge polls that channel every 30 s; a second binding would keep its own interval) |
+| Set `poll_seconds` back to inherit (2 s) | the next message arrives within 2 s — the shorter interval takes effect at once, no restart |
 
 **Proves:** the live configuration contract — edits reach the running
 process through the event stream, gates combine with AND, and the process
@@ -221,7 +224,27 @@ instead of retried forever.
 **Proves:** ownership is enforced in the database, and removal retires the
 worker and cleans its bubbles.
 
-## Phase J — stop (1 min)
+## Phase J — things that must refuse (3 min)
+
+1. On `/bridges`, click the connector's name (the heading) → rename it to
+   the name of another connector (create a second one first if you have
+   only one). Expect a toast "Save refused: a connector with that name
+   already exists — reloaded" and the old name back.
+2. **Replace token…** with a value containing a tab or a newline (paste
+   two lines). Expect the modal to show "credential value must be a single
+   line without control characters" and nothing saved.
+3. Open Admin Panel → Bridges → Bridge Connector (and Bridge Credential).
+   Expect list pages with no Create, Edit, or Delete controls; the
+   credential view lists only which connector and when, never a value.
+4. On the connector pane, the manual launch command starts with
+   `RAINBOX_URL='http://127.0.0.1:5000'` — or your `RAINBOX_CORE_PORT` if
+   you run the core elsewhere.
+
+**Proves:** every write goes through the API's checks (unique names,
+single-line credentials), the admin panel cannot bypass them, and a copied
+manual command points at the core you are actually running.
+
+## Phase K — stop (1 min)
 
 Ctrl-C in the launcher terminal: it stops `Main Bot` first, then the core,
 and exits. Start it again with the Phase A command: the connector comes back

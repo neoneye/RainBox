@@ -196,8 +196,11 @@ One JSON line from the core, pushed at startup and on every change:
 }
 ```
 
-A snapshot is complete and coherent — it comes from one statement over the
-settings table — and includes **disabled** entries. Missing static entries
+A snapshot is complete and coherent — the settings table, the bridge
+connector rows, and their sealed credentials are read in one REPEATABLE READ
+read-only transaction, and the core builds and sends it under one lock so
+concurrent pushes arrive in the order they were read — and includes
+**disabled** entries. Missing static entries
 invalidate it. A missing dynamic bridge key in a valid snapshot means removal.
 Validate the whole line before reconciling any part of it; unknown kinds
 invalidate it and report that launcher/core versions disagree.
