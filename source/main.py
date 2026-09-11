@@ -210,8 +210,9 @@ def validate_desired(payload: Any, catalogue: dict[str, ServiceKind]) -> Snapsho
             if set(item) - {"key", "kind", "enabled", "restart_nonce", "env", "label", "token_env", "state_file", "credential"}:
                 raise ValueError(f"unexpected fields on {key}")
             credential = item.get("credential")
-            if credential is not None and (not isinstance(credential, str) or not credential.strip()):
-                raise ValueError(f"{key}: credential must be a non-empty string or null")
+            if credential is not None and (not isinstance(credential, str) or not credential.strip()
+                                           or any(ord(ch) < 32 or ch == "\x7f" for ch in credential)):
+                raise ValueError(f"{key}: credential must be a non-empty single line or null")
             token_env = item.get("token_env")
             if not isinstance(token_env, str) or not _ENV_NAME_OK.match(token_env):
                 raise ValueError(f"{key}: token_env must be an environment variable name")
@@ -513,9 +514,13 @@ class Launcher:
             if child_sock is not None:
                 child_sock.close()
             return
-        except OSError as exc:
-            rec.state, rec.message = "failed", f"spawn error: {exc}"
+        except (OSError, ValueError) as exc:
+            # ValueError: an environment value or argument the OS cannot take
+            # (an embedded NUL); a defect in one entry must never take the
+            # launcher down with it.
+            rec.state, rec.message = "failed", f"spawn error: {type(exc).__name__}"
             self._status_dirty = True
+            logger.error("%s: spawn error: %s", rec.label or rec.key, type(exc).__name__)
             if parent_sock is not None:
                 parent_sock.close()
             if child_sock is not None:

@@ -322,8 +322,9 @@ def test_credential_is_sealed_never_serialized_and_rotates_the_nonce(cleanup, mo
     monkeypatch.setenv(credential_box.KEY_ENV, "k" * 40)
     cu = UUID(_connector(cleanup)["uuid"])
     assert db.bridge_credential_status(cu) == {"set": False, "updated_at": None, "key_configured": True}
-    with pytest.raises(AdapterError):
-        db.bridge_set_credential(cu, "", autostart=True)
+    for bad in ("", "  ", "a\nb", "a\x00b", "tab\there"):
+        with pytest.raises(AdapterError):
+            db.bridge_set_credential(cu, bad, autostart=True)
     nonce_before = db.bridge_get_connector(cu)["restart_nonce"]
     status = db.bridge_set_credential(cu, " tok-1 ", autostart=True)
     assert status["set"] is True and status["updated_at"]

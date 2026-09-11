@@ -690,3 +690,48 @@ def test_inbound_loop_wakes_on_a_published_snapshot(tmp_path):
     threading.Timer(0.9, stop.set).start()
     inbound_loop(b, stop)
     assert rb.posted == [(ROOM2, "new")]
+
+
+def test_a_shorter_poll_interval_on_the_same_binding_takes_effect_at_once(tmp_path):
+    """The binding is polled once, then sleeps on 300 s; a snapshot that sets
+    poll_seconds=0.5 re-anchors the deadline, so it polls again within the
+    new interval instead of finishing the old sleep."""
+    stop = threading.Event()
+    dc = FakeDiscord({"777": []})
+    calls = {"n": 0}
+    orig = dc.get_messages
+
+    def counting(channel_id, after, limit=100):
+        calls["n"] += 1
+        return orig(channel_id, after, limit)
+    dc.get_messages = counting
+    b = _bridge(tmp_path, dc, FakeRainbox(), snapshot=_payload(bindings=[_binding(policy=_policy(poll_seconds=300))]))
+    b.store.set_binding(B1, _rec())
+
+    def shorten():
+        b.config.publish(parse_snapshot(_payload(bindings=[_binding(policy=_policy(poll_seconds=0.5))], revision="r2"), CONN), b.config.epoch)
+    threading.Timer(0.3, shorten).start()
+    threading.Timer(1.5, stop.set).start()
+    inbound_loop(b, stop)
+    assert calls["n"] >= 3          # 1 initial + at least 2 on the 0.5 s cadence after the change
+
+
+def test_a_longer_poll_interval_does_not_cause_a_premature_poll(tmp_path):
+    stop = threading.Event()
+    dc = FakeDiscord({"777": []})
+    calls = {"n": 0}
+    orig = dc.get_messages
+
+    def counting(channel_id, after, limit=100):
+        calls["n"] += 1
+        return orig(channel_id, after, limit)
+    dc.get_messages = counting
+    b = _bridge(tmp_path, dc, FakeRainbox(), snapshot=_payload(bindings=[_binding(policy=_policy(poll_seconds=0.5))]))
+    b.store.set_binding(B1, _rec())
+
+    def lengthen():
+        b.config.publish(parse_snapshot(_payload(bindings=[_binding(policy=_policy(poll_seconds=300))], revision="r2"), CONN), b.config.epoch)
+    threading.Timer(0.1, lengthen).start()    # right after the first poll
+    threading.Timer(1.2, stop.set).start()
+    inbound_loop(b, stop)
+    assert calls["n"] == 1           # the wake-up re-anchors on the last poll + 300 s; no extra poll

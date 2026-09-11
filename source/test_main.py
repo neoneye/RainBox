@@ -778,8 +778,10 @@ def test_validate_desired_dynamic_entries():
         {**bridge_entry(), "state_file": {"env": "DISCORD_STATE_FILE", "name": "../escape.json"}},
         {**bridge_entry(), "env": {"BRIDGE_CONNECTOR": "0f7a1b2c-3d4e-4f50-8a9b-000000000000"}},
         bridge_entry(env={"BOT_TOKEN": "leak"}),                           # the value never rides env
-        bridge_entry(credential=""),                                       # null or a non-empty string
+        bridge_entry(credential=""),                                       # null or a non-empty single line
         bridge_entry(credential=42),
+        bridge_entry(credential="a\x00b"),                                 # could never enter an environment
+        bridge_entry(credential="two\nlines"),
         bridge_entry(label="x" * 61),
         {**bridge_entry(), "surprise": 1},
         {**bridge_entry(), "kind": "svc"},                                 # a static kind under a dynamic key
@@ -858,5 +860,30 @@ def test_bridge_credential_from_the_boot_environment_and_missing_state_is_cleare
         assert rec.state == "credential missing"
         push(l, core, desired_with_bridge(bridge_entry(enabled=False, nonce="b2", token_env="OTHER_TOKEN")))
         assert rec.state == "stopped" and rec.message is None
+    finally:
+        _kill_all(l)
+
+
+def test_a_spawn_the_os_refuses_fails_the_entry_not_the_launcher(tree: Path, core: FakeCore, monkeypatch):
+    """subprocess.Popen raising ValueError (an embedded NUL somewhere the
+    validator did not see) marks the entry failed and leaves the launcher
+    running for everything else."""
+    seen: list[tuple[str, str]] = []
+    l = _bridge_launcher(tree, core, seen, {"BOT_TOKEN": "from-env"})
+    key = f"bridge:{BRIDGE_UUID}"
+    try:
+        real_popen = L.subprocess.Popen
+
+        def refusing(argv, **kw):
+            if any("BOT_TOKEN" in k for k in (kw.get("env") or {})):
+                raise ValueError("embedded null byte")
+            return real_popen(argv, **kw)
+        monkeypatch.setattr(L.subprocess, "Popen", refusing)
+        push(l, core, desired_with_bridge(bridge_entry()))
+        rec = l.services[key]
+        assert rec.state == "failed" and "ValueError" in (rec.message or "")
+        assert "from-env" not in (rec.message or "")
+        push(l, core, desired_with_bridge(bridge_entry(), svc_enabled=True))   # the launcher still serves others
+        wait_for(l, lambda: l.services["svc"].state == "running")
     finally:
         _kill_all(l)

@@ -810,8 +810,11 @@ def bridge_set_credential(connector_uuid: UUID, value: Any, *, autostart: bool) 
     BridgeTreeError for an unknown connector."""
     if not isinstance(value, str) or not value.strip():
         raise AdapterError("credential value must be a non-empty string")
-    if "\n" in value or "\r" in value:
-        raise AdapterError("credential value must be a single line")
+    if any(ord(ch) < 32 or ch == "\x7f" for ch in value):
+        # One printable line: a NUL or control character could never enter a
+        # child's environment (os.execve refuses NULs), so refuse it here
+        # rather than let a saved value crash a spawn later.
+        raise AdapterError("credential value must be a single line without control characters")
     conn = _connector_row(connector_uuid, lock=True)
     if conn is None:
         db.session.rollback()

@@ -819,19 +819,27 @@ def inbound_loop(bridge: Bridge, stop: threading.Event, clock: Callable[[], floa
     new binding, a shorter interval, or a direction change is not left
     waiting behind a long sleep."""
     next_poll: dict[str, float] = {}
+    last_poll: dict[str, float] = {}
+    interval: dict[str, float] = {}
     attempts: dict[str, int] = {}
     seen = 0
     while not stop.is_set():
         snap, fresh = bridge.config.current()
         active = {b.uuid: b for b in (snap.active() if snap and fresh else []) if b.policy.inbound}
         for gone in [u for u in next_poll if u not in active]:
-            next_poll.pop(gone, None)
-            attempts.pop(gone, None)
+            for table in (next_poll, last_poll, interval, attempts):
+                table.pop(gone, None)
         if not active:
             seen = bridge.config.wait_change(seen, stop, 60.0)
             continue
         now = clock()
         for uuid, b in active.items():
+            # A changed poll interval re-anchors the deadline on the last
+            # poll: shorter means (possibly) due now, longer means no
+            # premature poll — the old deadline is never kept.
+            if interval.get(uuid) not in (None, b.policy.poll_seconds) and not attempts.get(uuid):
+                next_poll[uuid] = last_poll.get(uuid, now) + b.policy.poll_seconds
+            interval[uuid] = b.policy.poll_seconds
             if next_poll.get(uuid, now) > now:
                 continue   # not due yet
             with bridge.binding_lock(uuid):
@@ -844,13 +852,14 @@ def inbound_loop(bridge: Bridge, stop: threading.Event, clock: Callable[[], floa
                     continue
                 bridge.acting_for(uuid, "in")
                 try:
+                    last_poll[uuid] = clock()
                     messages = bridge.discord.get_messages(b.channel_id, after=rec.get("discord_after", "0"))
                     bridge.process_inbound(b, rec, messages)
                     attempts[uuid] = 0
-                    next_poll[uuid] = clock() + b.policy.poll_seconds
+                    next_poll[uuid] = last_poll[uuid] + b.policy.poll_seconds
                 except Paused as exc:
                     logger.info("%s", exc)
-                    next_poll[uuid] = clock() + b.policy.poll_seconds
+                    next_poll[uuid] = last_poll[uuid] + b.policy.poll_seconds
                 except Exception as exc:
                     attempts[uuid] = attempts.get(uuid, 0) + 1
                     bridge.log_error(f"binding {uuid} inbound error (attempt {attempts[uuid]})", exc)
