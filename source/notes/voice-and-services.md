@@ -86,8 +86,9 @@ serves one `bridge_connector` row edited on `/bridges`: its bindings
 `GET /bridge/api/connectors/<uuid>/config`, fetched when its `/chat/stream`
 connection opens and on every `bridge_config` event for that connector —
 never on a timer. The launcher starts one process per enabled connector
-with the credential named by the row's `token_env` (from its
-`credentials.env`) and a per-connector state file. Inbound: allowed users'
+with the credential the row names as `token_env` (the value is stored
+sealed in Postgres and sent to the launcher with the desired snapshot)
+and a per-connector state file. Inbound: allowed users'
 messages are posted into the bound room as the human operator. Outbound:
 agent `message`/`notice` rows become Discord messages; `progress` rows
 become one bubble each, edited in place and deleted when the reply lands

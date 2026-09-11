@@ -44,6 +44,7 @@ from db import (
     FeedbackEvent,
     BridgeBinding,
     BridgeConnector,
+    BridgeCredential,
     BridgeFolder,
     GitFolder,
     GitRepo,
@@ -1123,7 +1124,18 @@ class BridgeBindingView(ModelView):
     }
 
 
+class BridgeCredentialView(ModelView):
+    """Read-only, and only the row's metadata: the sealed bytes are not
+    listed (they are ciphertext, but nothing in the admin needs them), and
+    the value itself exists nowhere the admin could show."""
+    can_create = can_edit = can_delete = False
+    column_list = ("connector_uuid", "version", "updated_at")
+    column_type_formatters = CRON_TYPE_FORMATTERS
+    column_formatters = {"connector_uuid": _bridge_connector_label}
+
+
 admin.add_view(BridgeConnectorView(BridgeConnector, db, category="Bridges"))
+admin.add_view(BridgeCredentialView(BridgeCredential, db, category="Bridges"))
 admin.add_view(BridgeFolderView(BridgeFolder, db, category="Bridges"))
 admin.add_view(BridgeBindingView(BridgeBinding, db, category="Bridges"))
 

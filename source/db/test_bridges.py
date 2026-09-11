@@ -289,6 +289,7 @@ def test_launcher_entries_shape(cleanup):
         "restart_nonce": db.bridge_get_connector(cu)["restart_nonce"],
         "env": {"RAINBOX_URL": "http://127.0.0.1:5000", "BRIDGE_CONNECTOR": str(cu)},
         "token_env": "DISCORD_TOKEN_TEST",
+        "credential": None,   # nothing stored yet; the opened value rides here otherwise
         "state_file": {"env": "DISCORD_STATE_FILE", "name": f"bridge-{cu}.json"},
     }
     assert [x for x in db.bridge_launcher_entries(autostart=False, rainbox_url="u") if x["key"] == e["key"]][0]["enabled"] is False
@@ -309,3 +310,55 @@ def test_every_write_notifies_bridge_config(cleanup, monkeypatch):
     db.bridge_delete_binding(UUID(b["uuid"]))
     db.bridge_delete_folder(UUID(f["id"]))
     assert seen.count(str(cu)) == 8   # create connector, folder, binding; 3 updates; 2 deletes
+
+
+# --- credentials (sealed) ---------------------------------------------------------
+
+
+def test_credential_is_sealed_never_serialized_and_rotates_the_nonce(cleanup, monkeypatch):
+    import json
+    from uuid import UUID
+    from services import credential_box
+    monkeypatch.setenv(credential_box.KEY_ENV, "k" * 40)
+    cu = UUID(_connector(cleanup)["uuid"])
+    assert db.bridge_credential_status(cu) == {"set": False, "updated_at": None, "key_configured": True}
+    with pytest.raises(AdapterError):
+        db.bridge_set_credential(cu, "", autostart=True)
+    nonce_before = db.bridge_get_connector(cu)["restart_nonce"]
+    status = db.bridge_set_credential(cu, " tok-1 ", autostart=True)
+    assert status["set"] is True and status["updated_at"]
+    assert db.bridge_get_connector(cu)["restart_nonce"] == nonce_before          # gate is off: no restart
+    # No serializer carries it: the connector dict, the tree, the config snapshot.
+    for blob in (db.bridge_get_connector(cu), db.bridge_load_tree(), db.bridge_connector_config(cu)):
+        assert "tok-1" not in json.dumps(blob)
+    row = db.session.get(db.BridgeCredential, cu)
+    assert b"tok-1" not in bytes(row.ciphertext)
+    assert db.bridge_credential_value(cu) == "tok-1"                              # only the launcher path opens it
+    # With the launch gate on, saving a new value rewrites the nonce (rotation = one paste).
+    db.bridge_update_connector(cu, {"enabled": True}, autostart=True)
+    nonce_on = db.bridge_get_connector(cu)["restart_nonce"]
+    db.bridge_set_credential(cu, "tok-2", autostart=True)
+    assert db.bridge_get_connector(cu)["restart_nonce"] != nonce_on
+    assert db.bridge_credential_value(cu) == "tok-2"
+    [entry] = [e for e in db.bridge_launcher_entries(autostart=True, rainbox_url="http://x") if e["key"] == f"bridge:{cu}"]
+    assert entry["credential"] == "tok-2"
+    # A different key cannot open it; the launcher entry then carries null.
+    monkeypatch.setenv(credential_box.KEY_ENV, "z" * 40)
+    assert db.bridge_credential_value(cu) is None
+    monkeypatch.setenv(credential_box.KEY_ENV, "k" * 40)
+    assert db.bridge_clear_credential(cu) is True and db.bridge_clear_credential(cu) is False
+    assert db.bridge_credential_status(cu)["set"] is False
+
+
+def test_credential_requires_the_key_and_dies_with_its_connector(cleanup, monkeypatch):
+    from uuid import UUID
+    from services import credential_box
+    monkeypatch.delenv(credential_box.KEY_ENV, raising=False)
+    cu = UUID(_connector(cleanup)["uuid"])
+    with pytest.raises(credential_box.CredentialKeyMissing):
+        db.bridge_set_credential(cu, "tok", autostart=True)
+    assert db.bridge_credential_status(cu)["key_configured"] is False
+    monkeypatch.setenv(credential_box.KEY_ENV, "k" * 40)
+    db.bridge_set_credential(cu, "tok", autostart=True)
+    assert db.bridge_delete_connector(cu) is True
+    assert db.session.get(db.BridgeCredential, cu) is None                       # ON DELETE CASCADE

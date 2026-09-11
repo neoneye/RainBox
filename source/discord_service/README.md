@@ -60,10 +60,13 @@ input at all (see *Troubleshooting* below).
    channel pair (channel id from Discord's *Copy Channel ID*). Set
    `allowed_senders` (numeric user ids) on the connector, a folder, or the
    binding — the nearest level wins; enable the binding and the connector.
-2. Put the token VALUE under that variable name in the launcher's
-   `<state-dir>/credentials.env` (default state dir `source/var/services/`),
-   then press **Restart** on the connector — or run the manual command the
-   connector pane shows. The database never holds the token.
+2. On the connector pane press **Set token…** and paste the bot token. It
+   is sealed (AES-GCM under `RAINBOX_CREDENTIAL_KEY` from the repo-root
+   `.env`) before it is stored, no page or API ever returns it, and the
+   launcher receives it with the connector's desired entry and injects it
+   under that variable name at every spawn. Saving a new value restarts a
+   running connector, so rotation is one paste. A manual run instead gets
+   the token from its own launch environment (the pane's command says so).
 
 The process fetches `GET /bridge/api/connectors/<uuid>/config` when its
 `/chat/stream` connection opens and again on every `bridge_config` event
@@ -77,7 +80,7 @@ snapshot's freshness and the binding's effective enablement and direction.
 | Env var (connector mode) | Required | Meaning |
 |---|---|---|
 | `BRIDGE_CONNECTOR` | yes | the connector's uuid (selects this mode) |
-| *the connector's `token_env`* | yes | the bot token, under whatever NAME the row says; read from this process's environment only |
+| *the connector's `token_env`* | yes | the bot token, under whatever NAME the row says; read from this process's environment only (the launcher sets it from the sealed value saved on /bridges; a manual run exports it) |
 | `RAINBOX_URL` | no (`http://127.0.0.1:5000`) | core webapp base URL |
 | `DISCORD_STATE_FILE` | no (`./bridge-<uuid>.json`) | per-connector state (schema 2): bot identity, per-binding cursors and progress maps; the launcher sets `<state-dir>/bridge-<uuid>.json` |
 
@@ -106,8 +109,9 @@ It resolves `DISCORD_ROOM_NAME` to exactly one room, creates a disabled
 connector and binding with the legacy allowlist and poll interval, and, if
 `state.json` exists, writes `bridge-<uuid>.json` in the state dir with the
 cursors and progress map under the new binding (the legacy file stays for
-rollback). Then stop the legacy process, enable on `/bridges`, add the token
-to `credentials.env`, and start. Never run both modes for the same bot.
+rollback). Then stop the legacy process, paste the token on the connector
+pane, enable on `/bridges`, and let the launcher start it. Never run both
+modes for the same bot.
 
 ## Run (legacy env mode)
 

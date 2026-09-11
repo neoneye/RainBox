@@ -11,6 +11,7 @@ llama-index-embeddings-openai==0.6.0        # OpenAI-compatible /v1/embeddings c
 mcp==1.27.2                                 # MCP server SDK (FastMCP)
 llama-index-tools-mcp==0.4.8               # MCP client + FunctionTool wrapper
 requests==2.34.2
+cryptography==48.0.1                        # sealing bridge credentials at rest (services/credential_box.py)
 croniter==6.2.2                                # cron-expression parser for the scheduler
 python-dotenv==1.2.2                        # repo-root .env loading (env_file.py)
 lingua-language-detector==2.2.0             # statistical language detection for the response-language gate

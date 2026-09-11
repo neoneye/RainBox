@@ -8,6 +8,10 @@ Enabled flags and policies are per-item content with their own PUT.
 
 - `GET/PUT /bridges/api/tree`
 - `POST /bridges/api/connectors`, `GET/PUT/DELETE /bridges/api/connectors/<uuid>`
+- `PUT/DELETE /bridges/api/connectors/<uuid>/credential` — write-only: the
+  value is sealed into `bridge_credential` and never returned by anything;
+  GET of the connector reports only `credential: {set, updated_at,
+  key_configured}`.
 - `POST /bridges/api/folders`, `PUT/DELETE /bridges/api/folders/<uuid>`
 - `POST /bridges/api/bindings`, `PUT/DELETE /bridges/api/bindings/<uuid>`
 - `GET /bridge/api/connectors/<uuid>/config` — what a bridge process fetches
@@ -24,6 +28,7 @@ from sqlalchemy.exc import IntegrityError
 import db
 from services import registry as services_registry
 from services.bridge_adapters import AdapterError
+from services.credential_box import CredentialKeyMissing
 
 from .core import app
 
@@ -99,7 +104,8 @@ def bridges_connector(connector_uuid: str) -> Response | tuple[Response, int]:
             return _err(404, "connector not found")
         status = services_registry.CHANNEL.view()["services"].get(f"bridge:{cu}", {"state": "unknown"})
         return jsonify({"ok": True, "connector": row, "launcher": status,
-                        "autostart": services_registry.bridges_autostart()})
+                        "autostart": services_registry.bridges_autostart(),
+                        "credential": db.bridge_credential_status(cu)})
     if request.method == "DELETE":
         try:
             found = db.bridge_delete_connector(cu)
@@ -120,6 +126,32 @@ def bridges_connector(connector_uuid: str) -> Response | tuple[Response, int]:
     if row is None:
         return _err(404, "connector not found")
     return jsonify({"ok": True, "connector": row, "version": db.bridge_tree_version()})
+
+
+@app.route("/bridges/api/connectors/<connector_uuid>/credential", methods=["PUT", "DELETE"])
+def bridges_connector_credential(connector_uuid: str) -> Response | tuple[Response, int]:
+    """Write-only. PUT {value} seals and stores it (rotating a running
+    connector); DELETE forgets it. Neither response, nor any other, carries
+    the value."""
+    cu = _parse_uuid(connector_uuid)
+    if cu is None:
+        return _err(400, "bad uuid")
+    if request.method == "DELETE":
+        if not db.bridge_clear_credential(cu):
+            return _err(404, "no stored credential for that connector")
+        return jsonify({"ok": True, "credential": db.bridge_credential_status(cu)})
+    data = _body()
+    if data is None:
+        return _err(400, "request body must be a JSON object")
+    try:
+        status = db.bridge_set_credential(cu, data.get("value"), autostart=services_registry.bridges_autostart())
+    except CredentialKeyMissing as exc:
+        return _err(409, str(exc), key_configured=False)
+    except AdapterError as exc:
+        return _err(400, str(exc))
+    except db.BridgeTreeError as exc:
+        return _err(404, str(exc))
+    return jsonify({"ok": True, "credential": status})
 
 
 # --- folders ---------------------------------------------------------------------

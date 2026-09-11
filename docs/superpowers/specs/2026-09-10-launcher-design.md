@@ -120,34 +120,20 @@ loader-injection variables, database URLs, or arbitrary parent variables through
 this service path. Additional model-cache/proxy settings require catalogue
 entries; the UI must not accept arbitrary environment maps.
 
-For supervised bridges, use `<state-dir>/credentials.env`, an owner-readable
-file read only by the launcher. It is optional for the static-services phase;
-a missing file matters only when a requested credential is unavailable.
-The launcher parses a deliberately limited format:
-
-- One `NAME=value` per line; names match `[A-Za-z_][A-Za-z0-9_]*`.
-- Blank lines and lines whose first non-whitespace character is `#` are ignored.
-- Strip whitespace around the name and value; one matching pair of single or
-  double quotes may surround the value. Characters inside quotes are literal.
-- No interpolation, escapes, multiline values, `export`, or inline comments.
-  An unquoted `#` is part of the value. Reject malformed quoting and duplicate
-  names with a line-number error, never echo the line's contents.
-
-At **every spawn**, resolve a credential from the freshly parsed credentials
-file first, and only if the file does not set that name, from the launcher's
-startup environment. The file is the operator's source of truth for service
-credentials, so editing it and pressing Restart takes effect even when the
-same name was exported when the launcher booted — silently ignoring a file
-edit because of a variable set days ago would be the astonishing behavior.
-An empty value is unset at either level. Show the selected source
-(file/environment) without its value. Because the file is read at every
-spawn, a writer must replace it atomically — write `credentials.env.tmp`,
-then `os.replace()` — so a Restart that coincides with a save never reads a
-truncated file; editors that truncate-then-write are an accepted risk for a
-hand-edited file, and any UI that writes it must use the atomic form. Changing an exported value that the
-file does not override requires restarting the launcher. Running children keep their
-current environment. Invalid file syntax prevents file-backed spawns, not the
-core or already-running services. Neither source is copied into DB, argv, status,
+For supervised bridges the credential arrives **in the desired snapshot**:
+the core stores each connector's token sealed in Postgres
+(`bridge_credential`, see the bridge design's *Credentials and process
+identity*), decrypts it only while building the snapshot, and sends it over
+the control socketpair as the entry's `credential` (a string, or null when
+none is stored). The launcher keeps it in memory on the process record,
+injects it under the entry's `token_env` at every spawn, and falls back to
+its own startup environment for a null. It never writes it anywhere: not
+to the state directory, not to the status table, not to a log line
+(snapshot rejections name the field, never the value). Changing an
+exported fallback value requires restarting the launcher; a stored value
+takes effect at the connector's next spawn, which saving it triggers.
+Show the selected source (database/environment) without its value.
+Running children keep their current environment. Neither source is copied into DB, argv, status,
 or the desired-state API. A child may still deliberately read local files:
 environment filtering is not an OS sandbox.
 
@@ -230,10 +216,11 @@ the credential name, that the state variable is the catalogue's
 `env.BRIDGE_CONNECTOR` equals the key's uuid, and that `env` carries neither
 the state-file nor the credential variable; static services reject these
 fields. The state file is joined under the launcher's state directory. The
-credential is resolved by name at spawn time (`credentials.env`, then the
-launcher's own environment); when neither has it the record reports
-`credential missing` with the variable name and file path, and a later
-Restart (nonce change) retries. The label prefixes the child's output lines
+credential comes with the entry (`credential`, sealed in the database and
+decrypted by the core for the snapshot) or, failing that, from the
+launcher's own environment under `token_env`; when neither has it the
+record reports `credential missing` naming the variable, and a later
+Restart (nonce change) or a saved credential retries. The label prefixes the child's output lines
 and rides the status table. A dynamic record whose key is absent from a valid
 snapshot is stopped, then dropped from the status table.
 

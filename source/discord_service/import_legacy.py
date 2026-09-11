@@ -146,7 +146,7 @@ def run(argv: list[str] | None = None, env: dict[str, str] | None = None, sessio
     else:
         print(f"no legacy state at {legacy['state_file']}: the first start begins at newest (no replay)")
     print("next: stop the legacy process, check /bridges, enable the binding and the connector, "
-          "put the token value under that variable in the launcher's credentials.env, then let the launcher start it")
+          "paste the token on the connector pane (it is stored sealed), then let the launcher start it")
     return {"connector": connector, "binding": binding, "state_file": str(target) if wrote_state else None}
 
 

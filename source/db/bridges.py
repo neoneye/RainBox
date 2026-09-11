@@ -24,6 +24,7 @@ Shape rules that matter here:
 from __future__ import annotations
 
 import hashlib
+import logging
 import json
 from typing import Any
 from uuid import UUID, uuid4
@@ -31,8 +32,11 @@ from uuid import UUID, uuid4
 import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 
-from db.models import BridgeBinding, BridgeConnector, BridgeFolder, Chatroom, db
+from db.models import BridgeBinding, BridgeConnector, BridgeCredential, BridgeFolder, Chatroom, db
+from services import credential_box
 from services.definitions import DYNAMIC_SERVICES
+
+logger = logging.getLogger(__name__)
 from services.bridge_adapters import (
     ADAPTERS,
     LAUNCH_MODES,
@@ -781,6 +785,87 @@ def bridge_connector_config(connector_uuid: UUID) -> dict[str, Any] | None:
 # --- launcher desired entries ---------------------------------------------------------
 
 
+# --- credentials (sealed; never returned) --------------------------------------------
+
+
+def _credential_row(connector_uuid: UUID) -> BridgeCredential | None:
+    return db.session.get(BridgeCredential, connector_uuid)
+
+
+def bridge_credential_status(connector_uuid: UUID) -> dict[str, Any]:
+    """What a page may know: whether a value is stored and when it was
+    saved, plus whether the sealing key is configured at all."""
+    row = _credential_row(connector_uuid)
+    return {"set": row is not None,
+            "updated_at": row.updated_at.isoformat() if row is not None and row.updated_at else None,
+            "key_configured": credential_box.key_configured()}
+
+
+def bridge_set_credential(connector_uuid: UUID, value: Any, *, autostart: bool) -> dict[str, Any]:
+    """Seal and store (replace) the connector's credential. A non-empty
+    string only. While the launch gate is on the restart nonce is rewritten
+    in the same transaction, so the running process is restarted with the
+    new value: rotation is one paste. Raises CredentialKeyMissing when the
+    core has no RAINBOX_CREDENTIAL_KEY; AdapterError for a bad value;
+    BridgeTreeError for an unknown connector."""
+    if not isinstance(value, str) or not value.strip():
+        raise AdapterError("credential value must be a non-empty string")
+    if "\n" in value or "\r" in value:
+        raise AdapterError("credential value must be a single line")
+    conn = _connector_row(connector_uuid, lock=True)
+    if conn is None:
+        db.session.rollback()
+        raise BridgeTreeError("connector not found")
+    try:
+        sealed = credential_box.seal(value.strip())
+    except credential_box.CredentialKeyMissing:
+        db.session.rollback()
+        raise
+    row = _credential_row(connector_uuid)
+    if row is None:
+        row = BridgeCredential(connector_uuid=connector_uuid)
+        db.session.add(row)
+    row.version, row.salt, row.nonce, row.ciphertext = sealed.version, sealed.salt, sealed.nonce, sealed.ciphertext
+    if launch_gate(conn, autostart):
+        conn.restart_nonce = uuid4()
+    db.session.commit()
+    _push_launcher()
+    return bridge_credential_status(connector_uuid)
+
+
+def bridge_clear_credential(connector_uuid: UUID) -> bool:
+    """Forget the stored value. A running process keeps the environment it
+    was spawned with; the next spawn reports `credential missing` unless the
+    launcher's own environment names it. Returns False for no row."""
+    conn = _connector_row(connector_uuid, lock=True)
+    if conn is None:
+        db.session.rollback()
+        return False
+    row = _credential_row(connector_uuid)
+    if row is None:
+        db.session.rollback()
+        return False
+    db.session.delete(row)
+    db.session.commit()
+    _push_launcher()
+    return True
+
+
+def bridge_credential_value(connector_uuid: UUID) -> str | None:
+    """The plaintext, for the launcher snapshot ONLY. None when nothing is
+    stored, the key is missing, or the row does not open (each logged,
+    without the value); callers never serialize it anywhere else."""
+    row = _credential_row(connector_uuid)
+    if row is None:
+        return None
+    try:
+        return credential_box.open_sealed(
+            credential_box.Sealed(row.version, bytes(row.salt), bytes(row.nonce), bytes(row.ciphertext)))
+    except (credential_box.CredentialKeyMissing, credential_box.CredentialUnopenable) as exc:
+        logger.error("bridge connector %s: stored credential unusable: %s", connector_uuid, exc)
+        return None
+
+
 def bridge_launcher_entries(*, autostart: bool, rainbox_url: str) -> list[dict[str, Any]]:
     """One dynamic desired entry per connector of an available platform,
     disabled or not; the launcher sees a key vanish only on deletion."""
@@ -799,6 +884,9 @@ def bridge_launcher_entries(*, autostart: bool, rainbox_url: str) -> list[dict[s
             "restart_nonce": str(row.restart_nonce) if row.restart_nonce else None,
             "env": {"RAINBOX_URL": rainbox_url, "BRIDGE_CONNECTOR": str(row.uuid)},
             "token_env": row.token_env,
+            # The sealed value, opened for this snapshot only; the launcher
+            # keeps it in memory and injects it under token_env at spawn.
+            "credential": bridge_credential_value(row.uuid),
             "state_file": {"env": adapter.state_file_env, "name": f"bridge-{row.uuid}.json"},
         })
     return out

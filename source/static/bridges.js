@@ -254,7 +254,7 @@ function brLaunchCommand(c, stateDir){
   return 'cd source/' + plat.directory + '/\n' +
     'BRIDGE_CONNECTOR=' + brShellQuote(c.uuid) + ' ' + plat.state_file_env + '=' + brShellQuote(stateFile) +
     ' ' + plat.argv.join(' ') + '\n' +
-    '# ' + c.token_env + ' must already be set in the launch environment; RAINBOX_URL defaults to http://127.0.0.1:5000';
+    '# ' + c.token_env + ' must already be set in the launch environment (a manual run gets no value from the database); RAINBOX_URL defaults to http://127.0.0.1:5000';
 }
 function brPolicyTable(kind, id, node){
   const sel = brNodeOf(kind, id);
@@ -296,7 +296,8 @@ function brRenderDetail(){
     html +=
       '<dl class="br-kv">' +
       '<dt>Platform</dt><dd>' + brEscapeHtml(plat.label) + (plat.available === false ? ' <span class="br-warn">(no bridge implementation yet)</span>' : '') + '</dd>' +
-      '<dt>Credential variable</dt><dd><code>' + brEscapeHtml(n.token_env) + '</code> <span class="muted">name only; the value lives in the launcher’s credentials.env or environment</span></dd>' +
+      '<dt>Credential variable</dt><dd><code>' + brEscapeHtml(n.token_env) + '</code> <span class="muted">what the bridge process reads; the launcher fills it from the sealed value below</span></dd>' +
+      '<dt>Token</dt><dd id="br-cred"><span class="muted">checking…</span></dd>' +
       (n.base_url ? '<dt>Realm URL</dt><dd><code>' + brEscapeHtml(n.base_url) + '</code></dd>' : '') +
       (n.identity ? '<dt>Identity</dt><dd>' + brEscapeHtml(n.identity) + '</dd>' : '') +
       '<dt>Connector id</dt><dd><code>' + brEscapeHtml(n.uuid) + '</code> <button class="br-btn" id="br-copy-id">Copy ID</button></dd>' +
@@ -367,7 +368,96 @@ function brRenderDetail(){
     e.preventDefault(); brSelectNode('connector', a.getAttribute('data-open-connector'));
   }));
   el.querySelectorAll('[data-policy]').forEach(b => b.addEventListener('click', () => brOpenPolicyModal(sel.kind, sel.kind === 'folder' ? n.id : n.uuid, b.getAttribute('data-policy'))));
-  if (sel.kind === 'connector') brRefreshStatus();
+  if (sel.kind === 'connector'){ brRefreshStatus(); brLoadCredential(n.uuid); }
+}
+
+// ---- credential (write-only; the page only ever learns "set" or "not set") ----
+let brCredential = {};   // connector uuid -> {set, updated_at, key_configured}
+async function brLoadCredential(uuid){
+  try {
+    const r = await fetch('/bridges/api/connectors/' + encodeURIComponent(uuid));
+    const d = await r.json();
+    if (r.ok) brCredential[uuid] = d.credential || {};
+  } catch (e) { /* rendered as unknown */ }
+  brRenderCredential(uuid);
+}
+function brRenderCredential(uuid){
+  const el = document.getElementById('br-cred');
+  const sel = brSelected();
+  if (!el || !sel || sel.kind !== 'connector' || sel.node.uuid !== uuid) return;
+  const c = brCredential[uuid];
+  if (!c){ el.innerHTML = '<span class="muted">unknown</span>'; return; }
+  let html = c.set
+    ? '<span class="br-state running">set</span> <span class="muted">saved ' + brEscapeHtml((c.updated_at || '').replace('T', ' ').slice(0, 19)) + '</span> '
+    : '<span class="br-state">not set</span> ';
+  html += '<button class="br-btn" id="br-cred-set">' + (c.set ? 'Replace token…' : 'Set token…') + '</button>';
+  if (c.set) html += ' <button class="br-btn" id="br-cred-clear">Clear</button>';
+  if (c.key_configured === false){
+    html += '<div class="br-warn" style="margin-top:4px">RAINBOX_CREDENTIAL_KEY is not set in the core’s environment (repo-root .env), so nothing can be sealed' +
+      (c.set ? ' or opened: the launcher cannot use the stored token until the key is back' : '') +
+      '. Generate one with <code>python3 -c "import secrets; print(secrets.token_urlsafe(48))"</code>, add the line, restart the core.</div>';
+  }
+  el.innerHTML = html;
+  const setBtn = el.querySelector('#br-cred-set');
+  if (setBtn) setBtn.addEventListener('click', () => brOpenCredentialModal(uuid));
+  const clearBtn = el.querySelector('#br-cred-clear');
+  if (clearBtn) clearBtn.addEventListener('click', () => brConfirmClearCredential(uuid));
+}
+let brCredentialUuid = null;
+function brOpenCredentialModal(uuid){
+  const c = brConnectorByUuid(uuid);
+  if (!c) return;
+  brCredentialUuid = uuid;
+  document.getElementById('br-credential-title').textContent = (brCredential[uuid] && brCredential[uuid].set ? 'Replace token for ' : 'Set token for ') + c.name;
+  document.getElementById('br-credential-desc').textContent = 'The bridge process will read it as ' + c.token_env + '.';
+  const input = document.getElementById('br-credential-input');
+  input.value = '';
+  document.getElementById('br-credential-err').textContent = '';
+  document.getElementById('br-credential-save').disabled = true;
+  document.getElementById('ui-modal-backdrop').hidden = false;
+  document.getElementById('br-credential-modal').hidden = false;
+  input.focus();
+}
+function brCloseCredentialModal(){
+  document.getElementById('br-credential-input').value = '';   // never keep it around
+  document.getElementById('ui-modal-backdrop').hidden = true;
+  document.getElementById('br-credential-modal').hidden = true;
+  brCredentialUuid = null;
+}
+async function brSaveCredential(){
+  const uuid = brCredentialUuid;
+  const value = document.getElementById('br-credential-input').value.trim();
+  const err = document.getElementById('br-credential-err');
+  if (!uuid || !value) return;
+  err.textContent = '';
+  try {
+    const r = await fetch('/bridges/api/connectors/' + encodeURIComponent(uuid) + '/credential',
+      {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({value: value})});
+    const d = await r.json();
+    if (!r.ok){ err.textContent = d.error || 'Could not save.'; return; }
+    brCredential[uuid] = d.credential || {};
+    brCloseCredentialModal();
+    brRenderCredential(uuid);
+    const c = brConnectorByUuid(uuid);
+    brToast(c && c.enabled && c.launch_mode === 'launcher' ? 'Token saved; the launcher restarts the connector with it' : 'Token saved');
+    setTimeout(brRefreshStatus, 800);
+  } catch (e) { err.textContent = 'Could not reach the server.'; }
+}
+function brConfirmClearCredential(uuid){
+  const c = brConnectorByUuid(uuid);
+  if (!c) return;
+  brOpenDeleteModal({title: 'Clear token',
+    message: 'Forget the stored token for "' + c.name + '"? A running process keeps going until its next restart; after that the launcher reports "credential missing" unless ' + c.token_env + ' is in its environment.',
+    onConfirm: async () => {
+      try {
+        const r = await fetch('/bridges/api/connectors/' + encodeURIComponent(uuid) + '/credential', {method: 'DELETE'});
+        const d = await r.json();
+        if (!r.ok){ brToast(d.error || 'Could not clear.'); return; }
+        brCredential[uuid] = d.credential || {};
+        brRenderCredential(uuid);
+        brToast('Token cleared');
+      } catch (e) { brToast('Could not clear.'); }
+    }});
 }
 
 // ---- per-item content writes (their own PUTs; the tree token is untouched) ----
@@ -1316,6 +1406,7 @@ function brOpenModalDirty(){
   const v = id => document.getElementById(id).value.trim();
   if (!document.getElementById('br-connector-modal').hidden) return v('br-conn-name') !== '' || v('br-conn-token-env') !== '';
   if (!document.getElementById('br-folder-modal').hidden) return v('br-folder-input') !== '';
+  if (!document.getElementById('br-credential-modal').hidden) return v('br-credential-input') !== '';
   if (!document.getElementById('br-binding-modal').hidden)
     return Array.from(document.querySelectorAll('#br-binding-fields [data-address]')).some(i => i.value.trim() !== '');
   if (!document.getElementById('br-policy-modal').hidden) return true;  // explicit Save/Cancel only
@@ -1327,6 +1418,7 @@ function brOpenModalDirty(){
 function brCloseOpenModal(){
   if (!document.getElementById('br-connector-modal').hidden){ brCloseConnectorModal(); return; }
   if (!document.getElementById('br-folder-modal').hidden){ brCloseFolderModal(); return; }
+  if (!document.getElementById('br-credential-modal').hidden){ brCloseCredentialModal(); return; }
   if (!document.getElementById('br-binding-modal').hidden){ brCloseBindingModal(); return; }
   if (!document.getElementById('br-policy-modal').hidden){ brClosePolicyModal(); return; }
   if (!document.getElementById('br-delete-modal').hidden){ brCloseDeleteModal(); return; }
@@ -1347,6 +1439,12 @@ document.getElementById('br-folder-input').addEventListener('keydown', e => {
   if (e.key === 'Enter' && !document.getElementById('br-folder-create').disabled){ e.preventDefault(); brAddFolderConfirm(); }
 });
 document.getElementById('br-conn-platform').addEventListener('change', brSyncConnectorFields);
+document.getElementById('br-credential-input').addEventListener('input', () => {
+  document.getElementById('br-credential-save').disabled = document.getElementById('br-credential-input').value.trim() === '';
+});
+document.getElementById('br-credential-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !document.getElementById('br-credential-save').disabled){ e.preventDefault(); brSaveCredential(); }
+});
 document.getElementById('br-conn-token-env').addEventListener('keydown', e => {
   if (e.key === 'Enter'){ e.preventDefault(); brAddConnectorConfirm(); }
 });

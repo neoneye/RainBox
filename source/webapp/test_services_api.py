@@ -260,7 +260,7 @@ def test_status_view_carries_reported_bridge_keys_only_while_reported(client, ma
     key = f"bridge:{cu}"
     first = _status(1, core="running")
     first["services"][key] = {"state": "credential missing", "label": "Main Bot",
-                              "message": "BOT_TOKEN is set neither in credentials.env nor in the environment"}
+                              "message": "no credential stored for this connector and BOT_TOKEN is not in the environment"}
     first["services"]["rogue"] = {"state": "running"}  # an unknown static-looking key never surfaces
     managed.send(first)
     view = _wait_status(lambda v: key in v["services"])

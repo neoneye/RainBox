@@ -10,7 +10,7 @@ from uuid import UUID, uuid4
 import sqlalchemy as sa
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Index, Text, UniqueConstraint
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Index, LargeBinary, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from pgvector.sqlalchemy import Vector
@@ -1447,8 +1447,9 @@ class AppSetting(db.Model):
 
 class BridgeConnector(db.Model):
     """One chat-bridge bot identity on one platform (Discord, Telegram, …).
-    The credential never lives here: `token_env` is the NAME of the variable
-    that holds it in the launcher's credentials file or environment. Platform,
+    The credential never lives on this row: `token_env` is the NAME of the
+    variable the bridge process reads; the value is sealed in its own
+    `BridgeCredential` row (never serialized with the connector). Platform,
     realm, identity, and token_env are fixed after creation; name, policy,
     launch mode, and enabled are editable. `restart_nonce` is what a Restart
     (or an off→on transition of the launch gate) rewrites so the launcher
@@ -1474,6 +1475,23 @@ class BridgeConnector(db.Model):
         DateTime(timezone=True), default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
     )
+
+
+class BridgeCredential(db.Model):
+    """The connector's credential, sealed (services/credential_box.py:
+    AES-256-GCM under a key derived from RAINBOX_CREDENTIAL_KEY and this
+    row's salt). One row per connector, deleted with it. No API returns the
+    value; the core opens it only to hand it to the launcher."""
+
+    __tablename__ = "bridge_credential"
+    connector_uuid: Mapped[UUID] = mapped_column(
+        ForeignKey("bridge_connector.uuid", ondelete="CASCADE"), primary_key=True)
+    version: Mapped[int] = mapped_column(default=1)
+    salt: Mapped[bytes] = mapped_column(LargeBinary)
+    nonce: Mapped[bytes] = mapped_column(LargeBinary)
+    ciphertext: Mapped[bytes] = mapped_column(LargeBinary)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
 
 
 class BridgeFolder(db.Model):

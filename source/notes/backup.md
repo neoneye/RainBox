@@ -30,7 +30,11 @@ A backup contains the **entire database** — chat history, memory claims, and
 the model API keys stored in `model_config` — so the recipient keys guard all
 of it. This is also why secret-flagged settings are **env-only** and can never
 be stored in `app_setting` (`db/settings.py:set_setting` enforces it): a secret
-in the DB would land in cleartext inside every dump.
+in the DB would land in cleartext inside every dump. Chat-bridge bot tokens
+(`bridge_credential`) are the exception that keeps the rule's point: they
+are stored sealed (AES-GCM under a key derived from `RAINBOX_CREDENTIAL_KEY`
+in `.env`), so a dump carries only ciphertext — and a restore needs that
+`.env` line, or the tokens must be pasted again on `/bridges`.
 
 ### Limits of the threat model — the control plane
 

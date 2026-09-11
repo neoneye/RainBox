@@ -210,24 +210,6 @@ def test_main_launcher_imports_only_the_standard_library():
     assert leaked == []
 
 
-def test_parse_credentials_grammar():
-    text = "\n".join([
-        "# comment", "", "  A = plain value with # hash ", 'B="quoted # kept"',
-        "C='single'", "D=", "E=\"\"",
-    ])
-    assert L.parse_credentials(text) == {
-        "A": "plain value with # hash", "B": "quoted # kept", "C": "single", "D": "", "E": "",
-    }
-    assert L.parse_credentials("API_KEY=foo=bar") == {"API_KEY": "foo=bar"}
-    assert L.parse_credentials('PAD="  spaced  "') == {"PAD": "  spaced  "}
-    assert L.parse_credentials("URL=https://h/x?a=1&b=2#frag") == {"URL": "https://h/x?a=1&b=2#frag"}
-    for bad in ("A=1\nA=2", "A=\"open", "1A=x", "novalue", "A='x'y", "A=\"a\"b\""):
-        with pytest.raises(L.CredentialsError) as info:
-            L.parse_credentials(bad)
-        assert "line" in str(info.value)
-        assert "open" not in str(info.value) and "novalue" not in str(info.value)
-
-
 def test_service_environment_is_built_from_scratch():
     env = L.service_environment(_base_env(), {"TEST_MODE": "sleep"}, ("BOT_TOKEN", "t"))
     assert env["PATH"] and env["HOME"] and env["LC_ALL"] == "C"
@@ -690,16 +672,16 @@ def test_child_output_is_prefixed_with_its_key(tree: Path, core: FakeCore):
         _kill_all(l)
 
 
-def test_credentials_file_wins_over_the_boot_environment(tree: Path, core: FakeCore):
+def test_snapshot_credential_wins_over_the_boot_environment(tree: Path, core: FakeCore):
     l = L.Launcher(state_dir=tree / "state9", catalogue={"svc": KIND}, source_dir=tree,
                    spawn_core=False, base_env={**_base_env(), "BOT_TOKEN": "from-env", "ONLY_ENV": "e"})
     l.acquire_lock()
     assert l.resolve_credential("BOT_TOKEN") == ("environment", "from-env")
-    (l.state_dir / "credentials.env").write_text("BOT_TOKEN=from-file\nEMPTY=\n")
-    assert l.resolve_credential("BOT_TOKEN") == ("file", "from-file")   # an edit takes effect at once
-    assert l.resolve_credential("ONLY_ENV") == ("environment", "e")     # fallback for names the file lacks
-    assert l.resolve_credential("EMPTY") is None                        # empty = unset at either level
-    assert l.resolve_credential("NOPE") is None
+    assert l.resolve_credential("BOT_TOKEN", "from-db") == ("database", "from-db")   # the entry's value wins
+    assert l.resolve_credential("ONLY_ENV", None) == ("environment", "e")           # fallback for a null
+    assert l.resolve_credential("ONLY_ENV", "") == ("environment", "e")             # empty = unset
+    assert l.resolve_credential("NOPE", None) is None
+    assert not (l.state_dir / "credentials.env").exists()                           # no file is ever read or written
 
 
 def _launcher_with_output(tree: Path, core: FakeCore, seen: list):
@@ -759,9 +741,9 @@ BRIDGE_KIND = ServiceKind(
 BRIDGE_UUID = "0f7a1b2c-3d4e-4f50-8a9b-0c1d2e3f4a5b"
 
 
-def bridge_entry(*, enabled=True, nonce="b1", env=None, label="Main Bot", token_env="BOT_TOKEN"):
+def bridge_entry(*, enabled=True, nonce="b1", env=None, label="Main Bot", token_env="BOT_TOKEN", credential=None):
     return {"key": f"bridge:{BRIDGE_UUID}", "kind": "discord_bridge", "enabled": enabled,
-            "restart_nonce": nonce, "label": label, "token_env": token_env,
+            "restart_nonce": nonce, "label": label, "token_env": token_env, "credential": credential,
             "state_file": {"env": "DISCORD_STATE_FILE", "name": f"bridge-{BRIDGE_UUID}.json"},
             "env": {"RAINBOX_URL": "http://127.0.0.1:5000", "BRIDGE_CONNECTOR": BRIDGE_UUID, **(env or {})}}
 
@@ -775,10 +757,11 @@ def desired_with_bridge(bridge: dict | None, *, svc_enabled=False):
 
 def test_validate_desired_dynamic_entries():
     cat = {"svc": KIND, "discord_bridge": BRIDGE_KIND}
-    snap = L.validate_desired(desired_with_bridge(bridge_entry()), cat)
+    snap = L.validate_desired(desired_with_bridge(bridge_entry(credential="tok-1")), cat)
     entry = snap.services[f"bridge:{BRIDGE_UUID}"]
-    assert (entry.kind, entry.label, entry.token_env, entry.state_file_name) == (
-        "discord_bridge", "Main Bot", "BOT_TOKEN", f"bridge-{BRIDGE_UUID}.json")
+    assert (entry.kind, entry.label, entry.token_env, entry.state_file_name, entry.credential) == (
+        "discord_bridge", "Main Bot", "BOT_TOKEN", f"bridge-{BRIDGE_UUID}.json", "tok-1")
+    assert L.validate_desired(desired_with_bridge(bridge_entry()), cat).services[f"bridge:{BRIDGE_UUID}"].credential is None
     # A snapshot without any dynamic entry is complete; a missing static one is not.
     assert f"bridge:{BRIDGE_UUID}" not in L.validate_desired(desired_with_bridge(None), cat).services
     with pytest.raises(ValueError):
@@ -794,7 +777,9 @@ def test_validate_desired_dynamic_entries():
         {**bridge_entry(), "state_file": {"env": "OTHER", "name": f"bridge-{BRIDGE_UUID}.json"}},
         {**bridge_entry(), "state_file": {"env": "DISCORD_STATE_FILE", "name": "../escape.json"}},
         {**bridge_entry(), "env": {"BRIDGE_CONNECTOR": "0f7a1b2c-3d4e-4f50-8a9b-000000000000"}},
-        bridge_entry(env={"BOT_TOKEN": "leak"}),                           # the value never rides the snapshot
+        bridge_entry(env={"BOT_TOKEN": "leak"}),                           # the value never rides env
+        bridge_entry(credential=""),                                       # null or a non-empty string
+        bridge_entry(credential=42),
         bridge_entry(label="x" * 61),
         {**bridge_entry(), "surprise": 1},
         {**bridge_entry(), "kind": "svc"},                                 # a static kind under a dynamic key
@@ -826,23 +811,26 @@ def test_bridge_entry_appears_runs_with_its_credential_and_state_file_then_vanis
         push(l, core, desired_with_bridge(bridge_entry(env={"TEST_MODE": "print", "TEST_OUT": str(out)})))
         rec = l.services[key]
         assert rec.state == "credential missing" and rec.proc is None
-        assert "BOT_TOKEN" in (rec.message or "") and "credentials.env" in (rec.message or "")
+        assert "BOT_TOKEN" in (rec.message or "") and "/bridges" in (rec.message or "")
         status = core.drain()[-1]["services"][key]
         assert status["state"] == "credential missing" and status["label"] == "Main Bot"
-        assert not out.exists()
-        # The operator fills in credentials.env and presses Restart (new nonce).
-        (l.state_dir / "credentials.env").write_text("BOT_TOKEN=from-file\n")
-        push(l, core, desired_with_bridge(bridge_entry(nonce="b2", env={"TEST_MODE": "print", "TEST_OUT": str(out)})))
+        assert "credential" not in status and not out.exists()
+        # The operator saves the token on /bridges: the core sends it with the
+        # entry and a new nonce; nothing on disk changes.
+        push(l, core, desired_with_bridge(bridge_entry(nonce="b2", credential="from-db",
+                                                       env={"TEST_MODE": "print", "TEST_OUT": str(out)})))
         wait_for(l, lambda: rec.state == "running" and ("Main Bot", "warning on stderr") in seen)
         info = eval(out.read_text())
         env = info["env"]
-        assert env["BOT_TOKEN"] == "from-file"
+        assert env["BOT_TOKEN"] == "from-db"
+        assert not (l.state_dir / "credentials.env").exists()
+        assert all("from-db" not in json.dumps(s) for s in core.drain())   # never in a status line
         assert env["DISCORD_STATE_FILE"] == str(l.state_dir / f"bridge-{BRIDGE_UUID}.json")
         assert env["BRIDGE_CONNECTOR"] == BRIDGE_UUID and env["RAINBOX_URL"] == "http://127.0.0.1:5000"
         assert "SECRET_TOKEN" not in env and "DATABASE_URL" not in env
-        assert rec.credential_source == "file"
+        assert rec.credential_source == "database"
         status = core.drain()[-1]["services"][key]
-        assert status["state"] == "running" and status["credential_source"] == "file"
+        assert status["state"] == "running" and status["credential_source"] == "database"
         assert all(k in ("Main Bot", "svc") for k, _ in seen)  # output carries the label, not the uuid
         # Removing the row: the launcher stops the process and forgets the key.
         push(l, core, desired_with_bridge(None))

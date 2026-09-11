@@ -21,8 +21,9 @@ not match and read *Troubleshooting* at the end.
   this bot while you test. Two processes for one bot would both read the
   channel.
 
-Nothing here touches the token except your editor and the launcher's
-private file; the database only ever stores the variable *name*.
+The token is pasted once into a write-only field on `/bridges`; it is
+sealed under `RAINBOX_CREDENTIAL_KEY` before it is stored and nothing ever
+displays it again.
 
 ## Phase A — start the launcher on this branch (3 min)
 
@@ -54,7 +55,7 @@ Open http://127.0.0.1:5000/bridges. Click **+ Connector**:
 Click Create. The connector appears in the left tree and its pane opens.
 Expect:
 
-- *Credential variable* `DISCORD_TOKEN_MAINBOT` with the note "name only".
+- *Credential variable* `DISCORD_TOKEN_MAINBOT`, and a *Token* row saying `not set`.
 - *Desired state*: Enabled unchecked; Launch mode *launcher*.
 - *Process*: `unknown` (the launcher has never been asked to run it).
 - The **Manual launch command** section shows the launcher's state directory
@@ -62,19 +63,26 @@ Expect:
 
 **Proves:** the row is stored and the page reads it back; no token involved.
 
-## Phase C — give the launcher the token (2 min)
+## Phase C — the sealing key, once (2 min)
 
-Create the launcher's private credentials file (the directory already exists
-because the launcher is running):
+Credentials are stored sealed, under a key that lives only in the
+repo-root `.env`. If `RAINBOX_CREDENTIAL_KEY` is not there yet, add it:
 
 ```bash
-printf 'DISCORD_TOKEN_MAINBOT=%s\n' 'PASTE-THE-TOKEN-HERE' > ~/git/rainbox/var/services/credentials.env && chmod 600 ~/git/rainbox/var/services/credentials.env
+cd ~/git/rainbox && printf 'RAINBOX_CREDENTIAL_KEY=%s\n' "$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')" >> .env
 ```
 
-One `NAME=value` per line, no `export`, no quotes needed. This file is
-git-ignored (`var/services/`) and read only by the launcher, at every spawn.
+Then restart the launcher (Ctrl-C, Phase A command again) so the core reads
+it. Keep this line with your backups: a database restored without it holds
+tokens nobody can open, and the connector pane will ask for them again.
 
-**Proves nothing yet** — Phase D does.
+Back on the connector pane, press **Set token…**, paste the bot token,
+Save. Expect the *Token* row to say `set` with a timestamp. The toast says
+"Token saved". If the pane shows a warning about `RAINBOX_CREDENTIAL_KEY`
+instead, the core did not see the key: check `.env` and restart.
+
+**Proves:** the value went in write-only. Reload the page or open the admin
+panel's Bridges views: nothing shows it.
 
 ## Phase D — enable it and watch it start (2 min)
 
@@ -83,14 +91,15 @@ On the connector pane tick **Enabled**. Within a second:
 - The launcher terminal prints lines prefixed `[Main Bot]`, ending with
   something like `discord bot <bot name> (<id>); connector 'Main Bot', 0 binding(s) configured`.
 - The pane's *Process* pill turns `running (pid …)` with *credential from
-  file* (it refreshes every 10 s; click the connector again to refresh now).
+  database* (it refreshes every 10 s; click the connector again to refresh now).
 
-If instead the pill says `credential missing`, the message names the
-variable and the file path: fix the file, then press **Restart** — the
-launcher re-reads the file at every spawn, so no launcher restart is needed.
+If instead the pill says `credential missing`, no token is stored for this
+connector: Phase C was skipped or the key is missing. Save the token; that
+alone restarts it.
 
-**Proves:** the desired state reached the launcher over its socket, the
-credential was injected by name, and the bot authenticated. Also proves that
+**Proves:** the desired state, token included, reached the launcher over its
+socket, the credential was injected under the named variable, and the bot
+authenticated. Also proves that
 an enabled connector with no bindings just idles — nothing is posted.
 
 ## Phase E — bind the channel to a room (3 min)
@@ -163,14 +172,16 @@ is never restarted for a policy change.
 1. Press **Restart** on the connector pane. The pid changes; the log shows
    the bot authenticating again; traffic resumes from the persisted cursors
    (nothing is replayed).
-2. Edit `credentials.env` and change the token to `wrong`, press
-   **Restart**. Expect `discord rejected the credential in DISCORD_TOKEN_MAINBOT`
-   in the log, the pill `failed` with `exit 2`, and **no** respawn loop
-   (exit 2 means "fix the config", so the launcher waits for you).
-3. Put the real token back, press **Restart**. Running again.
+2. Press **Replace token…**, paste `wrong`, Save. The connector restarts by
+   itself (saving a token rewrites its restart nonce). Expect
+   `discord rejected the credential in DISCORD_TOKEN_MAINBOT` in the log, the
+   pill `failed` with `exit 2`, and **no** respawn loop (exit 2 means "fix
+   the config", so the launcher waits for you).
+3. **Replace token…** again with the real one. Running again, no Restart
+   press needed.
 
-**Proves:** rotation is edit-file-then-Restart, and a rejected credential is
-reported instead of retried forever.
+**Proves:** rotation is one paste, and a rejected credential is reported
+instead of retried forever.
 
 ## Phase I — the deletion guards (2 min)
 
@@ -211,9 +222,9 @@ Phase C with `--token-env`'s name (default `DISCORD_BOT_TOKEN`), then Phase D.
 | Symptom | Cause | Fix |
 |---|---|---|
 | /settings says *unmanaged* | the core was started directly | run `venv/bin/python main.py` from `source/` |
-| Process `credential missing` | the variable is not in `credentials.env` (or a typo in the name) | fix the file, press Restart |
+| Process `credential missing` | no token saved for this connector (or the sealing key is missing so it cannot be opened) | Set token… on the pane; check `RAINBOX_CREDENTIAL_KEY` in `.env` |
 | Process `not installed` | `discord_service/venv` missing | `cd discord_service && python3 -m venv venv && venv/bin/pip install -r requirements.txt`, then Restart |
-| `failed`, exit 2, "rejected the credential" | wrong token | fix the file, Restart |
+| `failed`, exit 2, "rejected the credential" | wrong token | Replace token… on the pane |
 | `failed`, exit 3, "state lock … is held" | another process (your old manual run) owns this connector's state file | stop it, Restart |
 | binding never says *activated*; log says `cannot activate … 403 Missing Access` | the bot is not in that server or cannot see the channel | invite it / fix channel permissions; the bridge retries by itself with backoff |
 | a change on /bridges has no effect | the bridge's stream to the core is down (log: `stream dropped`, `traffic paused`) | it reconnects with backoff and refetches; nothing is delivered on stale config by design |

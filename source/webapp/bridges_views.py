@@ -111,7 +111,7 @@ BRIDGES_TEMPLATE = """
   .ui-modal label{display:flex;flex-direction:column;gap:3px;font-weight:600;font-size:0.9rem;margin:8px 0}
   .ui-modal label[hidden]{display:none}
   .ui-modal label.br-check{flex-direction:row;align-items:center;gap:8px;font-weight:400}
-  .ui-modal input[type=text],.ui-modal input[type=number],.ui-modal input[type=url],.ui-modal textarea,.ui-modal select{
+  .ui-modal input[type=text],.ui-modal input[type=password],.ui-modal input[type=number],.ui-modal input[type=url],.ui-modal textarea,.ui-modal select{
     font:inherit;font-weight:400;padding:5px 7px;width:100%;box-sizing:border-box}
   .ui-modal textarea{min-height:5em;resize:vertical}
   .ui-modal .err{color:#dc2626;font-size:0.85rem;min-height:1em;margin-top:6px}
@@ -154,13 +154,25 @@ BRIDGES_TEMPLATE = """
   <label>Name<input type="text" id="br-conn-name" placeholder="e.g. Main Bot" autocomplete="off"></label>
   <label>Platform<select id="br-conn-platform"></select></label>
   <label>Credential variable name<input type="text" id="br-conn-token-env" placeholder="e.g. DISCORD_TOKEN_MAINBOT" autocomplete="off">
-    <span class="hint">Only the NAME is stored. Put the value in the launcher's credentials.env (or its environment); it never enters the database.</span></label>
+    <span class="hint">The variable the bridge process reads. You paste the token itself on the connector pane afterwards; it is stored sealed and never shown again.</span></label>
   <label id="br-conn-base-url-row" hidden>Realm URL<input type="url" id="br-conn-base-url" placeholder="https://chat.example.org"></label>
   <label id="br-conn-identity-row" hidden>Bot identity<input type="text" id="br-conn-identity" placeholder="bot@example.org"></label>
   <div class="err" id="br-conn-err"></div>
   <div class="modal-actions">
     <button class="btn-primary" id="br-conn-create" onclick="brAddConnectorConfirm()">Create</button>
     <button class="btn-cancel" onclick="brCloseConnectorModal()">Cancel</button>
+  </div>
+</div>
+
+<div class="ui-modal" id="br-credential-modal" hidden>
+  <h3 id="br-credential-title">Set token</h3>
+  <p class="muted" id="br-credential-desc"></p>
+  <label>Token<input type="password" id="br-credential-input" autocomplete="off" spellcheck="false">
+    <span class="hint">Sealed with RAINBOX_CREDENTIAL_KEY before it is stored; no page or API ever returns it. Saving replaces the previous value and restarts a running connector.</span></label>
+  <div class="err" id="br-credential-err"></div>
+  <div class="modal-actions">
+    <button class="btn-primary" id="br-credential-save" onclick="brSaveCredential()" disabled>Save</button>
+    <button class="btn-cancel" onclick="brCloseCredentialModal()">Cancel</button>
   </div>
 </div>
 

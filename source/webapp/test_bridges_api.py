@@ -216,3 +216,40 @@ def test_bridge_config_event_rides_the_chat_notify_channel(client):
                    for p in got)
     finally:
         conn.close()
+
+
+def test_credential_endpoints_are_write_only_and_feed_the_launcher_snapshot(client, monkeypatch):
+    from services import credential_box
+    monkeypatch.setenv(credential_box.KEY_ENV, "k" * 40)
+    c, made = client
+    conn = _connector(c, made)
+    cu = conn["uuid"]
+    g = c.get(f"/bridges/api/connectors/{cu}").get_json()
+    assert g["credential"] == {"set": False, "updated_at": None, "key_configured": True}
+    assert c.put(f"/bridges/api/connectors/{cu}/credential", json={"value": ""}).status_code == 400
+    assert c.put(f"/bridges/api/connectors/{uuid4()}/credential", json={"value": "x"}).status_code == 404
+    r = c.put(f"/bridges/api/connectors/{cu}/credential", json={"value": "tok-secret-1"})
+    assert r.status_code == 200 and r.get_json()["credential"]["set"] is True
+    assert "tok-secret-1" not in r.get_data(as_text=True)
+    # Nothing a browser can fetch carries it.
+    for path in (f"/bridges/api/connectors/{cu}", "/bridges/api/tree", f"/bridge/api/connectors/{cu}/config",
+                 "/admin/bridgecredential/", "/admin/bridgeconnector/"):
+        resp = c.get(path)
+        assert "tok-secret-1" not in resp.get_data(as_text=True), path
+    # The launcher snapshot is the one place it appears, and saving while the
+    # gate is on rewrites the nonce so the process restarts with it.
+    entry = next(s for s in registry.desired_snapshot()["services"] if s["key"] == f"bridge:{cu}")
+    assert entry["credential"] == "tok-secret-1"
+    c.put(f"/bridges/api/connectors/{cu}", json={"enabled": True})
+    nonce = next(s for s in registry.desired_snapshot()["services"] if s["key"] == f"bridge:{cu}")["restart_nonce"]
+    c.put(f"/bridges/api/connectors/{cu}/credential", json={"value": "tok-secret-2"})
+    entry = next(s for s in registry.desired_snapshot()["services"] if s["key"] == f"bridge:{cu}")
+    assert entry["credential"] == "tok-secret-2" and entry["restart_nonce"] != nonce
+    assert c.delete(f"/bridges/api/connectors/{cu}/credential").status_code == 200
+    assert c.delete(f"/bridges/api/connectors/{cu}/credential").status_code == 404
+    assert next(s for s in registry.desired_snapshot()["services"] if s["key"] == f"bridge:{cu}")["credential"] is None
+    # Without the key: saving is refused with a 409 that says how to fix it.
+    monkeypatch.delenv(credential_box.KEY_ENV)
+    r = c.put(f"/bridges/api/connectors/{cu}/credential", json={"value": "tok"})
+    assert r.status_code == 409 and r.get_json()["key_configured"] is False and "RAINBOX_CREDENTIAL_KEY" in r.get_json()["error"]
+    assert c.get(f"/bridges/api/connectors/{cu}").get_json()["credential"]["key_configured"] is False

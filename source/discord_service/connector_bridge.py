@@ -981,7 +981,7 @@ def run(env: Mapping[str, str] = os.environ) -> None:
     token = (env.get(startup.token_env) or "").strip()
     if not token:
         logger.error("credential variable %s (the connector's token_env) is not set in this process's "
-                     "environment; under the launcher put it in <state-dir>/credentials.env, "
+                     "environment; under the launcher save the token on the connector's /bridges pane, "
                      "for a manual run export it before starting", startup.token_env)
         raise SystemExit(EXIT_CONFIG_REJECTED)
     bridge.token = token

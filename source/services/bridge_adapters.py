@@ -26,7 +26,7 @@ _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # the launcher or the bridge itself sets, and a token there would collide.
 RESERVED_ENV_NAMES: frozenset[str] = frozenset({
     "BRIDGE_CONNECTOR", "RAINBOX_URL", "DISCORD_STATE_FILE", "TELEGRAM_STATE_FILE",
-    "ZULIP_STATE_FILE", "PATH", "HOME", "PYTHONPATH", "DATABASE_URL",
+    "ZULIP_STATE_FILE", "PATH", "HOME", "PYTHONPATH", "DATABASE_URL", "RAINBOX_CREDENTIAL_KEY",
 })
 
 ROW_KINDS: tuple[str, ...] = ("message", "notice", "progress")

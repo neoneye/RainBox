@@ -64,7 +64,12 @@ def test_credentials_never_appear_in_the_page_or_command():
     and never writes an assignment for it; the connector form stores a NAME."""
     b = _body()
     assert "must already be set in the launch environment" in b
-    assert "Only the NAME is stored" in b
+    assert "stored sealed and never shown again" in b
+    # The token field is write-only: a password input inside its own modal,
+    # cleared on close, and the pane only ever renders "set" / "not set".
+    assert 'type="password" id="br-credential-input"' in b
+    assert "/credential'" in b and "brRenderCredential" in b
+    assert "document.getElementById('br-credential-input').value = '';   // never keep it around" in b
     # Values are single-quoted for the shell so display names never become syntax.
     assert "brShellQuote" in b
 
