@@ -3,6 +3,7 @@ import logging
 import os
 import re
 from datetime import UTC, datetime
+from datetime import date as date_type, time as time_type
 from collections.abc import Callable
 from typing import Any, Literal
 from uuid import UUID, uuid4
@@ -11,7 +12,7 @@ import sqlalchemy as sa
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Index, LargeBinary, Text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from pgvector.sqlalchemy import Vector
 
@@ -916,7 +917,7 @@ class RetrievalEvent(db.Model):
     )
     __table_args__ = (
         CheckConstraint(
-            "target_type IN ('qa_entry','memory_claim','skill')",
+            "target_type IN ('qa_entry','memory_claim','skill','diary_citation')",
             name="ck_retrieval_event_target_type",
         ),
         CheckConstraint(
@@ -967,7 +968,7 @@ class EvalCase(db.Model):
     __table_args__ = (
         CheckConstraint(
             "case_type IN ('chat_reply','memory_retrieval',"
-            "'query_answer','tool_output')",
+            "'query_answer','tool_output','diary_recall')",
             name="eval_case_case_type_check",
         ),
         CheckConstraint(
@@ -1950,6 +1951,258 @@ class BenchmarkResult(db.Model):
     __table_args__ = (
         Index("ix_benchmark_result_cell", "spec_set", "benchmark_name", "target_uuid"),
     )
+
+
+# --- diary memory ------------------------------------------------------------
+# Read-only search over the operator's diary files. Contract and rationale:
+# notes/proposals/2026-09-21-diary-memory-representation-proposals.md (§4).
+# Bytes are kept forever (prefix-shared for appended files); parse rows exist
+# only for each file's current generation; vectors are keyed by content.
+
+DIARY_AVAILABILITY = ("pending", "ready", "quarantined", "missing")
+DIARY_DIALECTS = ("timed", "daily", "changelog", "plain")
+DIARY_VECTOR_MODES = ("off", "exact", "hnsw")
+
+
+class DiarySource(db.Model):
+    """One configured diary directory, bound to one room (and optionally one
+    agent). The row is the runtime configuration; the CLI writes it from a
+    validated manifest. Sources start disabled."""
+
+    __tablename__ = "diary_source"
+    uuid: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(Text, unique=True)
+    root_path: Mapped[str] = mapped_column(Text, unique=True)
+    room_uuid: Mapped[UUID] = mapped_column()
+    agent_uuid: Mapped[UUID | None] = mapped_column()
+    timezone: Mapped[str] = mapped_column(Text)
+    sensitivity: Mapped[str] = mapped_column(Text)
+    allow_remote_models: Mapped[bool] = mapped_column(default=False)
+    # The validated manifest (normalized) and the parser configuration built
+    # from it; parser_fingerprint names the latter.
+    config: Mapped[dict] = mapped_column(JSONB)
+    parser_config: Mapped[dict] = mapped_column(JSONB)
+    parser_fingerprint: Mapped[str] = mapped_column(Text)
+    enabled: Mapped[bool] = mapped_column(default=False)
+    pilot: Mapped[bool] = mapped_column(default=False)
+    vector_mode: Mapped[str] = mapped_column(Text, default="off")
+    embedding_spec: Mapped[dict | None] = mapped_column(JSONB)
+    policy_version: Mapped[int] = mapped_column(BigInteger, default=1)
+    catalog_version: Mapped[int] = mapped_column(BigInteger, default=1)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC))
+    __table_args__ = (
+        CheckConstraint("sensitivity IN ('private','secret')", name="ck_diary_source_sensitivity"),
+        CheckConstraint("vector_mode IN ('off','exact','hnsw')", name="ck_diary_source_vector_mode"),
+        CheckConstraint("policy_version > 0 AND catalog_version > 0", name="ck_diary_source_versions"),
+        CheckConstraint("NOT (sensitivity = 'secret' AND allow_remote_models)",
+                        name="ck_diary_source_secret_local"),
+    )
+
+
+class DiaryFile(db.Model):
+    __tablename__ = "diary_file"
+    uuid: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    source_uuid: Mapped[UUID] = mapped_column(
+        ForeignKey("diary_source.uuid", ondelete="CASCADE"))
+    relative_path: Mapped[str] = mapped_column(Text)
+    # Composite deferred FK to diary_generation(uuid, file_uuid) is added by
+    # init_db: the pointer can only name a generation of this same file.
+    current_generation_uuid: Mapped[UUID | None] = mapped_column()
+    availability: Mapped[str] = mapped_column(Text, default="pending")
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    diagnostics: Mapped[list] = mapped_column(JSONB, default=list)
+    __table_args__ = (
+        UniqueConstraint("source_uuid", "relative_path", name="uq_diary_file_path"),
+        CheckConstraint("availability IN ('pending','ready','quarantined','missing')",
+                        name="ck_diary_file_availability"),
+    )
+
+
+class DiaryRevision(db.Model):
+    """Immutable snapshot of a file's bytes. The bytes are either stored here
+    or are the first `byte_length` bytes of exactly one other revision
+    (`bytes_in_revision_uuid`), which is how an appended file stores its bytes
+    once. What a revision denotes never changes."""
+
+    __tablename__ = "diary_revision"
+    uuid: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    file_uuid: Mapped[UUID] = mapped_column(
+        ForeignKey("diary_file.uuid", ondelete="CASCADE"), index=True)
+    sha256: Mapped[str] = mapped_column(Text)
+    byte_length: Mapped[int] = mapped_column(BigInteger)
+    raw_bytes: Mapped[bytes | None] = mapped_column(LargeBinary)
+    bytes_in_revision_uuid: Mapped[UUID | None] = mapped_column(
+        ForeignKey("diary_revision.uuid", deferrable=True, initially="DEFERRED"), index=True)
+    # Provenance only (a plain UUID): the previous current revision this one
+    # extends byte-for-byte. `prune` clears it.
+    extends_revision_uuid: Mapped[UUID | None] = mapped_column()
+    first_ingested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    __table_args__ = (
+        UniqueConstraint("file_uuid", "sha256", name="uq_diary_revision_sha"),
+        CheckConstraint("(raw_bytes IS NULL) <> (bytes_in_revision_uuid IS NULL)",
+                        name="ck_diary_revision_storage"),
+        CheckConstraint("raw_bytes IS NULL OR length(raw_bytes) = byte_length",
+                        name="ck_diary_revision_length"),
+    )
+
+
+class DiaryGeneration(db.Model):
+    """One parse of one revision with one parser configuration. Only each
+    file's current generation is kept (publishing deletes the superseded
+    one): a generation is a pure function of bytes and configuration."""
+
+    __tablename__ = "diary_generation"
+    uuid: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    file_uuid: Mapped[UUID] = mapped_column(
+        ForeignKey("diary_file.uuid", ondelete="CASCADE"), index=True)
+    revision_uuid: Mapped[UUID] = mapped_column(
+        ForeignKey("diary_revision.uuid", ondelete="CASCADE"))
+    parser_fingerprint: Mapped[str] = mapped_column(Text)
+    parser_config: Mapped[dict] = mapped_column(JSONB)
+    dialect: Mapped[str] = mapped_column(Text)
+    diagnostics: Mapped[list] = mapped_column(JSONB, default=list)
+    coverage: Mapped[list] = mapped_column(JSONB, default=list)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    __table_args__ = (
+        UniqueConstraint("revision_uuid", "parser_fingerprint", name="uq_diary_generation_parse"),
+        UniqueConstraint("uuid", "file_uuid", name="uq_diary_generation_file"),
+        CheckConstraint("dialect IN ('timed','daily','changelog','plain')",
+                        name="ck_diary_generation_dialect"),
+    )
+
+
+class DiaryEntry(db.Model):
+    __tablename__ = "diary_entry"
+    uuid: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    generation_uuid: Mapped[UUID] = mapped_column(
+        ForeignKey("diary_generation.uuid", ondelete="CASCADE"))
+    ordinal: Mapped[int] = mapped_column()
+    byte_start: Mapped[int] = mapped_column(BigInteger)
+    byte_end: Mapped[int] = mapped_column(BigInteger)
+    # Deferred: checked at commit, so one statement may delete a revision and
+    # everything citing it (purge, prune) whatever order cascades run in.
+    cite_revision_uuid: Mapped[UUID] = mapped_column(
+        ForeignKey("diary_revision.uuid", deferrable=True, initially="DEFERRED"))
+    text: Mapped[str] = mapped_column(Text)
+    date_local: Mapped[date_type | None] = mapped_column(sa.Date)
+    clock_start: Mapped[time_type | None] = mapped_column(sa.Time)
+    clock_end: Mapped[time_type | None] = mapped_column(sa.Time)
+    date_basis: Mapped[str] = mapped_column(Text)
+    time_status: Mapped[str] = mapped_column(Text)
+    author_token: Mapped[str | None] = mapped_column(Text)
+    context_ranges: Mapped[list] = mapped_column(JSONB, default=list)
+    __table_args__ = (
+        UniqueConstraint("generation_uuid", "ordinal", name="uq_diary_entry_ordinal"),
+        CheckConstraint("byte_start >= 0 AND byte_end > byte_start", name="ck_diary_entry_range"),
+        CheckConstraint("ordinal >= 0", name="ck_diary_entry_ordinal"),
+        CheckConstraint("date_basis IN ('header','filename','unknown')", name="ck_diary_entry_basis"),
+        CheckConstraint("time_status IN ('date_only','minute','range','unknown','ambiguous',"
+                        "'invalid_range')", name="ck_diary_entry_time_status"),
+        Index("ix_diary_entry_date", "date_local", "clock_start"),
+    )
+
+
+class DiaryPassage(db.Model):
+    __tablename__ = "diary_passage"
+    uuid: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    entry_uuid: Mapped[UUID] = mapped_column(
+        ForeignKey("diary_entry.uuid", ondelete="CASCADE"))
+    part_index: Mapped[int] = mapped_column()
+    byte_start: Mapped[int] = mapped_column(BigInteger)
+    byte_end: Mapped[int] = mapped_column(BigInteger)
+    # Deferred: checked at commit, so one statement may delete a revision and
+    # everything citing it (purge, prune) whatever order cascades run in.
+    cite_revision_uuid: Mapped[UUID] = mapped_column(
+        ForeignKey("diary_revision.uuid", deferrable=True, initially="DEFERRED"))
+    text: Mapped[str] = mapped_column(Text)
+    text_hash: Mapped[str] = mapped_column(Text, index=True)
+    # Exact passage text, `simple` configuration: language-neutral lexemes.
+    search_vector = mapped_column(
+        TSVECTOR, sa.Computed("to_tsvector('simple'::regconfig, text)", persisted=True))
+    __table_args__ = (
+        UniqueConstraint("entry_uuid", "part_index", name="uq_diary_passage_part"),
+        CheckConstraint("byte_start >= 0 AND byte_end > byte_start", name="ck_diary_passage_range"),
+        CheckConstraint("part_index >= 0", name="ck_diary_passage_part"),
+        Index("ix_diary_passage_search", "search_vector", postgresql_using="gin"),
+    )
+
+
+class DiaryAnnotation(db.Model):
+    __tablename__ = "diary_annotation"
+    uuid: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    entry_uuid: Mapped[UUID] = mapped_column(
+        ForeignKey("diary_entry.uuid", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(Text)
+    subtype: Mapped[str] = mapped_column(Text)
+    value: Mapped[str] = mapped_column(Text)
+    byte_start: Mapped[int] = mapped_column(BigInteger)
+    byte_end: Mapped[int] = mapped_column(BigInteger)
+    basis: Mapped[str] = mapped_column(Text)
+    __table_args__ = (
+        UniqueConstraint("entry_uuid", "kind", "subtype", "byte_start", "byte_end", "value",
+                         name="uq_diary_annotation"),
+        CheckConstraint("kind IN ('identifier','command_hint','idea_hint','pasted')",
+                        name="ck_diary_annotation_kind"),
+        CheckConstraint("basis IN ('rule','explicit_override')", name="ck_diary_annotation_basis"),
+        CheckConstraint("byte_end > byte_start", name="ck_diary_annotation_range"),
+        Index("ix_diary_annotation_value", "kind", "subtype", "value"),
+    )
+
+
+class DiaryEmbedding(db.Model):
+    """A passage vector keyed by content: (source, epoch, text_hash). An
+    unchanged passage in a new generation joins its existing vector."""
+
+    __tablename__ = "diary_embedding"
+    uuid: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    source_uuid: Mapped[UUID] = mapped_column(
+        ForeignKey("diary_source.uuid", ondelete="CASCADE"))
+    model_epoch: Mapped[str] = mapped_column(Text)
+    text_hash: Mapped[str] = mapped_column(Text)
+    embedding: Mapped[list[float]] = mapped_column(Vector(768))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    __table_args__ = (
+        UniqueConstraint("source_uuid", "model_epoch", "text_hash", name="uq_diary_embedding"),
+    )
+
+
+class DiaryExclusion(db.Model):
+    """A file-level exclusion: all revisions, all routes. Survives rebuilds
+    and purges."""
+
+    __tablename__ = "diary_exclusion"
+    uuid: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    source_uuid: Mapped[UUID] = mapped_column(
+        ForeignKey("diary_source.uuid", ondelete="CASCADE"))
+    relative_path: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    __table_args__ = (
+        UniqueConstraint("source_uuid", "relative_path", name="uq_diary_exclusion"),
+    )
+
+
+class DiaryCursor(db.Model):
+    """Continuation state for one paged diary read. Positions and IDs only,
+    never copied source text; bound to room/agent and source versions."""
+
+    __tablename__ = "diary_cursor"
+    uuid: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    room_uuid: Mapped[UUID] = mapped_column()
+    agent_uuid: Mapped[UUID | None] = mapped_column()
+    request: Mapped[dict] = mapped_column(JSONB)
+    catalog_manifest: Mapped[dict] = mapped_column(JSONB)
+    position: Mapped[dict] = mapped_column(JSONB)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
 
 
 def psycopg_dsn() -> str:

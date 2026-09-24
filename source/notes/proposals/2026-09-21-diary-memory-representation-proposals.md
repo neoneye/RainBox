@@ -196,8 +196,13 @@ marked `?`; timestamps are UTC `timestamptz`, hashes are 64-character lowercase
 hex text, and JSON is JSONB. New dependent foreign keys use `ON DELETE CASCADE`
 except the current-generation pointer and the references that point *at* a
 revision's bytes (`bytes_in_revision_uuid`, `cite_revision_uuid`), which are
-`ON DELETE RESTRICT`, so a revision that other rows depend on cannot vanish
-underneath them. A source record is retained on purge.
+plain references `DEFERRABLE INITIALLY DEFERRED`, so a revision that other
+rows depend on cannot vanish underneath them. Deferred because the check
+must run after cascades: Postgres may queue a statement-level check on a
+deleted revision ahead of the cascade that deletes the entries citing it,
+so only a commit-time check lets a purge or prune remove a revision and its
+dependents together, while one that would leave a dangling reference still
+fails. A source record is retained on purge.
 
 | Table | Columns in addition to `uuid` | Uniqueness / checks |
 |---|---|---|

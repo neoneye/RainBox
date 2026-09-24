@@ -331,3 +331,31 @@ def file_included(relative_path: str, suffixes: tuple[str, ...] | list[str]) -> 
         elif base.endswith(suffix):
             return True
     return False
+
+
+def manifest_to_json(manifest: Manifest) -> dict[str, Any]:
+    """The normalized manifest as stored in `diary_source.config`."""
+    return {
+        "schema_version": MANIFEST_SCHEMA_VERSION,
+        "name": manifest.name,
+        "root": manifest.root,
+        "room_uuid": str(manifest.room_uuid),
+        "agent_uuid": str(manifest.agent_uuid) if manifest.agent_uuid else None,
+        "timezone": manifest.timezone,
+        "sensitivity": manifest.sensitivity,
+        "allow_remote_models": manifest.allow_remote_models,
+        "include_suffixes": list(manifest.include_suffixes),
+        "dialect_rules": [{"prefix": r.prefix, "dialect": r.dialect} for r in manifest.dialect_rules],
+        "month_languages": list(manifest.month_languages),
+        "command_tokens": list(manifest.command_tokens),
+        "author_tokens": dict(manifest.author_tokens),
+        "file_overrides": {
+            path: {
+                "content_sha256": ov.content_sha256,
+                "force_boundary_offsets": list(ov.force_boundary_offsets),
+                "suppress_boundary_offsets": list(ov.suppress_boundary_offsets),
+                "pasted_ranges": [list(r) for r in ov.pasted_ranges],
+            }
+            for path, ov in manifest.file_overrides.items()
+        },
+    }

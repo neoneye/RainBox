@@ -39,6 +39,7 @@ from db.find_uuid import *  # noqa: F401,F403  re-export the cross-table fuzzy u
 from db.activity import *  # noqa: F401,F403  re-export llm_call recording + /activity aggregation
 from db.benchmark import *  # noqa: F401,F403  re-export benchmark_result recording + retention
 from db.assistant_log import *  # noqa: F401,F403  re-export the assistant run read model
+from db.diary import *  # noqa: F401,F403  re-export diary source/publication/retention ops
 
 #: The SQLAlchemy session, re-exported so a caller who has `import db`
 #: writes `db.session` rather than `db.session` — the second `db` being
@@ -341,6 +342,32 @@ def _constraint_def(name: str) -> str | None:
     return row[0] if row else None
 
 
+def _ensure_membership_check(table: str, name: str, column: str,
+                             values: tuple[str, ...]) -> None:
+    """(Re)create `name` as `column IN values` unless the live constraint
+    already names every value. Steady state is a catalog read, no lock."""
+    current = _constraint_def(name)
+    if current is not None and all(f"'{v}'" in current for v in values):
+        return
+    listed = ",".join(f"'{v}'" for v in values)
+    db.session.execute(sa.text(f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {name}"))
+    db.session.execute(sa.text(
+        f"ALTER TABLE {table} ADD CONSTRAINT {name} CHECK ({column} IN ({listed}))"))
+
+
+def _ensure_diary_schema() -> None:
+    """The diary pieces create_all cannot express: the deferred composite FK
+    that lets a file's current pointer name only a generation of that same
+    file. Guarded, so a migrated database starts without taking a lock."""
+    if _constraint_def("fk_diary_file_current_generation") is None:
+        db.session.execute(sa.text(
+            "ALTER TABLE diary_file ADD CONSTRAINT fk_diary_file_current_generation "
+            "FOREIGN KEY (current_generation_uuid, uuid) "
+            "REFERENCES diary_generation (uuid, file_uuid) "
+            "DEFERRABLE INITIALLY DEFERRED"))
+        db.session.commit()
+
+
 def init_db(app: Flask) -> None:
     with app.app_context():
         # pgvector must exist before create_all() builds the memory_embedding
@@ -626,17 +653,15 @@ def init_db(app: Flask) -> None:
             )
         # Skills retrieval telemetry reuses retrieval_event; widen the
         # target_type/stage CHECKs to admit skill 'considered'/'injected' rows.
-        _rt_target = _constraint_def("ck_retrieval_event_target_type")
-        if _rt_target is None or "skill" not in _rt_target:
-            db.session.execute(
-                sa.text("ALTER TABLE retrieval_event DROP CONSTRAINT IF EXISTS ck_retrieval_event_target_type")
-            )
-            db.session.execute(
-                sa.text(
-                    "ALTER TABLE retrieval_event ADD CONSTRAINT ck_retrieval_event_target_type "
-                    "CHECK (target_type IN ('qa_entry','memory_claim','skill'))"
-                )
-            )
+        # Diary telemetry adds 'diary_citation'. The check recognizes the
+        # complete set, so an older constraint missing any member is replaced.
+        _ensure_membership_check(
+            "retrieval_event", "ck_retrieval_event_target_type", "target_type",
+            ("qa_entry", "memory_claim", "skill", "diary_citation"))
+        _ensure_membership_check(
+            "eval_case", "eval_case_case_type_check", "case_type",
+            ("chat_reply", "memory_retrieval", "query_answer", "tool_output",
+             "diary_recall"))
         _rt_stage = _constraint_def("ck_retrieval_event_stage")
         if _rt_stage is None or "injected" not in _rt_stage:
             db.session.execute(
@@ -677,6 +702,7 @@ def init_db(app: Flask) -> None:
                 )
             )
         db.session.commit()
+        _ensure_diary_schema()
         _migrate_ollama_native_args()
         _migrate_cron_message_targets()
         _migrate_profile_preferred_name()
