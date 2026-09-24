@@ -151,3 +151,59 @@ def structured_llm_call(
         f"agent {agent_name}: all {len(candidate_model_uuids)} models "
         f"in the group failed; last error: {last_error}"
     )
+
+
+def assistant_slot_uuids() -> list[UUID]:
+    """Every `assistant.*` model slot: one per model call the assistant makes."""
+    from agents.config import (
+        ASSISTANT_ACCEPTANCE_CRITERIA_UUID,
+        ASSISTANT_DECIDE_UUID,
+        ASSISTANT_DEFAULT_UUID,
+        ASSISTANT_MEMORY_FILTER_UUID,
+        ASSISTANT_REPLY_AUDIT_UUID,
+        ASSISTANT_REQUEST_SUMMARY_UUID,
+        ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID,
+        ASSISTANT_RUN_SUMMARIZER_UUID,
+        ASSISTANT_SECOND_OPINION_UUID,
+    )
+
+    return [ASSISTANT_DEFAULT_UUID, ASSISTANT_DECIDE_UUID, ASSISTANT_ACCEPTANCE_CRITERIA_UUID,
+            ASSISTANT_REQUEST_SUMMARY_UUID, ASSISTANT_MEMORY_FILTER_UUID,
+            ASSISTANT_SECOND_OPINION_UUID, ASSISTANT_REPLY_AUDIT_UUID,
+            ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID, ASSISTANT_RUN_SUMMARIZER_UUID]
+
+
+def model_base_url(member_uuid: UUID) -> str | None:
+    """The endpoint a model config (or override) actually calls: its own
+    `base_url`/`api_base` argument, else its provider's base URL. None when
+    the member cannot be resolved."""
+    from providers import registry
+
+    try:
+        provider_id, _model, kwargs = db.resolved_model_kwargs(member_uuid)
+    except Exception:   # noqa: BLE001 — unresolvable counts as not-local
+        return None
+    url = kwargs.get("base_url") or kwargs.get("api_base")
+    if url:
+        return str(url)
+    try:
+        return registry.get(provider_id).base_url()
+    except Exception:   # noqa: BLE001
+        return None
+
+
+def assistant_models_all_local() -> tuple[bool, str | None]:
+    """(True, None) when every member of every assistant slot's resolved
+    group calls a loopback host; else (False, the first offending slot's
+    label). Fallback members count: a group falls back across them. Diary
+    text may reach only such models (proposal §1, model locality)."""
+    from agents.config import role_name
+    from diary.embeddings import is_loopback_url
+
+    for slot in assistant_slot_uuids():
+        members, _label = resolve_assistant_model_uuids(slot)
+        for member in members or []:
+            url = model_base_url(member)
+            if url is None or not is_loopback_url(url):
+                return False, role_name(slot) or str(slot)
+    return True, None

@@ -3,7 +3,8 @@ implementation and persist EvalRun + EvalResult rows.
 
 Deterministic-first: chat_reply cases use `case.input["actual_output"]`
 (no live LLM); memory_retrieval cases call
-`memory.retrieval.retrieve_memories(...)`. LLM-as-judge lands in a
+`memory.retrieval.retrieve_memories(...)`; diary_recall cases run one
+diary_query and score it against gold byte ranges (evals/diary.py). LLM-as-judge lands in a
 later work package.
 
 Scoring policy: each configured criterion (must_include, must_include_any,
@@ -297,6 +298,10 @@ def run_eval_case(
             include_secret=include_secret,
         )
         score, details = score_memory_retrieval_case(case, retrieved)
+    elif case.case_type == "diary_recall":
+        from evals.diary import score_diary_recall_case
+
+        score, details = score_diary_recall_case(case)
     else:
         score, details = 0.0, {"error": f"unsupported case_type: {case.case_type}"}
 
