@@ -206,6 +206,9 @@ def _sync(source_uuid: UUID, report: SyncReport) -> None:
             db.diary_mark_file(f.uuid, availability="missing")
             report.missing += 1
 
+    from diary.embeddings import maybe_build_trgm_index
+    maybe_build_trgm_index(source_uuid)
+
 
 def _unchanged(f: Any, sha: str, fingerprint: str) -> bool:
     if f.availability != "ready" or f.current_generation_uuid is None:

@@ -47,6 +47,9 @@ class DiaryContext:
     # The operator's pilot probe: permits one named source even while it is
     # disabled. Never reachable from action args.
     trusted_source: UUID | None = None
+    # The probe's inspection-only override of the vector route (off, exact,
+    # hnsw); None uses each source's own vector_mode.
+    vector_mode_override: str | None = None
 
 
 @dataclass(frozen=True)
@@ -270,7 +273,7 @@ def retrieve_diary(req: DiaryRequest, ctx: DiaryContext, *,
         elif req.mode == "timeline":
             result = _timeline(req, sources, position)
         elif req.mode == "search":
-            result = _search(req, sources, embed_query, position, frozen)
+            result = _search(req, sources, embed_query, position, frozen, ctx.vector_mode_override)
         elif req.mode == "read":
             result = _read_forward(sources, position or {})
         else:
@@ -465,7 +468,8 @@ def _same_entry(key: dict, position: dict) -> bool:
 
 
 def _search(req: DiaryRequest, sources: list[Any], embed_query: Callable | None,
-            position: dict | None, frozen: list[str] | None) -> DiaryResult:
+            position: dict | None, frozen: list[str] | None,
+            vector_override: str | None = None) -> DiaryResult:
     assert req.query is not None
     result = DiaryResult(ok=True, mode="search")
     if frozen is None:
@@ -474,7 +478,10 @@ def _search(req: DiaryRequest, sources: list[Any], embed_query: Callable | None,
             t0 = _time.monotonic()
             ranks[name] = {str(pid): i + 1 for i, pid in enumerate(route(req, sources))}
             result.timings_ms[name] = int((_time.monotonic() - t0) * 1000)
-        vector_sources = [s for s in sources if s.vector_mode in ("exact", "hnsw")]
+        if vector_override is not None:
+            vector_sources = [s for s in sources if vector_override != "off" and s.embedding_spec]
+        else:
+            vector_sources = [s for s in sources if s.vector_mode in ("exact", "hnsw")]
         if vector_sources:
             t0 = _time.monotonic()
             if embed_query is None:
@@ -483,7 +490,7 @@ def _search(req: DiaryRequest, sources: list[Any], embed_query: Callable | None,
                 try:
                     from diary.embeddings import vector_route
                     ids = vector_route(req, vector_sources, embed_query, _params(sources, req),
-                                       _date_sql(req))
+                                       _date_sql(req), mode_override=vector_override)
                     ranks["vector"] = {str(pid): i + 1 for i, pid in enumerate(ids)}
                 except Exception:   # noqa: BLE001 — a vector failure never removes lexical results
                     db.session.rollback()

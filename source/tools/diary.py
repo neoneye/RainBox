@@ -95,6 +95,28 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("show", help="print a citation's original bytes (operator only)")
     s.add_argument("--citation", required=True)
+
+    e = sub.add_parser("embed", help="resume missing vectors for current passages")
+    e.add_argument("--source", required=True)
+    e.add_argument("--base-url", default=None, help="loopback embedding endpoint (default OLLAMA_BASE_URL)")
+    e.add_argument("--model", default="embeddinggemma:300m")
+    e.add_argument("--input-format", type=int, choices=(1, 2), default=1)
+
+    ix = sub.add_parser("index", help="build optional indexes; never enables a mode")
+    ix.add_argument("--source", required=True)
+    ix.add_argument("--hnsw", action="store_true")
+    ix.add_argument("--trgm", action="store_true")
+
+    vm = sub.add_parser("set-vector-mode")
+    vm.add_argument("--source", required=True)
+    vm.add_argument("--mode", required=True, choices=("off", "exact", "hnsw"))
+
+    pr = sub.add_parser("probe", help="run fixed private queries through the trusted context")
+    pr.add_argument("--source", required=True)
+    pr.add_argument("--cases", required=True)
+    pr.add_argument("--vectors", choices=("off", "exact", "hnsw"), default=None)
+    pr.add_argument("--hnsw-gate", action="store_true",
+                    help="measure HNSW against exact and record a pass")
     return p
 
 
@@ -149,6 +171,37 @@ def run(args: argparse.Namespace) -> Any:
                                                   release=args.release)}
     if cmd == "purge":
         return {"files_removed": db.diary_purge(source.uuid)}
+    if cmd == "embed":
+        from diary.embeddings import OllamaEmbedder, capture_spec, default_base_url, embed_source
+        base = (args.base_url or default_base_url()).rstrip("/")
+        embedder = OllamaEmbedder(base, args.model)
+        spec = capture_spec(embedder, base_url=base, model=args.model, input_format=args.input_format)
+        return embed_source(source.uuid, embedder, spec).__dict__
+    if cmd == "index":
+        from diary.embeddings import build_hnsw_index, build_trgm_index
+        out = {}
+        if args.hnsw:
+            out["hnsw"] = build_hnsw_index()
+        if args.trgm:
+            out["trgm"] = build_trgm_index()
+        if not out:
+            raise CliError("pass --hnsw and/or --trgm")
+        return out
+    if cmd == "set-vector-mode":
+        from diary.embeddings import set_vector_mode
+        s = set_vector_mode(source.uuid, args.mode)
+        return {"source_uuid": s.uuid, "vector_mode": s.vector_mode}
+    if cmd == "probe":
+        from diary.embeddings import QueryEmbedder
+        from diary.probe import hnsw_gate, run_probe
+        with open(args.cases, encoding="utf-8") as fh:
+            cases = json.load(fh)["cases"]
+        embed_query = QueryEmbedder() if source.embedding_spec else None
+        if args.hnsw_gate:
+            if embed_query is None:
+                raise CliError("no recorded embedding epoch; run embed first")
+            return hnsw_gate(source, cases, embed_query)
+        return run_probe(source, cases, vectors=args.vectors, embed_query=embed_query)
     if cmd == "reset-pilot":
         if not source.pilot:
             raise CliError(f"source {source.name!r} has no pilot marker; refusing")
