@@ -217,10 +217,14 @@ underneath them. A source record is retained on purge.
 `invalid_range`. For identifier annotations, subtype is `url`, `hash`, `path`,
 `symbol`, `issue` or `model`; other kinds use `none`. `value` is the original
 literal string, never a concatenated compound key. Pasted annotations use value
-`terminal_likely` or `fenced`. All annotation ranges must be nonempty and within
-the entry. Identifier rules are conservative and fixture-pinned: HTTP(S) URLs,
-7–40 hex-digit runs with token boundaries, slash-containing non-whitespace paths,
-code-span symbols, `#` plus digits, and model `name:tag` tokens. Overlapping kinds
+`terminal_likely` or `fenced` (basis `rule`), or `explicit` for an override's
+pasted range (basis `explicit_override`). All annotation ranges must be nonempty and within
+the entry. Identifier rules are conservative and fixture-pinned: HTTP(S) URLs;
+7–40 lowercase hex runs with token boundaries that mix digits and letters (so
+a date is not a hash); paths with at least two segments that are rooted
+(`/`, `~/`, `./`, `../`), end in `/` or have an extension (so `true/false`
+and `/goal` are not paths); code-span contents and `::`/`#`-qualified names
+as symbols; `#` plus digits; and model `name:tag` tokens. Overlapping kinds
 are allowed. Coverage of unusual identifiers comes from literal mode.
 Keep the schema narrow; no event/extraction/promotion tables exist.
 
@@ -362,14 +366,16 @@ normalize stored newlines or indentation.
    pasted ranges.
 3. Fenced regions: an opening run of at least three backticks/tildes, closed by
    the same character with at least that length. Ignore time/bullet syntax
-   inside. An unmatched opener does **not** protect to EOF — one stray fence
-   would otherwise erase every boundary in the rest of a decade-long file.
-   It closes at the first of: a matching closer; the next valid **date**
-   header of the file's dialect (a date line, a ChangeLog header — time lines
-   and bullets do not close it, since fenced output legitimately contains
-   four-digit lines); or 16,384 characters after the opener. The forced close
+   inside. A matching closer within 16,384 characters wins outright, so a
+   closed fence protects everything in it, date-shaped lines included. An
+   unmatched opener does **not** protect to EOF — one stray fence would
+   otherwise erase every boundary in the rest of a decade-long file. It
+   closes before the first of: a forced boundary; the next valid **date**
+   header of the file's dialect (a date line, a ChangeLog header — time
+   lines and bullets do not close it, since fenced output legitimately
+   contains four-digit lines); or the 16,384-character cap. The forced close
    emits `fence_unterminated` with both offsets, and the region is still
-   annotated as pasted. Every one of the three closes has a fixture.
+   annotated as pasted. Every one of these closes has a fixture.
 4. Likely terminal regions, then dialect boundary recognition outside them.
 5. Date/author context assignment, coverage validation, passage chunking.
 
@@ -394,8 +400,12 @@ the region that follows, and a `pasted_ranges` override on that file
 resolves it. Add it to the fixture as a documented limitation, not a bug.
 
 Once started, the likely terminal region includes successive prompts/output and ends before two
-consecutive empty lines, an explicit override boundary, or EOF. One empty line
-inside it does not end it. A header-shaped line suppressed there produces a
+consecutive empty lines, an explicit override boundary, the next valid date
+header, the 16,384-character cap, or EOF. In `timed`, an `HHhMM` line right
+after an empty line also ends it: that shape does not occur in shell output
+the way four-digit lines do, and without the rule a single pasted command
+would swallow the rest of the day's entries. One empty line inside it does
+not end it. A header-shaped line suppressed there produces a
 `possible_boundary_in_terminal` diagnostic. The region is a parsing heuristic,
 not a verified speaker label; the following prose is not automatically quoted.
 
@@ -457,7 +467,9 @@ the timeline as local diary dates, not a single absolute event chronology.
 Each entry owns its time/bullet marker and body; date/author headers are separate
 context ranges. Chunk the body, including its entry marker, at the last line end
 within **700 characters**. If none fits, split at the cap on a character
-boundary. Two things set the cap. Four whole passages plus their labels must
+boundary; a line that must be split this way carries the pending text
+(usually just the entry marker) with it rather than leaving a marker-only
+passage. Two things set the cap. Four whole passages plus their labels must
 fit one observation (§8), and about 200 tokens keeps a long entry's vectors
 focused on one topic each. Most diary entries are shorter and stay a single
 passage. No overlap at ingestion. Keep part indexes and map ranges to bytes.

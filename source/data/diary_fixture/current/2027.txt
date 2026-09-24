@@ -1,0 +1,43 @@
+20270312
+Woke at 07h10. Slept badly; the dog next door barked until two.
+
+09h30 - 10h00
+Physiotherapy exercises.
+
+10h15
+reread the threat model
+https://example.org/notes/threat-model
+
+11h02
+find the two papers on sparse memory tables and write a note about them.
+no need to download the models, there is no disk for it.
+
+11h40
+IDEA: let the assistant keep its own diary in this format, so we can
+query each other's.
+
+12h05
+A user of the export tool asked for JSONL output (issue #41). Follow up
+next week.
+
+12h30
+/goal process the queue
+
+13h15
+Mein Rücken fühlt sich wieder normal an.
+
+20270313
+09h30 - 10h00
+Physiotherapy exercises.
+
+14h00
+tried embeddinggemma:300m against the old index, commit 3fa9c2e1 broke
+the loader in `load_index`.
+
+```
+20270314
+14h30 not a boundary, inside a fence
+```
+
+16h20 - 16h05
+wrote the end before the start by mistake.

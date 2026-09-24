@@ -1,0 +1,28 @@
+0830
+call with reese
+
+exclude the admin tool
+exclude images
+
+we agree on what to build first
+
+
+0910
+reese says look at
+http://trac.example.org/skynet/ticket/6
+
+so I start with "product_info.php"
+
+first the ignore list needs fixing.
+
+www:/srv/skynet/www# svn st
+?      admin
+M      index.php
+
+0955
+?      images/products/t800.gif
+D      index.php.bak
+www:/srv/skynet/www#
+
+
+argh. commit fails, the repository is locked.
