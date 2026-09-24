@@ -1,6 +1,9 @@
 # Diary Memory: First-Release Implementation Specification
 
-**Status:** Ready to implement. No diary components are built.
+**Status:** P1–P5 implemented on branch `diary-memory` (`diary/`, `db/diary.py`,
+`tools/diary.py`, the `diary_query` capability, `evals/diary.py`), tested on
+synthetic fixtures. The one-month pilot (§9) has not run; no source is
+registered against a real diary.
 **Date:** 2026-09-21
 **Related:** [memory architecture](../memory-architecture.md),
 [Q&A](../qa-system.md), [retrieval granularity](2026-08-17-recall-filter-and-retrieval-granularity.md),

@@ -89,6 +89,7 @@ def test_action_enum_covers_the_known_action_surface():
         "ask_clarifying_question",
         "acceptance_criteria",
         "memory_query",
+        "diary_query",
         "workspace_read_command",
         "find_uuid",
         "python_run",
