@@ -24,7 +24,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # Bump when parse_file's output for the same bytes and config changes. Part
 # of the fingerprint, so every generation parsed by older code goes stale.
-PARSER_VERSION = 1
+PARSER_VERSION = 2
 # Bump when the identifier annotation rules change (same effect).
 IDENTIFIER_VERSION = 1
 # Passage cap in characters (code points). §5/§8 of the proposal: four whole

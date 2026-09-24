@@ -202,6 +202,13 @@ def test_terminal_start_regex(line, matches):
     assert bool(TERMINAL_START.match(line)) is matches
 
 
+@pytest.mark.parametrize("clock", ["0830", "08:30", "8:30"])
+def test_daily_accepts_colon_times(clock):
+    raw = f"{clock}\nfirst\n\n09:10\nsecond\n".encode()
+    parsed = parse_file(raw, "daily/2027_07_26.txt", CFG)
+    assert [e.clock_start for e in parsed.entries] == [time(8, 30), time(9, 10)]
+
+
 def test_timed_time_line_after_blank_ends_terminal_region():
     raw = b"20270312\n09h00\n$ make\nbuilding\n\n10h00\nnext entry\n"
     parsed = parse_file(raw, "current/x.txt", CFG)

@@ -48,7 +48,8 @@ TERMINAL_START = re.compile(r"^(?:\$[ \t]|[A-Za-z0-9_.@-]+:[~/][^\r\n]*?[#$](?:[
 FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 TIMED_DATE = re.compile(r"^(\d{4})(\d{2})(\d{2})$")
 TIMED_TIME = re.compile(r"^(\d{2})h(\d{2})(?:[ \t]*-[ \t]*(\d{2})h(\d{2}))?$")
-DAILY_TIME = re.compile(r"^(\d{2})(\d{2})$")
+# `0830`, or with a colon: `08:30`, `8:30`.
+DAILY_TIME = re.compile(r"^(\d{2})(\d{2})$|^(\d{1,2}):(\d{2})$")
 CHANGELOG_HEADER = re.compile(r"^(\d{1,2})-([^\s\d-]+)-(\d{4})[ \t]+(\S+)$")
 CHANGELOG_BULLET = re.compile(r"^\*[ \t]")
 FILENAME_DATE = (
@@ -411,7 +412,8 @@ class _Parser:
                 return None
             if not relaxed and not (i == 0 or self.lines[i - 1].empty):
                 return None
-            start = _valid_clock(int(m[1]), int(m[2]))
+            hour, minute = (m[1], m[2]) if m[1] is not None else (m[3], m[4])
+            start = _valid_clock(int(hour), int(minute))
             if start is None:
                 if report:
                     self.diags.append(Diagnostic("invalid_time", line.byte_start))
