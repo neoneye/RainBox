@@ -186,6 +186,47 @@ def filename_date(relative_path: str) -> date | None:
     return None
 
 
+
+def find_identifiers(text: str) -> list[tuple[str, str, int, int]]:
+    """(subtype, value, start, end) character spans of every identifier in
+    `text`, by the IDENTIFIER_VERSION rules. Shared by the parser's
+    annotations and the search route's query tokens, so both sides agree."""
+    out: list[tuple[str, str, int, int]] = []
+
+    def trimmed(m: re.Match) -> tuple[int, int, str]:
+        value = m.group(0).rstrip(_TRAILING_PUNCT)
+        return m.start(), m.start() + len(value), value
+
+    for m in _URL.finditer(text):
+        a, b, v = trimmed(m)
+        out.append(("url", v, a, b))
+    for m in _HASH.finditer(text):
+        v = m.group(0)
+        if any(c.isdigit() for c in v) and any(c.isalpha() for c in v):
+            out.append(("hash", v, m.start(), m.end()))
+    for m in _TOKEN.finditer(text):
+        tok = m.group(0).strip("\"'(`")
+        lead = m.group(0).find(tok) if tok else 0
+        tok = tok.rstrip(_TRAILING_PUNCT)
+        if "/" not in tok or "://" in tok:
+            continue
+        segments = [p for p in tok.split("/") if p not in ("", "~", ".", "..")]
+        if len(segments) < 2:
+            continue   # "/goal", "/tmp": a single segment is too ambiguous
+        if tok.startswith(("/", "~/", "./", "../")) or tok.endswith("/") or "." in segments[-1]:
+            a = m.start() + lead
+            out.append(("path", tok, a, a + len(tok)))
+    for m in _CODE_SPAN.finditer(text):
+        out.append(("symbol", m.group(1), m.start(1), m.end(1)))
+    for m in _QUALIFIED.finditer(text):
+        out.append(("symbol", m.group(0), m.start(), m.end()))
+    for m in _ISSUE.finditer(text):
+        out.append(("issue", m.group(0), m.start(), m.end()))
+    for m in _MODEL.finditer(text):
+        out.append(("model", m.group(0), m.start(), m.end()))
+    return out
+
+
 class _Text:
     """Decoded text split on "\\n" only, with char<->byte conversion."""
 
@@ -249,7 +290,7 @@ class _Parser:
         self.diags: list[Diagnostic] = []
         self.months: dict[str, int] = config.get("month_table", {})
         self.tz = ZoneInfo(config["timezone"]) if config.get("timezone") else None
-        self.cap: int = config.get("passage_cap", 700)
+        self.cap: int = config.get("passage_cap", 600)
         self.file_date = filename_date(path)
         n = len(self.lines)
         self.forced: set[int] = set()
@@ -646,37 +687,8 @@ class _Parser:
             key = (kind, subtype, bs, be, value)
             found.setdefault(key, ParsedAnnotation(kind, subtype, value, bs, be, basis))
 
-        def trimmed(m: re.Match) -> tuple[int, int, str]:
-            value = m.group(0).rstrip(_TRAILING_PUNCT)
-            return m.start(), m.start() + len(value), value
-
-        for m in _URL.finditer(text):
-            a, b, v = trimmed(m)
-            add("identifier", "url", v, a, b)
-        for m in _HASH.finditer(text):
-            v = m.group(0)
-            if any(c.isdigit() for c in v) and any(c.isalpha() for c in v):
-                add("identifier", "hash", v, m.start(), m.end())
-        for m in _TOKEN.finditer(text):
-            tok = m.group(0).strip("\"'(`")
-            lead = m.group(0).find(tok) if tok else 0
-            tok = tok.rstrip(_TRAILING_PUNCT)
-            if "/" not in tok or "://" in tok:
-                continue
-            segments = [p for p in tok.split("/") if p not in ("", "~", ".", "..")]
-            if len(segments) < 2:
-                continue   # "/goal", "/tmp": a single segment is too ambiguous
-            if tok.startswith(("/", "~/", "./", "../")) or tok.endswith("/") or "." in segments[-1]:
-                a = m.start() + lead
-                add("identifier", "path", tok, a, a + len(tok))
-        for m in _CODE_SPAN.finditer(text):
-            add("identifier", "symbol", m.group(1), m.start(1), m.end(1))
-        for m in _QUALIFIED.finditer(text):
-            add("identifier", "symbol", m.group(0), m.start(), m.end())
-        for m in _ISSUE.finditer(text):
-            add("identifier", "issue", m.group(0), m.start(), m.end())
-        for m in _MODEL.finditer(text):
-            add("identifier", "model", m.group(0), m.start(), m.end())
+        for subtype, value, a, b in find_identifiers(text):
+            add("identifier", subtype, value, a, b)
 
         # Pasted spans inside this entry.
         run_start = None

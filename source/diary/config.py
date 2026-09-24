@@ -28,8 +28,8 @@ PARSER_VERSION = 1
 # Bump when the identifier annotation rules change (same effect).
 IDENTIFIER_VERSION = 1
 # Passage cap in characters (code points). §5/§8 of the proposal: four whole
-# passages plus labels fit one observation.
-PASSAGE_CAP = 700
+# passages plus their labels fit one observation (pinned by a render test).
+PASSAGE_CAP = 600
 
 DIALECTS = ("timed", "daily", "changelog", "plain")
 SENSITIVITIES = ("private", "secret")

@@ -178,7 +178,7 @@ def test_long_entries_chunk_at_line_ends_then_at_the_cap():
     multi, single = parsed.entries
     assert len(multi.passages) > 1
     assert all(p.text.endswith("\n") for p in multi.passages)
-    assert [len(p.text) for p in single.passages] == [700, 700, 207]
+    assert [len(p.text) for p in single.passages] == [600, 600, 407]
 
 
 def test_short_entry_is_one_passage():

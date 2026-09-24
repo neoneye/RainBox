@@ -471,11 +471,11 @@ the timeline as local diary dates, not a single absolute event chronology.
 
 Each entry owns its time/bullet marker and body; date/author headers are separate
 context ranges. Chunk the body, including its entry marker, at the last line end
-within **700 characters**. If none fits, split at the cap on a character
+within **600 characters**. If none fits, split at the cap on a character
 boundary; a line that must be split this way carries the pending text
 (usually just the entry marker) with it rather than leaving a marker-only
 passage. Two things set the cap. Four whole passages plus their labels must
-fit one observation (§8), and about 200 tokens keeps a long entry's vectors
+fit one observation (§8), and about 170 tokens keeps a long entry's vectors
 focused on one topic each. Most diary entries are shorter and stay a single
 passage. No overlap at ingestion. Keep part indexes and map ranges to bytes.
 Attach inherited date/author context to every part. Every short entry is one
@@ -755,7 +755,7 @@ Select at most four groups, at most two per entry; the observation budget
 usually admits all four, and the rest become citations. Expand by at most one adjacent
 passage on either side *within that entry*, subject to the same count/access/
 rendering caps. Two windows that touch or overlap are merged only when the
-merged range fits the 700-character window cap; otherwise they stay
+merged range fits the 600-character window cap; otherwise they stay
 separate windows, each charged to the budget, each containing its own
 whole match — a merge never truncates and never drops the later match.
 Stored source slices are never concatenated across gaps into one quote.
@@ -893,20 +893,23 @@ over-budget event does today. The reserve is checked by a test that builds
 a search event and a read event with 300-character reasons and asserts both
 render.
 
-The passage cap follows from the budget. The fence takes about 150
-characters, the source line 60, four excerpt label lines 90 each and a
-continuation notice 80. Four 700-character passages bring that to about
-3,450. The routine lines that carry occurrence lists are short, so their
-lists fit in the space those passages leave unused. A unit test asserts
-`4 * PASSAGE_CAP + LABEL_RESERVE <= DIARY_OBSERVATION_CHARS` against the
-real rendered label lengths, so shrinking the scratchpad fails a test
-instead of silently showing fewer passages. Changing the cap is a new
+The passage cap follows from the budget, with the overheads measured on
+the renderer, not estimated. The status line with its degradation notes is
+about 140 characters, the fence 139, the source line 60, each excerpt label
+128 (the 54-character citation dominates it) and the continuation footer
+105. Four 600-character passages bring that to about 3,360 of 3,500. The
+routine lines that carry occurrence lists are short, so their lists fit in
+the space those passages leave unused. A render test packs four maximal
+passages with realistic labels at `DIARY_OBSERVATION_CHARS` and asserts all
+four fit, so shrinking the scratchpad or lengthening a label fails a test
+instead of silently showing fewer passages. (Estimated overheads of 90 and
+150 had made 700-character passages look like they fit; they did not.) Changing the cap is a new
 parser fingerprint and re-embeds, which is why it is fixed here rather than
 recomputed at runtime.
 
 | Limit | Value and meaning |
 |---|---|
-| Stored passage | 700 characters, no token-equivalence promise |
+| Stored passage | 600 characters, no token-equivalence promise |
 | Search candidates | 20 per route; no generative scorer call |
 | Selected groups | ≤4, ≤2 per entry; neighbor expansion counts toward both |
 | Diary observation | **`DIARY_OBSERVATION_CHARS` total** (3,500 today), including labels, fence, citations and continuation notice |
@@ -919,9 +922,9 @@ Pack in rank order (source order for literal/read, timeline order for timeline).
 Prefer complete passages. If a literal range is too large, choose one
 contiguous window containing the match and a continuation offset. Do not
 truncate a citation, join disconnected fragments or remove the middle of a
-quote. Literal windows are at most 700 characters, start up to 200
+quote. Literal windows are at most 600 characters, start up to 160
 characters before the match, and must contain the entire match; a match
-longer than 700 characters is shown from its start with a continuation. A
+longer than 600 characters is shown from its start with a continuation. A
 `read` fills the budget with whole entries in source order and continues
 mid-entry only when one entry alone exceeds it. Date/header context is
 labeled metadata and charged to the same cap.
