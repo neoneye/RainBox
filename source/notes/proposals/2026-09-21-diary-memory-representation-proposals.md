@@ -902,8 +902,7 @@ routine lines that carry occurrence lists are short, so their lists fit in
 the space those passages leave unused. A render test packs four maximal
 passages with realistic labels at `DIARY_OBSERVATION_CHARS` and asserts all
 four fit, so shrinking the scratchpad or lengthening a label fails a test
-instead of silently showing fewer passages. (Estimated overheads of 90 and
-150 had made 700-character passages look like they fit; they did not.) Changing the cap is a new
+instead of silently showing fewer passages. Changing the cap is a new
 parser fingerprint and re-embeds, which is why it is fixed here rather than
 recomputed at runtime.
 
