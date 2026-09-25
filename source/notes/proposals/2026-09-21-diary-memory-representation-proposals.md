@@ -447,8 +447,10 @@ Order is the parser's cheapest ambiguity signal. A four-digit prose line
 such as a year (`2027` is a valid `20h27`) or an eight-digit order number
 can pass the header grammar, but it rarely also fits the file's sequence.
 The parser therefore checks each accepted header against its predecessor in
-the same file: in `timed` and `daily`, a clock earlier than the previous
-entry's start on the same date emits `clock_regression`; in `timed`, a date
+the same file: in `timed` and `daily`, a clock earlier than the latest clock
+so far on the same date emits `clock_regression` — except a crossing of
+midnight (a latest clock at or after 18:00 followed by one before 06:00, or
+an hour-24 clock), which is a late night, not an ambiguity; in `timed`, a date
 earlier than the previous date emits `date_regression`, and in `changelog`
 (newest first) a date *later* than the previous one does. The boundary is
 still accepted, because diaries are occasionally written out of order, and
@@ -459,17 +461,22 @@ region cannot occur, since those headers are already suppressed.
 ### Clocks, order and chunks
 
 Keep local dates and minute values as written. Time ranges do not prove when the
-author typed a record or when its event occurred. An end earlier than a start is
-`invalid_range`; do not infer midnight rollover. DST gaps/overlaps are
+author typed a record or when its event occurred. Hour 24 is the writer's own
+past-midnight notation: `24h00` and `23h30 - 24h15` are valid, stored as
+`00:MM` under the date as written, and a range ending in hour 24 is a
+`range`. Otherwise an end earlier than a start is `invalid_range`; do not
+infer midnight rollover from bare clocks. DST gaps/overlaps are
 `ambiguous`; retain local values without inventing a unique UTC instant.
 Date-only entries do not acquire midnight timestamps. The generation records
 its assumed source timezone. Filters apply to local calendar dates, not UTC
 instants.
 
 Source order controls neighbors. Timeline order is
-`(date_local, clock_start NULLS FIRST, source_uuid, relative_path, ordinal,
-part_index)`; newest-first ChangeLogs therefore read chronologically in timelines
-while preserving source order within a date. With differing assumed zones, label
+`(date_local, source_uuid, relative_path, ordinal, part_index)`: dates
+ascending, and source order within a date, not clock order. A diary written
+late keeps its date header while the clock rolls past midnight (`23h45`,
+then `00h05`), so sorting by clock would put the small hours before the
+evening. Newest-first ChangeLogs still read chronologically across dates. With differing assumed zones, label
 the timeline as local diary dates, not a single absolute event chronology.
 
 Each entry owns its time/bullet marker and body; date/author headers are separate

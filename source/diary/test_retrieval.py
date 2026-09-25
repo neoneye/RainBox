@@ -437,3 +437,10 @@ def test_item_too_large_for_budget_still_makes_progress():
     rendered = render_items(DiaryResult(ok=True, mode="timeline", items=items), 900)
     assert rendered.rendered == [] and rendered.first_unrendered == 1
     assert "too large" in rendered.text and len(rendered.text) <= 900
+
+
+def test_timeline_keeps_late_night_entries_after_the_evening(live):
+    live.write("current/2028.txt", "20280601\n21h00\nevening\n\n23h50\nlate\n\n00h20\nafter midnight\n")
+    live.resync()
+    t = live.q(mode="timeline", date_from="2028-06-01", date_to="2028-06-01").text
+    assert t.index("evening") < t.index("late") < t.index("after midnight")

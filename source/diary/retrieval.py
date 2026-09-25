@@ -398,8 +398,9 @@ def _entry_window_item(r: Any, text: str, ws: int, we: int, *, resume: dict) -> 
 # --- timeline ------------------------------------------------------------------------------
 
 
-_TIMELINE_KEY = ("(e.date_local, e.clock_start IS NOT NULL, COALESCE(e.clock_start, '00:00'::time), "
-                 "s.uuid, f.relative_path, e.ordinal)")
+# Within a date, source order: a clock can roll past midnight under its date
+# header, so sorting by clock would put the small hours before the evening.
+_TIMELINE_KEY = "(e.date_local, s.uuid, f.relative_path, e.ordinal)"
 
 
 def _passage_item(r: Any, *, reasons: list[str] | None = None, resume: dict | None = None) -> DiaryItem:
@@ -423,10 +424,9 @@ def _timeline(req: DiaryRequest, sources: list[Any], position: dict | None) -> D
     keyset = ""
     if position:
         params.update({
-            "kd": date.fromisoformat(position["date"]), "kh": position["has_clock"],
-            "kc": time.fromisoformat(position["clock"]), "ks": UUID(position["source"]),
+            "kd": date.fromisoformat(position["date"]), "ks": UUID(position["source"]),
             "kp": position["path"], "ko": position["ordinal"]})
-        keyset = f" AND {_TIMELINE_KEY} >= (:kd, :kh, :kc, :ks, :kp, :ko)"
+        keyset = f" AND {_TIMELINE_KEY} >= (:kd, :ks, :kp, :ko)"
     entry_sql = ("SELECT e.uuid " + _ELIGIBLE_ENTRIES + _date_sql(req) + keyset
                  + f" ORDER BY {_TIMELINE_KEY} LIMIT {TIMELINE_BATCH + 1}")
     entry_ids = [r[0] for r in db.session.execute(sa.text(entry_sql), params).all()]
@@ -455,13 +455,12 @@ def _timeline(req: DiaryRequest, sources: list[Any], position: dict | None) -> D
 
 
 def _timeline_resume(r: Any) -> dict[str, Any]:
-    return {"date": r["date_local"].isoformat(), "has_clock": r["clock_start"] is not None,
-            "clock": (r["clock_start"] or time(0, 0)).isoformat(),
-            "source": str(r["source_uuid"]), "path": r["path"], "ordinal": r["ordinal"]}
+    return {"date": r["date_local"].isoformat(), "source": str(r["source_uuid"]),
+            "path": r["path"], "ordinal": r["ordinal"]}
 
 
 def _same_entry(key: dict, position: dict) -> bool:
-    return all(key[k] == position.get(k) for k in ("date", "has_clock", "clock", "source", "path", "ordinal"))
+    return all(key[k] == position.get(k) for k in ("date", "source", "path", "ordinal"))
 
 
 # --- search -------------------------------------------------------------------------------

@@ -202,6 +202,22 @@ def test_terminal_start_regex(line, matches):
     assert bool(TERMINAL_START.match(line)) is matches
 
 
+def test_writing_past_midnight_is_not_a_regression():
+    raw = b"20270312\n22h00\na\n\n23h30 - 24h15\nb\n\n00h30\nc\n\n24h40\nd\n\n00h10\ne\n"
+    parsed = parse_file(raw, "current/x.txt", CFG)
+    assert [e.clock_start for e in parsed.entries] == \
+        [time(22, 0), time(23, 30), time(0, 30), time(0, 40), time(0, 10)]
+    assert parsed.entries[1].time_status == "range"          # 24h15 is not invalid
+    assert parsed.entries[1].clock_end == time(0, 15)
+    assert codes(parsed) == ["clock_regression"]             # only 00h10 after 00h40
+    assert parsed.diagnostics[0].byte_offset == raw.index(b"00h10")
+
+
+def test_real_regression_in_the_afternoon_still_flags():
+    raw = b"20270312\n16h30 - 17h50\na\n\n15h00 - 19h00\nb\n"
+    assert codes(parse_file(raw, "current/x.txt", CFG)) == ["clock_regression"]
+
+
 @pytest.mark.parametrize("clock", ["0830", "08:30", "8:30"])
 def test_daily_accepts_colon_times(clock):
     raw = f"{clock}\nfirst\n\n09:10\nsecond\n".encode()

@@ -155,6 +155,10 @@ class _Marker:
     clock_start: time | None = None
     clock_end: time | None = None
     author: str | None = None
+    # Written with hour 24 (`24h00`, `23h30 - 24h15`): past midnight by the
+    # writer's own notation. The stored clock is 00:MM on the date as written.
+    start_wraps: bool = False
+    end_wraps: bool = False
 
 
 def sha256_hex(data: bytes) -> str:
@@ -172,6 +176,15 @@ def _valid_clock(h: int, m: int) -> time | None:
     if 0 <= h <= 23 and 0 <= m <= 59:
         return time(h, m)
     return None
+
+
+def _clock24(h: int, m: int) -> tuple[time, bool] | None:
+    """A clock that may be written with hour 24 for past midnight: returns
+    (clock, wraps). `24h15` is (00:15, True)."""
+    if h == 24 and 0 <= m <= 59:
+        return time(0, m), True
+    t = _valid_clock(h, m)
+    return (t, False) if t is not None else None
 
 
 def filename_date(relative_path: str) -> date | None:
@@ -395,17 +408,19 @@ class _Parser:
             m = TIMED_TIME.match(rec)
             if not m:
                 return None
-            start = _valid_clock(int(m[1]), int(m[2]))
+            start = _clock24(int(m[1]), int(m[2]))
             end = None
             valid = start is not None
             if m[3] is not None:
-                end = _valid_clock(int(m[3]), int(m[4]))
+                end = _clock24(int(m[3]), int(m[4]))
                 valid = valid and end is not None
             if not valid:
                 if report:
                     self.diags.append(Diagnostic("invalid_time", line.byte_start))
                 return None
-            return _Marker("start", clock_start=start, clock_end=end)
+            return _Marker("start", clock_start=start[0], start_wraps=start[1],
+                           clock_end=end[0] if end else None,
+                           end_wraps=bool(end and end[1]))
         if self.dialect == "daily":
             m = DAILY_TIME.match(rec)
             if not m:
@@ -413,12 +428,12 @@ class _Parser:
             if not relaxed and not (i == 0 or self.lines[i - 1].empty):
                 return None
             hour, minute = (m[1], m[2]) if m[1] is not None else (m[3], m[4])
-            start = _valid_clock(int(hour), int(minute))
+            start = _clock24(int(hour), int(minute))
             if start is None:
                 if report:
                     self.diags.append(Diagnostic("invalid_time", line.byte_start))
                 return None
-            return _Marker("start", clock_start=start)
+            return _Marker("start", clock_start=start[0], start_wraps=start[1])
         if self.dialect == "changelog":
             if CHANGELOG_BULLET.match(line.text):
                 return _Marker("start")
@@ -568,7 +583,10 @@ class _Parser:
         mismatch_reported = False
         prev_header_date: date | None = None
         prev_header_byte = 0
-        prev_clock: tuple[date | None, time, int] | None = None
+        # (date, extended minutes of the latest clock, byte offset, day offset).
+        # Extended minutes count past midnight as 1440+: a diary written late
+        # keeps its date header while the clock rolls over.
+        prev_clock: tuple[date | None, int, int, int] | None = None
         for i, ln in enumerate(self.lines):
             marker = markers[i]
             if marker is not None and marker.kind == "date":
@@ -592,11 +610,8 @@ class _Parser:
                 continue
             if marker is not None and marker.kind == "start":
                 if marker.clock_start is not None:
-                    if prev_clock is not None and prev_clock[0] == ctx["date"] \
-                            and marker.clock_start < prev_clock[1]:
-                        self.diags.append(Diagnostic("clock_regression", ln.byte_start,
-                                                     {"previous_byte_offset": prev_clock[2]}))
-                    prev_clock = (ctx["date"], marker.clock_start, ln.byte_start)
+                    prev_clock = self._check_clock_order(marker, ctx["date"], ln.byte_start,
+                                                         prev_clock)
                 cur = {"kind": "entry", "first": i, "last": i, "marker": marker, "ctx": ctx}
                 groups.append(cur)
                 continue
@@ -608,10 +623,39 @@ class _Parser:
             cur["last"] = i
         return groups
 
+    MIDNIGHT_LATE = 18 * 60   # a clock at or after this ...
+    MIDNIGHT_EARLY = 6 * 60   # ... followed by one before this crossed midnight
+
+    def _check_clock_order(self, marker: _Marker, d: date | None, byte: int,
+                           prev: tuple[date | None, int, int, int] | None
+                           ) -> tuple[date | None, int, int, int]:
+        """Emit clock_regression when a clock runs backwards within one date,
+        except across midnight: 23h45 then 00h05 under the same header is a
+        late night, not an ambiguity. Returns the new ordering state."""
+        def minutes(t: time) -> int:
+            return t.hour * 60 + t.minute
+
+        offset = prev[3] if prev is not None and prev[0] == d else 0
+        start = minutes(marker.clock_start) + (1440 if marker.start_wraps else 0)
+        if prev is not None and prev[0] == d and offset + start < prev[1]:
+            if offset == 0 and prev[1] >= self.MIDNIGHT_LATE and start < self.MIDNIGHT_EARLY:
+                offset = 1440
+            if offset + start < prev[1]:
+                self.diags.append(Diagnostic("clock_regression", byte,
+                                             {"previous_byte_offset": prev[2]}))
+        latest = offset + start
+        if marker.clock_end is not None:
+            end = minutes(marker.clock_end) + (1440 if marker.end_wraps else 0)
+            if end < start:
+                end += 1440 if marker.end_wraps else 0
+            latest = max(latest, offset + end)
+        return (d, latest, byte, offset)
+
     def _time_status(self, d: date | None, marker: _Marker | None) -> str:
         if marker is None or marker.clock_start is None:
             return "date_only" if d is not None else "unknown"
-        if marker.clock_end is not None and marker.clock_end < marker.clock_start:
+        if marker.clock_end is not None and marker.clock_end < marker.clock_start \
+                and not marker.end_wraps:
             return "invalid_range"
         if d is not None and self.tz is not None:
             for clock in (marker.clock_start, marker.clock_end):
