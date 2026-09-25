@@ -96,6 +96,14 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("show", help="print a citation's original bytes (operator only)")
     s.add_argument("--citation", required=True)
 
+    qy = sub.add_parser("query", help="run one diary_query and print what the assistant would see")
+    qy.add_argument("--source", required=True)
+    qy.add_argument("mode", choices=("search", "literal", "timeline", "read", "continue"))
+    qy.add_argument("text", nargs="?", default=None,
+                    help="query text (search/literal), citation (read) or cursor (continue)")
+    qy.add_argument("--from", dest="date_from", default=None, help="YYYY-MM-DD, inclusive")
+    qy.add_argument("--to", dest="date_to", default=None, help="YYYY-MM-DD, inclusive")
+
     e = sub.add_parser("embed", help="resume missing vectors for current passages")
     e.add_argument("--source", required=True)
     e.add_argument("--base-url", default=None, help="loopback embedding endpoint (default OLLAMA_BASE_URL)")
@@ -171,6 +179,26 @@ def run(args: argparse.Namespace) -> Any:
                                                   release=args.release)}
     if cmd == "purge":
         return {"files_removed": db.diary_purge(source.uuid)}
+    if cmd == "query":
+        from diary.action import diary_query
+        from diary.embeddings import QueryEmbedder
+        from diary.probe import trusted_context
+        qargs: dict[str, Any] = {"mode": args.mode}
+        key = {"search": "query", "literal": "query", "read": "citation",
+               "continue": "cursor"}.get(args.mode)
+        if key and args.text:
+            qargs[key] = args.text
+        if args.date_from:
+            qargs["date_from"] = args.date_from
+            qargs["date_to"] = args.date_to or args.date_from
+        embed_query = QueryEmbedder() if source.vector_mode in ("exact", "hnsw") else None
+        obs = diary_query(qargs, trusted_context(source), embed_query=embed_query,
+                          record_telemetry=False)
+        print(obs.text)
+        return {"ok": obs.ok, "error": obs.data.get("error"),
+                "next_cursor": obs.data.get("next_cursor"), "chars": len(obs.text),
+                "coverage": obs.data.get("coverage"),
+                "degraded_routes": obs.data.get("degraded_routes")}
     if cmd == "embed":
         from diary.embeddings import OllamaEmbedder, capture_spec, default_base_url, embed_source
         base = (args.base_url or default_base_url()).rstrip("/")

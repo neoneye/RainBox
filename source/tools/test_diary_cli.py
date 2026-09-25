@@ -106,3 +106,16 @@ def test_reset_pilot_requires_marker(workspace, capsys):
     call(capsys, "register", "--manifest", str(manifest))
     with pytest.raises(SystemExit, match="pilot marker"):
         cli.main(["--database-url", SANDBOX_URL, "reset-pilot", "--source", name])
+
+
+def test_query_prints_the_observation(workspace, capsys):
+    manifest, name = workspace
+    call(capsys, "register", "--manifest", str(manifest))
+    call(capsys, "sync", "--source", name)
+    assert cli.main(["--database-url", SANDBOX_URL, "query", "--source", name,
+                     "literal", "Edit::VSpace#move_left"]) == 0
+    out = capsys.readouterr().out
+    assert "Edit::VSpace#move_left" in out and "<diary_passages" in out
+    assert cli.main(["--database-url", SANDBOX_URL, "query", "--source", name,
+                     "timeline", "--from", "2027-07-26"]) == 0
+    assert "re-enabled Buffer" in capsys.readouterr().out
