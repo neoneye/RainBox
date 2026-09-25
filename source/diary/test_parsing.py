@@ -213,6 +213,11 @@ def test_writing_past_midnight_is_not_a_regression():
     assert parsed.diagnostics[0].byte_offset == raw.index(b"00h10")
 
 
+def test_starting_before_the_previous_range_ends_is_an_overlap_not_a_regression():
+    raw = b"20270312\n13h05 - 14h25\na\n\n14h23\nb\n"
+    assert codes(parse_file(raw, "current/x.txt", CFG)) == []
+
+
 def test_real_regression_in_the_afternoon_still_flags():
     raw = b"20270312\n16h30 - 17h50\na\n\n15h00 - 19h00\nb\n"
     assert codes(parse_file(raw, "current/x.txt", CFG)) == ["clock_regression"]

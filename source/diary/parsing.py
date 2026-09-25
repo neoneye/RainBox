@@ -583,10 +583,10 @@ class _Parser:
         mismatch_reported = False
         prev_header_date: date | None = None
         prev_header_byte = 0
-        # (date, extended minutes of the latest clock, byte offset, day offset).
-        # Extended minutes count past midnight as 1440+: a diary written late
-        # keeps its date header while the clock rolls over.
-        prev_clock: tuple[date | None, int, int, int] | None = None
+        # (date, extended start, extended latest clock, byte offset, day
+        # offset). Extended minutes count past midnight as 1440+: a diary
+        # written late keeps its date header while the clock rolls over.
+        prev_clock: tuple[date | None, int, int, int, int] | None = None
         for i, ln in enumerate(self.lines):
             marker = markers[i]
             if marker is not None and marker.kind == "date":
@@ -627,29 +627,30 @@ class _Parser:
     MIDNIGHT_EARLY = 6 * 60   # ... followed by one before this crossed midnight
 
     def _check_clock_order(self, marker: _Marker, d: date | None, byte: int,
-                           prev: tuple[date | None, int, int, int] | None
-                           ) -> tuple[date | None, int, int, int]:
-        """Emit clock_regression when a clock runs backwards within one date,
-        except across midnight: 23h45 then 00h05 under the same header is a
-        late night, not an ambiguity. Returns the new ordering state."""
+                           prev: tuple[date | None, int, int, int, int] | None
+                           ) -> tuple[date | None, int, int, int, int]:
+        """Emit clock_regression when an entry starts before the previous
+        entry started, within one date — except across midnight: 23h45 then
+        00h05 under the same header is a late night, not an ambiguity. The
+        previous range's end only informs midnight detection; starting
+        before it ends is an overlap, not a regression."""
         def minutes(t: time) -> int:
             return t.hour * 60 + t.minute
 
-        offset = prev[3] if prev is not None and prev[0] == d else 0
+        same = prev is not None and prev[0] == d
+        offset = prev[4] if same else 0
         start = minutes(marker.clock_start) + (1440 if marker.start_wraps else 0)
-        if prev is not None and prev[0] == d and offset + start < prev[1]:
-            if offset == 0 and prev[1] >= self.MIDNIGHT_LATE and start < self.MIDNIGHT_EARLY:
+        if same and offset + start < prev[1]:
+            if offset == 0 and prev[2] >= self.MIDNIGHT_LATE and start < self.MIDNIGHT_EARLY:
                 offset = 1440
             if offset + start < prev[1]:
                 self.diags.append(Diagnostic("clock_regression", byte,
-                                             {"previous_byte_offset": prev[2]}))
+                                             {"previous_byte_offset": prev[3]}))
         latest = offset + start
         if marker.clock_end is not None:
             end = minutes(marker.clock_end) + (1440 if marker.end_wraps else 0)
-            if end < start:
-                end += 1440 if marker.end_wraps else 0
             latest = max(latest, offset + end)
-        return (d, latest, byte, offset)
+        return (d, offset + start, latest, byte, offset)
 
     def _time_status(self, d: date | None, marker: _Marker | None) -> str:
         if marker is None or marker.clock_start is None:
