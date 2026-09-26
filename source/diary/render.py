@@ -77,7 +77,8 @@ def _snapshot(at: datetime | None) -> str:
 
 def _block(item: DiaryItem) -> str:
     text = item.text if item.text.endswith("\n") else item.text + "\n"
-    out = f"--- {_path_label(item.path)} · {date_label(item)} · {item.citation}\n{text}"
+    matches = f" · {item.match_count} matches" if item.match_count > 1 else ""
+    out = f"--- {_path_label(item.path)} · {date_label(item)}{matches} · {item.citation}\n{text}"
     if item.occurrence_dates or item.occurrence_more:
         dates = ", ".join(d.isoformat() for d in item.occurrence_dates)
         more = f" (+{item.occurrence_more} more)" if item.occurrence_more else ""

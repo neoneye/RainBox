@@ -352,13 +352,20 @@ def _literal(req: DiaryRequest, sources: list[Any], position: dict | None) -> Di
         first = (position is not None and idx == 0
                  and str(r["source_uuid"]) == position["source"]
                  and r["path"] == position["path"] and r["ordinal"] == position["ordinal"])
+        shown_until = -1
         for a, b in hits:
             if first and a < skip_before:
                 continue
-            ws, we = _literal_window(len(text), a, b)
+            if b <= shown_until:
+                # Already inside the previous excerpt of this entry: count it
+                # there instead of showing the same text twice.
+                items[-1].match_count += 1
+                continue
+            ws, we = _literal_window(text, a, b)
             items.append(_entry_window_item(r, text, ws, we, resume={
                 "source": str(r["source_uuid"]), "path": r["path"],
                 "ordinal": r["ordinal"], "offset": a}))
+            shown_until = we
     after = None
     if more:
         nxt = rows[-1]
@@ -368,14 +375,32 @@ def _literal(req: DiaryRequest, sources: list[Any], position: dict | None) -> Di
                        enumeration="partial" if more else "complete")
 
 
-def _literal_window(length: int, a: int, b: int) -> tuple[int, int]:
+def _literal_window(text: str, a: int, b: int) -> tuple[int, int]:
+    """A window of at most LITERAL_WINDOW characters containing the whole
+    match [a, b), starting up to LITERAL_LEAD before it. Edges snap to line
+    boundaries when the window still fits, else to whitespace, so an excerpt
+    does not open or close mid-word."""
+    length = len(text)
     if b - a >= LITERAL_WINDOW:
         return a, a + LITERAL_WINDOW
     start = max(0, a - LITERAL_LEAD)
+    line_start = text.rfind("\n", 0, start) + 1
+    if b - line_start <= LITERAL_WINDOW:
+        start = line_start
+    elif start > 0 and not text[start - 1].isspace():
+        ws = next((k for k in range(start, a) if text[k].isspace()), None)
+        start = ws + 1 if ws is not None else start
     end = min(length, start + LITERAL_WINDOW)
     if end < b:
         start = max(0, b - LITERAL_WINDOW)
         end = b
+    if end < length:
+        line_end = text.rfind("\n", b, end)
+        if line_end >= 0:
+            end = line_end + 1
+        else:
+            ws = next((k for k in range(end - 1, b - 1, -1) if text[k].isspace()), None)
+            end = ws + 1 if ws is not None else end
     return start, end
 
 

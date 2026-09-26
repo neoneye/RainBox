@@ -931,7 +931,10 @@ Pack in rank order (source order for literal/read, timeline order for timeline).
 Prefer complete passages. If a literal range is too large, choose one
 contiguous window containing the match and a continuation offset. Do not
 truncate a citation, join disconnected fragments or remove the middle of a
-quote. Literal windows are at most 600 characters, start up to 160
+quote. A match that falls inside the previous excerpt of the same entry
+adds to that excerpt's match count instead of opening another. Window edges
+snap to line boundaries when the window still fits, else to whitespace.
+Literal windows are at most 600 characters, start up to 160
 characters before the match, and must contain the entire match; a match
 longer than 600 characters is shown from its start with a continuation. A
 `read` fills the budget with whole entries in source order and continues

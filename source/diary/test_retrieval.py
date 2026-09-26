@@ -444,3 +444,20 @@ def test_timeline_keeps_late_night_entries_after_the_evening(live):
     live.resync()
     t = live.q(mode="timeline", date_from="2028-06-01", date_to="2028-06-01").text
     assert t.index("evening") < t.index("late") < t.index("after midnight")
+
+
+def test_literal_matches_inside_one_excerpt_are_not_repeated(live):
+    live.write("current/2028.txt", "20280701\n09h00\nset DB_PASSWORD and APP_PASSWORD now\nthen restart\n")
+    live.resync()
+    obs = live.q(mode="literal", query="PASSWORD")
+    assert obs.text.count("--- current/2028.txt") == 1 and "2 matches" in obs.text
+
+
+def test_literal_window_snaps_to_line_boundaries(live):
+    filler = "".join(f"line {i} with some words\n" for i in range(12))
+    live.write("current/2028.txt", f"20280702\n09h00\n{filler}needle here\n{filler}")
+    live.resync()
+    obs = live.q(mode="literal", query="needle")
+    block = obs.text.split("--- current/2028.txt", 1)[1].split("\n", 1)[1]
+    assert block.startswith("line ") and "needle here" in block
+    assert block.split("</diary_passages>")[0].rstrip("\n").endswith("words")
