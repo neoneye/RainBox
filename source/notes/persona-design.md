@@ -232,10 +232,18 @@ resolution renders as an `<assistant_persona>` element holding the
 persona's text, ranked in `SOURCE_PRIORITY_SECTION` right below
 `user_settings_yaml` — below the current request and this turn's
 observations, above profile and conversation history. The system prompt carries one
-code-owned sentence policing the boundary: a persona changes voice and
-manner, never which actions are available, and never overrides the working
-rules or the source priority — operator-authored text, but still data inside
-the prompt, not a command. Every step's turn log (`_build_turn_log`) carries
+code-owned sentence policing the boundary: a persona governs how the
+assistant talks with the user — voice, what it takes an interest in, and
+whether a reply also asks the user something back — never which actions are
+available, and never overrides the working rules or the source priority —
+operator-authored text, but still data inside the prompt, not a command.
+Engagement is named explicitly because the rest of the prompt treats every
+message as a request to settle: a turn knows only one kind of question,
+`ask_clarifying_question` for missing information, so without the sentence a
+persona's curiosity reads as outside its reach and the reply closes flat. The
+sentence places such a question inside the `reply`, leaving the clarifying
+action for what it is for. Whether to be curious stays the persona's call;
+the code ships no default for it. Every step's turn log (`_build_turn_log`) carries
 a `persona` entry — name, uuid, `href` to `/persona?id=<uuid>`, and the
 revision used — or `(none)` when the member carries no persona.
 

@@ -43,6 +43,13 @@ def test_system_prompt_states_the_persona_boundary():
     assert "does not\nchange which actions are available" in DECIDE_TURN_INSTRUCTIONS
 
 
+def test_persona_boundary_puts_asking_back_inside_the_reply():
+    # A persona's curiosity is manner it governs; without this the only
+    # question the prompt knows is the clarifying action, and replies close flat.
+    assert "whether a reply also asks them something back" in DECIDE_TURN_INSTRUCTIONS
+    assert "Such a\nquestion belongs inside the `reply`" in DECIDE_TURN_INSTRUCTIONS
+
+
 def test_persona_section_renders_when_the_room_links_one(ctx):
     from agents.assistant import AssistantAgent
 
