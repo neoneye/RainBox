@@ -591,7 +591,10 @@ class Chatroom(db.Model):
     uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
     name: Mapped[str] = mapped_column(Text)
     created_by: Mapped[UUID] = mapped_column()  # chat_user.uuid (the human)
-    # "agents" — the group chat where responder agents reply to human posts.
+    # "assistant" — the operator and the assistant, members fixed; the
+    # assistant member is born with the chat.default_persona binding.
+    # "agents" — the group chat where responder agents reply to human posts
+    # (labelled "Group chat" in the UI).
     # "direct" — a one-to-one operator<->model chat: the model sees the room
     # history (all of it, or the newest history_window messages) as
     # system/user/assistant messages, replies with one plain-text completion,

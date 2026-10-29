@@ -156,17 +156,21 @@ def remove_room_member(room_uuid: UUID, user_uuid: UUID) -> bool:
     return deleted > 0
 
 
+ROOM_TYPES = ("assistant", "agents", "direct")
+
+
 def create_chatroom(
     name: str, created_by: UUID, member_uuids: list[UUID],
     room_type: str = "agents", folder_uuid: UUID | None = None,
 ) -> Chatroom:
     """Create a room. The creator (the human) is always a member; `member_uuids`
     are the additional participants (agents). Duplicates are ignored.
-    `room_type` is "agents" (group chat with responder agents) or "direct"
-    (one-to-one operator<->model chat; see DirectChatAgent). With
+    `room_type` is "assistant" (operator + the assistant), "agents" (group
+    chat with responder agents) or "direct" (one-to-one operator<->model chat;
+    see DirectChatAgent). The caller picks the members each type needs. With
     `folder_uuid` the room is created inside that folder, after the rooms
     already there; the folder must exist."""
-    if room_type not in ("agents", "direct"):
+    if room_type not in ROOM_TYPES:
         raise ValueError(f"invalid room_type: {room_type!r}")
     position = 0
     if folder_uuid is not None:

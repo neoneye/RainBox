@@ -259,6 +259,18 @@ assistant). A deleted linked persona renders as a red `(deleted)` link to
 the operator has to notice and relink or unlink. Direct rooms are untouched:
 they keep their own model + system-prompt Settings panel, no persona section.
 
+An **assistant room** (`room_type='assistant'`, the New-chatroom modal's
+default "Assistant" choice) is the operator and the assistant, members fixed,
+and is born with a persona: `POST /chat/api/rooms` copies the
+`chat.default_persona` setting (a persona uuid, picked on `/settings`) into
+the assistant member's binding, following the newest revision — the same
+binding the picker writes, so the room's Settings show it and can change it.
+The copy happens once, at creation: changing the default later re-voices no
+existing room. An unset default, or one naming a deleted persona, creates the
+room with no persona, and the modal says which of the two will happen before
+Create (`GET /chat/api/new-room-defaults`). Nothing ships as the default; the
+store and the setting both start empty.
+
 ## Open questions
 
 - **Usage back-references.** A persona can be bound from a room member,

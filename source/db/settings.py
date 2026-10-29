@@ -119,6 +119,22 @@ def _validate_profile_current(value: object) -> None:
         raise ValueError(f"profile.current: no profile with uuid {target}")
 
 
+def _validate_chat_default_persona(value: object) -> None:
+    """Must be the uuid of an existing persona on the /persona page."""
+    from uuid import UUID
+
+    import db.persona as persona
+
+    try:
+        target = UUID(str(value).strip())
+    except ValueError:
+        raise ValueError(
+            f"chat.default_persona: not a uuid: {value!r}"
+        ) from None
+    if persona.persona_get(target) is None:
+        raise ValueError(f"chat.default_persona: no persona with uuid {target}")
+
+
 def _default_chat_model() -> object:
     """Unset fallback for chat.default_model: the preferred model-config
     override (Ollama first), or None when no overrides exist."""
@@ -188,6 +204,15 @@ SETTINGS: dict[str, Setting] = {
                     "overrides this for that room only. Unset = the "
                     "first Ollama override by name, then another provider's "
                     "override if Ollama has none.",
+    ),
+    "chat.default_persona": Setting(
+        "chat.default_persona", None, "string", None,
+        validate=_validate_chat_default_persona,
+        description="Persona (from /persona) a new Assistant room speaks "
+                    "with. It is linked to the room's assistant when the room "
+                    "is created; changing it later leaves existing rooms "
+                    "alone, and a room's own Settings can change its persona. "
+                    "Unset = new Assistant rooms start with no persona.",
     ),
     "profile.current": Setting(
         "profile.current", None, "string", None,

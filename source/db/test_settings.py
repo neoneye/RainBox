@@ -164,6 +164,24 @@ def test_chat_default_model_validation(app_ctx):
         db.session.commit()
 
 
+def test_chat_default_persona_validation(app_ctx):
+    """Stored values must be uuids naming an existing persona."""
+    from uuid import UUID, uuid4
+    prior = db.get_setting("chat.default_persona")
+    with pytest.raises(ValueError):
+        db.set_setting("chat.default_persona", "not-a-uuid")
+    with pytest.raises(ValueError):
+        db.set_setting("chat.default_persona", str(uuid4()))
+
+    p = db.persona_create(f"settings-default-{uuid4().hex[:6]}", None)
+    try:
+        db.set_setting("chat.default_persona", p["uuid"])
+        assert db.get_setting("chat.default_persona") == p["uuid"]
+    finally:
+        db.set_setting("chat.default_persona", prior)
+        db.persona_delete(UUID(p["uuid"]))
+
+
 # ---- secrets are env-only --------------------------------------------------
 
 def test_secret_cannot_be_persisted_to_db(temp_setting):

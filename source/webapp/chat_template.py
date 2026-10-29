@@ -194,6 +194,7 @@ CHAT_TEMPLATE: str = """
   /* Room-type choice in the new-room modal. */
   .ui-modal .room-type-choices{display:flex;gap:1.2em;margin:0.6em 0 0.2em}
   .ui-modal .room-type-choices label{font-size:0.85rem;color:#333;display:flex;align-items:center;gap:0.4em}
+  .ui-modal .room-persona{font-size:0.8rem;color:#666;margin:0.4em 0 0.2em}
 
   .chat-log{flex:1 1 auto;overflow:auto;padding:1em;display:flex;flex-direction:column;gap:1.1em}
   /* Deep-link target flash (e.g. /assistant "open in chat"). */
@@ -525,9 +526,11 @@ CHAT_TEMPLATE: str = """
     <h3 id="chat-room-title">New chatroom</h3>
     <input type="text" id="chat-room-input" placeholder="Room name" autocomplete="off">
     <div class="room-type-choices">
-      <label><input type="radio" name="chat-room-type" value="agents" checked> Agents room</label>
-      <label><input type="radio" name="chat-room-type" value="direct"> Direct LLM chat</label>
+      <label><input type="radio" name="chat-room-type" value="assistant" checked> Assistant</label>
+      <label><input type="radio" name="chat-room-type" value="direct"> Direct</label>
+      <label><input type="radio" name="chat-room-type" value="agents"> Group chat</label>
     </div>
+    <div class="room-persona" id="chat-room-persona"></div>
     <div class="agents" id="chat-room-agents">
       <span class="lbl">Add agents</span>
       <div id="agent-list"></div>
@@ -974,14 +977,21 @@ function currentRoomIsDirect(){
   const r = currentRoomObj();
   return !!(r && r.room_type === 'direct');
 }
+// A group chat is stored as room_type 'agents': the only type whose members
+// the operator picks, so the only one with a Members panel.
+function currentRoomIsGroup(){
+  const r = currentRoomObj();
+  return !!(r && r.room_type === 'agents');
+}
 
-// One person talking to one model: every direct room, and an agents room
-// whose only member besides the person is a single agent. Those read as a
+// One person talking to one model: every direct and assistant room, and a
+// group room whose only member besides the person is a single agent. Those read as a
 // text-message thread (the one-to-one CSS); a group room keeps the
 // name-on-every-row transcript, since there the speaker isn't implied.
 function isOneToOneRoom(){
   const r = currentRoomObj();
-  return !!r && (r.room_type === 'direct' || r.member_count === 2);
+  return !!r && (r.room_type === 'direct' || r.room_type === 'assistant'
+                 || r.member_count === 2);
 }
 function syncRoomLayout(){
   const oneToOne = isOneToOneRoom();
@@ -3009,15 +3019,15 @@ document.getElementById('chat-rename-input').addEventListener('keydown', (e) => 
   }
 });
 
-// Members lists agents, so it's meaningless in a direct LLM room: map it to
-// Settings there. Bridge posts as the direct-chat responder, which only a
-// direct room has: map it to Settings in an agents room. Settings itself
-// exists for both room types — the model picker + system prompt for a direct
-// room, the persona picker for an agents room — so it is never mapped away.
-// Stats/Export are shared.
+// Members edits a group chat's agents; assistant and direct rooms have fixed
+// members, so it maps to Settings there. Bridge posts as the direct-chat
+// responder, which only a direct room has: map it to Settings elsewhere.
+// Settings itself exists for every room type — the model picker + system
+// prompt for a direct room, the persona picker otherwise — so it is never
+// mapped away. Stats/Export are shared.
 function effectiveSidebarMode(){
   const direct = currentRoomIsDirect();
-  if (direct && sidebarMode === 'members') return 'settings';
+  if (!currentRoomIsGroup() && sidebarMode === 'members') return 'settings';
   if (!direct && sidebarMode === 'bridge') return 'settings';
   return sidebarMode;
 }
@@ -3034,13 +3044,13 @@ function persistSidebarPrefs(){
 }
 // Keep the select honest for the open room: hide the option that doesn't
 // apply to its type, and point the value at what is actually displayed.
-// Members is meaningless in a direct room (no agents to list) and Bridge in an
-// agents room (no responder to post as), so each is hidden there; Settings
-// applies to both room types, so it's always shown.
+// Members only applies to a group chat (the one type with editable members)
+// and Bridge only to a direct room (the one responder to post as), so each is
+// hidden elsewhere; Settings applies to every room type, so it's always shown.
 function syncSidebarModeOptions(){
   const direct = currentRoomIsDirect();
   const membersOpt = sidebarModeSel.querySelector('option[value="members"]');
-  membersOpt.hidden = membersOpt.disabled = direct;
+  membersOpt.hidden = membersOpt.disabled = !currentRoomIsGroup();
   const bridgeOpt = sidebarModeSel.querySelector('option[value="bridge"]');
   bridgeOpt.hidden = bridgeOpt.disabled = !direct;
   sidebarModeSel.value = activeSidebarMode();
@@ -4017,12 +4027,35 @@ async function loadAgents(){
 // ---- new chatroom modal ----
 function selectedRoomType(){
   const checked = document.querySelector('input[name="chat-room-type"]:checked');
-  return checked ? checked.value : 'agents';
+  return checked ? checked.value : 'assistant';
 }
-// A direct room's members are fixed (operator + the model responder), so the
-// agent picker only applies to agents rooms.
+// Assistant and direct rooms have fixed members, so the agent picker only
+// applies to a group chat; the persona line only to an assistant room.
 function syncRoomTypeUI(){
-  document.getElementById('chat-room-agents').hidden = (selectedRoomType() === 'direct');
+  const type = selectedRoomType();
+  document.getElementById('chat-room-agents').hidden = (type !== 'agents');
+  document.getElementById('chat-room-persona').hidden = (type !== 'assistant');
+}
+// Say which persona a new assistant room will speak with, before Create:
+// a room born without one answers in the model's own voice.
+async function loadRoomPersonaLine(){
+  const el = document.getElementById('chat-room-persona');
+  el.textContent = '';
+  let persona = null;
+  try { persona = (await getJSON('/chat/api/new-room-defaults')).persona; }
+  catch (e) { el.textContent = 'Could not read the default persona.'; return; }
+  const link = document.createElement('a');
+  link.href = '/settings';
+  link.target = '_blank';
+  if (persona){
+    el.append('Speaks as ' + persona.name + ' (the default persona in ');
+    link.textContent = 'Settings';
+    el.append(link, ').');
+  } else {
+    el.append('No default persona is set, so the room starts with none. ');
+    link.textContent = 'Set one in Settings';
+    el.append(link, '.');
+  }
 }
 document.querySelectorAll('input[name="chat-room-type"]').forEach(radio => {
   radio.addEventListener('change', syncRoomTypeUI);
@@ -4039,8 +4072,9 @@ async function openRoomModal(folderId){
   input.value = '';
   if (!agentsLoaded) await loadAgents();
   agentListEl.querySelectorAll('input:checked').forEach(cb => { cb.checked = false; });
-  document.querySelector('input[name="chat-room-type"][value="agents"]').checked = true;
+  document.querySelector('input[name="chat-room-type"][value="assistant"]').checked = true;
   syncRoomTypeUI();
+  loadRoomPersonaLine();
   document.getElementById('chat-room-create').disabled = true;
   document.getElementById('ui-modal-backdrop').hidden = false;
   document.getElementById('chat-room-modal').hidden = false;
@@ -4055,7 +4089,7 @@ async function confirmRoomModal(){
   const name = input.value.trim();
   if (!name){ input.focus(); return; }
   const room_type = selectedRoomType();
-  const member_uuids = room_type === 'direct' ? []
+  const member_uuids = room_type !== 'agents' ? []
     : Array.from(agentListEl.querySelectorAll('input:checked')).map(cb => cb.value);
   try {
     await flushPendingTreeSave();

@@ -63,11 +63,22 @@ def test_messages_wrap_long_unbroken_text():
 
 
 def test_new_room_modal_has_room_type_choice():
+    """Assistant · Direct · Group chat, Assistant first and checked; the agent
+    picker belongs to Group chat (stored as 'agents'), the persona line to
+    Assistant."""
     body = _body()
     assert 'name="chat-room-type"' in body
-    assert "Direct LLM chat" in body
+    assert 'value="assistant" checked> Assistant</label>' in body
+    assert 'value="direct"> Direct</label>' in body
+    assert 'value="agents"> Group chat</label>' in body
+    assert body.index('value="assistant"') < body.index('value="direct"') \
+        < body.index('value="agents"')
     assert "function syncRoomTypeUI" in body
     assert 'id="chat-room-agents"' in body
+    assert "document.getElementById('chat-room-agents').hidden = (type !== 'agents');" in body
+    assert 'id="chat-room-persona"' in body
+    assert "/chat/api/new-room-defaults" in body
+    assert "const member_uuids = room_type !== 'agents' ? []" in body
 
 
 def test_direct_room_settings_sidebar():
@@ -82,13 +93,17 @@ def test_direct_room_settings_sidebar():
 
 
 def test_sidebar_modes_match_room_type():
-    """Members is hidden in direct rooms (no agents there). Settings now
-    applies to both room types (model/prompt for a direct room, the persona
-    picker for an agents room) so it is never hidden, and the remembered mode
-    maps Members->Settings in a direct room rather than dropping to hidden."""
+    """Members is shown only in a group chat: assistant and direct rooms have
+    fixed members. Settings applies to every room type (model/prompt for a
+    direct room, the persona picker otherwise) so it is never hidden, and the
+    remembered mode maps Members->Settings outside a group chat rather than
+    dropping to hidden."""
     body = _body()
     assert "function syncSidebarModeOptions" in body
-    assert "membersOpt.hidden = membersOpt.disabled = direct" in body
+    # Members belongs to the group chat only: assistant and direct rooms
+    # have fixed members.
+    assert "membersOpt.hidden = membersOpt.disabled = !currentRoomIsGroup();" in body
+    assert "if (!currentRoomIsGroup() && sidebarMode === 'members') return 'settings';" in body
     assert "settingsOpt.hidden" not in body
     assert "function effectiveSidebarMode" in body
     assert "function activeSidebarMode" in body
@@ -601,7 +616,8 @@ def test_one_to_one_rooms_render_as_text_messages():
     conversation rows drop their header — the clock moves to the action row.
     Group rooms keep the transcript layout; diagnostic rows keep theirs."""
     body = _body()
-    assert "return !!r && (r.room_type === 'direct' || r.member_count === 2);" in body
+    assert "r.room_type === 'direct' || r.room_type === 'assistant'" in body
+    assert "|| r.member_count === 2);" in body
     assert "log.classList.toggle('one-to-one', oneToOne);" in body
     assert "form.classList.toggle('one-to-one', oneToOne);" in body
     # A centered reading column, the composer aligned with it.

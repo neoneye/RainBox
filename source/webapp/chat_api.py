@@ -108,8 +108,8 @@ def chat_rooms() -> Response | tuple[Response, int]:
         if not name:
             abort(400, "room name required")
         room_type = data.get("room_type") or "agents"
-        if room_type not in ("agents", "direct"):
-            abort(400, "room_type must be 'agents' or 'direct'")
+        if room_type not in db.ROOM_TYPES:
+            abort(400, "room_type must be one of " + ", ".join(db.ROOM_TYPES))
         human = db.get_human_user()
         if human is None:
             abort(500, "no human user seeded")
@@ -117,6 +117,9 @@ def chat_rooms() -> Response | tuple[Response, int]:
             # A direct room is always exactly operator + the direct-chat
             # responder; any submitted member_uuids are ignored.
             member_uuids = [DIRECT_CHAT_UUID]
+        elif room_type == "assistant":
+            # Likewise operator + the assistant, whatever was submitted.
+            member_uuids = [ASSISTANT_UUID]
         else:
             member_uuids = [_parse_uuid(raw) for raw in data.get("member_uuids", [])]
             # The responder belongs to the room *type*, not to a member list:
@@ -132,6 +135,13 @@ def chat_rooms() -> Response | tuple[Response, int]:
                                       room_type=room_type, folder_uuid=folder_uuid)
         except ValueError as err:
             abort(400, str(err))
+        if room_type == "assistant":
+            # Born with the default persona, as if linked in Settings right
+            # after: following its newest revision, changeable per room.
+            default = _default_persona()
+            if default is not None:
+                db.set_member_persona(room.uuid, ASSISTANT_UUID,
+                                      persona_uuid=UUID(default["uuid"]))
         # A create is a tree mutation, so it hands back the fresh tree version —
         # without it the client's next drag 409s (notes/ui-tree-persistence.md).
         return jsonify({"uuid": str(room.uuid), "name": room.name,
@@ -260,12 +270,43 @@ def delete_chat_room(room_uuid: str) -> Response:
                     "version": db.chat_tree_version()})
 
 
+def _default_persona() -> dict[str, Any] | None:
+    """The persona `chat.default_persona` names, or None when it is unset or
+    the persona has since been deleted."""
+    raw = db.get_setting("chat.default_persona")
+    if not raw:
+        return None
+    try:
+        return db.persona_get(UUID(str(raw)))
+    except ValueError:
+        return None
+
+
+@app.route("/chat/api/new-room-defaults")
+def chat_new_room_defaults() -> Response:
+    """What a room created now would start with — read by the New-chatroom
+    modal when it opens, so a default changed in another tab is current."""
+    p = _default_persona()
+    return jsonify({"persona": None if p is None
+                    else {"uuid": p["uuid"], "name": p["name"]}})
+
+
+def _abort_if_members_fixed(room: Any) -> None:
+    """An assistant room is the operator and the assistant, nobody else; a
+    room that needs another agent is a group chat."""
+    if room.room_type == "assistant":
+        abort(400, "an assistant room's members are fixed; "
+                   "use a group chat for more agents")
+
+
 @app.route("/chat/api/rooms/<room_uuid>/members", methods=["GET", "POST"])
 def chat_room_members(room_uuid: str) -> Response:
     ruuid = _parse_uuid(room_uuid)
-    if db.get_chatroom(ruuid) is None:
+    room = db.get_chatroom(ruuid)
+    if room is None:
         abort(404, "room not found")
     if request.method == "POST":
+        _abort_if_members_fixed(room)
         data = request.get_json(silent=True) or {}
         raw = data.get("user_uuid")
         if not raw:
@@ -290,8 +331,10 @@ def chat_room_members(room_uuid: str) -> Response:
 )
 def remove_chat_room_member(room_uuid: str, user_uuid: str) -> Response:
     ruuid = _parse_uuid(room_uuid)
-    if db.get_chatroom(ruuid) is None:
+    room = db.get_chatroom(ruuid)
+    if room is None:
         abort(404, "room not found")
+    _abort_if_members_fixed(room)
     uuser = _parse_uuid(user_uuid)
     target = db.get_chat_user(uuser)
     # Defense-in-depth: the UI never offers to remove the human, but reject it

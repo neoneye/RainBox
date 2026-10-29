@@ -39,6 +39,13 @@ def _profile_choices() -> list[dict]:
     ]
 
 
+def _persona_choices() -> list[dict]:
+    """Every persona as {uuid, label} for the chat.default_persona dropdown,
+    in tree order."""
+    return [{"uuid": p["uuid"], "label": p["name"]}
+            for p in db.persona_load_tree()["personas"]]
+
+
 SETTINGS_TEMPLATE = """
 <!doctype html>
 <title>Settings &mdash; rainbox</title>
@@ -125,6 +132,7 @@ const SETTINGS = {{ settings_json|safe }};
 const QA_SHIELDS = {{ qa_shields_json|safe }};
 const MODELS = {{ models_json|safe }};  // {uuid,label,available} for chat.default_model
 const PROFILES = {{ profiles_json|safe }};  // {uuid,label} for profile.current
+const PERSONAS = {{ personas_json|safe }};  // {uuid,label} for chat.default_persona
 
 const SOURCE_HELP = {
   db: 'Stored in the database — overrides the environment variable and the default.',
@@ -149,10 +157,16 @@ function profileLabel(uuid){
   const p = PROFILES.find(x => x.uuid === uuid);
   return p ? p.label : null;
 }
+// A persona uuid's human label (the persona's name), or null.
+function personaLabel(uuid){
+  const p = PERSONAS.find(x => x.uuid === uuid);
+  return p ? p.label : null;
+}
 // Human label for a uuid-valued setting, or null for plain settings.
 function uuidLabel(key, uuid){
   if (key === 'chat.default_model') return modelLabel(uuid);
   if (key === 'profile.current') return profileLabel(uuid);
+  if (key === 'chat.default_persona') return personaLabel(uuid);
   return null;
 }
 // Effective value for display ("(unset)" when empty/null). chat.default_model
@@ -382,7 +396,8 @@ function openEdit(key){
 
   let field;
   const isSelect = s.value_type === 'bool' || s.key === 'chat.default_model'
-    || s.key === 'profile.current' || (s.choices && s.choices.length > 0);
+    || s.key === 'profile.current' || s.key === 'chat.default_persona'
+    || (s.choices && s.choices.length > 0);
   if (s.key === 'chat.default_model'){
     // An unavailable model cannot answer, so it is noise in the picker. The
     // exception is whatever the setting already holds (stored or effective):
@@ -400,6 +415,12 @@ function openEdit(key){
     field = 'Value <select id="s-edit-input">'
       + '<option value="">(unset &mdash; no operator identity)</option>'
       + PROFILES.map(p => '<option value="' + escapeHtml(p.uuid) + '">'
+          + escapeHtml(p.label) + '</option>').join('')
+      + '</select>';
+  } else if (s.key === 'chat.default_persona'){
+    field = 'Value <select id="s-edit-input">'
+      + '<option value="">(unset &mdash; new Assistant rooms start with no persona)</option>'
+      + PERSONAS.map(p => '<option value="' + escapeHtml(p.uuid) + '">'
           + escapeHtml(p.label) + '</option>').join('')
       + '</select>';
   } else if (s.choices && s.choices.length){
@@ -497,6 +518,7 @@ def settings_page() -> str:
         qa_shields_json=_js(seed_memory.available_qa_shields()),
         models_json=_js(db.chat_model_choices()),
         profiles_json=_js(_profile_choices()),
+        personas_json=_js(_persona_choices()),
     )
 
 
