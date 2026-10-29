@@ -351,6 +351,11 @@ class ModelGroupAgent(Agent):
     # its own failures and repeated them is not one more nudge from getting it
     # right, and the operator is paying a full call per nudge.
     REJECTED_RESPONSE_RETRIES = 3
+    # How many more times the SAME model is asked after a WhitespaceRunaway.
+    # The padding is a sampling accident, not a property of the prompt: the
+    # same request usually comes back whole in about a second, which beats
+    # falling through to a member that may need loading first.
+    WHITESPACE_RUNAWAY_RETRIES = 1
 
     # How much of a rejected response is quoted back to the model. Enough to
     # carry any plausible structured answer whole, and a bound on the runaway
@@ -594,6 +599,7 @@ class ModelGroupAgent(Agent):
             # prefix — byte-identical to what a group without retries sends.
             corrections: list[ChatMessage] = []
             rejections = 0
+            runaway_retries = 0
             while True:
                 attempt_started = False
                 # Per attempt, not per model: a retry that streams nothing
@@ -752,6 +758,16 @@ class ModelGroupAgent(Agent):
                                 self.REJECTED_RESPONSE_ECHO_CHARS) or None,
                             "error": f"{type(e).__name__}: {e}",
                         })
+                    if (isinstance(e, WhitespaceRunaway)
+                            and runaway_retries < self.WHITESPACE_RUNAWAY_RETRIES):
+                        # The same request again, with the corrections it was
+                        # already sent and nothing added: there is no answer
+                        # to correct, only padding to roll the dice past.
+                        runaway_retries += 1
+                        logger.warning(
+                            "agent %s: model %s got stuck padding whitespace; "
+                            "asking it again", self.name, model_uuid)
+                        continue
                     if not isinstance(e, RejectedResponse) or retries_left < 1:
                         logger.warning(
                             "agent %s: model %s failed (%s); trying next in group",

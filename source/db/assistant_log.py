@@ -103,7 +103,9 @@ def _rejected_calls(step) -> list[dict]:
     step's one log, system prompt, user prompt and request turns — the agent
     stores those once, not per attempt — and a retry was additionally sent the
     turns its own member's earlier refusals added (`retry_turns`), which reset
-    when the group moves to the next member. Read here rather than stored, so
+    when the group moves to the next member; a member asked again after it got
+    stuck padding whitespace keeps them, since that retry is the same request.
+    Read here rather than stored, so
     the row shows what the call worked from without saving the largest text
     once per attempt. `prompts_as` names the row that answered, which carries
     the same prompts, so the export can point at it instead of repeating them."""
@@ -115,9 +117,8 @@ def _rejected_calls(step) -> list[dict]:
     retry_turns: list = []
     previous: dict | None = None
     for index, attempt in enumerate(attempts, start=1):
-        if previous is not None and (
-                previous.get("outcome") == "failed"
-                or previous.get("model_uuid") != attempt.get("model_uuid")):
+        if (previous is not None
+                and previous.get("model_uuid") != attempt.get("model_uuid")):
             retry_turns = []
         # Numbered only when there were several, so the common single retry
         # reads as plain "(rejected)" and a model that failed twice in a row

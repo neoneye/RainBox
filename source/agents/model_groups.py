@@ -142,103 +142,112 @@ def structured_llm_call(
 
     from llama_index.core.instrumentation.dispatcher import instrument_tags
 
-    from agents.base import (ModelGroupAgent, check_whitespace_runaway,
-                             truncate_middle)
+    from agents.base import (ModelGroupAgent, WhitespaceRunaway,
+                             check_whitespace_runaway, truncate_middle)
     from llm import capture_reasoning
 
     for model_uuid in candidate_model_uuids:
-        # Per member: one counter across a fallback charges the answering
-        # member for the failed one's prompt too.
-        token_counter = TokenCountingHandler()
-        attempt_at = datetime.now(UTC)
-        t0 = time.monotonic()
-        model_name = ""
-        reasoning: str | None = None
-        response_text: str | None = None
-        try:
-            _provider_id, model_name, args = db.resolved_model_kwargs(model_uuid)
-            timeout_s = float(args.get("request_timeout") or args.get("timeout") or 60.0)
-            if observer is not None:
-                observer.started(model_uuid, model_name, timeout_s)
-            # Fail fast on a down/unreachable provider: the OpenAI client's
-            # default exponential backoff (max_retries=10) turns one outage
-            # into a ~30s+ hang per model with no UI feedback. We already
-            # fall back across the group's members, so per-model retries add
-            # latency without improving the odds. (Native-Ollama drops the
-            # key in prepare_llm's field filter, so this is a no-op there.)
-            args = {**args, "max_retries": 0}
-            the_llm = prepare_llm(_provider_id, model_name, args)
-            sllm = the_llm.as_structured_llm(
-                response_model, callback_manager=CallbackManager([token_counter])
-            )
-            deadline = time.monotonic() + timeout_s
-            last = None
-            with instrument_tags({"caller": agent_name}), \
-                    capture_reasoning() as tally:
-                try:
-                    for last in sllm.stream_chat(messages):
-                        raw_text = (tally.content_text
-                                    or getattr(getattr(last, "message", None),
-                                               "content", None)
-                                    or "")
-                        if observer is not None:
-                            observer.progress(
-                                model_uuid, model_name,
-                                tally.reasoning_text.strip() or None,
-                                raw_text.strip() or None)
-                        check_whitespace_runaway(raw_text)
-                        if time.monotonic() > deadline:
-                            raise TimeoutError(
-                                f"structured stream exceeded {timeout_s:.0f}s "
-                                "(model still generating)")
-                finally:
-                    reasoning = tally.reasoning_text.strip() or None
-                    response_text = (
-                        tally.content_text
-                        or getattr(getattr(last, "message", None), "content", None)
-                        or "").strip() or None
-            if last is None:
-                raise RuntimeError("structured stream produced no response")
-            result = ModelGroupAgent._settle_structured_result(
-                response_model, cast(BaseModel, last.raw), response_text)
-            if usage_out is not None:
-                usage_out.update({
-                    "input": token_counter.prompt_llm_token_count,
-                    "output": token_counter.completion_llm_token_count,
-                    "ms": int((time.monotonic() - t0) * 1000),
-                    "requested_at": attempt_at.isoformat(),
-                })
-            return result, model_uuid
-        except Exception as e:
-            last_error = e
-            logger.warning(
-                "agent %s: model %s failed (%s); trying next in group",
-                agent_name, model_uuid, e,
-            )
-            if observer is not None:
-                try:
-                    observer.failed(model_uuid, model_name, e,
-                                    reasoning, response_text)
-                except Exception:   # noqa: BLE001 — watching must not cost the call
-                    logger.warning("agent %s: observer failed", agent_name,
-                                   exc_info=True)
-            if attempts_out is not None:
-                attempts_out.append({
-                    "outcome": "failed",
-                    "model_uuid": str(model_uuid),
-                    "model_name": model_name,
-                    "requested_at": attempt_at.isoformat(),
-                    "ms": int((time.monotonic() - t0) * 1000),
-                    "input_tokens": token_counter.prompt_llm_token_count,
-                    "output_tokens": token_counter.completion_llm_token_count,
-                    "reasoning": truncate_middle(
-                        reasoning or "",
-                        ModelGroupAgent.REJECTED_ATTEMPT_REASONING_CHARS) or None,
-                    "response": truncate_middle(
-                        response_text or "",
-                        ModelGroupAgent.REJECTED_RESPONSE_ECHO_CHARS) or None,
-                    "error": f"{type(e).__name__}: {e}",
-                })
+        # A member that got stuck padding whitespace is asked again before
+        # the group moves on (ModelGroupAgent.WHITESPACE_RUNAWAY_RETRIES):
+        # the padding is a sampling accident, so the same request usually
+        # comes back whole, sooner than a next member that may need loading.
+        for try_index in range(1 + ModelGroupAgent.WHITESPACE_RUNAWAY_RETRIES):
+            # Per member: one counter across a fallback charges the answering
+            # member for the failed one's prompt too.
+            token_counter = TokenCountingHandler()
+            attempt_at = datetime.now(UTC)
+            t0 = time.monotonic()
+            model_name = ""
+            reasoning: str | None = None
+            response_text: str | None = None
+            try:
+                _provider_id, model_name, args = db.resolved_model_kwargs(model_uuid)
+                timeout_s = float(args.get("request_timeout") or args.get("timeout") or 60.0)
+                if observer is not None:
+                    observer.started(model_uuid, model_name, timeout_s)
+                # Fail fast on a down/unreachable provider: the OpenAI client's
+                # default exponential backoff (max_retries=10) turns one outage
+                # into a ~30s+ hang per model with no UI feedback. We already
+                # fall back across the group's members, so per-model retries add
+                # latency without improving the odds. (Native-Ollama drops the
+                # key in prepare_llm's field filter, so this is a no-op there.)
+                args = {**args, "max_retries": 0}
+                the_llm = prepare_llm(_provider_id, model_name, args)
+                sllm = the_llm.as_structured_llm(
+                    response_model, callback_manager=CallbackManager([token_counter])
+                )
+                deadline = time.monotonic() + timeout_s
+                last = None
+                with instrument_tags({"caller": agent_name}), \
+                        capture_reasoning() as tally:
+                    try:
+                        for last in sllm.stream_chat(messages):
+                            raw_text = (tally.content_text
+                                        or getattr(getattr(last, "message", None),
+                                                   "content", None)
+                                        or "")
+                            if observer is not None:
+                                observer.progress(
+                                    model_uuid, model_name,
+                                    tally.reasoning_text.strip() or None,
+                                    raw_text.strip() or None)
+                            check_whitespace_runaway(raw_text)
+                            if time.monotonic() > deadline:
+                                raise TimeoutError(
+                                    f"structured stream exceeded {timeout_s:.0f}s "
+                                    "(model still generating)")
+                    finally:
+                        reasoning = tally.reasoning_text.strip() or None
+                        response_text = (
+                            tally.content_text
+                            or getattr(getattr(last, "message", None), "content", None)
+                            or "").strip() or None
+                if last is None:
+                    raise RuntimeError("structured stream produced no response")
+                result = ModelGroupAgent._settle_structured_result(
+                    response_model, cast(BaseModel, last.raw), response_text)
+                if usage_out is not None:
+                    usage_out.update({
+                        "input": token_counter.prompt_llm_token_count,
+                        "output": token_counter.completion_llm_token_count,
+                        "ms": int((time.monotonic() - t0) * 1000),
+                        "requested_at": attempt_at.isoformat(),
+                    })
+                return result, model_uuid
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    "agent %s: model %s failed (%s); trying next in group",
+                    agent_name, model_uuid, e,
+                )
+                if observer is not None:
+                    try:
+                        observer.failed(model_uuid, model_name, e,
+                                        reasoning, response_text)
+                    except Exception:   # noqa: BLE001 — watching must not cost the call
+                        logger.warning("agent %s: observer failed", agent_name,
+                                       exc_info=True)
+                if attempts_out is not None:
+                    attempts_out.append({
+                        "outcome": "failed",
+                        "model_uuid": str(model_uuid),
+                        "model_name": model_name,
+                        "requested_at": attempt_at.isoformat(),
+                        "ms": int((time.monotonic() - t0) * 1000),
+                        "input_tokens": token_counter.prompt_llm_token_count,
+                        "output_tokens": token_counter.completion_llm_token_count,
+                        "reasoning": truncate_middle(
+                            reasoning or "",
+                            ModelGroupAgent.REJECTED_ATTEMPT_REASONING_CHARS) or None,
+                        "response": truncate_middle(
+                            response_text or "",
+                            ModelGroupAgent.REJECTED_RESPONSE_ECHO_CHARS) or None,
+                        "error": f"{type(e).__name__}: {e}",
+                    })
+                if (isinstance(e, WhitespaceRunaway)
+                        and try_index < ModelGroupAgent.WHITESPACE_RUNAWAY_RETRIES):
+                    continue
+            break
     raise RuntimeError(
         f"agent {agent_name}: all {len(candidate_model_uuids)} models "
         f"in the group failed; last error: {last_error}"

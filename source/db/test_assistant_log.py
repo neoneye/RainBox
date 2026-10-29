@@ -762,8 +762,9 @@ def test_a_failed_member_carries_the_prompts_it_was_sent():
 
 
 def test_a_retry_carries_the_turns_its_members_refusals_added():
-    """A retry was sent the turns the same member's earlier refusals added;
-    the next member starts from the prompts alone."""
+    """A retry was sent the turns the same member's earlier refusals added,
+    and so was that member's retry after it got stuck padding whitespace; the
+    next member starts from the prompts alone."""
     step = _step("reply", at=30, ms=2000)
     turn_a = {"role": "user", "content": "refused once"}
     turn_b = {"role": "user", "content": "refused twice"}
@@ -772,6 +773,9 @@ def test_a_retry_carries_the_turns_its_members_refusals_added():
          "error": "RejectedResponse: a", "feedback": [turn_a]},
         {"model_uuid": "m1", "requested_at": _at(1).isoformat(), "ms": 1000,
          "error": "RejectedResponse: b", "feedback": [turn_b]},
+        {"outcome": "failed", "model_uuid": "m1",
+         "requested_at": _at(1.5).isoformat(), "ms": 500,
+         "error": "WhitespaceRunaway: stuck padding"},
         {"outcome": "failed", "model_uuid": "m2",
          "requested_at": _at(2).isoformat(), "ms": 1000,
          "error": "TimeoutError: t"},
@@ -783,7 +787,7 @@ def test_a_retry_carries_the_turns_its_members_refusals_added():
 
     attempts = [e for e in events if e["variant"] == "rejected"]
     assert [a["payload"]["retry_turns"] for a in attempts] == [
-        [], [turn_a], [], []]
+        [], [turn_a], [turn_a, turn_b], [], []]
     assert {a["payload"]["prompts_as"] for a in attempts} == {"decide → reply"}
 
 
