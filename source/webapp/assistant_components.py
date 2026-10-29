@@ -243,7 +243,8 @@ def _kpi_html(event: dict) -> Markup:
 
 
 def _block(title: str, body: Any, *, collapsed: bool = False,
-           key: str = "", cache: dict | None = None) -> dict | None:
+           key: str = "", cache: dict | None = None,
+           same_as: str | None = None) -> dict | None:
     """A labelled block of text, or None when there is nothing to show.
 
     None rather than an empty block: an absent field says "not recorded",
@@ -264,12 +265,17 @@ def _block(title: str, body: Any, *, collapsed: bool = False,
     `cache` is where the prompt cache's prefixes end inside THIS body
     (`_prompt_cache`), for the page's cache view. Only the two prompt panes
     have one; the page draws it, the export never sees it.
+
+    `same_as` names another row of the run whose block of this title holds
+    the same body. The page still draws it — the pane is where a call is
+    inspected — but the export, which has no fold, writes a pointer instead of
+    printing a prompt a second time.
     """
     if body in (None, "", {}, []):
         return None
     return {"title": title, "body": body, "collapsed": collapsed,
             "key": key or title, "note": False, "json": _is_json_text(body),
-            "cache": cache}
+            "cache": cache, "same_as": same_as}
 
 
 def _prompt_cache(event: dict) -> dict[str, dict]:
@@ -498,12 +504,16 @@ def _llm(event: dict) -> list[dict]:
     rejected = payload.get("rejected_attempts") or []
     key = event.get("uuid") or event.get("label") or "ev"
     cache = _prompt_cache(event)
+    # On an attempt that was thrown away: the row that answered, which was
+    # sent the same log, prompts and request turns.
+    same_as = payload.get("prompts_as")
     return _blocks(
         # First: what the call was working from — the profile in force, the
         # switch states. It frames everything below it, and it is short, so
         # putting it after the prompts left it past tens of thousands of
         # characters.
-        _block("log", payload.get("log"), collapsed=True, key=f"{key}-log"),
+        _block("log", payload.get("log"), collapsed=True, key=f"{key}-log",
+               same_as=same_as),
         # Present only on the response-language classifier's own row: the
         # gate's verdict that sent this call out (why it asked rather than
         # skipping), so an operator looking at an 11s classifier call does
@@ -513,13 +523,20 @@ def _llm(event: dict) -> list[dict]:
         # The prompts shut by default: they are the largest thing here and the
         # least often the answer. The response is what the reader came for.
         _block("system prompt", payload.get("system_prompt"),
-               collapsed=True, key=f"{key}-system", cache=cache.get("system")),
+               collapsed=True, key=f"{key}-system", cache=cache.get("system"),
+               same_as=same_as),
         _block("user prompt", payload.get("user_prompt"),
-               collapsed=True, key=f"{key}-user", cache=cache.get("user")),
+               collapsed=True, key=f"{key}-user", cache=cache.get("user"),
+               same_as=same_as),
         # The turns sent after the user prompt when the prompt layout gave the
         # request a message of its own: the acknowledgement, then the request.
         _block("request turns", payload.get("followup_turns"),
-               collapsed=True, key=f"{key}-request"),
+               collapsed=True, key=f"{key}-request", same_as=same_as),
+        # On a retry: the turns its member's earlier refusals added after the
+        # prompts — the part of what this attempt was sent that the answering
+        # row's prompts do not show.
+        _block("retry turns", payload.get("retry_turns"),
+               collapsed=True, key=f"{key}-retry"),
         # Reasoning before the response: the model produces them in that
         # order. Folded, so the response stays the first open block.
         _block("reasoning", payload.get("reasoning"),
@@ -1044,6 +1061,9 @@ def event_markdown(event: dict) -> list[str]:
     for block in event_blocks(event):
         if block["note"]:
             out += [block["body"], ""]
+            continue
+        if block.get("same_as"):
+            out += [f"**{block['title']}** — same as {block['same_as']}", ""]
             continue
         out += [f"**{block['title']}**", "", fence(_block_text(block)), ""]
     for intent in event_intents(event):

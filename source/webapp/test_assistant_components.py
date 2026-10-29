@@ -861,3 +861,28 @@ def test_each_pane_carries_its_own_length_so_the_legend_can_speak_for_the_pane()
     assert sys_attr["chars"] == 40 and user_attr["chars"] == 40
     # "<system>" + 40 + "\n<user>" + 40
     assert sys_attr["prompt_chars"] == user_attr["prompt_chars"] == 95
+
+
+def test_an_attempt_row_shows_its_prompts_and_the_export_points_instead():
+    """A thrown-away attempt was sent the answering row's prompts. The pane
+    draws them, as it does for the answering call; the export, which has no
+    fold, names that row instead of printing the prompts a second time."""
+    event = _event("llm", "reply_audit (failed)", payload={
+        "system_prompt": "SYSTEM-TEXT", "user_prompt": "USER-TEXT",
+        "log": [{"label": "persona", "text": "P"}],
+        "retry_turns": [{"role": "user", "content": "RETRY-TEXT"}],
+        "prompts_as": "reply_audit",
+        "model_response": "{}", "error": "TimeoutError: 60s"})
+
+    html = render_event_detail(event)
+    assert "SYSTEM-TEXT" in html and "USER-TEXT" in html
+    assert "RETRY-TEXT" in html
+
+    md = "\n".join(event_markdown(event))
+    assert "SYSTEM-TEXT" not in md and "USER-TEXT" not in md
+    assert "**system prompt** — same as reply_audit" in md
+    assert "**user prompt** — same as reply_audit" in md
+    assert "**log** — same as reply_audit" in md
+    # What only this attempt was sent is printed.
+    assert "RETRY-TEXT" in md
+    assert "TimeoutError: 60s" in md

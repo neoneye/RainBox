@@ -738,6 +738,55 @@ def test_a_group_member_that_failed_is_drawn_as_a_failed_call_before_the_answer(
     assert answered["start"] >= _at(60)
 
 
+def test_a_failed_member_carries_the_prompts_it_was_sent():
+    """The failed member was sent the step's one log, system prompt, user
+    prompt and request turns — the same the answering member was — so its row
+    shows them too, and names the answering row for the export to point at."""
+    step = _step("reply_audit", at=0, ms=14000, code_driven=True)
+    step.log = [{"label": "persona", "text": "P"}]
+    step.followup_turns = [{"role": "user", "content": "the request"}]
+    step.rejected_attempts = [{
+        "outcome": "failed", "requested_at": _at(0).isoformat(), "ms": 60000,
+        "error": "TimeoutError: structured stream exceeded 60s"}]
+
+    events = db.run_events(_run(finished=90), [step])
+
+    failed = next(e for e in events if e["label"] == "reply_audit (failed)")
+    assert failed["payload"]["system_prompt"] == "sys"
+    assert failed["payload"]["user_prompt"] == "usr"
+    assert failed["payload"]["log"] == [{"label": "persona", "text": "P"}]
+    assert failed["payload"]["followup_turns"] == [
+        {"role": "user", "content": "the request"}]
+    assert failed["payload"]["retry_turns"] == []
+    assert failed["payload"]["prompts_as"] == "reply_audit"
+
+
+def test_a_retry_carries_the_turns_its_members_refusals_added():
+    """A retry was sent the turns the same member's earlier refusals added;
+    the next member starts from the prompts alone."""
+    step = _step("reply", at=30, ms=2000)
+    turn_a = {"role": "user", "content": "refused once"}
+    turn_b = {"role": "user", "content": "refused twice"}
+    step.rejected_attempts = [
+        {"model_uuid": "m1", "requested_at": _at(0).isoformat(), "ms": 1000,
+         "error": "RejectedResponse: a", "feedback": [turn_a]},
+        {"model_uuid": "m1", "requested_at": _at(1).isoformat(), "ms": 1000,
+         "error": "RejectedResponse: b", "feedback": [turn_b]},
+        {"outcome": "failed", "model_uuid": "m2",
+         "requested_at": _at(2).isoformat(), "ms": 1000,
+         "error": "TimeoutError: t"},
+        {"model_uuid": "m3", "requested_at": _at(3).isoformat(), "ms": 1000,
+         "error": "RejectedResponse: c", "feedback": [turn_a]},
+    ]
+
+    events = db.run_events(_run(finished=40), [step])
+
+    attempts = [e for e in events if e["variant"] == "rejected"]
+    assert [a["payload"]["retry_turns"] for a in attempts] == [
+        [], [turn_a], [], []]
+    assert {a["payload"]["prompts_as"] for a in attempts} == {"decide → reply"}
+
+
 def test_a_member_that_failed_mid_call_is_drawn_before_the_call_ends():
     """While a code-driven call is still running, a member that already failed
     is its own row — from the in-flight checkpoint, not once the call's row
@@ -747,6 +796,7 @@ def test_a_member_that_failed_mid_call_is_drawn_before_the_call_ends():
         "action": "reply_audit", "model_name": "answering-model",
         "started_at": _at(60).isoformat(), "timeout_seconds": 60.0,
         "attempt": 2, "partial_response": '{"verdict"',
+        "system_prompt": "the system prompt", "user_prompt": "the user prompt",
         "failed_attempts": [{
             "model_name": "runaway-model",
             "started_at": _at(0).isoformat(), "finished_at": _at(60).isoformat(),
@@ -762,6 +812,8 @@ def test_a_member_that_failed_mid_call_is_drawn_before_the_call_ends():
     assert "again and again" in failed["payload"]["model_response"]
     assert failed["payload"]["reasoning"] == "checking the reply"
     assert "60s" in failed["payload"]["error"]
+    assert failed["payload"]["system_prompt"] == "the system prompt"
+    assert failed["payload"]["prompts_as"] == "reply_audit (in flight)"
     live = events[-1]
     assert live["label"] == "reply_audit (in flight)"
     assert live["start"] == _at(60)

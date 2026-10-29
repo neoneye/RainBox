@@ -97,10 +97,28 @@ def _rejected_calls(step) -> list[dict]:
     Real calls to a real model, so they belong in the enumeration on the same
     footing as the one that succeeded — the step's own `duration_ms` covers
     only the attempt it kept, and without these rows their seconds read as a
-    gap where nothing was running."""
+    gap where nothing was running.
+
+    Each row also carries what the attempt was sent. Every attempt shares the
+    step's one log, system prompt, user prompt and request turns — the agent
+    stores those once, not per attempt — and a retry was additionally sent the
+    turns its own member's earlier refusals added (`retry_turns`), which reset
+    when the group moves to the next member. Read here rather than stored, so
+    the row shows what the call worked from without saving the largest text
+    once per attempt. `prompts_as` names the row that answered, which carries
+    the same prompts, so the export can point at it instead of repeating them."""
     calls: list[dict] = []
     attempts = step.rejected_attempts or []
+    shared = {k: getattr(step, k, None)
+              for k in ("log", "system_prompt", "user_prompt", "followup_turns")}
+    answered_as = _call_label(step) if _made_a_call(step) else None
+    retry_turns: list = []
+    previous: dict | None = None
     for index, attempt in enumerate(attempts, start=1):
+        if previous is not None and (
+                previous.get("outcome") == "failed"
+                or previous.get("model_uuid") != attempt.get("model_uuid")):
+            retry_turns = []
         # Numbered only when there were several, so the common single retry
         # reads as plain "(rejected)" and a model that failed twice in a row
         # is still tellable apart row by row. A member that raised instead of
@@ -119,11 +137,24 @@ def _rejected_calls(step) -> list[dict]:
             # a bar with a duration, which teaches that a discarded attempt is
             # less of a call than the one that replaced it — when the refused
             # answer is the whole reason anyone opens the row.
-            payload={"model_response": attempt.get("response"),
+            payload={**shared,
+                     "retry_turns": list(retry_turns),
+                     "prompts_as": answered_as,
+                     "model_response": attempt.get("response"),
                      "reasoning": attempt.get("reasoning"),
                      "error": attempt.get("error"),
                      "feedback": attempt.get("feedback") or []}))
+        if attempt.get("outcome") != "failed":
+            retry_turns.extend(attempt.get("feedback") or [])
+        previous = attempt
     return calls
+
+
+def _call_label(step) -> str:
+    """The label of the row for the call a step kept."""
+    if step.code_driven:
+        return step.action or "—"
+    return f"decide → {step.action}" if step.action else "decide"
 
 
 def embed_call_label(call: dict) -> tuple[str, str]:
@@ -594,9 +625,7 @@ def _step_events(step) -> list[dict]:
         if resumed is not None and (start is None or resumed > start):
             start = resumed
         events.append(_event(
-            "llm",
-            step.action or "—" if step.code_driven
-            else f"decide → {step.action}" if step.action else "decide",
+            "llm", _call_label(step),
             start=start, duration_ms=step.duration_ms,
             anchor=str(step.uuid), uuid=str(step.uuid),
             variant="code-driven" if step.code_driven else "decide",
@@ -722,6 +751,10 @@ def _live_event(active: dict | None, now: datetime | None = None) -> list[dict]:
     # rejected_attempts. Without them a member that ran into its timeout sat
     # inside the live row's growing bar until the next member answered.
     action = active.get("action")
+    live_label = f"{action} (in flight)" if action else "in flight"
+    # A failed member was sent the request the member being asked now was.
+    shared = {k: active.get(k)
+              for k in ("log", "system_prompt", "user_prompt", "followup_turns")}
     events = []
     for attempt in active.get("failed_attempts") or []:
         started = _parse_ts(attempt.get("started_at"))
@@ -733,7 +766,8 @@ def _live_event(active: dict | None, now: datetime | None = None) -> list[dict]:
             duration_ms=(int((finished - started).total_seconds() * 1000)
                          if started and finished else None),
             model=str(attempt.get("model_name") or ""),
-            payload={"model_response": attempt.get("partial_response"),
+            payload={**shared, "prompts_as": live_label,
+                     "model_response": attempt.get("partial_response"),
                      "reasoning": attempt.get("partial_reasoning"),
                      "error": error or None})))
     start = _parse_ts(active.get("started_at"))
@@ -747,7 +781,7 @@ def _live_event(active: dict | None, now: datetime | None = None) -> list[dict]:
         # Named for the call when it is a code-driven one, so the row says
         # which call the operator is watching; a decide call has no action
         # until it returns.
-        "llm", f"{action} (in flight)" if action else "in flight", variant="live",
+        "llm", live_label, variant="live",
         start=start, duration_ms=max(elapsed, 0) if elapsed is not None else None,
         uuid="live",
         kpis={"model": active.get("model_name"),
