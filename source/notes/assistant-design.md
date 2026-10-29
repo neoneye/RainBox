@@ -801,7 +801,14 @@ Every run is durable in `assistant_run` / `assistant_step` (see
   rejected (as a `<rejected_response>` user turn), so the model can see what
   was wrong with what it wrote. A call that never produced a response
   (timeout, transport error, empty stream) is not retried — it falls straight
-  through to the next candidate.
+  through to the next candidate. So does a stream that has emitted only
+  whitespace for `WHITESPACE_RUNAWAY_CHARS` (200) characters
+  (`WhitespaceRunaway`, `agents/base.py`): a schema-constrained decoder allows
+  whitespace between any two JSON tokens, and gemma4's MLX build can lock into
+  newline-and-indent padding where the next field belongs, which would
+  otherwise run to the 60s deadline. The guard runs on the raw stream in both
+  the decide loop and `structured_llm_call`, and cuts such a member off within
+  a second or two.
 - Each rejected attempt is kept on the step's **`rejected_attempts`** (what the
   model wrote and thought, why it was refused, its start time, duration, token
   counts, and the corrective turns that rejection produced), and so is each

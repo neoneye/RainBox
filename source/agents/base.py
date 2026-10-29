@@ -119,6 +119,38 @@ class RejectedResponse(ValueError):
     Only this one earns retries against the same model."""
 
 
+#: Consecutive whitespace characters at the end of a structured stream that
+#: mark it as stuck. A schema-constrained decoder lets whitespace sit between
+#: any two JSON tokens, and a model can fall into emitting it forever: gemma4's
+#: MLX build, asked for a reply audit, wrote its JSON in under a second and
+#: then 15k characters of newline-and-indent for the rest of the 60s deadline,
+#: right where the next field belonged. Legitimate pretty-printing puts a
+#: newline and an indent between tokens, a few dozen characters at most.
+WHITESPACE_RUNAWAY_CHARS = 200
+
+
+class WhitespaceRunaway(RuntimeError):
+    """A structured stream that has emitted nothing but whitespace for
+    WHITESPACE_RUNAWAY_CHARS characters. Raised mid-stream so the group moves
+    to its next member within a second, rather than spending the rest of the
+    deadline on padding. Not a RejectedResponse: there is no finished answer
+    to tell the model about."""
+
+
+def check_whitespace_runaway(raw_text: str) -> None:
+    """Raise WhitespaceRunaway when `raw_text` — the provider's text as
+    streamed, before any stripping — ends in a whitespace run of
+    WHITESPACE_RUNAWAY_CHARS or more. Looks only at the tail, so it is cheap
+    to call on every chunk."""
+    tail = raw_text[-WHITESPACE_RUNAWAY_CHARS:]
+    if len(tail) == WHITESPACE_RUNAWAY_CHARS and tail.isspace():
+        written = len(raw_text.rstrip())
+        raise WhitespaceRunaway(
+            f"structured stream emitted only whitespace for "
+            f"{WHITESPACE_RUNAWAY_CHARS}+ characters after {written} "
+            "characters of response (model stuck padding)")
+
+
 class Agent:
     """Base class for an inbox-draining agent.
 
@@ -643,6 +675,7 @@ class ModelGroupAgent(Agent):
                                     self._last_reasoning,
                                     self._last_response_text,
                                 )
+                                check_whitespace_runaway(response_text)
                                 if time.monotonic() > deadline:
                                     raise TimeoutError(
                                         f"structured stream exceeded {timeout_s:.0f}s "

@@ -552,3 +552,92 @@ def test_the_group_call_reports_each_member_to_its_observer(monkeypatch):
         ("started", "answering-model", 60.0),
         ("progress", "answering-model", '{"answer":"ok"}'),
     ]
+
+
+#: What the padding member wrote before it started emitting only whitespace.
+PADDING_TEXT = '{"answer": "fine"'
+
+
+def _padding_then_answer(models: list, calls: list):
+    """prepare_llm for a group whose first member writes PADDING_TEXT and then
+    streams newline-and-indent forever, and whose second member answers. The
+    first stream never ends on its own: only the runaway guard stops it."""
+    def stream_for(index):
+        def stream_chat(_messages):
+            calls.append(index)
+            if index == 0:
+                text = PADDING_TEXT
+                while True:
+                    yield SimpleNamespace(
+                        message=SimpleNamespace(content=text),
+                        raw=_Reply.model_construct(answer=None))
+                    text += "\n    "
+            yield SimpleNamespace(
+                message=SimpleNamespace(content='{"answer":"ok"}'),
+                raw=_Reply(answer="ok"))
+        return stream_chat
+
+    def prepare(_provider, model_name, _args):
+        index = models.index(model_name)
+        return SimpleNamespace(as_structured_llm=lambda *_a, **_k: SimpleNamespace(
+            stream_chat=stream_for(index)))
+    return prepare
+
+
+def _padding_group(monkeypatch):
+    uuids = [uuid4(), uuid4()]
+    names = ["padding-model", "answering-model"]
+    monkeypatch.setattr(
+        db, "resolved_model_kwargs",
+        lambda model_uuid: ("ollama", names[uuids.index(model_uuid)], {}))
+    calls: list[int] = []
+    return uuids, calls, _padding_then_answer(names, calls)
+
+
+def test_the_decide_path_drops_a_member_stuck_padding_whitespace(monkeypatch):
+    """A member that has stopped writing anything but whitespace is cut off
+    at once and the next member asked — not left to pad until the deadline."""
+    uuids, calls, prepare = _padding_group(monkeypatch)
+    monkeypatch.setattr(llm, "prepare_llm", prepare)
+    agent = ModelGroupAgent(uuid4(), "assistant", lambda _: None)
+    agent.candidate_model_uuids = uuids
+
+    result = agent._structured_completion(
+        system_prompt="Answer briefly.", user_prompt="Hello",
+        response_model=_Reply)
+
+    assert result == _Reply(answer="ok")
+    assert calls == [0, 1]
+    [attempt] = agent._last_rejected_attempts
+    assert attempt["outcome"] == "failed"
+    assert attempt["response"] == PADDING_TEXT
+    assert "WhitespaceRunaway" in attempt["error"]
+
+
+def test_the_group_call_drops_a_member_stuck_padding_whitespace(monkeypatch):
+    """structured_llm_call — the reply audit's path, where this was seen."""
+    import agents.model_groups as mg
+
+    uuids, calls, prepare = _padding_group(monkeypatch)
+    monkeypatch.setattr(mg, "prepare_llm", prepare)
+    attempts: list = []
+
+    result, model_uuid = mg.structured_llm_call(
+        "assistant.reply_audit", uuids, "Answer briefly.", "Hello", _Reply,
+        attempts_out=attempts)
+
+    assert result == _Reply(answer="ok")
+    assert model_uuid == uuids[1]
+    [attempt] = attempts
+    assert attempt["response"] == PADDING_TEXT
+    assert "WhitespaceRunaway" in attempt["error"]
+
+
+def test_whitespace_runaway_spares_pretty_printed_json():
+    from agents.base import (WHITESPACE_RUNAWAY_CHARS, WhitespaceRunaway,
+                             check_whitespace_runaway)
+
+    check_whitespace_runaway('{\n    "answer": "ok",\n    ' + " " * 40)
+    check_whitespace_runaway(" " * (WHITESPACE_RUNAWAY_CHARS - 1))
+    with pytest.raises(WhitespaceRunaway):
+        check_whitespace_runaway('{"a": "b"' + "\n    " * 40)

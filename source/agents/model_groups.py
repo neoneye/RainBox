@@ -142,7 +142,8 @@ def structured_llm_call(
 
     from llama_index.core.instrumentation.dispatcher import instrument_tags
 
-    from agents.base import ModelGroupAgent, truncate_middle
+    from agents.base import (ModelGroupAgent, check_whitespace_runaway,
+                             truncate_middle)
     from llm import capture_reasoning
 
     for model_uuid in candidate_model_uuids:
@@ -176,14 +177,16 @@ def structured_llm_call(
                     capture_reasoning() as tally:
                 try:
                     for last in sllm.stream_chat(messages):
+                        raw_text = (tally.content_text
+                                    or getattr(getattr(last, "message", None),
+                                               "content", None)
+                                    or "")
                         if observer is not None:
                             observer.progress(
                                 model_uuid, model_name,
                                 tally.reasoning_text.strip() or None,
-                                (tally.content_text
-                                 or getattr(getattr(last, "message", None),
-                                            "content", None)
-                                 or "").strip() or None)
+                                raw_text.strip() or None)
+                        check_whitespace_runaway(raw_text)
                         if time.monotonic() > deadline:
                             raise TimeoutError(
                                 f"structured stream exceeded {timeout_s:.0f}s "
