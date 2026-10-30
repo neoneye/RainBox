@@ -1549,6 +1549,48 @@ def retrieve_seed_memories(
     return out
 
 
+def answers_by_path(
+    query: str, *, qctx: QueryContext,
+    unlocked_shields: set[str] | None = None,
+) -> list[SeedMemory]:
+    """The entries a path names, when `query` is one: the entry whose `path`
+    equals it, then — when the query is dotted — every entry under it
+    (`path` starting with the query plus "."), in path order. Empty when the
+    query names no path, so the caller falls back to search.
+
+    A lookup, not a ranking: a fact's path is shown beside it in every recalled
+    line, and a model that wants that fact again — or the facts filed under
+    it — names the path. Search only found them when the embedding happened to
+    favour them. Prefixes are matched only for a dotted query, so a plain word
+    that happens to be a top-level path segment is still searched. Locked-shield
+    entries are excluded and dynamic entries resolved, as in
+    `retrieve_seed_answers`. Callers load the registry first (`_load_kb`)."""
+    path = query.strip()
+    if not path or any(c.isspace() for c in path):
+        return []
+    unlocked = _unlocked_shields() if unlocked_shields is None else unlocked_shields
+    under = path + "."
+    named = sorted(
+        ((str(e.get("path", "")), qa_id) for qa_id, e in _entries_by_id.items()
+         if str(e.get("path", "")) == path
+         or ("." in path and str(e.get("path", "")).startswith(under))),
+        key=lambda pair: (pair[0] != path, pair[0]))
+    out: list[SeedMemory] = []
+    for entry_path, qa_id in named:
+        entry = _entries_by_id[qa_id]
+        if _entry_locked(entry, unlocked):
+            continue
+        kind = str(entry.get("kind", "static"))
+        answer = (str(entry.get("answer", "")) if kind == "static"
+                  else _resolve_match(Match(qa_id=qa_id, method="exact",
+                                            score=1.0), qctx))
+        out.append(SeedMemory(
+            uuid=qa_id, path=entry_path,
+            source=str(entry.get("_source", "upstream")),
+            answer=answer, score=1.0, kind=kind))
+    return out
+
+
 def retrieve_seed_answers(
     query: str, *, qctx: QueryContext, limit: int = 5,
     _ranker: Callable[[str], list[Match]] | None = None,

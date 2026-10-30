@@ -1892,7 +1892,7 @@ def _action_diary_query(ctx: AssistantActionContext, args: dict[str, Any]) -> As
 
 def _action_query_memory(
     ctx: AssistantActionContext, args: dict[str, Any], *, _seed_retriever=None,
-    record_telemetry: bool = True,
+    _path_lookup=None, record_telemetry: bool = True,
     top_k_vector: int | None = None, top_k_fulltext: int | None = None,
     any_room: bool = False,
 ) -> AssistantObservation:
@@ -1915,6 +1915,11 @@ def _action_query_memory(
     its size, so an over-long lead fact is preferred to returning nothing. Pass
     `{"uuid": ...}` instead of `{"query": ...}` to read one fact in full.
 
+    A query that is a seed fact's path (the dotted tag on its line) is a
+    lookup, not a search: that fact, then the facts filed under it, with no
+    retrieval or relevance filter (`seed_memory.answers_by_path`; `_path_lookup`
+    is injected by tests).
+
     `record_telemetry=False` skips the RetrievalEvent writes — for callers
     outside a real assistant run (the /memory/developer inspection page), whose
     probe queries must not pollute the relevance telemetry.
@@ -1923,7 +1928,7 @@ def _action_query_memory(
     "(all rooms)" operator-inspection view (room-scoped claims from every
     room become candidates) — a Python-level kwarg only, never readable from
     the model-supplied `args`, so a live run can't request it."""
-    from memory.retrieval import fence_recalled_memory, retrieve_memories_hybrid
+    from memory.retrieval import retrieve_memories_hybrid
     from memory import seed_memory as qkb
     from agents.query_handlers import QueryContext
     from llm import capture_embeddings
@@ -1937,6 +1942,19 @@ def _action_query_memory(
     qctx = QueryContext(
         room_uuid=ctx.room_uuid, query=query, payload={}, agent_uuid=ctx.agent_uuid
     )
+    # A path names facts outright. Searching for one only found them when the
+    # embedding happened to rank them first.
+    if _path_lookup is None:
+        def _path_lookup(q, *, qctx):
+            if _seed_retriever is not None:
+                return []   # tests that inject a retriever stay hermetic
+            qkb._load_kb()
+            return qkb.answers_by_path(q, qctx=qctx)
+    named = _path_lookup(query, qctx=qctx)
+    if named:
+        return _recalled_facts_observation(
+            named, [], recall_filter_debug={"mode": "path", "path": query},
+            timing=None)
     # Every phase below is timed, and every embedding call any of them makes
     # is captured, for the step's `timing` block (see _memory_query_timing).
     # This action is the run's most expensive read and the only one that
@@ -2012,6 +2030,20 @@ def _action_query_memory(
         except Exception:
             logger.warning("assistant: seed memory retrieval failed", exc_info=True)
     timing = _memory_query_timing(timer, embeds)
+    return _recalled_facts_observation(
+        seeds, memories, recall_filter_debug=recall_filter_debug,
+        timing=timing)
+
+def _recalled_facts_observation(
+    seeds: list, memories: list, *, recall_filter_debug: dict[str, Any],
+    timing: dict[str, Any] | None,
+) -> AssistantObservation:
+    """memory_query's observation for what it recalled: seed answers then
+    claims as fact lines (per-fact cap, payload admission, the notes after
+    the fence). Shared by search and path lookup, so a fact reads the same
+    however it was found."""
+    from memory.retrieval import fence_recalled_memory
+
     # Tier seeds: user-overlay first, then upstream; preserve score order within tier.
     overlay = [s for s in seeds if s.source == "user-overlay"]
     upstream = [s for s in seeds if s.source != "user-overlay"]
@@ -3309,7 +3341,10 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
         description=('recall stored facts AND answer general questions (project '
                      'status, git status, capabilities, model info) from the '
                      'knowledge base. NOT for kanban or files — use kanban_read / '
-                     'workspace_read_command. args: {"query": "..."} to search, '
+                     'workspace_read_command. args: {"query": "..."} to search; '
+                     'a fact\'s path — the dotted tag after its source on a '
+                     'recalled line — given as the query returns that fact and '
+                     'the facts filed under it, exactly, instead of searching; '
                      'or {"uuid": "..."} to read one shortened/omitted fact in full.'),
         summary="recall facts and answer general questions",
         required_args=(), optional_args=frozenset({"query", "uuid"}),

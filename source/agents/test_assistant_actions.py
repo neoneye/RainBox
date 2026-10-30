@@ -1571,6 +1571,41 @@ def test_query_memory_truncates_large_facts_and_tags_them(app_ctx):
     assert "characters dropped from the middle" in fact
 
 
+def test_a_query_that_names_a_path_is_looked_up_not_searched(app_ctx):
+    """The named facts come back with their path tags and no search runs."""
+    from memory.seed_memory import SeedMemory
+    searched = []
+
+    def fake_seed(query, *, qctx, **_):
+        searched.append(query)
+        return []
+
+    def fake_path(query, *, qctx):
+        if query != "garden.shed":
+            return []
+        return [SeedMemory(uuid="id-shed", path="garden.shed", source="user-overlay",
+                           answer="A wooden shed.", score=1.0),
+                SeedMemory(uuid="id-roof", path="garden.shed.roof", source="user-overlay",
+                           answer="Tar paper.", score=1.0)]
+
+    obs = _action_query_memory(_ctx(), {"query": "garden.shed"},
+                               _seed_retriever=fake_seed, _path_lookup=fake_path)
+    assert "id-shed, seed/user-overlay, garden.shed: A wooden shed." in obs.text
+    assert "id-roof, seed/user-overlay, garden.shed.roof: Tar paper." in obs.text
+    assert obs.data["recall_filter"] == {"mode": "path", "path": "garden.shed"}
+    assert searched == []
+
+    _action_query_memory(_ctx(), {"query": "a wooden shed"},
+                         _seed_retriever=fake_seed, _path_lookup=fake_path)
+    assert searched == ["a wooden shed"]
+
+
+def test_the_action_description_says_a_path_can_be_the_query():
+    from agents.assistant import _base_enabled_capabilities
+    description = _base_enabled_capabilities()[AssistantActionName.MEMORY_QUERY].description
+    assert "path" in description and "facts filed under it" in description
+
+
 # The incident's geometry, synthetic: a 1947-character answer whose
 # answer-bearing span sits at offset 1795 with 134 characters after it. A
 # head-only cut at 1200 removes it; a middle cut keeps it. The numbers are

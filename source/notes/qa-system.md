@@ -490,6 +490,19 @@ e6d8…, seed/upstream, dynamic, system.uptime_process: 1m 35s (since …)
 
 The uuid full-fetch mode (below) renders the same tag shape.
 
+A path is also an address. A `memory_query` whose query is exactly a seed
+entry's path is a lookup, not a search (`seed_memory.answers_by_path`): that
+entry first, then — when the query is dotted — every entry whose path starts
+with it plus `.`, in path order, with no claim retrieval, embedding or recall
+filter (`recall_filter.mode` is `path` on the step). A one-segment query
+matches only exactly, so a plain search word that happens to be a top-level
+segment is still searched; a query that names no path falls through to the
+search as before. Shields and dynamic handlers apply as in search, and the
+facts render through the same per-fact cap and payload admission
+(`_recalled_facts_observation`). The action's description tells the model a
+path can be given as the query. Searching for a path's text only found the
+entry when the embedding happened to rank it first.
+
 Each fact's text is capped to `MEMORY_QUERY_PER_FACT_CHARS` (1200) — longer
 facts have their MIDDLE dropped, keeping both ends, and are tagged
 `truncate1200`. The cap is on the RENDERED text, marker included, so a
