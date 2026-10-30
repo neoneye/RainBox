@@ -59,6 +59,7 @@ def fully_populated_agent():
     agent._reply_language_markdown = "language"
     agent._long_request_summary_markdown = ""
     agent.step_limit = 8
+    agent._step_budget = agent.step_limit
     # The classifier's user_settings_languages_json renders from the profile
     # dict itself; a minimal real one so that section renders.
     agent._criteria_profile = {"data": {"units": "metric"}}

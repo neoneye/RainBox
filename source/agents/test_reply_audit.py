@@ -283,11 +283,13 @@ def test_the_auditor_sees_the_evidence_and_not_the_argument(
 # --- the loop -----------------------------------------------------------------
 
 
-def _audited_run(room, monkeypatch, *audits):
+def _audited_run(room, monkeypatch, *audits, step_limit=None):
     """Run one turn whose audit seam returns `audits` in order. Returns the
     messages posted to the room."""
     room_uuid, message_uuid = room
     agent = _agent()
+    if step_limit is not None:
+        agent.step_limit = step_limit
     replies = [_reply(f"answer {i}") for i in range(len(audits))]
     agent._decide_next_step = scripted_decisions(*replies)
     queue = list(audits)
@@ -359,6 +361,33 @@ def test_past_the_cap_the_reply_ships_despite_the_audit(room, monkeypatch):
     posted = [m["text"] for m in messages
               if str(m["text"]).startswith("answer ")]
     assert posted, "past the cap the reply must ship anyway"
+
+
+def test_a_bounce_on_the_last_step_gets_a_step_to_revise_in(room, monkeypatch):
+    """The reply was the run's last step: bounced, it had nowhere to go and
+    the turn ended as "couldn't complete" with a fixable reply in hand. The
+    bounce buys the revision one step past the limit."""
+    revise = (False, {"verdict": "revise", "reason": "repeats itself",
+                      "problems": "asks the question it already asked"})
+    send = (True, {"verdict": "send", "problems": ""})
+    agent, messages = _audited_run(room, monkeypatch, revise, send,
+                                   step_limit=1)
+    texts = [str(m["text"]) for m in messages]
+    assert "answer 1" in texts
+    assert not any("step limit" in t for t in texts)
+    assert agent._step_budget == 2
+
+
+def test_last_step_bounces_stay_within_the_cap(room, monkeypatch):
+    """Each last-step bounce adds one step, and the cap still ships the reply,
+    so a run never goes more than MAX_AUDIT_REJECTIONS past its limit."""
+    revise = (False, {"verdict": "revise", "reason": "no",
+                      "problems": "still wrong"})
+    audits = [revise] * (AssistantAgent.MAX_AUDIT_REJECTIONS + 1)
+    agent, messages = _audited_run(room, monkeypatch, *audits, step_limit=1)
+    posted = [str(m["text"]) for m in messages]
+    assert f"answer {AssistantAgent.MAX_AUDIT_REJECTIONS}" in posted
+    assert agent._step_budget == 1 + AssistantAgent.MAX_AUDIT_REJECTIONS
 
 
 def test_the_audit_gets_its_own_trace_row(room, monkeypatch):

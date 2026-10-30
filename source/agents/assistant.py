@@ -3699,7 +3699,9 @@ class AssistantAgent(ModelGroupAgent):
     MAX_OBSERVATION_PREVIEW_CHARS: int = 12000
     # How many replies the model's own self-audit may bounce per run before
     # the reply ships anyway. Two retries out of STEP_LIMIT=6 leaves the loop
-    # room to work; an audit that never says "OK" must not fail the turn.
+    # room to work; an audit that never says "OK" must not fail the turn. A
+    # bounce on the run's last step adds one step to the budget for the
+    # revision, so the cap also bounds how far past STEP_LIMIT a run can go.
     MAX_AUDIT_REJECTIONS: int = 2
     REPLY_AUDIT_ACTION: str = "reply_audit"
     RECALL_FILTER_ACTION: str = "recall_filter"
@@ -3720,6 +3722,9 @@ class AssistantAgent(ModelGroupAgent):
     def __init__(self, agent_uuid: UUID, name: str, send: StatusSender) -> None:
         super().__init__(agent_uuid, name, send)
         self.step_limit = self.STEP_LIMIT
+        # This run's budget: step_limit, plus one step for each audit bounce
+        # that landed on the last step (see the audit branch of the loop).
+        self._step_budget = self.step_limit
         # Set only by pin_model_group (evals); None on every live turn, where
         # each call resolves its own assistant.* slot.
         self._pinned_model_group: UUID | None = None
@@ -4059,8 +4064,11 @@ class AssistantAgent(ModelGroupAgent):
             # an audit that never says "OK" cannot burn the whole step limit and
             # fail the turn: past the cap the reply ships despite the audit.
             audit_rejections = 0
+            self._step_budget = self.step_limit
 
-            for step_index in range(self.step_limit):
+            step_index = -1
+            while step_index + 1 < self._step_budget:
+                step_index += 1
                 current_step = step_index
                 # Step boundary: honour any operator stop/redirect before the
                 # next model call, so a stop leaves a clean trace (not a killed
@@ -4175,6 +4183,13 @@ class AssistantAgent(ModelGroupAgent):
                             )
                         else:
                             audit_rejections += 1
+                            if step_index + 1 >= self._step_budget:
+                                # Bounced on the last step: without one more
+                                # there is nothing to revise in, and a reply
+                                # one step from fixed ends the turn as "couldn't
+                                # complete". The step is the revision's; the
+                                # bounce cap above bounds how many there are.
+                                self._step_budget += 1
                             self._settle_step(reply_step, phase="failed",
                                               error=rejection, entry=reply_entry)
                             scratchpad.append(AssistantTurnStep(
@@ -4421,7 +4436,7 @@ class AssistantAgent(ModelGroupAgent):
             db.finish_run(run, "stopped", final_summary="step limit reached")
             logger.warning(
                 "assistant run %s hit step limit (%d) in room %s",
-                run.uuid, self.step_limit, room_uuid,
+                run.uuid, self._step_budget, room_uuid,
             )
             self._request_summary(run)
             return self._run_result("stopped", "step limit reached")
@@ -5064,7 +5079,7 @@ class AssistantAgent(ModelGroupAgent):
             "Choose exactly one next action. If current_turn_steps already "
             "answer that request, choose reply now. Never repeat "
             "an identical successful or failed action.",
-            step=str(step_index + 1), max_steps=str(self.step_limit))
+            step=str(step_index + 1), max_steps=str(self._step_budget))
 
         prompt.append_local_time()
         return prompt.render(), prompt.followup_turns()
