@@ -70,6 +70,16 @@ consumes the step limit. Each loop iteration:
    trace row with its model, duration and prompts. A clarifying question is
    not audited. Reads and log-and-undo writes execute immediately.
    Confirm-tier writes are **proposed**, never executed inline.
+   A read this turn already ran is refused inside the decide call: the
+   call's validator (`_repeat_read_validator`) rejects the decision, and the
+   model is asked again in the same call with the reason, so a repeat costs
+   a model call and no step. Reads are compared by `_read_key` — the action
+   and its arguments with each string case-folded, punctuation removed and
+   its words sorted — so a query differing only in those is the same read.
+   The refusal is bounded (`READ_REPEAT_REJECTIONS = 2` per call); past it
+   the decision stands and the loop answers the repeat with the first read's
+   observation without dispatching it again. A run once spent all six steps
+   on one identical query.
 5. **Observe** — the action's `AssistantObservation{ok, text, data}` is capped
    (per-capability `output_cap_chars`), persisted on the step row, and appended
    to the scratchpad for the next decision.
@@ -175,7 +185,12 @@ turn.
   taken this turn (each step renders its action, the decision's stated
   reason, the args, and the observation — a rejected step reads as the full
   decision it was, not an anonymous failure; tail-capped at
-  `MAX_SCRATCHPAD_CHARS = 5000`), the step
+  `MAX_SCRATCHPAD_CHARS = 5000`: the newest step stays whole, an older one
+  that no longer fits keeps a compact stand-in where its action has one, and
+  past that stays as a stub — action, status and arguments (long string
+  arguments middle-cut to 300 chars), its observation replaced by a note —
+  outside the budget, so the model always sees every action it tried this
+  turn), the step
   counter (`decision_request`), the **user settings**
   (`<user_settings_yaml>` — `profile.current`'s fields as YAML, a bare tag
   with no attributes (the system prompt declares it reference data and

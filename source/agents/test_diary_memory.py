@@ -11,6 +11,7 @@ import sqlalchemy as sa
 
 import agents.model_groups as mg
 import db
+from agents.assistant import TURN_STEP_STUB_NOTE
 from agents.assistant import (
     CAPABILITIES,
     AssistantActionContext,
@@ -174,16 +175,20 @@ def test_third_step_keeps_one_compacted_predecessor(live):
                     data=obs.data, compact=obs.compact)
     steps = [_step(big, index=i) for i in range(3)]
     kept, omitted = agent._bounded_turn_events(steps)
-    assert omitted == 1 and [s.step_index for s in kept] == [1, 2]
-    assert kept[0].compacted and not kept[1].compacted
+    assert omitted == 0 and [s.step_index for s in kept] == [0, 1, 2]
+    # The oldest no longer fits even compacted: it stays as a stub.
+    assert kept[0].observation == TURN_STEP_STUB_NOTE
+    assert kept[1].compacted and kept[1].observation != TURN_STEP_STUB_NOTE
+    assert not kept[2].compacted
 
 
-def test_legacy_actions_are_still_dropped_whole():
+def test_an_action_without_a_compact_form_stays_as_a_stub():
     agent = _agent()
     steps = [AssistantTurnStep(step_index=i, action="python_run", args={}, status="ok",
                                observation="x" * 3000, is_read=True) for i in range(2)]
     kept, omitted = agent._bounded_turn_events(steps)
-    assert omitted == 1 and not kept[0].compacted
+    assert omitted == 0
+    assert kept[0].observation == TURN_STEP_STUB_NOTE and not kept[1].compacted
 
 
 def test_audit_sees_full_diary_observation(live):

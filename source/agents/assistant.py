@@ -15,6 +15,7 @@ deterministic fake via `agents/assistant_fakes.py`).
 
 import json
 import logging
+import re
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -1841,6 +1842,25 @@ def _memory_query_timing(timer: _PhaseTimer, embeds: Any) -> dict[str, Any]:
 # The scratchpad budget, hoisted so the diary capability's output cap can be
 # derived from it at import (AssistantAgent.MAX_SCRATCHPAD_CHARS is this).
 SCRATCHPAD_CHARS: int = 5000
+
+# What a step's observation becomes when the step no longer fits the
+# scratchpad budget and stays as a stub (AssistantAgent._stubbed).
+TURN_STEP_STUB_NOTE: str = (
+    "Observation dropped to fit. The action and arguments above are what this "
+    "step tried.")
+
+
+def _read_key(action: str, args: dict[str, Any]) -> str:
+    """A read's identity for repeat detection: the action and its arguments,
+    each string argument case-folded with punctuation removed and its words
+    sorted. Near-same queries — differing only in case, punctuation or word
+    order — return the same result, so they are the same read; anything that
+    changes the words is a different one."""
+    normal = {
+        k: (" ".join(sorted(re.sub(r"[^\w\s]", " ", v.casefold()).split()))
+            if isinstance(v, str) else v)
+        for k, v in sorted(args.items())}
+    return f"{action}:{json.dumps(normal, sort_keys=True, default=str)}"
 
 _diary_embedder = None
 
@@ -3679,6 +3699,13 @@ class AssistantAgent(ModelGroupAgent):
     _last_followup_turns: list[dict[str, str]] | None = None
     MAX_RECENT_MESSAGES: int = 30
     MAX_SCRATCHPAD_CHARS: int = SCRATCHPAD_CHARS
+    # A long string argument in a stubbed step (an edit's new content, a
+    # pasted query) is middle-cut to this; the stub is there to say what was
+    # tried, not to carry it.
+    TURN_STEP_STUB_ARG_CHARS: int = 300
+    # How many times one decide call refuses a read this turn already ran
+    # before letting the decision stand (_repeat_read_validator).
+    READ_REPEAT_REJECTIONS: int = 2
     # Longest request the closing instruction quotes back in full; past it, the
     # anchor points at the section instead (see `_request_anchor`).
     REQUEST_ANCHOR_MAX_CHARS: int = 400
@@ -3741,6 +3768,9 @@ class AssistantAgent(ModelGroupAgent):
         # This run's budget: step_limit, plus one step for each audit bounce
         # that landed on the last step (see the audit branch of the loop).
         self._step_budget = self.step_limit
+        # This run's successful reads, by `_read_key`, with the step each ran
+        # at: what the decide call's validator refuses a repeat of.
+        self._turn_reads: dict[str, int] = {}
         # Set only by pin_model_group (evals); None on every live turn, where
         # each call resolves its own assistant.* slot.
         self._pinned_model_group: UUID | None = None
@@ -4066,6 +4096,9 @@ class AssistantAgent(ModelGroupAgent):
             # observation remains in the scratchpad; repeated reads are not
             # dispatched again.
             done_reads: dict[str, AssistantObservation] = {}
+            # The same reads, keyed as `_read_key` keys them, with the step that
+            # ran each — what the decide call's validator refuses a repeat of.
+            self._turn_reads = {}
             # Failed actions also make no progress when repeated verbatim. Keep
             # their signatures so the loop can return a corrective observation
             # without re-running the same doomed action.
@@ -4276,7 +4309,10 @@ class AssistantAgent(ModelGroupAgent):
                     f"{json.dumps(decision.args, sort_keys=True, default=str)}"
                 )
                 write_sig = action_sig if cap.write else None
-                read_sig = action_sig if cap.read else None
+                # Near-same reads count as the same read: a query differing
+                # only in case, punctuation or word order returns the same.
+                read_sig = (_read_key(decision.action.value, decision.args)
+                            if cap.read else None)
                 if write_sig is not None and write_sig in done_writes:
                     # Identical to a write already completed this run — don't replay
                     # it (that would duplicate state); tell the model it's done.
@@ -4390,6 +4426,7 @@ class AssistantAgent(ModelGroupAgent):
                         pending_proposal = proposal
                 if read_sig is not None and observation.ok:
                     done_reads.setdefault(read_sig, observation)
+                    self._turn_reads.setdefault(read_sig, step_index)
                 if not observation.ok:
                     failed_actions.add(action_sig)
                 preview = observation.text[: self.MAX_OBSERVATION_PREVIEW_CHARS]
@@ -4560,8 +4597,42 @@ class AssistantAgent(ModelGroupAgent):
             purpose="decide",
             candidate_model_uuids=models,
             followup_turns=followup_turns,
+            validator=self._repeat_read_validator(),
         )
         return cast(AssistantStepDecision, result)
+
+    def _repeat_read_validator(self) -> Callable[[BaseModel], None]:
+        """Refuse, inside the decide call, a read this turn already ran.
+
+        A refused repeat is retried in the same call with the reason attached,
+        so it costs a model call and no step. Before this, the loop answered a
+        repeated read with the first read's result and the model chose the
+        same read again, step after step, until the limit: six identical
+        queries in one run. Bounded per call (READ_REPEAT_REJECTIONS): past it
+        the decision stands and the loop's own repeat handling answers it, so
+        a model that will not move on cannot fail the call."""
+        tried = dict(getattr(self, "_turn_reads", {}) or {})
+        refused = 0
+
+        def validate(result: BaseModel) -> None:
+            nonlocal refused
+            decision = cast(AssistantStepDecision, result)
+            cap = self._caps.get(decision.action)
+            if cap is None or not cap.read or not tried:
+                return
+            key = _read_key(decision.action.value, decision.args)
+            if key not in tried or refused >= self.READ_REPEAT_REJECTIONS:
+                return
+            refused += 1
+            raise ValueError(
+                f"this read already ran at step {tried[key] + 1} of this turn "
+                "(a query differing only in case, punctuation or word order is "
+                "the same read), and running it again returns the same result. "
+                "Choose a different next action: reply with what the reads so "
+                "far show — that nothing relevant was found is an answer — "
+                "read one fact in full by its uuid, or search with a query "
+                "that asks for something different.")
+        return validate
 
     def _model_attempt_started(
         self, model_uuid: UUID, model_name: str, timeout_seconds: float
@@ -6931,26 +7002,55 @@ class AssistantAgent(ModelGroupAgent):
 
         The newest event is always retained whole because it contains the latest
         observation. Older events are dropped as records, never sliced strings.
+
+        A step that no longer fits stays as a stub — its action and arguments,
+        its observation replaced by a note — outside the budget, so the model
+        still sees every action it already tried. Dropping the step whole hid
+        exactly that: a run repeated one query six times while the prompt
+        showed only the newest attempt and "4 omitted".
         """
         kept_reversed: list[AssistantTurnEvent] = []
         used = 0
+        stubbing = False
         for event in reversed(events):
             size = self._turn_event_size(event)
-            if kept_reversed and used + size > self.MAX_SCRATCHPAD_CHARS:
+            if stubbing or (kept_reversed
+                            and used + size > self.MAX_SCRATCHPAD_CHARS):
                 # Soft eviction: an observation with a code-built compact
                 # stand-in stays as that stand-in while it fits. It is a
                 # separate record, never a slice of the text.
-                compact = self._compacted(event)
-                if compact is None:
-                    break
-                size = self._turn_event_size(compact)
-                if used + size > self.MAX_SCRATCHPAD_CHARS:
-                    break
-                event = compact
+                compact = None if stubbing else self._compacted(event)
+                if compact is not None and (
+                        used + self._turn_event_size(compact)
+                        <= self.MAX_SCRATCHPAD_CHARS):
+                    event = compact
+                    size = self._turn_event_size(compact)
+                else:
+                    stubbing = True
+                    stub = self._stubbed(event)
+                    if stub is None:
+                        break
+                    kept_reversed.append(stub)
+                    continue
             kept_reversed.append(event)
             used += size
         kept = list(reversed(kept_reversed))
         return kept, len(events) - len(kept)
+
+    @classmethod
+    def _stubbed(cls, event: AssistantTurnEvent) -> AssistantTurnStep | None:
+        """The step as a stub: action, status and arguments (each long string
+        argument middle-cut to TURN_STEP_STUB_ARG_CHARS), its observation
+        replaced by TURN_STEP_STUB_NOTE. None for a redirect, which has no
+        action to remember and is dropped as before."""
+        if not isinstance(event, AssistantTurnStep):
+            return None
+        args = {k: (truncate_middle(v, cls.TURN_STEP_STUB_ARG_CHARS)
+                    if isinstance(v, str) else v)
+                for k, v in event.args.items()}
+        return replace(event, args=args, observation=TURN_STEP_STUB_NOTE,
+                       guidance=None, reason="", compact_observation=None,
+                       compacted=True)
 
     @staticmethod
     def _compacted(event: AssistantTurnEvent) -> AssistantTurnStep | None:

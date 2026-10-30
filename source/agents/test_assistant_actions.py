@@ -221,10 +221,15 @@ def test_source_priority_policy_is_in_decide_turn_instructions():
     assert "acceptance_criteria_markdown" not in DECIDE_TURN_INSTRUCTIONS
 
 
-def test_turn_event_budget_drops_whole_old_events():
+def test_turn_event_budget_keeps_an_old_step_as_a_stub():
+    """A step whose observation no longer fits stays as its action and
+    arguments, so the model still sees what it already tried — dropped whole,
+    a run repeated one query six times while the prompt showed "4 omitted"."""
+    from agents.assistant import TURN_STEP_STUB_NOTE
     agent = AssistantAgent(agent_uuid=uuid4(), name="assistant", send=lambda _: None)
     old = AssistantTurnStep(
-        step_index=0, action="memory_query", args={}, status="ok",
+        step_index=0, action="memory_query", args={"query": "the q"},
+        status="ok", reason="looking it up",
         observation="x" * (agent.MAX_SCRATCHPAD_CHARS + 100), is_read=True,
     )
     newest = AssistantTurnStep(
@@ -232,8 +237,56 @@ def test_turn_event_budget_drops_whole_old_events():
         observation="3 tasks", is_read=True,
     )
     kept, omitted = agent._bounded_turn_events([old, newest])
-    assert kept == [newest]
-    assert omitted == 1
+    assert omitted == 0
+    stub, last = kept
+    assert last == newest
+    assert (stub.action, stub.args, stub.status) == ("memory_query", {"query": "the q"}, "ok")
+    assert stub.observation == TURN_STEP_STUB_NOTE and stub.compacted
+    assert stub.reason == ""
+
+
+def test_a_stub_cuts_a_long_argument():
+    agent = AssistantAgent(agent_uuid=uuid4(), name="assistant", send=lambda _: None)
+    old = AssistantTurnStep(
+        step_index=0, action="edit_file",
+        args={"path": "a.txt", "content": "y" * 5000}, status="ok",
+        observation="x" * (agent.MAX_SCRATCHPAD_CHARS + 100))
+    newest = AssistantTurnStep(step_index=1, action="kanban_read", args={},
+                               status="ok", observation="3 tasks")
+    (stub, _newest), _ = agent._bounded_turn_events([old, newest])
+    assert stub.args["path"] == "a.txt"
+    assert len(stub.args["content"]) < 500
+
+
+def test_read_key_treats_near_same_queries_as_one_read():
+    from agents.assistant import _read_key
+    a = _read_key("memory_query", {"query": "Scouting activities, mother"})
+    assert a == _read_key("memory_query", {"query": "mother scouting  activities"})
+    assert a != _read_key("memory_query", {"query": "mother scouting history"})
+    assert a != _read_key("diary_query", {"query": "mother scouting activities"})
+
+
+def test_the_decide_validator_refuses_a_read_already_run():
+    """Refused inside the decide call — a retry with the reason, no step spent
+    — and bounded, so a model that will not move on cannot fail the call."""
+    agent = AssistantAgent(agent_uuid=uuid4(), name="assistant", send=lambda _: None)
+    from agents.assistant import _base_enabled_capabilities
+    agent._caps = _base_enabled_capabilities()
+    from agents.assistant import _read_key
+    agent._turn_reads = {_read_key("memory_query", {"query": "the moon"}): 0}
+    validate = agent._repeat_read_validator()
+    repeat = AssistantStepDecision(reason="again", action=AssistantActionName.MEMORY_QUERY,
+                                   args={"query": "The moon!"})
+    other = AssistantStepDecision(reason="new", action=AssistantActionName.MEMORY_QUERY,
+                                  args={"query": "the sun"})
+    reply = AssistantStepDecision(reason="done", action=AssistantActionName.REPLY,
+                                  args={"message": "Nothing on that."})
+    validate(other)
+    validate(reply)
+    for _ in range(agent.READ_REPEAT_REJECTIONS):
+        with pytest.raises(ValueError, match="already ran at step 1"):
+            validate(repeat)
+    validate(repeat)  # past the bound the decision stands
 
 
 def test_turn_event_budget_keeps_oversized_newest_event_whole():
