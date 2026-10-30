@@ -24,7 +24,9 @@ from agents.assistant import (
     SECOND_OPINION_TURN_INSTRUCTIONS,
     TRUNCATED_REQUEST_SECTION,
 )
-from agents.base import truncate_middle, truncate_middle_to_length
+from agents.base import (
+    truncate_middle, truncate_middle_at_sentences, truncate_middle_to_length,
+)
 from agents.config import ASSISTANT_UUID
 
 
@@ -488,3 +490,44 @@ def test_the_summarizer_is_told_never_to_describe_what_it_did_not_see():
     invention here is the one error nothing downstream can catch."""
     assert "Never describe a middle you" in REQUEST_SUMMARY_TURN_INSTRUCTIONS
     assert "only account of it" in REQUEST_SUMMARY_TURN_INSTRUCTIONS
+
+
+# A fact written as prose whose middle names a person the tail goes on to
+# describe. Cut mid-sentence, the tail would open on a clause with no subject.
+ORPHAN_FACT = (
+    "The house was built in 1924. " * 14
+    + "We moved in during 1984. The boiler was old and the cellar stairs were "
+    "yellow. Before us lived a neighbour named Ruth Example (1901-1984), who "
+    "was single and a scout leader, and every year she hosted a party. "
+    "Her parents built the house. " + "The garden holds old pottery. " * 12)
+
+
+def test_a_sentence_cut_leaves_no_clause_without_its_subject():
+    """The old cut opened the tail on ", and every year she hosted a party."
+    — a clause whose subject the dropped middle had named. The sentence cut
+    drops the partial sentence on each side, so both seams fall between
+    sentences."""
+    old = truncate_middle_to_length(ORPHAN_FACT, 900)
+    assert old.split("…]\n\n")[1].startswith(", and every year")
+
+    cut = truncate_middle_at_sentences(ORPHAN_FACT, 900)
+    head, tail = cut.split("\n\n[… ")[0], cut.split("…]\n\n")[1]
+    assert head.endswith(".") and tail.startswith("Her parents built the house.")
+    assert "scout" not in cut and "hosted a party" not in cut
+    dropped = int(re.search(r"\[… (\d+) characters", cut).group(1))
+    assert dropped == len(ORPHAN_FACT) - len(head) - len(tail)
+    assert len(cut) <= 900
+
+
+def test_a_sentence_cut_without_boundaries_is_the_plain_cut():
+    text = "x" * 3000
+    assert truncate_middle_at_sentences(text, 1200) == truncate_middle_to_length(text, 1200)
+    assert truncate_middle_at_sentences("short.", 1200) == "short."
+
+
+@pytest.mark.parametrize("cap", [200, 450, 700, 900])
+def test_a_sentence_cut_keeps_a_prefix_and_a_suffix_within_the_cap(cap):
+    cut = truncate_middle_at_sentences(ORPHAN_FACT, cap)
+    head, tail = cut.split("\n\n[… ")[0], cut.split("…]\n\n")[1]
+    assert len(cut) <= cap
+    assert ORPHAN_FACT.startswith(head) and ORPHAN_FACT.endswith(tail)

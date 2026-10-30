@@ -18,6 +18,7 @@
 
 import json
 import logging
+import re
 import threading
 import time
 from datetime import UTC, datetime
@@ -64,9 +65,13 @@ def truncate_middle(text: str, limit: int) -> str:
         return text
     head = (limit + 1) // 2
     tail = limit - head
-    omitted = len(text) - limit
-    marker = f"\n\n[… {omitted} characters dropped from the middle …]\n\n"
-    return text[:head] + marker + (text[len(text) - tail:] if tail else "")
+    return (text[:head] + _middle_marker(len(text) - limit)
+            + (text[len(text) - tail:] if tail else ""))
+
+
+def _middle_marker(omitted: int) -> str:
+    """The in-band gap every middle cut writes, in one place."""
+    return f"\n\n[… {omitted} characters dropped from the middle …]\n\n"
 
 
 def truncate_middle_to_length(text: str, max_length: int) -> str:
@@ -99,13 +104,67 @@ def truncate_middle_to_length(text: str, max_length: int) -> str:
         raise ValueError(f"max_length must be non-negative, got {max_length}")
     if len(text) <= max_length:
         return text
+    return truncate_middle(text, _fitting_allowance(text, max_length))
+
+
+def _fitting_allowance(text: str, max_length: int) -> int:
+    """The most source characters `truncate_middle` can keep while its result
+    stays within `max_length` (see truncate_middle_to_length)."""
     for allowance in range(max_length, 1, -1):
-        shortened = truncate_middle(text, allowance)
-        if len(shortened) <= max_length:
-            return shortened
+        if len(truncate_middle(text, allowance)) <= max_length:
+            return allowance
     raise ValueError(
         f"max_length {max_length} cannot hold the truncation marker plus one "
         f"character from each end")
+
+
+# Where a sentence ends: terminal punctuation followed by whitespace, or a line
+# break. Script-neutral enough for the facts the operator writes; a text with
+# none near the gap is cut where truncate_middle cut it.
+_SENTENCE_END = re.compile(r"[.!?。！？](?=\s)|\n")
+# How far from the gap a sentence boundary may be and still be used. Past it
+# the partial sentence stays: dropping more than this to tidy a seam would
+# throw away content the cut was sized to keep.
+SENTENCE_TRIM_REACH = 400
+
+
+def truncate_middle_at_sentences(text: str, max_length: int) -> str:
+    """`truncate_middle_to_length`, with the partial sentence on each side of
+    the gap dropped as well, so both seams fall between sentences.
+
+    For text whose sentences lean on each other — a fact written as prose.
+    A fragment beside the gap has lost its own start or end, and with it,
+    often, its subject: a recalled fact once surfaced as "…, who was a scout
+    leader" right after the gap, the dropped middle having named the person,
+    and the model gave it to the last person named before the gap. A seam
+    between sentences cannot orphan a clause that way. Each side is trimmed
+    only when a boundary lies within SENTENCE_TRIM_REACH of the gap, and the
+    result is never longer than truncate_middle_to_length's.
+    """
+    if max_length < 0:
+        raise ValueError(f"max_length must be non-negative, got {max_length}")
+    if len(text) <= max_length:
+        return text
+    allowance = _fitting_allowance(text, max_length)
+    head_len = (allowance + 1) // 2
+    tail_start = len(text) - (allowance - head_len)
+    head, tail = text[:head_len], text[tail_start:]
+    # The head ends mid-sentence unless the cut fell right after a boundary.
+    if not _SENTENCE_END.match(text, head_len - 1):
+        ends = [m.end() for m in _SENTENCE_END.finditer(head)]
+        if ends and head_len - ends[-1] <= SENTENCE_TRIM_REACH:
+            head = head[:ends[-1]].rstrip()
+    # The tail starts mid-sentence unless a boundary sits right before it.
+    before = text[:tail_start].rstrip(" \t")
+    starts_clean = before.endswith("\n") or (
+        len(before) < tail_start and before[-1:] in tuple(".!?。！？"))
+    if not starts_clean:
+        first = _SENTENCE_END.search(tail)
+        if first is not None and first.end() <= SENTENCE_TRIM_REACH:
+            tail = tail[first.end():].lstrip()
+    if not head or not tail:
+        return truncate_middle(text, allowance)
+    return head + _middle_marker(len(text) - len(head) - len(tail)) + tail
 
 
 class RejectedResponse(ValueError):

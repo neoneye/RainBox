@@ -39,7 +39,7 @@ from diary.render import DIARY_SCRATCHPAD_RESERVE
 from agents import response_language_gate
 from agents.base import (
     ModelGroupAgent, StatusSender, truncate_middle,
-    truncate_middle_to_length,
+    truncate_middle_at_sentences,
 )
 from agents.config import (
     ASSISTANT_ACCEPTANCE_CRITERIA_UUID,
@@ -1336,14 +1336,17 @@ def _fact_line(uuid: str, tags: str, text: str) -> tuple[str, bool]:
     back apart — and the paths drifted, so a fix to one left the other cutting
     head-only. One renderer is what stops that recurring.
 
-    The shortening drops the MIDDLE and stays within the cap once rendered
-    (`truncate_middle_to_length`). A head-only cut silently discards whichever
+    The shortening drops the MIDDLE and stays within the cap once rendered,
+    with both seams moved to sentence boundaries
+    (`truncate_middle_at_sentences`): a clause cut off from its subject once
+    read as being about the last person named before the gap. A head-only cut silently discards whichever
     end matters most, and for these answers that is usually the end: they
     accumulate by appending, so the newest and most specific material collects
     at the tail. A live run refused a question whose answer sat 8% from the end
     of a kept fact."""
     if len(text) > MEMORY_QUERY_PER_FACT_CHARS:
-        shortened = truncate_middle_to_length(text, MEMORY_QUERY_PER_FACT_CHARS)
+        shortened = truncate_middle_at_sentences(
+            text, MEMORY_QUERY_PER_FACT_CHARS)
         return (f"{uuid}, {tags}, truncate{MEMORY_QUERY_PER_FACT_CHARS}: "
                 f"{shortened}", True)
     return f"{uuid}, {tags}: {text}", False
