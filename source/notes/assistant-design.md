@@ -779,8 +779,8 @@ Every run is durable in `assistant_run` / `assistant_step` (see
 - Terminal-only rows (`final`, a `failed` validation, a crash, `control`) are
   single inserts.
 - Each step stores the exact decide-call prompts (`system_prompt`,
-  `user_prompt`, and in the `request_turn` prompt layout the
-  `followup_turns` sent after it), raw `model_response`, the model used, token counts,
+  `user_prompt`, and in the `request_turn` and `exchange_turns` prompt
+  layouts the `followup_turns` sent after it), raw `model_response`, the model used, token counts,
   `duration_ms`, and the
   `requested_at`/`created_at`/`settled_at` timestamps. The JSONB columns
   (`args`, observations) are reordered by Postgres — length-then-bytes — so

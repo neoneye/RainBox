@@ -205,8 +205,10 @@ Key fields:
 - `system_prompt`, `user_prompt`: the exact decide-call prompt
 - `followup_turns`: JSONB `[{role, content}, ...]` sent after `user_prompt`
   when the `prompt.layout` setting gave the request a message of its own
-  (`request_turn`: the acknowledgement, then the request); `user_prompt` is
-  then the context. NULL on a single-message call.
+  (`request_turn`: the acknowledgement, then the request; `exchange_turns`:
+  the acknowledgement, the user's previous message and the reply to it, then
+  the request); `user_prompt` is then the context. NULL on a single-message
+  call.
 - `reasoning`: the model's native thinking channel from the decide call
   (captured via instrumentation while the structured output streamed); NULL
   for a non-reasoning model. Distinct from `reason`, the schema's short

@@ -6,6 +6,7 @@ import pytest
 
 import agents.chat_context as chat_context
 from agents.chat_context import (
+    CHAT_EXCHANGE_TURNS_SHAPE,
     CHAT_REQUEST_TURN_SHAPE,
     CHAT_SINGLE_TURN_SHAPE,
     build_chat_prompt,
@@ -14,6 +15,8 @@ from agents.chat_context import (
 from agents.chat_structured import CHAT_SYSTEM_PROMPT
 from agents.chat_unstructured import UNSTRUCTURED_CHAT_SYSTEM_PROMPT
 from chat.prompt_layout import (
+    EXCHANGE_TURNS,
+    EXCHANGE_TURNS_ACKNOWLEDGEMENT,
     REQUEST_TURN,
     REQUEST_TURN_ACKNOWLEDGEMENT,
     SINGLE_TURN,
@@ -83,3 +86,35 @@ def test_system_prompt_describes_the_layout(base):
 def test_a_system_prompt_without_the_shape_paragraph_fails_loudly():
     with pytest.raises(ValueError):
         chat_system_prompt("no paragraph here", REQUEST_TURN)
+
+
+def test_exchange_turns_repeats_this_agents_latest_exchange():
+    agent_uuid = uuid4()
+    messages = [
+        {"sender_name": "user", "sender_type": "human", "text": "hi"},
+        {"sender_name": "chatagent", "sender_type": "agent",
+         "sender_uuid": str(agent_uuid), "text": "Hi!"},
+        {"sender_name": "user", "sender_type": "human", "text": "more"},
+    ]
+    prompt = build_chat_prompt(messages, agent_uuid=agent_uuid,
+                               room_uuid=uuid4(), layout=EXCHANGE_TURNS)
+    assert prompt.followup_turns == [
+        {"role": "assistant", "content": EXCHANGE_TURNS_ACKNOWLEDGEMENT},
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "Hi!"},
+        {"role": "user", "content": "more"},
+    ]
+    # Someone else's reply is not this agent's turn.
+    other = build_chat_prompt(messages, agent_uuid=uuid4(),
+                              room_uuid=uuid4(), layout=EXCHANGE_TURNS)
+    assert other.followup_turns == [
+        {"role": "assistant", "content": REQUEST_TURN_ACKNOWLEDGEMENT},
+        {"role": "user", "content": "more"},
+    ]
+
+
+@pytest.mark.parametrize("base", [CHAT_SYSTEM_PROMPT, UNSTRUCTURED_CHAT_SYSTEM_PROMPT])
+def test_exchange_turns_system_prompt_describes_the_exchange(base):
+    prompt = chat_system_prompt(base, EXCHANGE_TURNS)
+    assert CHAT_EXCHANGE_TURNS_SHAPE in prompt
+    assert CHAT_SINGLE_TURN_SHAPE not in prompt

@@ -32,7 +32,8 @@ import db
 import skills
 import user_profile
 from chat.prompt_layout import (
-    REQUEST_TURN, SINGLE_TURN, current_prompt_layout, request_turns,
+    EXCHANGE_TURNS, REQUEST_MESSAGE_LAYOUTS, SINGLE_TURN,
+    current_prompt_layout, latest_exchange, request_turns,
 )
 from diary.render import DIARY_SCRATCHPAD_RESERVE
 from agents import response_language_gate
@@ -896,6 +897,18 @@ section is present, the request message was shortened the way the truncation
 rule describes for current_user_request: its middle was dropped, the section's
 attributes give the original and included lengths in characters, and
 current_user_request_summary_markdown describes the whole request."""
+
+# The exchange_turns layout repeats the conversation's latest exchange as
+# turns of its own before the request message. Said once, after
+# REQUEST_MESSAGE_SECTION, so the model reads those turns as the context they
+# are and the final user message as the request.
+EXCHANGE_TURNS_SECTION: str = """\
+Between your acknowledgement and the request message, the conversation's
+latest exchange is repeated as turns of its own: the user's previous message,
+then your reply to it — the same two messages that end
+conversation_history_xml, shortened the same way. They are context, already
+answered, and the nearest place a short follow-up takes its subject from. The
+request message after them is the one to act on."""
 
 # Where the decide instructions name the request by its section, the
 # request_turn layout names the request message instead. Exact fragments, each
@@ -4621,19 +4634,29 @@ class AssistantAgent(ModelGroupAgent):
         receives it."""
         base = DECIDE_TURN_INSTRUCTIONS.replace(
             SOURCE_PRIORITY_SECTION, ACCEPTANCE_CRITERIA_SOURCE_PRIORITY_SECTION)
-        if self._prompt_layout == REQUEST_TURN:
+        if self._prompt_layout in REQUEST_MESSAGE_LAYOUTS:
             base = _rewrite_for_request_turn(
                 base, _DECIDE_REQUEST_TURN_REWRITES)
-            base = f"{base}\n{REQUEST_MESSAGE_SECTION}"
+            base = f"{base}\n{self._request_message_section()}"
         return f"{base}\n\n{self._action_catalog()}"
 
     def _criteria_turn_instructions(self) -> str:
         """The criteria call's tier-2 block. It never names the request's
         section, so the request_turn layout only adds where the request went."""
-        if self._prompt_layout == REQUEST_TURN:
+        if self._prompt_layout in REQUEST_MESSAGE_LAYOUTS:
             return (f"{ACCEPTANCE_CRITERIA_TURN_INSTRUCTIONS}\n"
-                    f"{REQUEST_MESSAGE_SECTION}")
+                    f"{self._request_message_section()}")
         return ACCEPTANCE_CRITERIA_TURN_INSTRUCTIONS
+
+    def _request_message_section(self) -> str:
+        """Where the request went, for a call whose subject is the request:
+        REQUEST_MESSAGE_SECTION, plus EXCHANGE_TURNS_SECTION in the
+        exchange_turns layout. The section is per layout, not per turn — on a
+        turn with no exchange to repeat the request simply follows the
+        acknowledgement — so a layout's instructions stay one cached text."""
+        if self._prompt_layout == EXCHANGE_TURNS:
+            return f"{REQUEST_MESSAGE_SECTION}\n{EXCHANGE_TURNS_SECTION}"
+        return REQUEST_MESSAGE_SECTION
 
     def _action_catalog(self) -> str:
         lines = ["Available actions (choose exactly one per step):"]
@@ -4957,8 +4980,8 @@ class AssistantAgent(ModelGroupAgent):
         anchor promising the whole of it would contradict the tag saying it
         was cut.
         """
-        if self._prompt_layout == REQUEST_TURN:
-            # Nothing to quote or point across: the request is the next
+        if self._prompt_layout in REQUEST_MESSAGE_LAYOUTS:
+            # Nothing to quote or point across: the request is the final
             # message the model reads.
             return (
                 "The request to answer is the request message, the final user "
@@ -7706,8 +7729,15 @@ class AssistantPromptBuilder:
         # (followup_turns), and a call that judges something else places it
         # as a section before its subject (append_request_section). Every
         # call drops it from tier 0 together, so their heads stay nested.
-        self._request_turn = agent._prompt_layout == REQUEST_TURN
+        self._request_turn = agent._prompt_layout in REQUEST_MESSAGE_LAYOUTS
         self._request_placed = not self._request_turn
+        # The exchange_turns layout's previous exchange, sent as turns before
+        # the request by the calls whose subject is the request. None in the
+        # other layouts and when the two messages before the request are not
+        # the user and then this agent.
+        self._exchange = (
+            latest_exchange(messages, agent.agent_uuid)
+            if agent._prompt_layout == EXCHANGE_TURNS else None)
 
         # Tier 0. The request changes every turn, but within a turn it is
         # byte-identical across every call and every step, and it is unbounded
@@ -7787,7 +7817,15 @@ class AssistantPromptBuilder:
         if not self._request_turn:
             return []
         text, _attrs = self._agent._request_text(self.current)
-        return request_turns(text)
+        exchange = None
+        if self._exchange is not None:
+            limit = self._agent.HISTORY_MESSAGE_MAX_CHARS
+            exchange = tuple(
+                truncate_middle(str(m.get("text") or ""), limit)
+                if len(str(m.get("text") or "")) > limit
+                else str(m.get("text") or "")
+                for m in self._exchange)
+        return request_turns(text, exchange)
 
     def append_local_time(self) -> None:
         """The operator's clock, which the model needs because the only other

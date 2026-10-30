@@ -13,7 +13,9 @@ from uuid import UUID
 
 import memory.retrieval as memory_retrieval
 import user_profile
-from chat.prompt_layout import REQUEST_TURN, request_turns
+from chat.prompt_layout import (
+    EXCHANGE_TURNS, REQUEST_MESSAGE_LAYOUTS, latest_exchange, request_turns,
+)
 from chat.transcript import current_message_line, format_history, split_history
 from memory.retrieval import RetrievedMemory
 
@@ -111,14 +113,24 @@ a message of its own:
 The Current message follows as the final user message, exactly as it was
 written; your turn before it only acknowledged the context."""
 
+# The exchange_turns layout's paragraph: request_turn's, plus the previous
+# exchange that may sit between the acknowledgement and the Current message.
+CHAT_EXCHANGE_TURNS_SHAPE: str = CHAT_REQUEST_TURN_SHAPE + """
+When the transcript's last two lines are the user and then you, they are
+repeated after your acknowledgement as turns of their own — the user's
+previous message, then your reply — before the Current message. They are
+context, already answered; the Current message is the one to respond to."""
+
 
 def chat_system_prompt(base: str, layout: str) -> str:
     """`base` (a chat agent's single_turn system prompt) for `layout`."""
-    if layout != REQUEST_TURN:
+    if layout not in REQUEST_MESSAGE_LAYOUTS:
         return base
     if base.count(CHAT_SINGLE_TURN_SHAPE) != 1:
         raise ValueError("chat system prompt lost its message-shape paragraph")
-    return base.replace(CHAT_SINGLE_TURN_SHAPE, CHAT_REQUEST_TURN_SHAPE)
+    shape = (CHAT_EXCHANGE_TURNS_SHAPE if layout == EXCHANGE_TURNS
+             else CHAT_REQUEST_TURN_SHAPE)
+    return base.replace(CHAT_SINGLE_TURN_SHAPE, shape)
 
 
 @dataclass
@@ -150,12 +162,16 @@ def build_chat_prompt(
     message), a line naming who sent the Current message — then the
     acknowledgement and the Current message verbatim, line breaks intact. The
     profile and the per-message facts are fenced separately because the
-    transcript now sits between them."""
+    transcript now sits between them.
+
+    exchange_turns: request_turn, with the user's previous message and this
+    agent's reply to it repeated as turns before the Current message, when
+    those are the transcript's last two lines."""
     profile_block, seed_block, memory_block, query, memories = _context_parts(
         messages, agent_uuid=agent_uuid, room_uuid=room_uuid,
         journal_id=journal_id, query=None, _seed_retriever=None)
     history, current = split_history(messages)
-    if layout != REQUEST_TURN or current is None:
+    if layout not in REQUEST_MESSAGE_LAYOUTS or current is None:
         joined = "\n\n".join(
             b for b in (profile_block, seed_block, memory_block) if b)
         if joined:
@@ -171,7 +187,12 @@ def build_chat_prompt(
         memory_retrieval.fence_recalled_memory(recalled)[0],
         current_message_line(current),
     ]
+    exchange = (latest_exchange(messages, agent_uuid)
+                if layout == EXCHANGE_TURNS else None)
     return ChatPrompt(
         user_prompt="\n\n".join(p for p in parts if p),
-        followup_turns=request_turns(str(current.get("text") or "")),
+        followup_turns=request_turns(
+            str(current.get("text") or ""),
+            None if exchange is None
+            else tuple(str(m.get("text") or "") for m in exchange)),
         query=query, memories=memories)
