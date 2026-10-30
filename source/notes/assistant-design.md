@@ -59,7 +59,11 @@ consumes the step limit. Each loop iteration:
    was also judging the reply. A `revise` verdict bounces the reply as a
    rejected step (the problems flow back through the scratchpad so the model
    fixes the message), capped at `MAX_AUDIT_REJECTIONS = 2` per run so a
-   never-approving auditor cannot burn the step limit. The audit resolves
+   never-approving auditor cannot burn the step limit; past the cap the reply
+   ships. A bounce on the run's last step raises the run's step budget by one
+   (`_step_budget`, shown in `decision_request`'s `max_steps`), so the
+   revision has a step to happen in rather than the turn ending as "couldn't
+   complete"; the cap bounds how far past `STEP_LIMIT` that can go. The audit resolves
    its model through the `assistant.reply_audit` slot, else
    `assistant.default`; it fails open, so an unbound or unreachable
    auditor sends the message. Every verdict lands in its own `reply_audit`
@@ -638,7 +642,8 @@ only by `undo_write_intent`.
 - **`memory_query`** — hybrid retrieval over curated seed Q&A (static +
   dynamic handlers) and active memory claims, tiered user-overlay → upstream →
   claims, fenced as untrusted data, with a rendered per-fact cap (1200 chars —
-  the middle goes, both ends stay, tagged `truncateN`) and an 11000-char fact
+  the middle goes, both ends stay, the seams moved to sentence boundaries,
+  tagged `truncateN`) and an 11000-char fact
   payload that decides which further facts are admitted, and a `{"uuid": ...}`
   mode to read one fact in full. Seed fact lines carry the entry's `path` as a tag
   (e.g. `seed/upstream, dynamic, system.uptime_host`) so look-alike answers

@@ -495,6 +495,17 @@ facts have their MIDDLE dropped, keeping both ends, and are tagged
 `truncate1200`. The cap is on the RENDERED text, marker included, so a
 shortened fact cannot displace another through marker overhead.
 
+The cut is `truncate_middle_at_sentences` (`agents/base.py`): after the
+middle goes, the partial sentence on each side of the gap goes too, when a
+sentence boundary lies within `SENTENCE_TRIM_REACH` (400) characters, so both
+seams fall between sentences. A fact is prose whose sentences lean on each
+other, and a clause left beside the gap without its start has lost its
+subject: the model read such a clause as being about the last person named
+before the gap, when the dropped middle had named someone else. Telling the
+model to distrust text near the gap did not change that on a small local
+model; removing the fragment does. Text with no boundary near the gap is cut
+as before, and the result is never longer than the plain middle cut.
+
 `MEMORY_QUERY_FACT_PAYLOAD_CHARS` (11000) then governs which further facts are
 admitted, counted over the format legend, the per-line newlines and the
 retained fact lines — not the fence and not the notes after it. It is a

@@ -48,6 +48,7 @@ Unknown keys raise `UnknownSetting` — there is no ad-hoc key creation.
 | `cron.paused` | bool | `false` | — | Global cron pause: the scheduler fires nothing while on; per-job/folder flags are untouched, so resume restores the prior state. |
 | `assistant.disabled_capabilities` | json | `[]` | — | Assistant capability names the operator has turned off; a disabled capability is removed from the assistant's prompt catalog *and* its dispatch path. |
 | `chat.default_model` | string | dynamic: first Ollama model-config override by name, then Jan / LM Studio | — | Model a direct chat room talks to while the room has no model selected (a ModelConfig / ModelConfigOverride uuid; validated to exist). |
+| `chat.default_persona` | string | unset | — | Persona (a `/persona` uuid; validated to exist) a new Assistant room's assistant is linked to at creation, following its newest revision. Copied once: changing it later leaves existing rooms alone, and each room's own Settings can change its persona. Unset = new Assistant rooms start with no persona. |
 | `customize.dir` | string | unset | `RAINBOX_CUSTOMIZE_DIR` | Directory with the operator's private customizations (PII / persona); its `question_answer.jsonl` overlays the base Q&A registry by id. |
 | `qa.unlocked_shields` | json | `[]` | — | Names of unlocked Q&A shields. A shielded Q&A entry reaches the LLM only when its shield is listed; empty keeps every shielded entry hidden. |
 | `qa.facts_invalidated_at` | string | unset | — | ISO timestamp of the last change that can stale prior facts (shield toggle or Q&A repopulate); the assistant posts a one-time "re-check facts" notice per room after it changes. |
@@ -87,6 +88,7 @@ Main consumers: `db/cron.py` (pause, backup destination/recipients/push), `agent
 - `bool` → a `<select>` with `(unset)`, `true`, `false`.
 - `int` → `<input type=number>`; everything else → `<input type=text>`.
 - `chat.default_model` → a `<select>` of model configs, showing human labels (uuid in the tooltip) instead of raw uuids, with unavailable models marked.
+- `chat.default_persona` → a `<select>` of the personas on `/persona`, by name (uuid in the tooltip).
 - `qa.unlocked_shields` → no modal; the card itself is a checkbox checklist of every discovered shield, grouped by dotted-path prefix (checked = unlocked), with its own **Save shields** button.
 - secret settings → read-only card, no Edit.
 

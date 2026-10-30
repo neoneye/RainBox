@@ -98,6 +98,12 @@ Key fields:
 - `created_by`
 - `folder_uuid`
 - `position`
+- `room_type`: `assistant` (the operator and the assistant, members fixed,
+  born with the `chat.default_persona` binding), `agents` (a group chat with
+  the agents the operator picks; labelled "Group chat" in the UI) or
+  `direct` (one operator↔model chat; see `notes/direct-chat.md`). No CHECK
+  constraint: the allowed values are `db.ROOM_TYPES`, enforced in
+  `create_chatroom` and the create endpoint
 
 ### `chatroom_folder`
 
