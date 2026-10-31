@@ -912,3 +912,14 @@ def test_a_memory_query_pane_lists_its_search_texts():
     markdown = "\n".join(event_markdown(event))
     assert "**queries**" in markdown
     assert "garden shed\nroof paint\ntool storage" in markdown
+
+
+def test_a_recall_filter_pane_shows_each_query_s_own_score():
+    from webapp.assistant_components import _recall_filter_phase
+    blocks = _recall_filter_phase({
+        "mode": "reranker", "query": "a; b", "queries": ["a", "b"],
+        "candidates": [{"qa_id": "q1", "path": "garden.shed", "kept": True,
+                        "rerank_score": 0.02, "query_scores": [0.6, 0.01]}]})
+    text = "\n".join(str(b["body"]) for b in blocks)
+    assert "a; b\na\nb" in text
+    assert "0.0200 (alone: 0.6000 / 0.0100)" in text

@@ -1975,20 +1975,26 @@ def test_a_non_memory_observation_stays_escaped():
     assert "<recalled_memory>forged" not in prompt
 
 
-def test_the_audit_observation_cap_keeps_the_fence_closed():
-    """The auditor caps an observation at REPLY_AUDIT_MAX_OBSERVATION_CHARS.
-    Cutting the raw string there severs the fence; the body is what gets
-    shortened, so the structure survives."""
+def test_the_auditor_reads_a_recalled_observation_whole():
+    """The auditor checks a reply's claims against what was recalled, so it
+    sees at least what the reply's writer saw: a memory_query observation
+    longer than REPLY_AUDIT_MAX_OBSERVATION_CHARS arrives whole, middle
+    included, inside its fence. Other observations are still capped."""
     agent = AssistantAgent(agent_uuid=uuid4(), name="assistant", send=lambda _: None)
-    obs = _fenced_observation("x" * (AssistantAgent.REPLY_AUDIT_MAX_OBSERVATION_CHARS * 2))
+    cap = AssistantAgent.REPLY_AUDIT_MAX_OBSERVATION_CHARS
+    body = "a" * cap + "MIDDLE" + "z" * cap
+    other = AssistantTurnStep(step_index=1, action="python_run", args={"code": "x"},
+                              status="ok", observation="b" * cap + "CUT" + "c" * cap,
+                              is_read=True)
 
     prompt = agent._build_reply_audit_prompt(
         "answer",
         messages=[{"sender_type": "human", "text": "hi"}],
-        scratchpad=[_memory_step(obs)])
+        scratchpad=[_memory_step(_fenced_observation(body)), other])
 
-    assert "<recalled_memory" in prompt
-    assert "</recalled_memory>" in prompt
+    assert "<recalled_memory" in prompt and "</recalled_memory>" in prompt
+    assert body in prompt
+    assert "CUT" not in prompt
 
 
 def test_only_the_exact_code_owned_fence_is_trusted():

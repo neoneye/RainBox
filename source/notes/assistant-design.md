@@ -63,7 +63,14 @@ consumes the step limit. Each loop iteration:
    ships. A bounce on the run's last step raises the run's step budget by one
    (`_step_budget`, shown in `decision_request`'s `max_steps`), so the
    revision has a step to happen in rather than the turn ending as "couldn't
-   complete"; the cap bounds how far past `STEP_LIMIT` that can go. The audit resolves
+   complete"; the cap bounds how far past `STEP_LIMIT` that can go. The
+   auditor reads each observation capped at `REPLY_AUDIT_MAX_OBSERVATION_CHARS`
+   (2,000), except the recall reads (`AUDIT_WHOLE_ACTIONS`: `memory_query`,
+   `diary_query`), which it reads whole: it checks the reply's claims against
+   what was recalled, so it must see at least what the reply's writer saw. Cut,
+   a recalled fact's middle was missing from the audit alone, and a reply
+   quoting it was sent back as unsupported (5 of 6 replays; 0 of 6 whole). The
+   audit resolves
    its model through the `assistant.reply_audit` slot, else
    `assistant.default`; it fails open, so an unbound or unreachable
    auditor sends the message. Every verdict lands in its own `reply_audit`

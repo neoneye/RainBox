@@ -1519,12 +1519,13 @@ def _filter_recalled_candidates(
     live runs pass None.
 
     `queries` are the search's texts. Each brings its own seed candidates;
-    they are merged and scored ONCE, against the texts joined
-    (MEMORY_QUERY_JOINER) — so a fact that fits every angle outranks one
-    that fits a single angle. Joined, the texts can also dilute the
-    reranker's scores until nothing clears its noise floor; when that empties
-    the list, each candidate is scored against each text instead and keeps
-    its best score, which keeps what any single text would have kept."""
+    they are merged into one list. The reranker scores it against the texts
+    joined (MEMORY_QUERY_JOINER) and against each text alone, and keeps what
+    any of those keeps: joined, a fact that fits every angle outranks one
+    that fits a single angle, but a broad text also dilutes a specific one
+    until facts the specific text alone would keep fall under the noise
+    floor. The joined texts' picks lead. The LLM backend is asked once,
+    with the texts joined."""
     from agents.model_groups import (
         resolve_assistant_model_group, structured_llm_call,
     )
@@ -1595,15 +1596,33 @@ def _filter_recalled_candidates(
         scored = apply_rerank_scores(
             rerank_result.scores, candidates, top_k=TOP_K_FILTER)
         service_ms = rerank_result.service_ms
-        scoring = "the queries joined" if len(queries) > 1 else ""
-        if len(queries) > 1 and not any(s.kept for s in scored):
+        query_scores: dict[str, list[float]] = {}
+        if len(queries) > 1:
+            # Each text alone as well. Joined, a broad text dilutes a specific
+            # one: three facts about one condition fell under the noise floor
+            # against "<condition>; <broad>; <broader>" and scored high against
+            # the condition's name alone. A candidate is kept when the joined
+            # texts keep it or any single text does; the joined texts' picks
+            # lead, since a fact that fits every angle outranks one that fits
+            # a single angle, and the rest follow by their best single score.
             per_text = [rerank(text, documents, model=rerank_model)
                         for text in queries]
-            best = {d["id"]: max(r.scores.get(d["id"], 0.0) for r in per_text)
-                    for d in documents}
-            scored = apply_rerank_scores(best, candidates, top_k=TOP_K_FILTER)
             service_ms += sum(r.service_ms for r in per_text)
-            scoring = "each query, best score"
+            query_scores = {
+                d["id"]: [round(r.scores.get(d["id"], 0.0), 4) for r in per_text]
+                for d in documents}
+            kept_alone = {
+                c.qa_id for r in per_text
+                for c in apply_rerank_scores(r.scores, candidates,
+                                             top_k=TOP_K_FILTER)
+                if c.kept}
+            added = sorted(
+                (c for c in scored if not c.kept and c.qa_id in kept_alone),
+                key=lambda c: -max(query_scores.get(c.qa_id) or [0.0]))
+            scored = ([c for c in scored if c.kept]
+                      + [replace(c, kept=True) for c in added]
+                      + [c for c in scored
+                         if not c.kept and c.qa_id not in kept_alone])
         # What the backend was, what it was asked, and what it cost. The LLM
         # backend's input is recorded on its own step row; this one has no step
         # row, so THIS is where the exact input has to be — `query` and the
@@ -1614,8 +1633,8 @@ def _filter_recalled_candidates(
             "query": query,
             "max_length": rerank_result.max_length,
         }
-        if scoring:
-            head["scoring"] = scoring
+        if query_scores:
+            head["queries"] = list(queries)
     else:
         filter_user_prompt = _build_recall_filter_prompt(
             query, rows, prompt_prefix=prompt_prefix)
@@ -1680,6 +1699,10 @@ def _filter_recalled_candidates(
                        relevancy=s.relevancy)
             return row
         row["rerank_score"] = round(s.rerank_score, 4)
+        if query_scores:
+            # Against each text alone, in `queries` order: what kept a
+            # candidate the joined texts dropped.
+            row["query_scores"] = query_scores.get(s.qa_id)
         # The bytes this candidate was scored as. It replaces
         # matched_question rather than joining it: the document opens with
         # that same question, and the reranker read the document. What it
@@ -5804,6 +5827,11 @@ class AssistantAgent(ModelGroupAgent):
     # figure against what a step actually returned, bounded so a large read
     # cannot crowd out the message itself.
     REPLY_AUDIT_MAX_OBSERVATION_CHARS: int = 2_000
+    # The reads the auditor sees whole (see _build_reply_audit_prompt).
+    AUDIT_WHOLE_ACTIONS: frozenset[str] = frozenset({
+        AssistantActionName.MEMORY_QUERY.value,
+        AssistantActionName.DIARY_QUERY.value,
+    })
 
     def _build_reply_audit_prompt(
         self,
@@ -5862,16 +5890,19 @@ class AssistantAgent(ModelGroupAgent):
                     {"action": step.action, "status": step.status})
                 # Through the shared helper, so the auditor reads
                 # memory_query's fence as structure like every other call
-                # does, and so the observation cap shortens the fence's BODY
-                # rather than cutting through the fence itself.
-                # diary_query is exempt from the shortening: the auditor
-                # checks quoted passages, and a cut would hide the one a
-                # reply quotes. Its observations are already bounded, so the
-                # audit's diary evidence is at most
-                # (STEP_LIMIT - 1) * the diary observation budget.
+                # does.
+                # The recall reads are exempt from the shortening: the
+                # auditor checks the reply's claims against what they
+                # recalled, and must see at least what the reply's writer
+                # saw. Cut, the middle of a recalled fact went missing from
+                # the audit alone, and a reply quoting it was sent back as
+                # unsupported until the writer gave up and said nothing was
+                # stored. Both reads are bounded by their own budgets, so
+                # the audit's recalled evidence is at most
+                # (STEP_LIMIT - 1) * the larger observation cap.
                 self._set_observation_content(
                     entry, step.action, step.observation,
-                    max_body_chars=(None if step.action == AssistantActionName.DIARY_QUERY.value
+                    max_body_chars=(None if step.action in self.AUDIT_WHOLE_ACTIONS
                                     else self.REPLY_AUDIT_MAX_OBSERVATION_CHARS))
         prompt.append_request_section()
         # The message under audit closes the prompt — the last thing the

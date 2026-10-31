@@ -136,42 +136,49 @@ def _reranker_world(monkeypatch, scores_by_query):
 QUERIES = ["garden shed", "garden gate", "garden pond"]
 
 
-def test_the_merged_candidates_are_scored_once_against_the_texts_joined(
-        app_ctx, monkeypatch):
-    asked = _reranker_world(monkeypatch, {
-        "garden shed; garden gate; garden pond": {
-            "qa-shed": 0.9, "qa-gate": 0.6, "qa-pond": 0.01}})
-    obs = _action_query_memory(_ctx(), {"queries": QUERIES})
-    assert asked == ["garden shed; garden gate; garden pond"]
-    assert "The shed." in obs.text and "The gate." in obs.text
-    assert "The pond." not in obs.text
-    debug = obs.data["recall_filter"]
-    assert debug["query"] == "garden shed; garden gate; garden pond"
-    assert debug["scoring"] == "the queries joined"
-    assert len(debug["candidates"]) == 5
+JOINED = "garden shed; garden gate; garden pond"
 
 
-def test_when_the_joined_texts_keep_nothing_each_text_scores_alone(
-        app_ctx, monkeypatch):
+def test_the_joined_texts_picks_lead(app_ctx, monkeypatch):
     asked = _reranker_world(monkeypatch, {
-        "garden shed; garden gate; garden pond": {"qa-shed": 0.02},
-        "garden shed": {"qa-shed": 0.4},
-        "garden gate": {"qa-gate": 0.3},
+        JOINED: {"qa-shed": 0.9, "qa-gate": 0.6, "qa-pond": 0.01},
+        "garden shed": {"qa-shed": 0.9},
+        "garden gate": {"qa-gate": 0.8},
         "garden pond": {"qa-pond": 0.01}})
     obs = _action_query_memory(_ctx(), {"queries": QUERIES})
-    assert asked == ["garden shed; garden gate; garden pond", *QUERIES]
-    assert "The shed." in obs.text and "The gate." in obs.text
+    assert asked == [JOINED, *QUERIES]
+    assert obs.text.index("The shed.") < obs.text.index("The gate.")
     assert "The pond." not in obs.text
     debug = obs.data["recall_filter"]
-    assert debug["scoring"] == "each query, best score"
+    assert debug["query"] == JOINED and debug["queries"] == QUERIES
     assert debug["service_ms"] == 40
+    shed = next(c for c in debug["candidates"] if c["qa_id"] == "qa-shed")
+    assert shed["query_scores"] == [0.9, 0.0, 0.0]
+
+
+def test_a_fact_one_text_alone_keeps_is_kept_after_the_joined_picks(
+        app_ctx, monkeypatch):
+    """A broad text dilutes a specific one: joined, the gate falls under the
+    noise floor; against its own text it is the best candidate there is."""
+    _reranker_world(monkeypatch, {
+        JOINED: {"qa-shed": 0.9, "qa-path": 0.5, "qa-gate": 0.02},
+        "garden shed": {"qa-shed": 0.9},
+        "garden gate": {"qa-gate": 0.6},
+        "garden pond": {}})
+    obs = _action_query_memory(_ctx(), {"queries": QUERIES})
+    assert "The gate." in obs.text
+    assert obs.text.index("The path.") < obs.text.index("The gate.")
+    kept = [c["qa_id"] for c in obs.data["recall_filter"]["candidates"] if c["kept"]]
+    assert kept == ["qa-shed", "qa-path", "qa-gate"]
 
 
 def test_a_single_text_is_scored_as_before(app_ctx, monkeypatch):
     asked = _reranker_world(monkeypatch, {"garden shed": {"qa-shed": 0.9}})
     obs = _action_query_memory(_ctx(), {"query": "garden shed"})
     assert asked == ["garden shed"]
-    assert "scoring" not in obs.data["recall_filter"]
+    debug = obs.data["recall_filter"]
+    assert "queries" not in debug
+    assert all("query_scores" not in c for c in debug["candidates"])
 
 
 # --- the writing call ---------------------------------------------------------------------

@@ -677,7 +677,10 @@ def _recall_score_text(row: dict) -> str:
     """What the scorer said about one candidate, in its own terms: the
     reranker's single relevance score, or the LLM's three scales."""
     if row.get("rerank_score") is not None:
-        return f"{float(row['rerank_score']):.4f}"
+        alone = row.get("query_scores")
+        return f"{float(row['rerank_score']):.4f}" + (
+            " (alone: " + " / ".join(f"{float(x):.4f}" for x in alone) + ")"
+            if alone else "")
     return (f"direct {row.get('direct', 0)} · "
             f"indirect {row.get('indirect', 0)} · "
             f"relevancy {row.get('relevancy', 0)}")
@@ -726,9 +729,6 @@ def _recall_filter_phase(found: dict) -> list[dict]:
         mode, found.get("scorer_model"),
         f"{found['group_from']} model group" if found.get("group_from") else "",
         f"{found['service_ms']} ms in the service" if found.get("service_ms") else "",
-        # Several texts are scored as one, joined, unless that kept nothing
-        # and each was scored on its own.
-        f"scored against {found['scoring']}" if found.get("scoring") else "",
         f"pairs cut at {found['max_length']} tokens" if found.get("max_length") else "",
     ) if part)
     candidates = [row for row in (found.get("candidates") or [])
@@ -738,7 +738,10 @@ def _recall_filter_phase(found: dict) -> list[dict]:
         _block("scorer", scorer),
         # Half of every pair the reranker scored — the other half is each
         # candidate's own `document` below.
-        _block("scored against", found.get("query")),
+        # A search's texts are scored joined (the first line) and each alone.
+        _block("scored against", "\n".join([str(found.get("query") or ""),
+                                            *map(str, found["queries"])])
+               if found.get("queries") else found.get("query")),
         _block(f"sent to the scorer ({len(candidates)})",
                _recall_sent(candidates)),
         # The LLM backend's own summary of the set, written before it scored.

@@ -468,13 +468,17 @@ For the search, the action:
    candidates (`_hybrid_seed_ranked`, ungated, per-signal budgets) for each
    text, merged into one list (a candidate two texts found appears once).
 3. Runs ONE shared **recall filter** pass over both candidate kinds
-   (`_filter_recalled_candidates`), scored against the texts joined
-   (`MEMORY_QUERY_JOINER`, `; `): a fact that fits every angle outranks one
-   that fits a single angle, which matters because facts are admitted in rank
-   order. Joined, the texts can dilute the reranker's scores until nothing
-   clears its noise floor; when that empties the list, each candidate is
-   scored against each text and keeps its best score
-   (`recall_filter.scoring` on the step says which). Every candidate is scored, code keeps/drops,
+   (`_filter_recalled_candidates`). The reranker scores the list against the
+   texts joined (`MEMORY_QUERY_JOINER`, `; `) and against each text alone,
+   and keeps what any of them keeps. The joined texts' picks lead, because a
+   fact that fits every angle outranks one that fits a single angle and facts
+   are admitted in rank order; what only a single text kept follows, by its
+   best single score. Each alone, because a broad text dilutes a specific
+   one: three facts about one condition fell under the noise floor against
+   the condition's name joined with two broad texts, and scored high against
+   the name alone. The step's `recall_filter.queries` lists the texts and
+   each candidate's `query_scores` its scores alone. The LLM backend is asked
+   once, with the texts joined. Every candidate is scored, code keeps/drops,
    kept seed entries are resolved (dynamic handlers run only for kept
    candidates), kept claims are injected. Live runs also record one
    RetrievalEvent verdict per candidate (see `relevance-telemetry.md`).
