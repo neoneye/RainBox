@@ -886,3 +886,20 @@ def test_an_attempt_row_shows_its_prompts_and_the_export_points_instead():
     # What only this attempt was sent is printed.
     assert "RETRY-TEXT" in md
     assert "TimeoutError: 60s" in md
+
+
+def test_an_error_another_call_wrote_is_titled_by_that_call():
+    event = _event("llm", "decide → reply", payload={
+        "model_response": "{}", "error": "returned text",
+        "error_from": "reply_audit"})
+    html = render_event_detail(event)
+    assert "returned by reply_audit" in html and "returned text" in html
+    markdown = "\n".join(event_markdown(event))
+    assert "**returned by reply_audit**" in markdown
+    assert "**error**" not in markdown
+
+
+def test_a_call_s_own_error_keeps_the_plain_title():
+    html = render_event_detail(_event("llm", "decide → reply",
+                                      payload={"error": "timed out"}))
+    assert "returned by" not in html and "timed out" in html

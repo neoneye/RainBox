@@ -847,3 +847,20 @@ def test_the_criteria_revisions_inner_call_carries_its_prompts_and_response():
     assert inner["payload"]["system_prompt"] == "the shared system prompt"
     assert inner["payload"]["user_prompt"].startswith("<current_user_request>")
     assert inner["payload"]["model_response"] == '{"processing": "p", "assumptions": "a"}'
+
+
+def test_a_reply_the_audit_returned_names_the_audit_as_its_error_s_source():
+    reply = _step("reply", at=0, ms=1000, phase="failed")
+    reply.error = "The reply was audited and returned to you. It was NOT sent."
+    audit = _step("reply_audit", at=1.5, ms=500, code_driven=True)
+    events = db.run_events(_run(), [reply, audit])
+    decide = next(e for e in events if e["label"] == "decide → reply")
+    assert decide["payload"]["error_from"] == "reply_audit"
+
+
+def test_an_error_the_call_wrote_itself_names_no_other_source():
+    failed = _step("reply", at=0, ms=1000, phase="failed")
+    failed.error = "timed out"
+    events = db.run_events(_run(), [failed])
+    decide = next(e for e in events if e["label"] == "decide → reply")
+    assert "error_from" not in decide["payload"]

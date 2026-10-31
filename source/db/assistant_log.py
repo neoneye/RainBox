@@ -944,6 +944,7 @@ def run_events(run, steps: list, reviews: list | None = None,
     _attach_llm_call_kpis(out, run)
     _attach_model_names(out)
     _attach_step_refs(out, steps)
+    _attach_error_sources(out, steps)
     _attach_intents(out, intents or [])
     # Appended after the sort rather than through it: it is the newest thing
     # that has happened by construction — it has not finished — so the row the
@@ -1107,6 +1108,33 @@ def _model_label(model_uuid) -> str:
     if base is None:
         return tuning
     return f"{base.model_name} · {tuning}" if tuning else base.model_name
+
+
+#: The code-driven call that can bounce a reply back to the decide loop.
+REPLY_AUDIT_LABEL = "reply_audit"
+
+
+def _attach_error_sources(events: list[dict], steps: list) -> None:
+    """Say which row wrote a decide call's error, when another row did.
+
+    A reply the audit returns settles its decide step as failed, and the
+    error stored on that step is the audit's finding wrapped in the
+    feedback the next decide call is handed. Shown as the decide call's own
+    error, it reads as something that model produced — when its response is
+    the reply, and the text came from the audit row after it. The pairing is
+    by record: the audit step shares the decide step's index.
+    """
+    audited = {getattr(s, "step_index", None) for s in steps
+               if s.code_driven and s.action == REPLY_AUDIT_LABEL}
+    by_uuid = {str(s.uuid): s for s in steps}
+    for event in events:
+        if event["kind"] != "llm" or event.get("variant") != "decide":
+            continue
+        step = by_uuid.get(str(event.get("uuid") or ""))
+        if (step is not None and step.action == "reply"
+                and getattr(step, "error", None)
+                and getattr(step, "step_index", None) in audited):
+            event["payload"]["error_from"] = REPLY_AUDIT_LABEL
 
 
 def _attach_model_names(events: list[dict]) -> None:
