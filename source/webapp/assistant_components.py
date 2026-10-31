@@ -461,7 +461,7 @@ def _generic_action(event: dict) -> list[dict]:
         _block("reason", payload.get("reason")),
         _block("arguments", payload.get("args")),
         _block("result", _result_text(payload)),
-        _block("error", payload.get("error")),
+        *_error_blocks(payload),
     )
 
 
@@ -500,20 +500,20 @@ _ACTION_RENDERERS = {
 
 
 def _error_blocks(payload: dict) -> list[dict | None]:
-    """A call's error, titled by who wrote it.
+    """An action's error, titled by who wrote it.
 
-    Usually the call itself. A reply the audit returned is the exception:
-    the decide call answered, and the error on its row is the audit's
-    finding inside the feedback the next decide call was handed — so the
-    title names the audit row, and a note says which part is its output."""
+    Usually the action itself. A reply the audit returned is the exception:
+    the reply was never sent, and the text is the audit's finding inside
+    the feedback the next decide call was handed — so the title names the
+    audit, and a note says which part is its output."""
     source = payload.get("error_from")
     if not source:
         return [_block("error", payload.get("error"))]
     return [
-        _note(f"This call's response is the reply. The {source} call after it "
-              "returned that reply; the text below is what the next decide "
-              f"call was handed: {source}'s finding, between two fixed "
-              "sentences the code adds."),
+        _note(f"Not sent: the {source} call returned this reply. The text "
+              "below is what the next decide call was handed — "
+              f"{source}'s finding, between two fixed sentences the code "
+              "adds."),
         _block(f"returned by {source}", payload.get("error")),
     ]
 
@@ -561,7 +561,7 @@ def _llm(event: dict) -> list[dict]:
         _block("reasoning", payload.get("reasoning"),
                collapsed=True, key=f"{key}-reasoning"),
         _block("response", payload.get("model_response")),
-        *_error_blocks(payload),
+        _block("error", payload.get("error")),
         _block(f"rejected attempts ({len(rejected)})", rejected or None),
         # What was appended to a retried call's prompt: its own refused answer
         # and why it was refused. That is what makes the second attempt a

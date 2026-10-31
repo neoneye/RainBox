@@ -849,18 +849,27 @@ def test_the_criteria_revisions_inner_call_carries_its_prompts_and_response():
     assert inner["payload"]["model_response"] == '{"processing": "p", "assumptions": "a"}'
 
 
-def test_a_reply_the_audit_returned_names_the_audit_as_its_error_s_source():
+
+def test_a_reply_the_audit_returned_is_not_the_decide_call_s_error():
     reply = _step("reply", at=0, ms=1000, phase="failed")
     reply.error = "The reply was audited and returned to you. It was NOT sent."
     audit = _step("reply_audit", at=1.5, ms=500, code_driven=True)
     events = db.run_events(_run(), [reply, audit])
     decide = next(e for e in events if e["label"] == "decide → reply")
-    assert decide["payload"]["error_from"] == "reply_audit"
+    assert "error" not in decide["payload"]
+    action = next(e for e in events if e["kind"] == "action"
+                  and e["uuid"] == str(reply.uuid))
+    assert action["payload"]["error_from"] == "reply_audit"
+    assert action["payload"]["error"] == reply.error
+    assert action["kpis"]["status"] == "returned"
 
 
-def test_an_error_the_call_wrote_itself_names_no_other_source():
+def test_an_error_the_step_wrote_itself_stays_on_its_call():
     failed = _step("reply", at=0, ms=1000, phase="failed")
     failed.error = "timed out"
     events = db.run_events(_run(), [failed])
     decide = next(e for e in events if e["label"] == "decide → reply")
-    assert "error_from" not in decide["payload"]
+    assert decide["payload"]["error"] == "timed out"
+    action = next(e for e in events if e["kind"] == "action")
+    assert "error_from" not in action["payload"]
+    assert action["kpis"]["status"] == "error"

@@ -1115,26 +1115,32 @@ REPLY_AUDIT_LABEL = "reply_audit"
 
 
 def _attach_error_sources(events: list[dict], steps: list) -> None:
-    """Say which row wrote a decide call's error, when another row did.
+    """Keep a returned reply's rejection on the rows after the audit.
 
-    A reply the audit returns settles its decide step as failed, and the
-    error stored on that step is the audit's finding wrapped in the
-    feedback the next decide call is handed. Shown as the decide call's own
-    error, it reads as something that model produced — when its response is
-    the reply, and the text came from the audit row after it. The pairing is
-    by record: the audit step shares the decide step's index.
+    A reply the audit returns settles its step as failed, and the error
+    stored on that step is the audit's finding wrapped in the feedback the
+    next decide call is handed. The step's decide call came before the
+    audit and answered without fault, so its row carries no error: showing
+    it there presents a downstream verdict as an upstream failure. The
+    reply action settles after the audit, so that row carries it — titled
+    by the audit that wrote it, with the status `returned` rather than
+    `error`. The pairing is by record: the audit step shares the step's
+    index.
     """
     audited = {getattr(s, "step_index", None) for s in steps
                if s.code_driven and s.action == REPLY_AUDIT_LABEL}
-    by_uuid = {str(s.uuid): s for s in steps}
+    returned = {str(s.uuid) for s in steps
+                if not s.code_driven and s.action == "reply"
+                and getattr(s, "error", None)
+                and getattr(s, "step_index", None) in audited}
     for event in events:
-        if event["kind"] != "llm" or event.get("variant") != "decide":
+        if str(event.get("uuid") or "") not in returned:
             continue
-        step = by_uuid.get(str(event.get("uuid") or ""))
-        if (step is not None and step.action == "reply"
-                and getattr(step, "error", None)
-                and getattr(step, "step_index", None) in audited):
+        if event["kind"] == "llm" and event.get("variant") == "decide":
+            event["payload"].pop("error", None)
+        elif event["kind"] == "action":
             event["payload"]["error_from"] = REPLY_AUDIT_LABEL
+            event["kpis"]["status"] = "returned"
 
 
 def _attach_model_names(events: list[dict]) -> None:
