@@ -124,8 +124,8 @@ def test_measured_route_through_the_recall_filter(registry, app_ctx, monkeypatch
     """
     called = []
 
-    def fake_filter(query, **kwargs):
-        called.append(query)
+    def fake_filter(queries, **kwargs):
+        called.extend(queries)
         return [_seed(registry)], [], {"mode": "llm"}
 
     monkeypatch.setattr("agents.assistant._filter_recalled_candidates", fake_filter)

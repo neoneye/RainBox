@@ -904,3 +904,11 @@ def test_an_action_s_own_error_keeps_the_plain_title():
     html = render_event_detail(_event("action", "reply",
                                       payload={"error": "timed out"}))
     assert "returned by" not in html and "timed out" in html
+
+
+def test_a_memory_query_pane_lists_its_search_texts():
+    event = _event("action", "memory_query", payload={
+        "args": {"queries": ["garden shed", "roof paint", "tool storage"]}})
+    markdown = "\n".join(event_markdown(event))
+    assert "**queries**" in markdown
+    assert "garden shed\nroof paint\ntool storage" in markdown

@@ -486,8 +486,14 @@ def _memory_query(event: dict) -> list[dict]:
     of candidate documents on the page twice.
     """
     payload = event.get("payload") or {}
+    args = payload.get("args") or {}
+    queries = args.get("queries")
     return _blocks(
-        _block("query", (payload.get("args") or {}).get("query")),
+        # A search's texts, one per line: the call that wrote them is the row
+        # before this one, and these are what it settled on.
+        _block("queries", "\n".join(str(q) for q in queries)
+               if isinstance(queries, list) else None),
+        _block("query", args.get("query")),
         _block("recalled", _result_text(payload)),
     )
 
@@ -720,6 +726,9 @@ def _recall_filter_phase(found: dict) -> list[dict]:
         mode, found.get("scorer_model"),
         f"{found['group_from']} model group" if found.get("group_from") else "",
         f"{found['service_ms']} ms in the service" if found.get("service_ms") else "",
+        # Several texts are scored as one, joined, unless that kept nothing
+        # and each was scored on its own.
+        f"scored against {found['scoring']}" if found.get("scoring") else "",
         f"pairs cut at {found['max_length']} tokens" if found.get("max_length") else "",
     ) if part)
     candidates = [row for row in (found.get("candidates") or [])

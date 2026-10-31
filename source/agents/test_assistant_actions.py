@@ -1592,7 +1592,7 @@ def test_a_query_that_names_a_path_is_looked_up_not_searched(app_ctx):
                                _seed_retriever=fake_seed, _path_lookup=fake_path)
     assert "id-shed, seed/user-overlay, garden.shed: A wooden shed." in obs.text
     assert "id-roof, seed/user-overlay, garden.shed.roof: Tar paper." in obs.text
-    assert obs.data["recall_filter"] == {"mode": "path", "path": "garden.shed"}
+    assert obs.data["recall_filter"] == {"mode": "path", "paths": ["garden.shed"]}
     assert searched == []
 
     _action_query_memory(_ctx(), {"query": "a wooden shed"},
@@ -1600,10 +1600,10 @@ def test_a_query_that_names_a_path_is_looked_up_not_searched(app_ctx):
     assert searched == ["a wooden shed"]
 
 
-def test_the_action_description_says_a_path_can_be_the_query():
-    from agents.assistant import _base_enabled_capabilities
-    description = _base_enabled_capabilities()[AssistantActionName.MEMORY_QUERY].description
-    assert "path" in description and "facts filed under it" in description
+def test_the_search_text_request_says_a_path_can_be_a_search_text():
+    from agents.assistant import MEMORY_QUERIES_REQUEST
+    assert "path" in MEMORY_QUERIES_REQUEST
+    assert "facts filed under it" in MEMORY_QUERIES_REQUEST
 
 
 # The incident's geometry, synthetic: a 1947-character answer whose

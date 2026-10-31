@@ -111,7 +111,7 @@ vocabulary, so the row an operator binds is the row they read the cost of:
 | Slot | The call | Calls per run |
 | --- | --- | --- |
 | `assistant.default` | — | fallback for all |
-| `assistant.decide` | the loop's step decision | one per step |
+| `assistant.decide` | the loop's step decision, and `memory_query`'s search texts | one per step, plus one per search |
 | `assistant.acceptance_criteria` | step 0 and its revisions | one, plus revisions |
 | `assistant.request_summary` | describing an over-long request | zero or one |
 | `assistant.memory_filter` | scoring what `memory_query` recalled | one per `memory_query` |
@@ -660,7 +660,8 @@ only by `undo_write_intent`.
   the middle goes, both ends stay, the seams moved to sentence boundaries,
   tagged `truncateN`) and an 11000-char fact
   payload that decides which further facts are admitted, and a `{"uuid": ...}`
-  mode to read one fact in full. Seed fact lines carry the entry's `path` as a tag
+  mode to read one fact in full. A search (`{}`) runs three texts written by
+  their own call, from different angles, merged and scored once. Seed fact lines carry the entry's `path` as a tag
   (e.g. `seed/upstream, dynamic, system.uptime_host`) so look-alike answers
   stay tellable apart. Details in `qa-system.md` and `memory-architecture.md`.
 - **`workspace_read_command`** — one allowlisted, non-shell argv run in the

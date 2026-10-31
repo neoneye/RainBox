@@ -19,6 +19,7 @@ import re
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from itertools import combinations
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import Enum
@@ -163,6 +164,29 @@ class AssistantStepDecision(BaseModel):
             required.append("args")
         schema["required"] = required
         return schema
+
+
+class MemoryQueryTexts(BaseModel):
+    """The search texts a memory_query search runs, written by their own
+    call after the deciding call chose the search (see
+    AssistantAgent._write_memory_queries)."""
+
+    queries: list[str] = Field(
+        description="The search texts, each asking from a different angle.")
+
+
+#: The writing call's request, after the deciding call's own answer. Shapes
+#: rather than example words: a model copies examples, and a copied example
+#: is a search for the example.
+MEMORY_QUERIES_REQUEST: str = (
+    "memory_query will now search the stored facts. Write {count} search "
+    "texts for it. Each must come at the request from a different angle — "
+    "split it into its parts, or ask about the broader subject, or about a "
+    "concrete detail an answer would contain — so that together they reach "
+    "facts one search would miss. A fact's path — the dotted tag after its "
+    "source on a recalled line — given as a search text returns that fact "
+    "and the facts filed under it, exactly. {tried}"
+)
 
 
 class SecondOpinionProblem(BaseModel):
@@ -1322,6 +1346,26 @@ MEMORY_QUERY_PER_FACT_CHARS: int = 1200
 # see the loop in _action_query_memory, which always admits the first.
 MEMORY_QUERY_FACT_PAYLOAD_CHARS: int = 11000
 
+# A search runs this many query texts, written by their own call (see
+# AssistantAgent._write_memory_queries): one query worded by the deciding
+# call repeated itself when it found nothing, where three written as
+# different angles reach facts filed under other words.
+MEMORY_QUERY_TEXTS: int = 3
+# How the texts are put to the relevance filter as one: the merged candidates
+# are scored once, against the texts joined. A fact that fits every angle
+# outranks one that fits a single angle well — which matters, because facts
+# are admitted in rank order until the payload budget is spent.
+MEMORY_QUERY_JOINER: str = "; "
+# Two texts sharing more than this fraction of their words ask nearly the same
+# thing, and find the same facts. Half, not less: angles on one person or
+# place share its name, and at a third every such set was sent back until the
+# rewrites left the question for whatever else the name was filed under.
+# Words shorter than MEMORY_QUERY_WORD_MIN_CHARS are not counted: they are the
+# joining words of a phrase in most languages, and counting them refused
+# angles that shared nothing but those.
+MEMORY_QUERY_MAX_OVERLAP: float = 0.5
+MEMORY_QUERY_WORD_MIN_CHARS: int = 4
+
 
 RECALLED_MEMORY_LEGEND: str = "{memory_uuid}, {memory_tags}: {memory_text}"
 
@@ -1426,7 +1470,7 @@ def _build_recall_filter_prompt(
 
 
 def _filter_recalled_candidates(
-    query: str, *, qctx, agent_uuid: UUID, claim_candidates: list,
+    queries: list[str], *, qctx, agent_uuid: UUID, claim_candidates: list,
     top_k_vector: int | None = None, top_k_fulltext: int | None = None,
     journal_id: UUID | None = None, record_telemetry: bool = False,
     prompt_prefix: str = "", recall_filter_call: "RecallFilterCall | None" = None,
@@ -1472,7 +1516,15 @@ def _filter_recalled_candidates(
 
     `top_k_vector`/`top_k_fulltext` override the per-signal seed budgets
     (defaults TOP_K_VECTOR/TOP_K_FULLTEXT) — /memory/developer tuning knobs;
-    live runs pass None."""
+    live runs pass None.
+
+    `queries` are the search's texts. Each brings its own seed candidates;
+    they are merged and scored ONCE, against the texts joined
+    (MEMORY_QUERY_JOINER) — so a fact that fits every angle outranks one
+    that fits a single angle. Joined, the texts can also dilute the
+    reranker's scores until nothing clears its noise floor; when that empties
+    the list, each candidate is scored against each text instead and keeps
+    its best score, which keeps what any single text would have kept."""
     from agents.model_groups import (
         resolve_assistant_model_group, structured_llm_call,
     )
@@ -1497,12 +1549,19 @@ def _filter_recalled_candidates(
         if group_uuid is None:
             return None, None, {"mode": "gated", "reason": "no_model_group"}
         model_uuids = db.get_model_group_member_uuids(group_uuid)
-    seed_cands = qkb._hybrid_seed_ranked(
-        query, qkb._vector_store(),
-        top_k_vector=top_k_vector, top_k_fulltext=top_k_fulltext)
+    query = MEMORY_QUERY_JOINER.join(queries)
+    store = qkb._vector_store()
+    seed_cands: list = []
+    for text in queries:
+        for match in qkb._hybrid_seed_ranked(
+                text, store,
+                top_k_vector=top_k_vector, top_k_fulltext=top_k_fulltext):
+            if all(c.qa_id != match.qa_id for c in seed_cands):
+                seed_cands.append(match)
     claims_by_id = {str(m.uuid): m for m in claim_candidates}
     if not seed_cands and not claims_by_id:
-        return [], [], {"mode": mode, "group_from": group_from, "candidates": []}
+        return [], [], {"mode": mode, "group_from": group_from, "query": query,
+                        "candidates": []}
 
     # One combined candidate list: seed Matches as-is, each claim wrapped in a
     # Match so apply_filter_scores ranks/keeps both kinds under one policy.
@@ -1535,16 +1594,28 @@ def _filter_recalled_candidates(
         rerank_result = rerank(query, documents, model=rerank_model)
         scored = apply_rerank_scores(
             rerank_result.scores, candidates, top_k=TOP_K_FILTER)
+        service_ms = rerank_result.service_ms
+        scoring = "the queries joined" if len(queries) > 1 else ""
+        if len(queries) > 1 and not any(s.kept for s in scored):
+            per_text = [rerank(text, documents, model=rerank_model)
+                        for text in queries]
+            best = {d["id"]: max(r.scores.get(d["id"], 0.0) for r in per_text)
+                    for d in documents}
+            scored = apply_rerank_scores(best, candidates, top_k=TOP_K_FILTER)
+            service_ms += sum(r.service_ms for r in per_text)
+            scoring = "each query, best score"
         # What the backend was, what it was asked, and what it cost. The LLM
         # backend's input is recorded on its own step row; this one has no step
         # row, so THIS is where the exact input has to be — `query` and the
         # per-candidate `document` below are the whole request, verbatim.
         head: dict[str, Any] = {
             "mode": "reranker", "scorer_model": rerank_model,
-            "service_ms": rerank_result.service_ms,
+            "service_ms": service_ms,
             "query": query,
             "max_length": rerank_result.max_length,
         }
+        if scoring:
+            head["scoring"] = scoring
     else:
         filter_user_prompt = _build_recall_filter_prompt(
             query, rows, prompt_prefix=prompt_prefix)
@@ -1855,12 +1926,53 @@ def _read_key(action: str, args: dict[str, Any]) -> str:
     each string argument case-folded with punctuation removed and its words
     sorted. Near-same queries — differing only in case, punctuation or word
     order — return the same result, so they are the same read; anything that
-    changes the words is a different one."""
+    changes the words is a different one. A list of strings is a set of
+    queries: each is normalised the same way, and their order does not
+    matter."""
+    def words(v: str) -> str:
+        return " ".join(sorted(re.sub(r"[^\w\s]", " ", v.casefold()).split()))
+
     normal = {
-        k: (" ".join(sorted(re.sub(r"[^\w\s]", " ", v.casefold()).split()))
-            if isinstance(v, str) else v)
+        k: (words(v) if isinstance(v, str)
+            else sorted(words(x) for x in v)
+            if isinstance(v, list) and all(isinstance(x, str) for x in v)
+            else v)
         for k, v in sorted(args.items())}
     return f"{action}:{json.dumps(normal, sort_keys=True, default=str)}"
+
+
+def _query_words(text: str) -> set[str]:
+    """The words two memory_query texts are compared by: case-folded,
+    punctuation removed, the short joining words left out."""
+    return {w for w in re.sub(r"[^\w\s]", " ", text.casefold()).split()
+            if len(w) >= MEMORY_QUERY_WORD_MIN_CHARS}
+
+
+def _query_overlap(a: str, b: str) -> tuple[float, list[str]]:
+    """How much of two query texts' words they share (Jaccard), and which."""
+    wa, wb = _query_words(a), _query_words(b)
+    union = wa | wb
+    if not union:
+        return 0.0, []
+    shared = wa & wb
+    return len(shared) / len(union), sorted(shared)
+
+
+def _memory_query_texts(args: dict[str, Any]) -> list[str]:
+    """The query texts a memory_query search runs: `queries` (the written
+    list), else a lone `query` or `path`. Stripped, empties and exact
+    repeats dropped, at most MEMORY_QUERY_TEXTS."""
+    raw = args.get("queries")
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list) or not raw:
+        raw = [args.get("query") or args.get("path") or ""]
+    texts: list[str] = []
+    for item in raw:
+        text = str(item).strip() if isinstance(item, (str, int, float)) else ""
+        if text and text.casefold() not in {t.casefold() for t in texts}:
+            texts.append(text)
+    return texts[:MEMORY_QUERY_TEXTS]
 
 _diary_embedder = None
 
@@ -1915,10 +2027,14 @@ def _action_query_memory(
     its size, so an over-long lead fact is preferred to returning nothing. Pass
     `{"uuid": ...}` instead of `{"query": ...}` to read one fact in full.
 
-    A query that is a seed fact's path (the dotted tag on its line) is a
+    The search runs every text in `queries` (`_memory_query_texts`; a lone
+    `query` is one text): their candidates are merged and filtered once.
+
+    A text that is a seed fact's path (the dotted tag on its line) is a
     lookup, not a search: that fact, then the facts filed under it, with no
     retrieval or relevance filter (`seed_memory.answers_by_path`; `_path_lookup`
-    is injected by tests).
+    is injected by tests). They lead the observation, ahead of what the other
+    texts found.
 
     `record_telemetry=False` skips the RetrievalEvent writes — for callers
     outside a real assistant run (the /memory/developer inspection page), whose
@@ -1936,12 +2052,15 @@ def _action_query_memory(
     uuid_arg = str(args.get("uuid", "")).strip()
     if uuid_arg:
         return _query_memory_full(ctx, uuid_arg)
-    query = str(args.get("query", "")).strip()
-    if not query:
-        return AssistantObservation(ok=False, text="memory_query needs a 'query' or a 'uuid'.")
-    qctx = QueryContext(
-        room_uuid=ctx.room_uuid, query=query, payload={}, agent_uuid=ctx.agent_uuid
-    )
+    texts = _memory_query_texts(args)
+    if not texts:
+        return AssistantObservation(
+            ok=False, text="memory_query needs a search text or a 'uuid'.")
+
+    def _qctx(text: str) -> QueryContext:
+        return QueryContext(room_uuid=ctx.room_uuid, query=text, payload={},
+                            agent_uuid=ctx.agent_uuid)
+
     # A path names facts outright. Searching for one only found them when the
     # embedding happened to rank them first.
     if _path_lookup is None:
@@ -1950,11 +2069,22 @@ def _action_query_memory(
                 return []   # tests that inject a retriever stay hermetic
             qkb._load_kb()
             return qkb.answers_by_path(q, qctx=qctx)
-    named = _path_lookup(query, qctx=qctx)
-    if named:
+    named: list = []
+    paths: list[str] = []
+    queries: list[str] = []
+    for text in texts:
+        found = _path_lookup(text, qctx=_qctx(text))
+        if not found:
+            queries.append(text)
+            continue
+        paths.append(text)
+        named.extend(f for f in found if all(n.uuid != f.uuid for n in named))
+    if not queries:
         return _recalled_facts_observation(
-            named, [], recall_filter_debug={"mode": "path", "path": query},
+            named, [], recall_filter_debug={"mode": "path", "paths": paths},
             timing=None)
+    query = MEMORY_QUERY_JOINER.join(queries)
+    qctx = _qctx(query)
     # Every phase below is timed, and every embedding call any of them makes
     # is captured, for the step's `timing` block (see _memory_query_timing).
     # This action is the run's most expensive read and the only one that
@@ -1965,11 +2095,18 @@ def _action_query_memory(
         # Claim candidates first: they join the seed candidates in the one shared
         # filter call below (or pass through unfiltered on the fallback paths).
         with timer.phase("claim retrieval") as phase:
-            memories = retrieve_memories_hybrid(
-                query, agent_uuid=ctx.agent_uuid, room_uuid=ctx.room_uuid,
-                include_secret=False, journal_id=ctx.journal_id,
-                record_telemetry=record_telemetry, any_room=any_room,
-            )
+            # Each text's claims, merged in the order found: the relevance
+            # filter ranks them, so a claim another text found again only
+            # needs to be there once.
+            memories = []
+            for text in queries:
+                for m in retrieve_memories_hybrid(
+                    text, agent_uuid=ctx.agent_uuid, room_uuid=ctx.room_uuid,
+                    include_secret=False, journal_id=ctx.journal_id,
+                    record_telemetry=record_telemetry, any_room=any_room,
+                ):
+                    if all(str(k.uuid) != str(m.uuid) for k in memories):
+                        memories.append(m)
             phase.found({"claims": [_claim_found(m) for m in memories]})
         seeds = []
         recall_filter_debug: dict[str, Any] = {}
@@ -1979,7 +2116,9 @@ def _action_query_memory(
             # retriever is injected (tests stay hermetic).
             if _seed_retriever is not None:
                 with timer.phase("seed retrieval"):
-                    seeds = _seed_retriever(query, qctx=qctx)
+                    seeds = _merged_seeds(
+                        _seed_retriever(text, qctx=_qctx(text))
+                        for text in queries)
             else:
                 with timer.phase("seed KB load") as phase:
                     # The registry, and ONLY the registry. The loop does not
@@ -2009,7 +2148,7 @@ def _action_query_memory(
                 try:
                     with timer.phase("recall filter"):
                         filtered, kept_claims, recall_filter_debug = _filter_recalled_candidates(
-                            query, qctx=qctx, agent_uuid=ctx.agent_uuid,
+                            queries, qctx=qctx, agent_uuid=ctx.agent_uuid,
                             claim_candidates=memories,
                             top_k_vector=top_k_vector, top_k_fulltext=top_k_fulltext,
                             journal_id=ctx.journal_id, record_telemetry=record_telemetry,
@@ -2026,13 +2165,28 @@ def _action_query_memory(
                     memories = kept_claims if kept_claims is not None else memories
                 else:
                     with timer.phase("seed fallback"):
-                        seeds = qkb.retrieve_seed_answers(query, qctx=qctx)
+                        seeds = _merged_seeds(
+                            qkb.retrieve_seed_answers(text, qctx=_qctx(text))
+                            for text in queries)
         except Exception:
             logger.warning("assistant: seed memory retrieval failed", exc_info=True)
     timing = _memory_query_timing(timer, embeds)
+    if paths:
+        recall_filter_debug = {**recall_filter_debug, "paths": paths}
     return _recalled_facts_observation(
-        seeds, memories, recall_filter_debug=recall_filter_debug,
-        timing=timing)
+        _merged_seeds([named, seeds]), memories,
+        recall_filter_debug=recall_filter_debug, timing=timing)
+
+
+def _merged_seeds(lists) -> list:
+    """Seed answers from several lookups as one list: first come first, a
+    fact found again keeps its first place."""
+    merged: list = []
+    for found in lists:
+        for seed in found or []:
+            if all(m.uuid != seed.uuid for m in merged):
+                merged.append(seed)
+    return merged
 
 def _recalled_facts_observation(
     seeds: list, memories: list, *, recall_filter_debug: dict[str, Any],
@@ -3341,13 +3495,13 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
         description=('recall stored facts AND answer general questions (project '
                      'status, git status, capabilities, model info) from the '
                      'knowledge base. NOT for kanban or files — use kanban_read / '
-                     'workspace_read_command. args: {"query": "..."} to search; '
-                     'a fact\'s path — the dotted tag after its source on a '
-                     'recalled line — given as the query returns that fact and '
-                     'the facts filed under it, exactly, instead of searching; '
-                     'or {"uuid": "..."} to read one shortened/omitted fact in full.'),
+                     'workspace_read_command. args: {} to search — a follow-up '
+                     'call then writes three search texts from this conversation, '
+                     'and what they find is ranked together; or {"uuid": "..."} '
+                     'to read one shortened/omitted fact in full.'),
         summary="recall facts and answer general questions",
-        required_args=(), optional_args=frozenset({"query", "uuid"}),
+        required_args=(),
+        optional_args=frozenset({"query", "queries", "path", "uuid"}),
         action=_action_query_memory, output_cap_chars=12000,
     ),
     AssistantActionName.DIARY_QUERY: Capability(
@@ -3783,6 +3937,11 @@ class AssistantAgent(ModelGroupAgent):
     MAX_AUDIT_REJECTIONS: int = 2
     REPLY_AUDIT_ACTION: str = "reply_audit"
     RECALL_FILTER_ACTION: str = "recall_filter"
+    MEMORY_QUERIES_ACTION: str = "memory_queries"
+    # How many times one writing call's search texts are sent back for
+    # overlapping. Past it the texts run as written: a model that will not
+    # vary them must not cost the search.
+    MEMORY_QUERY_REWRITES: int = 2
     RESPONSE_LANGUAGE_CLASSIFIER_ACTION: str = "response_language_classifier"
     # The `args` key under which an observed classifier row snapshots the
     # profile's declared language codes at the moment it was resolved -- a
@@ -3806,6 +3965,9 @@ class AssistantAgent(ModelGroupAgent):
         # This run's successful reads, by `_read_key`, with the step each ran
         # at: what the decide call's validator refuses a repeat of.
         self._turn_reads: dict[str, int] = {}
+        # The memory_query texts searched this run: what the search-text call
+        # is shown, and refuses a near-repeat of.
+        self._turn_queries: list[str] = []
         # Set only by pin_model_group (evals); None on every live turn, where
         # each call resolves its own assistant.* slot.
         self._pinned_model_group: UUID | None = None
@@ -4134,6 +4296,7 @@ class AssistantAgent(ModelGroupAgent):
             # The same reads, keyed as `_read_key` keys them, with the step that
             # ran each — what the decide call's validator refuses a repeat of.
             self._turn_reads = {}
+            self._turn_queries = []
             # Failed actions also make no progress when repeated verbatim. Keep
             # their signatures so the loop can return a corrective observation
             # without re-running the same doomed action.
@@ -4318,6 +4481,18 @@ class AssistantAgent(ModelGroupAgent):
                 # observation. A confirm-tier write is *proposed* here, never
                 # executed inline; everything else (reads, log-and-undo writes)
                 # executes immediately.
+                if (decision.action is AssistantActionName.MEMORY_QUERY
+                        and not str(decision.args.get("uuid") or "").strip()):
+                    # The decision chose a search; its texts are written by
+                    # their own call, and the step records what it ran.
+                    decision = decision.model_copy(update={
+                        "args": self._write_memory_queries(
+                            decision, step_index=step_index,
+                            system_prompt=system_prompt,
+                            user_prompt=user_prompt,
+                            followup_turns=followup_turns,
+                            model_response=model_response,
+                            tried=list(self._turn_queries))})
                 self._set_activity(f"running {decision.action.value}")
                 step_row = self._open_step(
                     step_index=step_index, decision=decision, usage=usage,
@@ -4462,6 +4637,11 @@ class AssistantAgent(ModelGroupAgent):
                 if read_sig is not None and observation.ok:
                     done_reads.setdefault(read_sig, observation)
                     self._turn_reads.setdefault(read_sig, step_index)
+                    if (decision.action is AssistantActionName.MEMORY_QUERY
+                            and not decision.args.get("uuid")):
+                        self._turn_queries.extend(
+                            t for t in _memory_query_texts(decision.args)
+                            if t not in self._turn_queries)
                 if not observation.ok:
                     failed_actions.add(action_sig)
                 preview = observation.text[: self.MAX_OBSERVATION_PREVIEW_CHARS]
@@ -4668,6 +4848,194 @@ class AssistantAgent(ModelGroupAgent):
                 "read one fact in full by its uuid, or search with a query "
                 "that asks for something different.")
         return validate
+
+    def _write_memory_queries(
+        self,
+        decision: AssistantStepDecision,
+        *,
+        step_index: int,
+        system_prompt: str | None,
+        user_prompt: str | None,
+        followup_turns: list[dict[str, str]] | None,
+        model_response: str | None,
+        tried: list[str],
+    ) -> dict[str, Any]:
+        """The arguments a memory_query search runs with: search texts
+        written by their own call.
+
+        The deciding call only chooses to search. Asked to word the search as
+        well, it wrote one query, and when that found nothing it wrote the
+        same one again; a call whose only job is the wording, shown what this
+        turn already searched, writes angles the deciding call did not. It is
+        the deciding conversation continued — the same prompts, then the
+        decision, then the request — so it runs on the decide slot and its
+        prompt is the decide call's cached prefix.
+
+        Overlapping texts, among themselves or with a search already run this
+        turn, are sent back with the words they share
+        (`_memory_queries_validator`).
+
+        Falls back to the decision's own arguments — a lone `query` still
+        searches — when the slot has no models, the decide prompts were not
+        captured (the scripted test seam), or the call fails."""
+        models, group_uuid, _slot = self._slot_models(ASSISTANT_DECIDE_UUID)
+        if not models or not system_prompt or not user_prompt:
+            return dict(decision.args)
+        tried_note = (
+            "Searches already run this turn: "
+            + "; ".join(json.dumps(t, ensure_ascii=False) for t in tried)
+            + ". Do not repeat or reword them." if tried
+            else "No search has run this turn yet.")
+        turns = list(followup_turns or []) + [
+            {"role": "assistant",
+             "content": model_response or decision.model_dump_json()},
+            {"role": "user",
+             "content": MEMORY_QUERIES_REQUEST.format(
+                 count=MEMORY_QUERY_TEXTS, tried=tried_note)},
+        ]
+        self._set_activity("writing the memory_query search texts")
+        requested_at = datetime.now(UTC)
+        step_uuid = uuid4()
+        if self._run is not None:
+            db.checkpoint_assistant_call(
+                self._run,
+                step_index=step_index,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                requested_at=requested_at,
+                model_group_uuid=group_uuid,
+                log=self._turn_log or None,
+                followup_turns=turns,
+            )
+        record = dict(step_index=step_index, model_group_uuid=group_uuid,
+                      system_prompt=system_prompt, user_prompt=user_prompt,
+                      followup_turns=turns, requested_at=requested_at,
+                      step_uuid=step_uuid)
+        try:
+            with self._logging_step(step_uuid):
+                result = self._structured_completion(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    response_model=MemoryQueryTexts,
+                    purpose="memory_queries",
+                    candidate_model_uuids=models,
+                    followup_turns=turns,
+                    validator=self._memory_queries_validator(tried),
+                )
+        except Exception as exc:
+            logger.warning("assistant: writing the memory_query search texts "
+                           "failed; searching with the decision's own",
+                           exc_info=True)
+            self._record_memory_queries_step(
+                phase="failed", error=f"{type(exc).__name__}: {exc}", **record)
+            return dict(decision.args)
+        texts = _memory_query_texts(
+            {"queries": cast(MemoryQueryTexts, result).queries})
+        self._record_memory_queries_step(phase="observed", **record)
+        return {"queries": texts} if texts else dict(decision.args)
+
+    def _memory_queries_validator(
+        self, tried: list[str]
+    ) -> Callable[[BaseModel], None]:
+        """Send back search texts that ask nearly the same thing.
+
+        Each pair of texts, and each text against every search already run
+        this turn, may share at most MEMORY_QUERY_MAX_OVERLAP of their words
+        (`_query_overlap`). The refusal names the shared words: "too similar"
+        alone left the model guessing which. Bounded per call
+        (MEMORY_QUERY_REWRITES); past it the texts run as written."""
+        refused = 0
+
+        def validate(result: BaseModel) -> None:
+            nonlocal refused
+            if refused >= self.MEMORY_QUERY_REWRITES:
+                return
+            texts = _memory_query_texts(
+                {"queries": cast(MemoryQueryTexts, result).queries})
+            problem = None
+            if len(texts) < MEMORY_QUERY_TEXTS:
+                problem = (f"write {MEMORY_QUERY_TEXTS} different search "
+                           f"texts; this answer has {len(texts)}.")
+            for (i, a), (j, b) in combinations(enumerate(texts, 1), 2):
+                score, shared = _query_overlap(a, b)
+                if problem is None and score > MEMORY_QUERY_MAX_OVERLAP:
+                    problem = (f"search texts {i} and {j} are too similar: "
+                               f"they share {', '.join(shared)} ({score:.0%} "
+                               "of their words), and searches that ask nearly "
+                               "the same thing find the same facts.")
+            for i, a in enumerate(texts, 1):
+                for b in tried:
+                    score, shared = _query_overlap(a, b)
+                    if problem is None and score > MEMORY_QUERY_MAX_OVERLAP:
+                        problem = (f"search text {i} is too similar to "
+                                   f"{json.dumps(b, ensure_ascii=False)}, which "
+                                   f"already ran this turn: they share "
+                                   f"{', '.join(shared)} ({score:.0%} of their "
+                                   "words), so it would find the same facts.")
+            if problem is None:
+                return
+            refused += 1
+            raise ValueError(
+                problem + " Rewrite them so each asks something different: "
+                "split the request into its parts, or ask it from a "
+                "different angle.")
+        return validate
+
+    def _record_memory_queries_step(
+        self,
+        *,
+        step_index: int,
+        phase: str,
+        model_group_uuid: UUID | None,
+        system_prompt: str,
+        user_prompt: str,
+        followup_turns: list[dict[str, str]],
+        requested_at: datetime,
+        step_uuid: UUID,
+        error: str | None = None,
+    ) -> None:
+        """Persist the search-text call as its own code-driven step row.
+
+        Code-driven: the loop issued it once the decision chose a search, and
+        it consumes none of the step budget. Its answer is its result — the
+        texts are on `model_response`, and what they found is the memory_query
+        step's own observation."""
+        reason = "write the memory_query search texts"
+        self._steps.append({
+            "step_index": step_index,
+            "phase": phase,
+            "action": self.MEMORY_QUERIES_ACTION,
+            "reason": reason,
+            "error": error,
+            "code_driven": True,
+        })
+        if self._run is None:
+            return
+        usage = self._last_usage or {}
+        db.append_assistant_step(
+            run_uuid=self._run.uuid,
+            uuid=step_uuid,
+            step_index=step_index,
+            phase=phase,  # type: ignore[arg-type]
+            action=self.MEMORY_QUERIES_ACTION,
+            reason=reason,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            followup_turns=followup_turns,
+            log=self._turn_log or None,
+            reasoning=self._last_reasoning,
+            model_response=self._last_response_text,
+            rejected_attempts=self._last_rejected_attempts,
+            code_driven=True,
+            requested_at=requested_at,
+            error=error,
+            model_group_uuid=model_group_uuid,
+            model_uuid=self._last_model_uuid,
+            input_tokens=usage.get("input"),
+            output_tokens=usage.get("output"),
+            duration_ms=usage.get("ms"),
+        )
+        db.clear_assistant_call_checkpoint(self._run)
 
     def _model_attempt_started(
         self, model_uuid: UUID, model_name: str, timeout_seconds: float

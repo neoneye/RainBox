@@ -434,14 +434,47 @@ A shield hides sensitive entries from the LLM until the operator unlocks them.
 ### Assistant `memory_query`
 
 `_action_query_memory` (`agents/assistant.py`) is the assistant's single read
-action for facts. It:
+action for facts.
+
+The deciding call only chooses to search (`args: {}`); the search's texts are
+written by a call of their own (`AssistantAgent._write_memory_queries`). That
+call continues the deciding conversation — the same prompts, then the
+decision, then `MEMORY_QUERIES_REQUEST` — on the `assistant.decide` slot, so
+its prompt is the decide call's cached prefix. It writes
+`MEMORY_QUERY_TEXTS` (3) texts, each from a different angle, and is shown the
+texts already searched this turn. Texts that share more than
+`MEMORY_QUERY_MAX_OVERLAP` (half) of their words — with each other, or with
+a text already searched — are sent back naming the shared words, at most
+`MEMORY_QUERY_REWRITES` (2) times; past that they run as written. Words under
+four letters are not counted, so the check needs no per-language stopword
+list. Half rather than less because angles on one person or place share its
+name: at a third, such sets were sent back until the rewrites drifted off the
+question. The check catches near-repeats, not synonyms — two texts that
+reword each other share no words and pass. The call lands as its own code-driven `memory_queries` step row, and
+the `memory_query` step's `args` are the texts it ran (`{"queries": [...]}`).
+Without a model on the slot, or when the call fails, the decision's own
+arguments search (a lone `{"query": ...}` is one text).
+
+Asked to word the search itself, the deciding call wrote one query and, when
+that found nothing, the same query again; replayed on stored turns, the
+separate call wrote an angle that reached the fact in every stuck re-search
+where the single query never did.
+
+For the search, the action:
 
 1. Loads the registry (`_load_kb`) and ensures the table is populated
    (`_ensure_populated`) — the assistant loop does not otherwise load the KB.
 2. Retrieves memory-claim candidates (`retrieve_memories_hybrid`) and seed
-   candidates (`_hybrid_seed_ranked`, ungated, per-signal budgets).
+   candidates (`_hybrid_seed_ranked`, ungated, per-signal budgets) for each
+   text, merged into one list (a candidate two texts found appears once).
 3. Runs ONE shared **recall filter** pass over both candidate kinds
-   (`_filter_recalled_candidates`): every candidate is scored, code keeps/drops,
+   (`_filter_recalled_candidates`), scored against the texts joined
+   (`MEMORY_QUERY_JOINER`, `; `): a fact that fits every angle outranks one
+   that fits a single angle, which matters because facts are admitted in rank
+   order. Joined, the texts can dilute the reranker's scores until nothing
+   clears its noise floor; when that empties the list, each candidate is
+   scored against each text and keeps its best score
+   (`recall_filter.scoring` on the step says which). Every candidate is scored, code keeps/drops,
    kept seed entries are resolved (dynamic handlers run only for kept
    candidates), kept claims are injected. Live runs also record one
    RetrievalEvent verdict per candidate (see `relevance-telemetry.md`).
@@ -490,7 +523,7 @@ e6d8…, seed/upstream, dynamic, system.uptime_process: 1m 35s (since …)
 
 The uuid full-fetch mode (below) renders the same tag shape.
 
-A path is also an address. A `memory_query` whose query is exactly a seed
+A path is also an address. A search text that is exactly a seed
 entry's path is a lookup, not a search (`seed_memory.answers_by_path`): that
 entry first, then — when the query is dotted — every entry whose path starts
 with it plus `.`, in path order, with no claim retrieval, embedding or recall
@@ -499,9 +532,11 @@ matches only exactly, so a plain search word that happens to be a top-level
 segment is still searched; a query that names no path falls through to the
 search as before. Shields and dynamic handlers apply as in search, and the
 facts render through the same per-fact cap and payload admission
-(`_recalled_facts_observation`). The action's description tells the model a
-path can be given as the query. Searching for a path's text only found the
-entry when the embedding happened to rank it first.
+(`_recalled_facts_observation`); looked-up facts lead, ahead of what the
+other texts found (`recall_filter.paths` lists the paths). The search-text
+request tells the model a path can be given as a search text. Searching for a
+path's text only found the entry when the embedding happened to rank it
+first.
 
 Each fact's text is capped to `MEMORY_QUERY_PER_FACT_CHARS` (1200) — longer
 facts have their MIDDLE dropped, keeping both ends, and are tagged
@@ -530,7 +565,7 @@ mid-word) and counted in a note appended outside the fence. This keeps one
 large overlay entry (some are >5000 chars) from crowding out every other fact.
 
 To read a shortened or omitted fact in full, the model calls `memory_query`
-again with `{"uuid": "<the fact's uuid>"}` instead of `{"query": ...}`
+again with `{"uuid": "<the fact's uuid>"}` instead of `{}`
 (`_query_memory_full`): the uuid mode returns that single entry untruncated —
 seed entries still respect shields, claims never return secrets. The system
 prompt tells the model about the `truncate` tags and this uuid escape hatch.
