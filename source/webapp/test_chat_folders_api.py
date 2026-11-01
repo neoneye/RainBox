@@ -45,6 +45,25 @@ def test_create_folder_then_appears_in_tree(app_ctx):
         db.session.commit()
 
 
+def test_create_subfolder_lands_under_its_parent(app_ctx):
+    from webapp.core import app as flask_app
+    client = flask_app.test_client()
+    parent = client.post("/chat/api/folders", json={"name": "apitest-parent"}).get_json()
+    resp = client.post("/chat/api/folders",
+                       json={"name": "apitest-child", "parent_uuid": parent["id"]})
+    assert resp.status_code == 201
+    child = resp.get_json()
+    try:
+        assert child["parentId"] == parent["id"]
+        tree = client.get("/chat/api/tree").get_json()
+        assert any(f["id"] == child["id"] and f["parentId"] == parent["id"]
+                   for f in tree["folders"])
+    finally:
+        db.session.execute(sa.delete(ChatroomFolder)
+                           .where(ChatroomFolder.uuid.in_([child["id"], parent["id"]])))
+        db.session.commit()
+
+
 def test_put_tree_stale_version_is_409(app_ctx):
     from webapp.core import app as flask_app
     client = flask_app.test_client()
@@ -178,7 +197,7 @@ def test_room_delete_preview(app_ctx):
 
 
 def test_a_room_created_in_a_folder_lands_last_in_it(app_ctx):
-    """A folder's "New room" creates the room inside that folder, after the
+    """A folder's "New chat" creates the room inside that folder, after the
     rooms already there; an unknown folder is refused rather than leaving a
     room pointing at nothing."""
     from webapp.core import app as flask_app

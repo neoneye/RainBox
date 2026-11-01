@@ -456,7 +456,7 @@ CHAT_TEMPLATE: str = """
     <div class="rooms-head">
       <span>
         <button class="new-folder-btn" id="new-folder-btn" type="button">+ Folder</button>
-        <button class="new-room-btn" id="new-room-btn" type="button">+ New room</button>
+        <button class="new-room-btn" id="new-room-btn" type="button">+ New chat</button>
       </span>
     </div>
     <div id="rooms"></div>
@@ -2600,8 +2600,8 @@ function buildRoomMenu(roomUuid){
   return wrap;
 }
 
-// Folder kebab: New room (created inside this folder), Rename, Copy folder
-// id, Delete. The wrap is laid out (display:flex) but its
+// Folder kebab: New chat and Create subfolder (both created inside this
+// folder), Rename, Copy folder id, Delete. The wrap is laid out (display:flex) but its
 // visibility is governed by CSS — shown only when the folder node is selected
 // (.chat-node.sel) or hovered, mirroring the rooms' active-only kebab.
 function buildFolderMenu(folderId){
@@ -2616,7 +2616,7 @@ function buildFolderMenu(folderId){
   menu.className = 'room-menu';
   menu.setAttribute('role', 'menu');
   menu.hidden = true;
-  [['New room', ''], ['Rename', ''], ['Copy folder id', ''], ['Delete', 'danger']].forEach(([label, mod]) => {
+  [['New chat', ''], ['Create subfolder', ''], ['Rename', ''], ['Copy folder id', ''], ['Delete', 'danger']].forEach(([label, mod]) => {
     const item = document.createElement('button');
     item.type = 'button';
     item.className = 'item' + (mod ? ' ' + mod : '');
@@ -2626,7 +2626,8 @@ function buildFolderMenu(folderId){
       e.stopPropagation();
       e.preventDefault();  // the menu sits inside the folder's anchor — never follow it
       menu.hidden = true;
-      if (label === 'New room') openRoomModal(folderId);
+      if (label === 'New chat') openRoomModal(folderId);
+      else if (label === 'Create subfolder') openFolderModal({mode: 'create', parentId: folderId});
       else if (label === 'Copy folder id') copyIdToast(folderId, 'Folder');
       else if (label === 'Delete') confirmDeleteFolder(folderId);
       else if (label === 'Rename') renameFolder(folderId);
@@ -2658,8 +2659,10 @@ function renameFolder(folderId){
 let folderModalState = null;  // {mode:'create'|'rename', folderId?, parentId?, current?}
 function openFolderModal(opts){
   folderModalState = opts || {mode: 'create', parentId: null};
+  const parent = folderModalState.parentId ? folderById(folderModalState.parentId) : null;
   document.getElementById('chat-folder-title').textContent =
-    folderModalState.mode === 'rename' ? 'Rename folder' : 'New folder';
+    folderModalState.mode === 'rename' ? 'Rename folder'
+      : parent ? 'New subfolder in ' + parent.name : 'New folder';
   const input = document.getElementById('chat-folder-input');
   input.value = folderModalState.current || '';
   document.getElementById('chat-folder-create').textContent =
@@ -2689,10 +2692,15 @@ async function confirmFolderModal(){
     await flushPendingTreeSave();
     const resp = await fetch('/chat/api/folders', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({name: name}),
+      body: JSON.stringify({name: name, parent_uuid: folderModalState.parentId || null}),
     });
     if (!resp.ok) throw new Error('POST /chat/api/folders -> ' + resp.status);
   } catch (e) { alert(e); return; }
+  // Open the parent, so the new subfolder is in view.
+  if (folderModalState.parentId){
+    expandedFolders[folderModalState.parentId] = true;
+    saveExpandState();
+  }
   closeFolderModal();
   await loadRooms(currentRoom);
 }
@@ -4060,8 +4068,8 @@ async function loadRoomPersonaLine(){
 document.querySelectorAll('input[name="chat-room-type"]').forEach(radio => {
   radio.addEventListener('change', syncRoomTypeUI);
 });
-// The folder a new room goes into: set by a folder's "New room" menu item,
-// null (top level) from the "+ New room" button.
+// The folder a new room goes into: set by a folder's "New chat" menu item,
+// null (top level) from the "+ New chat" button.
 let roomModalFolder = null;
 async function openRoomModal(folderId){
   roomModalFolder = folderId || null;
