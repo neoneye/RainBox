@@ -629,6 +629,7 @@ class ModelGroupAgent(Agent):
         from llama_index.core.instrumentation.dispatcher import instrument_tags
         from llama_index.core.llms import ChatMessage, MessageRole
         from llm import capture_reasoning, prepare_llm
+        from llm.activity import close_stream
 
         candidates = candidate_model_uuids or self.candidate_model_uuids
         if not candidates:
@@ -720,8 +721,9 @@ class ModelGroupAgent(Agent):
                     # of a timed-out call is exactly what one wants to inspect).
                     with instrument_tags(self._instrument_tags(caller_tag)), \
                             capture_reasoning() as tally:
+                        stream = sllm.stream_chat(messages + corrections)
                         try:
-                            for last in sllm.stream_chat(messages + corrections):
+                            for last in stream:
                                 # Prefer the instrumentation capture: it holds the
                                 # provider's true streamed text. A structured
                                 # stream's message.content is a dump of the
@@ -746,6 +748,12 @@ class ModelGroupAgent(Agent):
                                         f"structured stream exceeded {timeout_s:.0f}s "
                                         "(model still generating)"
                                     )
+                        except BaseException as abandoned:
+                            # Closed here, naming why, so the failed call's
+                            # row on /activity shows this error rather than
+                            # the GeneratorExit the provider's stream sees.
+                            close_stream(stream, abandoned)
+                            raise
                         finally:
                             self._last_reasoning = tally.reasoning_text.strip() or None
                             if not self._last_response_text:

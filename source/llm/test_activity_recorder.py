@@ -26,6 +26,7 @@ from llama_index.core.instrumentation.events.span import SpanDropEvent
 from llm.activity import (
     ActivityRecorder,
     call_origin,
+    close_stream,
     error_category,
     error_traceback,
     prompt_text,
@@ -785,6 +786,26 @@ OPENAI_EMBED_MODEL_DICT = {
 }
 
 
+# Shaped like StructuredLLM.to_dict(): the wrapped model's dict under `llm`.
+STRUCTURED_MODEL_DICT = {
+    "class_name": "structured_llm",
+    "llm": OLLAMA_MODEL_DICT,
+    "system_prompt": None,
+    "pydantic_program_mode": "default",
+}
+
+
+def abandoned_stream(recorder, span="span-1"):
+    """A generator that reports its failure the way LlamaIndex's stream
+    wrapper does: an ExceptionEvent from its own `except BaseException`."""
+    try:
+        yield "chunk"
+        yield "chunk"
+    except BaseException as exc:
+        recorder.handle(exception_event(span=span, exc=exc))
+        raise
+
+
 def raise_and_drop(recorder, exc, span="span-1"):
     """Fire a drop event from inside a live `except` block, the way LlamaIndex
     does — which is what puts the exception in `sys.exc_info()` for the
@@ -939,6 +960,49 @@ class TestFailedStreamingCalls:
         recorder, rows = make_recorder()
         recorder.handle(exception_event(span="unrelated"))
         assert rows == []
+
+    def test_a_failed_structured_call_records_one_row_with_its_model(self):
+        """The structured-output wrapper and the model inside it each fire a
+        Start and, on failure, an ExceptionEvent, on spans of their own. Only
+        the model's is a call; the wrapper's would be a second row with no
+        model name."""
+        recorder, rows = make_recorder()
+        recorder.handle(start_event(span="wrapper", model_dict=STRUCTURED_MODEL_DICT))
+        recorder.handle(start_event(span="inner"))
+        recorder.handle(exception_event(span="wrapper"))
+        recorder.handle(exception_event(span="inner"))
+        assert len(rows) == 1
+        assert rows[0]["model"] == "llama3.2:3b"
+
+    def test_a_wrapper_start_is_not_held(self):
+        """A successful structured call's wrapper End carries the parsed
+        object and is ignored, so a held wrapper Start would never be popped."""
+        recorder, rows = make_recorder()
+        recorder.handle(start_event(span="wrapper", model_dict=STRUCTURED_MODEL_DICT))
+        assert recorder.pending == {}
+
+    def test_a_stream_closed_with_a_reason_records_the_reason(self):
+        """A caller abandoning a stream closes it, and the provider's
+        generator fails with GeneratorExit. Closed through `close_stream`,
+        the row names the caller's own error instead."""
+        recorder, rows = make_recorder()
+        recorder.handle(start_event())
+        stream = abandoned_stream(recorder)
+        next(stream)
+        try:
+            raise ValueError("only whitespace after 270 characters")
+        except ValueError as exc:
+            close_stream(stream, exc)
+        assert rows[0]["error_category"] == "ValueError"
+        assert "only whitespace after 270 characters" in rows[0]["error_text"]
+
+    def test_a_stream_closed_without_a_reason_records_generator_exit(self):
+        recorder, rows = make_recorder()
+        recorder.handle(start_event())
+        stream = abandoned_stream(recorder)
+        next(stream)
+        stream.close()
+        assert rows[0]["error_category"] == "GeneratorExit"
 
 
 class TestEmbeddingCalls:

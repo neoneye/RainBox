@@ -28,6 +28,12 @@ The handler is observational and defensive in equal measure: nothing reads
 these rows back into a decision, and every failure path swallows its
 exception. A telemetry bug must never be able to break an inference call.
 
+A call whose caller stops reading mid-stream — a deadline, a stop request,
+the whitespace-runaway guard — fails inside the provider's generator with a
+bare GeneratorExit, which says nothing about why. A caller that closes the
+stream through `close_stream(stream, reason)` hands the reason over, and the
+row carries it instead.
+
 Caller attribution rides in on `instrument_tags({"caller": ...})` at the call
 site; anything untagged records as "unknown" so coverage can grow gradually
 without leaving holes in the totals.
@@ -35,6 +41,7 @@ without leaving holes in the totals.
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import sys
 import traceback
@@ -88,6 +95,43 @@ _MAX_ERROR_CHARS = 20_000
 # Cap on the category label, which is a table cell. Only a pathological
 # exception class name gets near it.
 _MAX_CATEGORY_CHARS = 200
+
+# Why the caller is closing a stream, while `close_stream` closes it. The
+# close runs the generator's failure handlers synchronously, in this context,
+# so the recorder reads the reason off this variable.
+_closing_reason: contextvars.ContextVar[BaseException | None] = \
+    contextvars.ContextVar("llm_activity_closing_reason", default=None)
+
+
+def close_stream(stream: Any, reason: BaseException) -> None:
+    """Close a chat stream the caller is abandoning, naming why.
+
+    Call it from the `except` that is about to re-raise `reason`. The failed
+    row then shows `reason` — the error the caller raised — rather than the
+    GeneratorExit the generator sees. Never raises: the caller's own error is
+    the one that must surface.
+    """
+    close = getattr(stream, "close", None)
+    if close is None:
+        return
+    token = _closing_reason.set(reason)
+    try:
+        close()
+    except Exception:
+        logger.debug("closing an abandoned stream failed", exc_info=True)
+    finally:
+        _closing_reason.reset(token)
+
+
+def is_wrapper(model_dict: dict) -> bool:
+    """Whether a chat Start comes from a wrapper around another model.
+
+    The structured-output wrapper carries the wrapped model's dict under
+    `llm`, and that model fires its own Start, End and failure events on a
+    span of its own. Holding the wrapper's Start too would record every
+    failed structured call twice, once without a model name.
+    """
+    return isinstance(model_dict.get("llm"), dict)
 
 
 def provider_for_base_url(base_url: str | None) -> str | None:
@@ -342,6 +386,8 @@ class ActivityRecorder(BaseEventHandler):
 
     def _on_start(self, event: LLMChatStartEvent) -> None:
         model_dict = event.model_dict or {}
+        if is_wrapper(model_dict):
+            return
         text = prompt_text(event.messages)
         # Captured here, on the Start event, because this handler runs
         # synchronously inside the caller's own stack — by the End event the
@@ -420,6 +466,10 @@ class ActivityRecorder(BaseEventHandler):
         start = self._pending.pop(str(span_id), None)
         if start is None:
             return
+        reason = _closing_reason.get()
+        if isinstance(exc, GeneratorExit) and reason is not None:
+            exc = reason
+            err_str = None
         row: dict[str, Any] = {
             "started_at": start.get("started_at"),
             "finished_at": datetime.now(UTC),

@@ -145,6 +145,7 @@ def structured_llm_call(
     from agents.base import (ModelGroupAgent, WhitespaceRunaway,
                              check_whitespace_runaway, truncate_middle)
     from llm import capture_reasoning
+    from llm.activity import close_stream
 
     for model_uuid in candidate_model_uuids:
         # A member that got stuck padding whitespace is asked again before
@@ -180,8 +181,9 @@ def structured_llm_call(
                 last = None
                 with instrument_tags({"caller": agent_name}), \
                         capture_reasoning() as tally:
+                    stream = sllm.stream_chat(messages)
                     try:
-                        for last in sllm.stream_chat(messages):
+                        for last in stream:
                             raw_text = (tally.content_text
                                         or getattr(getattr(last, "message", None),
                                                    "content", None)
@@ -196,6 +198,9 @@ def structured_llm_call(
                                 raise TimeoutError(
                                     f"structured stream exceeded {timeout_s:.0f}s "
                                     "(model still generating)")
+                    except BaseException as abandoned:
+                        close_stream(stream, abandoned)
+                        raise
                     finally:
                         reasoning = tally.reasoning_text.strip() or None
                         response_text = (
