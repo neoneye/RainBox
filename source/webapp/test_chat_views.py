@@ -35,7 +35,7 @@ def test_folder_kebab_creates_a_chat_inside_the_folder():
     """A folder's menu leads with "New chat": the room dialog names the
     folder, the create posts it, and the "+ New chat" button stays top-level."""
     body = _body()
-    assert "[['New chat', ''], ['Create subfolder', ''], ['Rename', ''], ['Copy folder id', ''], ['Delete', 'danger']]" in body
+    assert "[['New chat', ''], ['Create subfolder', ''], ['Rename folder', ''], ['Copy folder id', ''], ['Delete', 'danger']]" in body
     assert "if (label === 'New chat') openRoomModal(folderId);" in body
     assert "folder ? 'New chat in ' + folder.name : 'New chat';" in body
     assert "{ name, member_uuids, room_type, folder_uuid: roomModalFolder });" in body

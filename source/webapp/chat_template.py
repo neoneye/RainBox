@@ -2601,9 +2601,10 @@ function buildRoomMenu(roomUuid){
 }
 
 // Folder kebab: New chat and Create subfolder (both created inside this
-// folder), Rename, Copy folder id, Delete. The wrap is laid out (display:flex) but its
-// visibility is governed by CSS — shown only when the folder node is selected
-// (.chat-node.sel) or hovered, mirroring the rooms' active-only kebab.
+// folder), Rename folder, Copy folder id, Delete. The wrap is laid out
+// (display:flex) but its visibility is governed by CSS — shown only when the
+// folder node is selected (.chat-node.sel) or hovered, mirroring the rooms'
+// active-only kebab.
 function buildFolderMenu(folderId){
   const wrap = document.createElement('div');
   wrap.className = 'room-actions';
@@ -2616,7 +2617,7 @@ function buildFolderMenu(folderId){
   menu.className = 'room-menu';
   menu.setAttribute('role', 'menu');
   menu.hidden = true;
-  [['New chat', ''], ['Create subfolder', ''], ['Rename', ''], ['Copy folder id', ''], ['Delete', 'danger']].forEach(([label, mod]) => {
+  [['New chat', ''], ['Create subfolder', ''], ['Rename folder', ''], ['Copy folder id', ''], ['Delete', 'danger']].forEach(([label, mod]) => {
     const item = document.createElement('button');
     item.type = 'button';
     item.className = 'item' + (mod ? ' ' + mod : '');
@@ -2630,7 +2631,7 @@ function buildFolderMenu(folderId){
       else if (label === 'Create subfolder') openFolderModal({mode: 'create', parentId: folderId});
       else if (label === 'Copy folder id') copyIdToast(folderId, 'Folder');
       else if (label === 'Delete') confirmDeleteFolder(folderId);
-      else if (label === 'Rename') renameFolder(folderId);
+      else if (label === 'Rename folder') renameFolder(folderId);
     });
     menu.appendChild(item);
   });
