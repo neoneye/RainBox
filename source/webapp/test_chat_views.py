@@ -37,7 +37,7 @@ def test_folder_kebab_creates_a_chat_inside_the_folder():
     body = _body()
     assert "[['New chat', ''], ['Create subfolder', ''], ['Rename', ''], ['Copy folder id', ''], ['Delete', 'danger']]" in body
     assert "if (label === 'New chat') openRoomModal(folderId);" in body
-    assert "folder ? 'New chatroom in ' + folder.name : 'New chatroom';" in body
+    assert "folder ? 'New chat in ' + folder.name : 'New chat';" in body
     assert "{ name, member_uuids, room_type, folder_uuid: roomModalFolder });" in body
     assert "newRoomBtn.addEventListener('click', () => openRoomModal(null));" in body
     assert "+ New chat</button>" in body

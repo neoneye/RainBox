@@ -43,7 +43,7 @@ action.
 
 ```html
 <div class="ui-modal" id="room-modal" hidden>
-  <h3>New chatroom</h3>
+  <h3>New chat</h3>
   <input type="text" id="room-input" placeholder="Room name" autocomplete="off">
   <!-- …optional extra body, e.g. an agent checklist… -->
   <div class="modal-actions">
@@ -164,7 +164,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') dismissOpenM
 
 | Modal        | Considered dirty when…                                            |
 |--------------|------------------------------------------------------------------|
-| New chatroom | a name is typed **or** any agent checkbox is checked             |
+| New chat     | a name is typed **or** any agent checkbox is checked             |
 | New folder   | the name differs from its initial value (covers create & rename) |
 | Delete       | the type-to-confirm box is non-empty                            |
 

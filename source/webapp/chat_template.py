@@ -523,7 +523,7 @@ CHAT_TEMPLATE: str = """
   </div>
 
   <div class="ui-modal" id="chat-room-modal" hidden>
-    <h3 id="chat-room-title">New chatroom</h3>
+    <h3 id="chat-room-title">New chat</h3>
     <input type="text" id="chat-room-input" placeholder="Room name" autocomplete="off">
     <div class="room-type-choices">
       <label><input type="radio" name="chat-room-type" value="assistant" checked> Assistant</label>
@@ -4032,7 +4032,7 @@ async function loadAgents(){
   agentsLoaded = true;
 }
 
-// ---- new chatroom modal ----
+// ---- new chat modal ----
 function selectedRoomType(){
   const checked = document.querySelector('input[name="chat-room-type"]:checked');
   return checked ? checked.value : 'assistant';
@@ -4075,7 +4075,7 @@ async function openRoomModal(folderId){
   roomModalFolder = folderId || null;
   const folder = roomModalFolder ? folderById(roomModalFolder) : null;
   document.getElementById('chat-room-title').textContent =
-    folder ? 'New chatroom in ' + folder.name : 'New chatroom';
+    folder ? 'New chat in ' + folder.name : 'New chat';
   const input = document.getElementById('chat-room-input');
   input.value = '';
   if (!agentsLoaded) await loadAgents();
