@@ -3932,6 +3932,9 @@ class AssistantAgent(ModelGroupAgent):
     # How many times one decide call refuses a read this turn already ran
     # before letting the decision stand (_repeat_read_validator).
     READ_REPEAT_REJECTIONS: int = 2
+    # How many times one decide call refuses a decision whose action or
+    # arguments do not check out (_decide_validator).
+    ARGUMENT_REJECTIONS: int = 2
     # Longest request the closing instruction quotes back in full; past it, the
     # anchor points at the section instead (see `_request_anchor`).
     REQUEST_ANCHOR_MAX_CHARS: int = 400
@@ -4868,9 +4871,34 @@ class AssistantAgent(ModelGroupAgent):
             purpose="decide",
             candidate_model_uuids=models,
             followup_turns=followup_turns,
-            validator=self._repeat_read_validator(),
+            validator=self._decide_validator(),
         )
         return cast(AssistantStepDecision, result)
+
+    def _decide_validator(self) -> Callable[[BaseModel], None]:
+        """The decide call's validator: the argument check first, then the
+        repeat-read check (_repeat_read_validator).
+
+        A decision whose action or arguments `_validate_decision` refuses is
+        sent back inside the call with that error — the action's usage
+        included — so it costs a model call and no step. Left to the loop, the
+        failed step entered the scratchpad and the model copied it: one run
+        made the same call with an unknown argument at every one of its six
+        steps; refused in the call, the same model at that run's last step
+        corrected it after one refusal (5 of 5 replays). Bounded per call
+        (ARGUMENT_REJECTIONS): past it the decision stands and the loop
+        records it as a failed step, as before."""
+        repeat_read = self._repeat_read_validator()
+        refused = 0
+
+        def validate(result: BaseModel) -> None:
+            nonlocal refused
+            error = self._validate_decision(cast(AssistantStepDecision, result))
+            if error is not None and refused < self.ARGUMENT_REJECTIONS:
+                refused += 1
+                raise ValueError(error)
+            repeat_read(result)
+        return validate
 
     def _repeat_read_validator(self) -> Callable[[BaseModel], None]:
         """Refuse, inside the decide call, a read this turn already ran.
@@ -7659,14 +7687,29 @@ class AssistantAgent(ModelGroupAgent):
                 return (
                     f"action '{action.value}' requires a non-empty '{key}' "
                     f"argument. Resubmit {action.value} with "
-                    f'args {{"{key}": "..."}} filled in{hint}.'
+                    f'args {{"{key}": "..."}} filled in{hint}.\n'
+                    + self._action_usage(cap)
                 )
         # Reject unknown args so an unsupported/typo'd read can't look successful.
         allowed = set(cap.required_args) | cap.optional_args
         unknown = sorted(set(args) - allowed)
         if unknown:
-            return f"action '{action.value}' got unknown argument(s): {', '.join(unknown)}"
+            return (f"action '{action.value}' got unknown argument(s): "
+                    f"{', '.join(unknown)}\n" + self._action_usage(cap))
         return None
+
+    def _action_usage(self, cap: Capability) -> str:
+        """How to call `cap`, for an error about its arguments: its own listing
+        line, then one line per other action of its family, so a decision that
+        reached for the wrong action sees the one it meant. A model handed only
+        the error repeated the same call until the steps ran out."""
+        lines = [f"How to use {cap.name.value}: {cap.description}"]
+        siblings = [c for c in self._caps.values()
+                    if c.family == cap.family and c is not cap and c.prompt_exposed]
+        if siblings:
+            lines.append(f"The other {cap.family} actions:")
+            lines.extend(f"- {c.name.value}: {c.summary}" for c in siblings)
+        return "\n".join(lines)
 
     def _terminal_text(self, decision: AssistantStepDecision) -> str:
         # Validation guarantees the required key is present and non-empty.

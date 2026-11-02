@@ -162,6 +162,9 @@ def log_view(run, steps: list, reviews: list | None = None,
         # next one.
         row["key"] = _row_key(event)
         row["glyph"] = EVENT_GLYPH.get(event["kind"], "·")
+        # An action that failed — refused before dispatch, or an observation
+        # that came back not ok — is drawn red, as a rejected call is.
+        row["failed"] = (event.get("kpis") or {}).get("status") == "error"
         if event["start"] and first is not None and span > 0:
             offset = (event["start"] - first).total_seconds()
             row["offset_pct"] = round(offset / span * 100, 3)

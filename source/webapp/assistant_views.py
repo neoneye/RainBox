@@ -282,6 +282,10 @@ ASSISTANT_TEMPLATE = """
   .as-main .ev-note { color:#6b7280; font-size:85%; }
   .as-main .wf-bar.kind-rejected { background:#e8746f; }
   .as-main .wf-name.kind-rejected { color:#c0392b; }
+  /* An action that failed: same red. It has no bar (an action carries no
+     span), so its name and tick carry it. */
+  .as-main .wf-name.is-failed { color:#c0392b; }
+  .as-main .wf-tick.is-failed { background:#e8746f; }
   /* Visibly not a measurement of anything: nothing reported this time, which
      is why it is worth looking at. */
   .as-main .wf-bar.kind-unaccounted {
@@ -439,12 +443,12 @@ ASSISTANT_TEMPLATE = """
                     {% if e.since_ms %}data-since="{{ e.since_ms }}"{% endif %}
                     {% if e.primary_for %}data-primary="{{ e.primary_for }}"{% endif %}
                     title="{{ e.label }} — {{ e.seconds }} at {{ e.clock }}">
-              <span class="wf-name kind-{{ e.variant or e.kind }}">{{ e.label }}</span>
+              <span class="wf-name kind-{{ e.variant or e.kind }}{% if e.failed %} is-failed{% endif %}">{{ e.label }}</span>
               <span class="wf-track">
                 {% if e.width_pct is not none %}
                 <span class="wf-bar kind-{{ e.variant or e.kind }}" style="left:{{ e.offset_pct }}%;width:{{ e.width_pct }}%"></span>
                 {% elif e.offset_pct is not none %}
-                <span class="wf-tick" style="left:{{ e.offset_pct }}%"></span>
+                <span class="wf-tick{% if e.failed %} is-failed{% endif %}" style="left:{{ e.offset_pct }}%"></span>
                 {% else %}
                 <span class="wf-undated">not timed</span>
                 {% endif %}

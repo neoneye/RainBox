@@ -289,6 +289,52 @@ def test_the_decide_validator_refuses_a_read_already_run():
     validate(repeat)  # past the bound the decision stands
 
 
+def test_the_decide_validator_sends_back_unknown_arguments_with_the_usage():
+    """Refused in the call, the model corrects the call; left to the loop the
+    failed step entered the scratchpad and was copied at every later step."""
+    agent = AssistantAgent(agent_uuid=uuid4(), name="assistant", send=lambda _: None)
+    from agents.assistant import _base_enabled_capabilities
+    agent._caps = _base_enabled_capabilities()
+    agent._turn_reads = {}
+    validate = agent._decide_validator()
+    wrong = AssistantStepDecision(reason="list them", action=AssistantActionName.KANBAN_READ,
+                                  args={"command": "list_all"})
+    right = AssistantStepDecision(reason="list them", action=AssistantActionName.KANBAN_READ,
+                                  args={})
+    validate(right)
+    for _ in range(agent.ARGUMENT_REJECTIONS):
+        with pytest.raises(ValueError) as refused:
+            validate(wrong)
+        text = str(refused.value)
+        assert text.startswith("action 'kanban_read' got unknown argument(s): command\n")
+        assert "How to use kanban_read: read kanban state" in text
+        assert "The other kanban actions:\n- kanban_query: " in text
+        assert "- kanban_read:" not in text  # the action itself is not a sibling
+    validate(wrong)  # past the bound the decision stands; the loop records it
+
+
+def test_the_decide_validator_still_refuses_a_read_already_run():
+    agent = AssistantAgent(agent_uuid=uuid4(), name="assistant", send=lambda _: None)
+    from agents.assistant import _base_enabled_capabilities, _read_key
+    agent._caps = _base_enabled_capabilities()
+    agent._turn_reads = {_read_key("memory_query", {"query": "the moon"}): 0}
+    repeat = AssistantStepDecision(reason="again", action=AssistantActionName.MEMORY_QUERY,
+                                   args={"query": "the moon"})
+    with pytest.raises(ValueError, match="already ran at step 1"):
+        agent._decide_validator()(repeat)
+
+
+def test_a_missing_required_argument_also_carries_the_usage():
+    agent = AssistantAgent(agent_uuid=uuid4(), name="assistant", send=lambda _: None)
+    from agents.assistant import _base_enabled_capabilities
+    agent._caps = _base_enabled_capabilities()
+    error = agent._validate_decision(AssistantStepDecision(
+        reason="find it", action=AssistantActionName.KANBAN_QUERY, args={}))
+    assert error is not None
+    assert "requires a non-empty 'query' argument" in error
+    assert "How to use kanban_query: find a kanban board" in error
+
+
 def test_turn_event_budget_keeps_oversized_newest_event_whole():
     agent = AssistantAgent(agent_uuid=uuid4(), name="assistant", send=lambda _: None)
     newest = AssistantTurnStep(

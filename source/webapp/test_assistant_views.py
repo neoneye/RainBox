@@ -2789,3 +2789,26 @@ def test_the_cache_legend_speaks_for_its_own_pane(app_ctx, client):
         db.session.query(AssistantRun).filter(
             AssistantRun.uuid == run.uuid).delete()
         db.session.commit()
+
+
+def test_a_failed_action_is_red_on_the_timeline(app_ctx, client):
+    """An action the loop refused (unknown arguments) or whose observation came
+    back not ok is drawn in the rejected call's red; a fine one is not."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    try:
+        db.append_assistant_step(
+            run_uuid=run.uuid, step_index=0, phase="failed", action="kanban_read",
+            reason="list them", args={"command": "list_all"},
+            error="action 'kanban_read' got unknown argument(s): command",
+            requested_at=datetime(1999, 3, 31, 9, 0, 0, tzinfo=UTC), duration_ms=900)
+        db.append_assistant_step(
+            run_uuid=run.uuid, step_index=1, phase="observed", action="kanban_read",
+            reason="list them", args={}, observation_preview="two boards",
+            requested_at=datetime(1999, 3, 31, 9, 0, 5, tzinfo=UTC), duration_ms=900)
+        page = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        names = re.findall(r'<span class="wf-name kind-action( is-failed)?">kanban_read</span>', page)
+        assert names == [" is-failed", ""]
+    finally:
+        _cleanup(run.uuid, room.uuid)

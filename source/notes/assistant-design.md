@@ -87,6 +87,19 @@ consumes the step limit. Each loop iteration:
    the decision stands and the loop answers the repeat with the first read's
    observation without dispatching it again. A run once spent all six steps
    on one identical query.
+   A decision whose action or arguments do not check out
+   (`_validate_decision`: an unavailable action, a missing required
+   argument, an unknown one) is refused inside the decide call the same way
+   (`_decide_validator`, `ARGUMENT_REJECTIONS = 2` per call). The error
+   carries the action's usage: its own listing line, then a one-line summary
+   of each other action of its family. Past the bound the decision stands,
+   and the loop records it as a failed step with the same text. Left to the
+   loop alone, the failed step entered the scratchpad and the model copied
+   it: one run called `kanban_read {"command": ...}` at every one of its six
+   steps. Refused in the call, the same model at that run's last step
+   corrected it after one refusal (5 of 5 replays; the usage text alone, in
+   the scratchpad, fixed 1 of 5). On /assistant a failed action's row is
+   red.
 5. **Observe** — the action's `AssistantObservation{ok, text, data}` is capped
    (per-capability `output_cap_chars`), persisted on the step row, and appended
    to the scratchpad for the next decision.
