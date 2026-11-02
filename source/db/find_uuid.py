@@ -441,7 +441,7 @@ def _qa_matches(needle: str, *, allow_mentions: bool) -> list[dict[str, Any]]:
             "kind": "Q&A entry", "uuid": str(e.get("id")),
             "match": match, "confidence": round(confidence, 3),
             "name": _excerpt(str(questions[0]) if questions else e.get("id")),
-            "url": None,
+            "url": f"/memory/qa?id={e.get('id')}",
             "parents": [{"kind": "q&a file", "uuid": str(e.get("id")),
                          "name": path}],
         })
