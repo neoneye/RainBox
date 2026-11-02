@@ -291,13 +291,11 @@ CHAT_TEMPLATE: str = """
      clicked — the "Worked for" toggle, a copy button — and :focus-within
      would then pin the row visible after the pointer had gone.
      Only where a pointer can hover: a touch screen never would, and would
-     lose the buttons entirely.
-     A reply's sources pill is the exception: what the reply rests on is part
-     of what it says, so it stays shown — it fades with none of the rest. */
+     lose the buttons entirely. */
   @media (hover: hover){
-    .chat-log.one-to-one .msg:not(.msg-debug) > .msg-actions > :not(.sources-btn){opacity:0;transition:opacity 0.12s}
-    .chat-log.one-to-one .msg:not(.msg-debug):hover > .msg-actions > *,
-    .chat-log.one-to-one .msg:not(.msg-debug):has(:focus-visible) > .msg-actions > *{opacity:1}
+    .chat-log.one-to-one .msg:not(.msg-debug) > .msg-actions{opacity:0;transition:opacity 0.12s}
+    .chat-log.one-to-one .msg:not(.msg-debug):hover > .msg-actions,
+    .chat-log.one-to-one .msg:not(.msg-debug):has(:focus-visible) > .msg-actions{opacity:1}
   }
   /* The row spans the full width, like a reply's, so hovering anywhere beside
      the bubble reveals its action row; the bubble itself is what is capped at
@@ -388,7 +386,8 @@ CHAT_TEMPLATE: str = """
   .fb-btn.fb-selected-down{color:#b91c1c;border-color:#b91c1c}
   .fb-btn:disabled{opacity:0.6;cursor:default}
   /* A reply's sources (meta.sources): a pill at the end of its action row,
-     opening the Sources panel; outlined while the panel lists this reply. */
+     shown and hidden with the rest of the row, opening the Sources panel;
+     outlined while the panel lists this reply. */
   .sources-btn{font-size:0.8rem;color:#495057;background:#f1f3f5;border:1px solid transparent;border-radius:999px;padding:3px 10px;margin-left:0.35em;cursor:pointer;display:inline-flex;align-items:center;gap:0.35em;line-height:1.4}
   .sources-btn:hover{color:#1a1a2e;border-color:#cbd5e1}
   .sources-btn.sources-shown{color:#2563eb;border-color:#2563eb}
