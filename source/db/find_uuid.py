@@ -53,8 +53,8 @@ from db.models import (AssistantRun, AssistantStep, ChatMessage, Chatroom,
                        PersonaFolder, PersonaRevision, Profile,
                        ProfileFolder, Prompt, PromptFolder, db)
 
-__all__ = ["find_uuid", "FIND_UUID_MIN_QUERY", "FIND_UUID_MIN_FUZZY_QUERY",
-           "FIND_UUID_MIN_MENTION_QUERY"]
+__all__ = ["find_uuid", "describe_uuid", "FIND_UUID_MIN_QUERY",
+           "FIND_UUID_MIN_FUZZY_QUERY", "FIND_UUID_MIN_MENTION_QUERY"]
 
 # Shorter fragments match half the database; refuse loudly instead.
 FIND_UUID_MIN_QUERY = 4
@@ -527,3 +527,26 @@ def find_uuid(query: str, limit: int = 20) -> list[dict[str, Any]]:
     out.extend(qa_matches)
     out.sort(key=lambda m: -m["confidence"])  # stable: ties keep their order
     return out[:limit]
+
+
+def describe_uuid(value: str) -> dict[str, Any] | None:
+    """The record a full uuid names, described as `find_uuid` describes an
+    exact match ({kind, uuid, name, url, parents, match, confidence}), or None.
+
+    For a caller that already holds the whole uuid and wants only what it is:
+    one indexed lookup per table and the Q&A registry's ids, none of
+    find_uuid's scans for fragments, typos and mentions."""
+    q = _normalize(value)
+    if len(q) != 32:
+        return None
+    try:
+        u = UUID(q)
+    except ValueError:
+        return None
+    for source in _SOURCES:
+        row = _row(source.model, u, source.uuid_attr)
+        if row is not None:
+            return {"kind": source.kind, "uuid": str(u), "match": "exact",
+                    "confidence": 1.0, **source.describe(row)}
+    return next((m for m in _qa_matches(q, allow_mentions=False)
+                 if m.get("match") == "exact"), None)

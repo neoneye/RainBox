@@ -160,6 +160,13 @@ CHAT_TEMPLATE: str = """
   .room-sidebar .ds-trouble-row button:hover{background:#f1f5f9}
   .room-sidebar .ds-trouble-row button:disabled{background:#f8fafc;color:#9ca3af;cursor:default}
   .room-sidebar .ds-note{color:#888;font-size:0.85rem}
+  .room-sidebar .src-for{color:#888;font-size:0.8rem;margin:0 0 0.6em}
+  .room-sidebar .src-for button{font:inherit;color:#2563eb;background:none;border:none;padding:0;cursor:pointer}
+  .room-sidebar .src-list{margin:0;padding-left:1.4em}
+  .room-sidebar .src-list li{margin:0 0 0.7em}
+  .room-sidebar .src-name{font-size:0.9rem;word-break:break-word}
+  .room-sidebar .src-meta{color:#6c757d;font-size:0.75rem;margin-top:0.15em}
+  .room-sidebar .src-link{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all;user-select:all}
   /* History panel: the open room's pages, oldest first (renderHistory). */
   .room-sidebar .hist-nav{display:flex;align-items:center;justify-content:space-between;gap:0.5em;margin:0.4em 0 0.8em;
                           font-size:0.85rem;color:#374151;font-variant-numeric:tabular-nums}
@@ -284,11 +291,13 @@ CHAT_TEMPLATE: str = """
      clicked — the "Worked for" toggle, a copy button — and :focus-within
      would then pin the row visible after the pointer had gone.
      Only where a pointer can hover: a touch screen never would, and would
-     lose the buttons entirely. */
+     lose the buttons entirely.
+     A reply's sources pill is the exception: what the reply rests on is part
+     of what it says, so it stays shown — it fades with none of the rest. */
   @media (hover: hover){
-    .chat-log.one-to-one .msg:not(.msg-debug) > .msg-actions{opacity:0;transition:opacity 0.12s}
-    .chat-log.one-to-one .msg:not(.msg-debug):hover > .msg-actions,
-    .chat-log.one-to-one .msg:not(.msg-debug):has(:focus-visible) > .msg-actions{opacity:1}
+    .chat-log.one-to-one .msg:not(.msg-debug) > .msg-actions > :not(.sources-btn){opacity:0;transition:opacity 0.12s}
+    .chat-log.one-to-one .msg:not(.msg-debug):hover > .msg-actions > *,
+    .chat-log.one-to-one .msg:not(.msg-debug):has(:focus-visible) > .msg-actions > *{opacity:1}
   }
   /* The row spans the full width, like a reply's, so hovering anywhere beside
      the bubble reveals its action row; the bubble itself is what is capped at
@@ -378,6 +387,12 @@ CHAT_TEMPLATE: str = """
   .fb-btn.fb-selected-up{color:#15803d;border-color:#15803d}
   .fb-btn.fb-selected-down{color:#b91c1c;border-color:#b91c1c}
   .fb-btn:disabled{opacity:0.6;cursor:default}
+  /* A reply's sources (meta.sources): a pill at the end of its action row,
+     opening the Sources panel; outlined while the panel lists this reply. */
+  .sources-btn{font-size:0.8rem;color:#495057;background:#f1f3f5;border:1px solid transparent;border-radius:999px;padding:3px 10px;margin-left:0.35em;cursor:pointer;display:inline-flex;align-items:center;gap:0.35em;line-height:1.4}
+  .sources-btn:hover{color:#1a1a2e;border-color:#cbd5e1}
+  .sources-btn.sources-shown{color:#2563eb;border-color:#2563eb}
+  .sources-btn svg{display:block}
   .copy-btn svg, .fb-btn svg{display:block}
   /* Generation speed under a direct-chat reply; hover/focus opens the
      detailed stats popover (buildGenerationBadge). */
@@ -472,6 +487,7 @@ CHAT_TEMPLATE: str = """
         <option value="settings">Settings</option>
         <option value="bridge">Bridge</option>
         <option value="history">History</option>
+        <option value="sources">Sources</option>
         <option value="export">Export</option>
       </select>
     </div>
@@ -606,6 +622,7 @@ const LUCIDE_THUMBS_UP_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1em
 const LUCIDE_THUMBS_DOWN_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/><path d="M17 14V2"/></svg>';
 const LUCIDE_MORE_HORIZONTAL_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>';
 const LUCIDE_PENCIL_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>';
+const LUCIDE_LINK_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
 const LUCIDE_TRASH_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>';
 const CHAT_ICON_FOLDER = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>';
 const CHAT_ICON_FOLDER_OPEN = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2"/></svg>';
@@ -680,12 +697,16 @@ let agentsLoaded = false;
 // panel doesn't apply — never loses the panel choice.
 const SIDEBAR_MODE_KEY = 'chat.sidebarMode';
 const SIDEBAR_VISIBLE_KEY = 'chat.sidebarVisible';
-let sidebarMode = 'members';    // 'members' | 'stats' | 'settings' | 'bridge' | 'history' | 'export'
+let sidebarMode = 'members';    // 'members' | 'stats' | 'settings' | 'bridge' | 'history' | 'sources' | 'export'
 let sidebarVisible = false;
+// The reply the Sources panel lists, by message uuid: set by its pill, cleared
+// on a room switch. null lists the newest reply in view that has sources.
+let sourcesMessageUuid = null;
 try {
   const saved = localStorage.getItem(SIDEBAR_MODE_KEY);
   if (saved === 'members' || saved === 'stats' || saved === 'settings'
-      || saved === 'bridge' || saved === 'history' || saved === 'export'){
+      || saved === 'bridge' || saved === 'history' || saved === 'sources'
+      || saved === 'export'){
     sidebarMode = saved;
     sidebarVisible = true;  // single-key era stored 'hidden' for off; a panel meant shown
   }
@@ -1877,6 +1898,20 @@ function makeMessage(m){
   // Overflow (...) menu, always present: "Copy message id" copies the UUID;
   // direct rooms also get "Retry" (re-ask the model from this turn).
   actions.appendChild(buildMessageMenu(m));
+  // Sources pill: on the same line as the actions, after them.
+  const sources = (m.meta || {}).sources;
+  if (Array.isArray(sources) && sources.length && !m.streaming){
+    const pill = document.createElement('button');
+    pill.type = 'button';
+    pill.className = 'sources-btn';
+    pill.dataset.messageUuid = m.uuid;
+    pill.title = 'Show what this reply rests on';
+    pill.innerHTML = LUCIDE_LINK_SVG;
+    pill.appendChild(document.createTextNode(
+      sources.length === 1 ? '1 source' : sources.length + ' sources'));
+    pill.addEventListener('click', () => openSources(m.uuid));
+    actions.appendChild(pill);
+  }
   const gen = (m.meta || {}).generation;
   if (gen && !m.streaming) actions.appendChild(buildGenerationBadge(gen));
   // The header's clock, for layouts that hide the header (one-to-one rooms).
@@ -2839,6 +2874,7 @@ function chatSyncUrl(){
 
 async function selectRoom(uuid, scrollMsgId){
   currentRoom = uuid;
+  sourcesMessageUuid = null;
   selectedFolder = null;  // opening a room clears any folder selection
   hideFolderDetail();     // swap the right pane back to the chat view
   unread[uuid] = 0;
@@ -2918,6 +2954,8 @@ async function fetchNew(uuid, opts){
   growNewestPage(msgs);
   if (follow) scrollLogToBottom();
   if (activeSidebarMode() === 'stats') renderStats();  // keep the live message count fresh
+  // An unpinned Sources panel follows the newest reply with sources.
+  if (activeSidebarMode() === 'sources' && !sourcesMessageUuid) renderSources();
 }
 
 async function loadRooms(selectUuid, scrollMsgId){
@@ -3065,9 +3103,11 @@ function syncSidebarModeOptions(){
   sidebarModeSel.value = activeSidebarMode();
 }
 
-// Right sidebar: hidden / members / stats / settings / bridge / history / export.
+// Right sidebar: hidden / members / stats / settings / bridge / history / sources / export.
 async function renderSidebar(){
   const mode = activeSidebarMode();
+  // Only the Sources panel marks a pill as the one it lists.
+  log.querySelectorAll('.sources-shown').forEach(b => b.classList.remove('sources-shown'));
   if (mode === 'hidden'){
     splitEl.classList.remove('sidebar-open');
     sidebarEl.innerHTML = '';
@@ -3079,7 +3119,92 @@ async function renderSidebar(){
   else if (mode === 'settings') await renderSettingsPanel();
   else if (mode === 'bridge') renderBridgePanel();
   else if (mode === 'history') renderHistory();
+  else if (mode === 'sources') renderSources();
   else if (mode === 'export') renderExport();
+}
+
+// Open the Sources panel on one reply; its pill again closes it.
+function openSources(messageUuid){
+  if (activeSidebarMode() === 'sources' && sourcesMessageUuid === messageUuid){
+    sidebarVisible = false;
+  } else {
+    sourcesMessageUuid = messageUuid;
+    sidebarVisible = true;
+    sidebarMode = 'sources';
+  }
+  persistSidebarPrefs();
+  syncSidebarModeOptions();
+  renderSidebar();
+}
+
+// The reply the Sources panel lists: the chosen one while it is in view, else
+// the newest reply in view that has sources.
+function sourcedRow(){
+  const rows = [...log.querySelectorAll('.msg')].map(el => el._row)
+    .filter(r => r && Array.isArray((r.meta || {}).sources) && r.meta.sources.length);
+  const chosen = sourcesMessageUuid && rows.find(r => r.uuid === sourcesMessageUuid);
+  return chosen || (rows.length ? rows[rows.length - 1] : null);
+}
+
+// The Sources panel: the items one reply rests on (meta.sources, checked and
+// resolved by agents/reply_sources.py), numbered, each linked to its page
+// when it has one, with its kind and its link to copy.
+function renderSources(){
+  sidebarEl.innerHTML = '';
+  const h = document.createElement('h3');
+  h.className = 'sidebar-title';
+  h.textContent = 'Sources';
+  sidebarEl.appendChild(h);
+  const row = sourcedRow();
+  if (!row){
+    const note = document.createElement('p');
+    note.className = 'ds-note';
+    note.textContent = 'No reply in view lists sources.';
+    sidebarEl.appendChild(note);
+    return;
+  }
+  log.querySelectorAll('.sources-btn').forEach(b => {
+    if (b.dataset.messageUuid === row.uuid) b.classList.add('sources-shown');
+  });
+  const forLine = document.createElement('p');
+  forLine.className = 'src-for';
+  const go = document.createElement('button');
+  go.type = 'button';
+  go.textContent = 'the reply at ' + (row.timestamp || '');
+  go.title = 'Scroll to this reply';
+  go.addEventListener('click', () => scrollToMessage(row.id));
+  forLine.appendChild(document.createTextNode('For '));
+  forLine.appendChild(go);
+  sidebarEl.appendChild(forLine);
+  const list = document.createElement('ol');
+  list.className = 'src-list';
+  row.meta.sources.forEach(source => {
+    const item = document.createElement('li');
+    const name = document.createElement('div');
+    name.className = 'src-name';
+    const label = source.name || source.link || '';
+    if (source.url){
+      const a = document.createElement('a');
+      a.href = source.url;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.textContent = label;
+      name.appendChild(a);
+    } else {
+      name.textContent = label;
+    }
+    const meta = document.createElement('div');
+    meta.className = 'src-meta';
+    meta.appendChild(document.createTextNode((source.kind || '') + ' · '));
+    const link = document.createElement('span');
+    link.className = 'src-link';
+    link.textContent = source.link || '';
+    meta.appendChild(link);
+    item.appendChild(name);
+    item.appendChild(meta);
+    list.appendChild(item);
+  });
+  sidebarEl.appendChild(list);
 }
 
 // Settings has two shapes: a direct room configures the model it talks to and

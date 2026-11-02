@@ -900,6 +900,19 @@ def test_a_reply_the_audit_returned_is_titled_by_the_audit():
     assert "**error**" not in markdown
 
 
+def test_a_reply_pane_reports_its_kept_and_dropped_sources():
+    event = _event("action", "reply", payload={
+        "args": {"message": "The shed is blue.", "sources": [
+            {"name": "Shed", "link": "shed-link"}]},
+        "observation": {"ok": True,
+                        "text": "sources: 1\n1. Shed — shed-link (record)\n"
+                                "dropped: 1\n- Pond — pond.md: not seen",
+                        "data": {}}})
+    html = render_event_detail(event)
+    assert "1. Shed — shed-link (record)" in html
+    assert "- Pond — pond.md: not seen" in html
+
+
 def test_an_action_s_own_error_keeps_the_plain_title():
     html = render_event_detail(_event("action", "reply",
                                       payload={"error": "timed out"}))

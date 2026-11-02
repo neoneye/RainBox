@@ -165,14 +165,16 @@ def test_the_auditor_checks_the_reply_answers_the_requests_subject():
 # --- the reply capability -----------------------------------------------------
 
 
-def test_reply_carries_the_message_alone():
+def test_reply_carries_the_message_and_its_sources():
     """No prefixes: they encoded a writing order, and there is no longer an
-    order to encode. `message` matches `question`, the other terminal arg."""
+    order to encode. `message` matches `question`, the other terminal arg;
+    `sources` is optional, since an answer may rest on no read."""
     cap = CAPABILITIES[AssistantActionName.REPLY]
     assert cap.required_args == ("message",)
+    assert cap.optional_args == frozenset({"sources"})
     assert "2_audit" not in cap.description
     assert "1_message" not in cap.description
-    assert '{"message": "..."}' in cap.description
+    assert '{"message": "...", "sources": [{"name": "...", "link": "..."}]}' in cap.description
 
 
 def test_the_argument_order_machinery_is_gone():

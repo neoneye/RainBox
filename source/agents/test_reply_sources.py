@@ -1,0 +1,216 @@
+"""A reply's sources: named by the model, kept only when this turn showed the
+link, resolved into a kind and a page, posted with the reply and shown to the
+next turn (agents/reply_sources.py and the assistant loop)."""
+
+from uuid import uuid4
+
+import db
+from agents.assistant import AssistantActionName, AssistantObservation
+from agents.assistant_fakes import scripted_decisions
+from agents.reply_sources import (
+    DROP_DUPLICATE,
+    DROP_NO_LINK,
+    DROP_NOT_A_LIST,
+    DROP_NOT_SEEN,
+    DROP_OVER_LIMIT,
+    MAX_REPLY_SOURCES,
+    MAX_SOURCE_NAME_CHARS,
+    check_seen,
+    normalize_sources,
+    reply_sources,
+    resolve_source,
+    sources_report,
+)
+from agents.test_assistant_actions import (  # noqa: F401 — fixtures
+    _agent,
+    _decision,
+    _steps_for,
+    app_ctx,
+    room,
+)
+
+SHED_UUID = "0b1e2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+
+
+def _no_match(_uuid):
+    return None
+
+
+# --- the argument ----------------------------------------------------------------------
+
+
+def test_entries_are_read_from_dicts_and_bare_links():
+    entries, dropped = normalize_sources(
+        [{"name": " Garden shed ", "link": f" {SHED_UUID} "}, "https://example.org/gate"])
+    assert entries == [{"name": "Garden shed", "link": SHED_UUID},
+                       {"name": "", "link": "https://example.org/gate"}]
+    assert dropped == []
+
+
+def test_no_argument_is_no_sources():
+    assert normalize_sources(None) == ([], [])
+
+
+def test_a_non_list_is_dropped_whole():
+    entries, dropped = normalize_sources("the shed")
+    assert entries == []
+    assert dropped[0]["reason"] == DROP_NOT_A_LIST
+
+
+def test_empty_links_and_repeats_are_dropped_with_their_reason():
+    entries, dropped = normalize_sources(
+        [{"name": "Shed", "link": SHED_UUID}, {"name": "Shed again", "link": SHED_UUID},
+         {"name": "Nothing", "link": ""}])
+    assert [e["name"] for e in entries] == ["Shed"]
+    assert [d["reason"] for d in dropped] == [DROP_DUPLICATE, DROP_NO_LINK]
+
+
+def test_past_the_limit_sources_are_dropped_and_names_are_cut():
+    raw = [{"name": "x" * 500, "link": f"https://example.org/{i}"}
+           for i in range(MAX_REPLY_SOURCES + 2)]
+    entries, dropped = normalize_sources(raw)
+    assert len(entries) == MAX_REPLY_SOURCES
+    assert len(entries[0]["name"]) == MAX_SOURCE_NAME_CHARS
+    assert [d["reason"] for d in dropped] == [DROP_OVER_LIMIT] * 2
+
+
+# --- what the turn showed ------------------------------------------------------------------
+
+
+def test_a_link_is_kept_only_when_the_turn_showed_it():
+    entries = [{"name": "Shed", "link": SHED_UUID},
+               {"name": "Step", "link": "current_turn_steps.1.observation"}]
+    kept, dropped = check_seen(entries, ["a request", f"{SHED_UUID}, garden.shed: blue"])
+    assert kept == [entries[0]]
+    assert dropped == [{**entries[1], "reason": DROP_NOT_SEEN}]
+
+
+# --- resolving ------------------------------------------------------------------------------
+
+
+def test_a_uuid_takes_its_kind_and_page_from_its_record():
+    def describe(uuid):
+        return {"kind": "memory claim", "uuid": uuid, "name": "garden.shed",
+                "url": f"/memory?id={uuid}", "match": "exact"}
+    assert resolve_source({"name": "Shed", "link": SHED_UUID}, describe) == {
+        "name": "Shed", "link": SHED_UUID, "kind": "memory claim",
+        "url": f"/memory?id={SHED_UUID}"}
+
+
+def test_an_unnamed_uuid_takes_the_record_s_name():
+    def describe(_uuid):
+        return {"kind": "kanban board", "name": "Garden", "url": "/kanban?id=b"}
+    assert resolve_source({"name": "", "link": SHED_UUID}, describe)["name"] == "Garden"
+
+
+def test_a_uuid_with_no_page_opens_the_find_page():
+    def describe(_uuid):
+        return {"kind": "Q&A entry", "name": "garden.shed", "url": None}
+    source = resolve_source({"name": "Shed", "link": SHED_UUID}, describe)
+    assert source["kind"] == "Q&A entry"
+    assert source["url"] == f"/find?q={SHED_UUID}"
+
+
+def test_an_unknown_uuid_is_a_record_on_the_find_page():
+    source = resolve_source({"name": "Shed", "link": SHED_UUID}, _no_match)
+    assert (source["kind"], source["url"]) == ("record", f"/find?q={SHED_UUID}")
+
+
+def test_a_failed_lookup_still_links_to_the_find_page():
+    def describe(_uuid):
+        raise RuntimeError("database gone")
+    assert resolve_source({"name": "", "link": SHED_UUID}, describe)["url"] == f"/find?q={SHED_UUID}"
+
+
+def test_a_web_address_is_its_own_page_and_a_path_has_none():
+    web = resolve_source({"name": "Gate", "link": "https://example.org/gate"}, _no_match)
+    path = resolve_source({"name": "", "link": "garden/shed.md"}, _no_match)
+    assert (web["kind"], web["url"]) == ("web", "https://example.org/gate")
+    assert path == {"name": "garden/shed.md", "link": "garden/shed.md",
+                    "kind": "path", "url": None}
+
+
+def test_the_report_lists_the_kept_then_the_dropped():
+    sources, dropped = reply_sources(
+        [{"name": "Shed", "link": SHED_UUID}, {"name": "Pond", "link": "pond.md"}],
+        [SHED_UUID], _no_match)
+    report = sources_report(sources, dropped)
+    assert report.splitlines() == [
+        "sources: 1",
+        f"1. Shed — {SHED_UUID} (record)",
+        "dropped: 1",
+        f"- Pond — pond.md: {DROP_NOT_SEEN}",
+    ]
+
+
+# --- the loop --------------------------------------------------------------------------------
+
+
+def _reply_with_sources(room, sources):
+    """One read whose observation shows SHED_UUID, then a reply citing `sources`."""
+    room_uuid, message_uuid = room
+    agent = _agent()
+    agent._dispatch_action = lambda ctx, decision: AssistantObservation(
+        ok=True, text=f"{SHED_UUID}, garden.shed: the shed is blue")
+    agent._decide_next_step = scripted_decisions(
+        _decision(AssistantActionName.FIND_UUID, query="0b1e2c3d"),
+        _decision(AssistantActionName.REPLY, message="The shed is blue.",
+                  sources=sources),
+    )
+    result = agent.handle(
+        uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
+    assert result["status"] == "finished"
+    reply = db.list_room_messages(room_uuid)[-1]
+    step = [s for s in _steps_for(result["assistant_run_uuid"]) if s.action == "reply"][-1]
+    return reply, step
+
+
+def test_the_reply_posts_the_sources_its_turn_showed(room):
+    reply, step = _reply_with_sources(room, [
+        {"name": "Garden shed", "link": SHED_UUID},
+        {"name": "Invented", "link": "1111aaaa-2222-4333-8444-555566667777"},
+    ])
+    assert reply["text"] == "The shed is blue."
+    assert reply["meta"]["sources"] == [{
+        "name": "Garden shed", "link": SHED_UUID, "kind": "record",
+        "url": f"/find?q={SHED_UUID}"}]
+    # The drop is reported on the reply's own row, where it happened.
+    assert step.observation is not None
+    data = step.observation["data"]
+    assert [s["link"] for s in data["sources"]] == [SHED_UUID]
+    assert data["dropped_sources"][0]["reason"] == DROP_NOT_SEEN
+    assert "dropped: 1" in step.observation["text"]
+
+
+def test_a_reply_without_sources_posts_none(room):
+    reply, step = _reply_with_sources(room, None)
+    assert "sources" not in reply["meta"]
+    assert step.observation is None
+
+
+# --- the next turn ----------------------------------------------------------------------
+
+
+def test_an_earlier_reply_s_sources_follow_it_in_the_history():
+    agent = _agent()
+    messages = [
+        {"sender_type": "human", "text": "what colour is the shed?"},
+        {"sender_type": "agent", "text": "The shed is blue.",
+         "meta": {"sources": [{"name": "Garden shed", "link": SHED_UUID,
+                               "kind": "memory claim", "url": "/memory?id=x"}]}},
+        {"sender_type": "human", "text": "and the door?"},
+    ]
+    prompt = agent._build_user_prompt(messages=messages, scratchpad=[], step_index=0)
+    history = prompt.split("<conversation_history_xml>")[1].split("</conversation_history_xml>")[0]
+    assert (f'<message_sources>\n<source kind="memory claim" link="{SHED_UUID}">'
+            "Garden shed</source>") in history.replace("  ", "")
+    # After the reply it belongs to, not inside its text.
+    assert history.index("The shed is blue.") < history.index("<message_sources>")
+    assert "Garden shed" not in history.split("<message_sources>")[0]
+
+
+def test_the_turn_instructions_say_sources_are_places_to_look():
+    from agents.assistant import DECIDE_TURN_INSTRUCTIONS
+    text = " ".join(DECIDE_TURN_INSTRUCTIONS.split())
+    assert "A message_sources section after one of your earlier answers" in text
+    assert "They are places to look, not facts" in text

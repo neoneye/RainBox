@@ -59,7 +59,7 @@ replayed on gemma4:e4b-mlx with the new listing):
 
 | Link | kind | page url |
 |---|---|---|
-| a full uuid | `db.find_uuid` exact match's kind (`memory claim`, `Q&A entry`, `kanban task`, `cron job`, …), else `record` | the match's url, else `/find?q=<uuid>` |
+| a full uuid | `db.describe_uuid` (one indexed lookup per table, no fuzzy or mention scans): its kind (`memory claim`, `Q&A entry`, `kanban task`, `cron job`, …), else `record` | the match's url, else `/find?q=<uuid>` |
 | `http://` / `https://` | `web` | the link |
 | anything else | `path` | none |
 

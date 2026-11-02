@@ -55,6 +55,7 @@ from agents.config import (
     ASSISTANT_SECOND_OPINION_UUID,
     ASSISTANT_WORKING_NOTICE,
 )
+from agents.reply_sources import reply_sources, sources_report
 
 logger = logging.getLogger(__name__)
 
@@ -1076,6 +1077,10 @@ turn was true of what was stored then, and stored facts change between turns.
 When this turn's read contradicts one of your earlier answers, the read wins
 and the earlier answer is simply out of date. Reusing it because it is already
 written, and reads well, is the mistake this section invites.
+A message_sources section after one of your earlier answers lists the items
+that answer rested on, each with its link. They are places to look, not facts:
+to use one, read it again this turn, by its link, with the action that reads
+that kind of item.
 Every message in conversation_history_xml belongs to a turn that already ended,
 including the last one. The request you are answering is the one quoted in
 current_user_request and repeated in decision_request, and only that one. When
@@ -3474,7 +3479,8 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
     AssistantActionName.REPLY: Capability(
         name=AssistantActionName.REPLY, family="conversation", read=False,
         description=('give your final answer to the user; ends the turn. '
-                     'args: {"message": "..."} — the full answer text, '
+                     'args: {"message": "...", "sources": [{"name": "...", '
+                     '"link": "..."}]} — message: the full answer text, '
                      "written in the language of the user's current "
                      'message; never switch language on your own, and an '
                      'explicit language request in the message wins. It must '
@@ -3483,9 +3489,17 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
                      'audited before it is sent: a separate reviewer reads '
                      'it against the request and the user settings, and '
                      'returns it to you with the problems it found if it '
-                     'is not sound.'),
+                     'is not sound. sources: what the answer rests on, one '
+                     'entry per item read this turn that it uses. link: the '
+                     "item's uuid, URL or file path, copied exactly as an "
+                     'observation of this turn shows it — the item itself, '
+                     'never the step or observation that showed it. name: a '
+                     'short title for the item, in the language of the '
+                     'message. An empty list when the answer rests on no '
+                     'read.'),
         summary="send the final answer to the user",
         required_args=("message",),
+        optional_args=frozenset({"sources"}),
         terminal=True,
     ),
     AssistantActionName.ASK_CLARIFYING_QUESTION: Capability(
@@ -3991,6 +4005,9 @@ class AssistantAgent(ModelGroupAgent):
         # The memory_query texts searched this run: what the search-text call
         # is shown, and refuses a near-repeat of.
         self._turn_queries: list[str] = []
+        # The request and every observation this run showed the model: the
+        # texts a reply's source link must occur in to be kept.
+        self._turn_seen: list[str] = []
         # Set only by pin_model_group (evals); None on every live turn, where
         # each call resolves its own assistant.* slot.
         self._pinned_model_group: UUID | None = None
@@ -4320,6 +4337,9 @@ class AssistantAgent(ModelGroupAgent):
             # ran each — what the decide call's validator refuses a repeat of.
             self._turn_reads = {}
             self._turn_queries = []
+            # Every text this turn showed the model that a reply's source may
+            # be cited from: the request, then each observation as it lands.
+            self._turn_seen = [str((messages[-1] if messages else {}).get("text") or "")]
             # Failed actions also make no progress when repeated verbatim. Keep
             # their signatures so the loop can return a corrective observation
             # without re-running the same doomed action.
@@ -4471,9 +4491,18 @@ class AssistantAgent(ModelGroupAgent):
                                 reason=decision.reason,
                             ))
                             continue
+                    sources: list[dict[str, Any]] = []
                     if reply_entry is not None:
-                        self._settle_step(reply_step, phase="final",
-                                          entry=reply_entry)
+                        sources, dropped = reply_sources(
+                            decision.args.get("sources"), self._turn_seen,
+                            db.describe_uuid)
+                        self._settle_step(
+                            reply_step, phase="final", entry=reply_entry,
+                            observation=({"ok": True,
+                                          "text": sources_report(sources, dropped),
+                                          "data": {"sources": sources,
+                                                   "dropped_sources": dropped}}
+                                         if sources or dropped else None))
                     else:
                         self._record_step(
                             step_index=step_index, phase="final", decision=decision,
@@ -4488,9 +4517,11 @@ class AssistantAgent(ModelGroupAgent):
                     text = self._terminal_text(decision)
                     if decision.action is AssistantActionName.REPLY:
                         text = self._append_result_links(text, result_links)
+                    meta = self._final_meta(pending_proposal)
+                    if sources:
+                        meta["sources"] = sources
                     db.post_chat_message(room_uuid, self.agent_uuid, text,
-                                         kind="message",
-                                         meta=self._final_meta(pending_proposal))
+                                         kind="message", meta=meta)
                     db.finish_run(run, "finished", final_summary=text[:200])
                     logger.info(
                         "assistant finished run %s in room %s at step %d",
@@ -4667,6 +4698,8 @@ class AssistantAgent(ModelGroupAgent):
                             if t not in self._turn_queries)
                 if not observation.ok:
                     failed_actions.add(action_sig)
+                else:
+                    self._turn_seen.append(observation.text)
                 preview = observation.text[: self.MAX_OBSERVATION_PREVIEW_CHARS]
                 self._settle_step(
                     step_row,
@@ -7403,6 +7436,19 @@ class AssistantAgent(ModelGroupAgent):
         if stored:
             summary = ET.SubElement(parent, "message_summary_markdown")
             summary.text = stored
+        # The items an earlier reply rested on (meta["sources"]), as a sibling
+        # rather than lines in its text: a reply that ends in a source list
+        # teaches the model to write source lists into its replies.
+        sources = (message.get("meta") or {}).get("sources") or []
+        if isinstance(sources, list) and sources:
+            listing = ET.SubElement(parent, "message_sources")
+            for source in sources:
+                if not isinstance(source, dict) or not source.get("link"):
+                    continue
+                item = ET.SubElement(listing, "source", {
+                    "kind": str(source.get("kind") or ""),
+                    "link": str(source["link"])})
+                item.text = str(source.get("name") or "")
 
     def _apply_diary_availability(self, room_uuid: UUID, run: Any) -> None:
         self._diary_models_local = False

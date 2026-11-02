@@ -91,6 +91,25 @@ consumes the step limit. Each loop iteration:
    (per-capability `output_cap_chars`), persisted on the step row, and appended
    to the scratchpad for the next decision.
 
+**Reply sources.** `reply` takes an optional `sources` argument next to
+`message`: `[{"name", "link"}]`, the items the answer rests on. The model
+names them, because only it knows which of the turn's reads the answer
+used. Code decides which stand (`agents/reply_sources.py`). A link is kept
+only when its text occurs verbatim in an observation of this turn or in the
+request, so neither an invented link nor an earlier answer can be cited. A
+kept uuid is resolved by `db.describe_uuid` to its kind and page, falling
+back to `/find?q=`. A URL is its own page, and anything else is a path.
+Nothing is bounced: what fails a check is dropped. The reply's step records
+the kept and the dropped sources, with each drop's reason, as its
+observation, so /assistant shows them on the reply's own row.
+
+The kept list is posted as the reply's `meta["sources"]`. The chat draws it
+as a pill at the end of the reply's action row, and the pill opens the
+sidebar's Sources panel. The next turn's `conversation_history_xml` renders
+it as a `message_sources` sibling after that reply, not as lines in its
+text. The turn instructions call those items places to look, not facts: a
+follow-up reads one again by its link.
+
 Running out of steps posts a "couldn't complete this within the step limit"
 message with a link to the run's inspector page and finishes the run
 `stopped`. Any exception marks the run `failed` (against the step it died on)

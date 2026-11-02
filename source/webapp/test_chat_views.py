@@ -651,10 +651,11 @@ def test_one_to_one_rooms_render_as_text_messages():
     assert "position:absolute;top:100%;right:0;width:50%;height:2.4rem}" in body
     assert "msg.dataset.senderType = m.sender_type || '';" in body
     assert "clock.className = 'msg-clock';" in body
-    # The action row shows on hover (or focus) only, where hovering exists.
-    assert ".chat-log.one-to-one .msg:not(.msg-debug) > .msg-actions{opacity:0;" in body
+    # The action row shows on hover (or focus) only, where hovering exists —
+    # all of it but a reply's sources pill, which stays shown.
+    assert ".chat-log.one-to-one .msg:not(.msg-debug) > .msg-actions > :not(.sources-btn){opacity:0;" in body
     # Keyboard focus reveals it; a click's lingering focus must not pin it.
-    assert ".chat-log.one-to-one .msg:not(.msg-debug):has(:focus-visible) > .msg-actions{opacity:1}" in body
+    assert ".chat-log.one-to-one .msg:not(.msg-debug):has(:focus-visible) > .msg-actions > *{opacity:1}" in body
     assert ":focus-within > .msg-actions" not in body
     assert "@media (hover: hover){" in body
     assert ('.chat-log.one-to-one .msg[data-sender-type="human"] .msg-clock'
@@ -705,3 +706,26 @@ def test_direct_room_stop_button():
     assert "existing.replaceWith(node);\n    syncStopButton();" in body    # upsertMessage
     assert "log.innerHTML = '';\n  syncStopButton();" in body              # selectRoom
     assert "finally { bulkAppending = false; }\n  syncStopButton();" in body  # a batch (a page, or new rows)
+
+
+def test_a_reply_s_sources_open_in_the_sidebar():
+    """A reply with meta.sources gets a pill on its action row; the pill opens
+    the Sources panel on that reply, and a room switch forgets the choice."""
+    body = _body()
+    assert '<option value="sources">Sources</option>' in body
+    assert "|| saved === 'sources'" in body
+    # The pill: on the action row, after the overflow menu.
+    menu_at = body.index("actions.appendChild(buildMessageMenu(m));")
+    pill_at = body.index("pill.className = 'sources-btn';")
+    assert menu_at < pill_at
+    assert "sources.length === 1 ? '1 source' : sources.length + ' sources'" in body
+    assert "pill.addEventListener('click', () => openSources(m.uuid));" in body
+    # The panel.
+    assert "else if (mode === 'sources') renderSources();" in body
+    assert "function renderSources(){" in body
+    assert "list.className = 'src-list';" in body
+    assert "a.target = '_blank';" in body
+    assert "No reply in view lists sources." in body
+    # A room switch forgets the chosen reply; an unpinned panel follows new ones.
+    assert "currentRoom = uuid;\n  sourcesMessageUuid = null;" in body
+    assert "if (activeSidebarMode() === 'sources' && !sourcesMessageUuid) renderSources();" in body

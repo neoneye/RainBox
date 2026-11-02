@@ -228,3 +228,25 @@ def test_exact_ranks_above_substring(world):
     matches = db.find_uuid(world["task"]["uuid"])
     assert matches[0]["uuid"] == world["task"]["uuid"]
     assert matches[0]["match"] == "exact"
+
+
+def test_describe_uuid_names_the_record_a_whole_uuid_belongs_to(app_ctx):
+    import sqlalchemy as sa
+    folder = db.create_chatroom_folder("describe-uuid shed")
+    try:
+        found = db.describe_uuid(str(folder.uuid))
+        assert found is not None
+        assert found["match"] == "exact"
+        assert found["uuid"] == str(folder.uuid)
+        assert found["name"] == "describe-uuid shed"
+        assert found["url"] == f"/chat?id={folder.uuid}"
+    finally:
+        db.session.execute(sa.delete(db.ChatroomFolder)
+                           .where(db.ChatroomFolder.uuid == folder.uuid))
+        db.session.commit()
+
+
+def test_describe_uuid_is_none_for_an_unknown_uuid_or_a_fragment(app_ctx):
+    assert db.describe_uuid("0b1e2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d") is None
+    assert db.describe_uuid("0b1e2c3d") is None
+    assert db.describe_uuid("not a uuid at all, no") is None
