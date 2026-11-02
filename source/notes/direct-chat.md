@@ -196,8 +196,13 @@ loses the panel choice. The room-type-specific panels map to each other
 when navigating: Members belongs to a group chat (`room_type='agents'`), the
 one type whose members the operator edits, so a direct or assistant room
 shows Settings where a group chat shows Members, and the inapplicable option
-is hidden from the select. Stats and Export carry over unchanged. Switching room types therefore never closes
-the sidebar.
+is hidden from the select. Stats, History, Sources and Export carry over
+unchanged. Switching room types therefore never closes the sidebar.
+
+Sources lists the items one reply rests on (`meta.sources`): the reply whose
+pill was clicked, kept in `sourcesMessageUuid` and forgotten on a room switch,
+else the newest reply in view that has sources. While it follows the newest,
+it re-renders as new rows arrive. The pill of the reply it lists is outlined.
 
 The right panel's Settings mode (direct rooms only;
 `webapp/chat_template.py` `renderDirectSettings`) edits the room's knobs via

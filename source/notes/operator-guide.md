@@ -77,8 +77,29 @@ fallback.
 - In `/chat`, a working run shows one progress row — the step it is on, what it
   is doing, and what it has cost so far — and every assistant message carries
   `Inspect ↗` in its kebab, linking to the run behind it.
+- In `/chat`, an assistant reply that rests on reads carries a **sources** pill
+  ("3 sources") at the end of its action row, shown and hidden with the rest
+  of the row. The pill opens the right sidebar's **Sources** panel on that
+  reply; clicking it again closes it. The panel is a numbered list. Each item
+  shows its name, linked to its page in a new tab when it has one: a stored
+  fact, a Q&A entry, a board, a task, a web page. Under the name it shows the
+  item's kind and its link (a uuid, URL or path) to copy. Picked from the
+  sidebar select instead, Sources shows the newest reply in view that has
+  any.
+
+  The assistant names a reply's sources itself, and code keeps only links that
+  occur in what that turn read. Anything else is dropped, and the drop is
+  listed on the reply's row in `/assistant`. The next turn sees the earlier
+  reply's sources beside it in its conversation history, as places to look
+  again, not as facts. That covers the room's last 30 messages and the
+  assistant only: other responders and the Discord/Telegram bridges relay the
+  reply text without its sources.
 - `/find` — paste a uuid (or a fragment, even typo'd) to learn what it is
   and jump to it; also searches mentions in chats/logs and the Q&A registry.
+- `/memory/qa?id=<uuid>` — one Q&A registry entry, read-only: its path, kind,
+  questions, answer or handler, and the jsonl file it came from. Where Find's
+  Open link and a reply source naming a Q&A entry land. A shield-locked entry
+  reads as not found.
 - `/user` — identity card for a chat participant (`?id=<uuid>`).
 - `/model`, `/modelgroup`, `/agentmodel` — model configs, fallback
   groups, agent bindings.
@@ -100,6 +121,8 @@ fallback.
    `assistant.<call>` row to move just that call to another group.
 5. Post a human message.
 6. Watch replies stream over SSE.
+7. Hover an assistant reply for its actions; a reply that rests on reads has
+   a sources pill there, opening the Sources panel.
 
 Useful responder agents:
 
