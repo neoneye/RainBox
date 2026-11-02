@@ -330,6 +330,15 @@ CHAT_TEMPLATE: str = """
         :has(+ .msg .reasoning-toggle),
         :has(+ .msg.msg-superseded + .msg .reasoning-toggle))::after{content:'';
         position:absolute;top:100%;right:0;width:50%;height:2.4rem}
+    /* When the next row does not open with that line — a notice, a reply
+       without a turn's cost, the person's next message — there is no empty
+       right side to land in, and the floating row would cover the next row's
+       first line of text. The message keeps room under itself instead: the
+       row's height (1rem buttons, 30px) less the gap the next row already
+       starts below, plus a small gap of its own. */
+    .chat-log.one-to-one .msg[data-sender-type="human"]:not(.msg-debug):not(
+        :has(+ .msg .reasoning-toggle),
+        :has(+ .msg.msg-superseded + .msg .reasoning-toggle)){margin-bottom:1.25rem}
   }
   .chat-log.one-to-one .msg[data-sender-type="human"].msg-editing > .msg-edit-area{width:80%}
   /* A right-aligned row reads from its outer edge in: the clock leads. */

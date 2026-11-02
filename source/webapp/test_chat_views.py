@@ -649,6 +649,11 @@ def test_one_to_one_rooms_render_as_text_messages():
     assert ":has(+ .msg .reasoning-toggle)," in body
     assert ":has(+ .msg.msg-superseded + .msg .reasoning-toggle))::after{content:'';" in body
     assert "position:absolute;top:100%;right:0;width:50%;height:2.4rem}" in body
+    # Before a row that does not open with that line (a notice), the floating
+    # row would cover its first line of text: the message keeps room instead.
+    assert ('.chat-log.one-to-one .msg[data-sender-type="human"]:not(.msg-debug):not(\n'
+            '        :has(+ .msg .reasoning-toggle),\n'
+            '        :has(+ .msg.msg-superseded + .msg .reasoning-toggle)){margin-bottom:1.25rem}') in body
     assert "msg.dataset.senderType = m.sender_type || '';" in body
     assert "clock.className = 'msg-clock';" in body
     # The action row shows on hover (or focus) only, where hovering exists —
