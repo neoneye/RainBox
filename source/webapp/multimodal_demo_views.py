@@ -42,6 +42,8 @@ from .core import app
 
 # The vision+audio model to talk to by default; override per-request with ?id=.
 DEFAULT_MODEL_UUID = "00ea3152-ff12-40e1-a63b-8f572de49edf"
+# The last model picked on the page; it opens there when the URL has no ?id.
+MODEL_COOKIE = "pp_mm_model"
 PROXY_TIMEOUT = 300  # seconds; multimodal generation on a local box can be slow
 
 _AUDIO_FORMATS = {
@@ -450,8 +452,17 @@ function ppSelectModel(event, el) {
   el.classList.add('selected');
   // Keep the URL in sync so a manual reload/bookmark restores this model.
   try { history.replaceState(null, '', '?id=' + encodeURIComponent(ppModelId)); } catch (e) {}
+  ppRememberModel();
   return false;
 }
+
+// The server reads this cookie when the URL has no ?id, so the page opens on
+// the last model used, across restarts too.
+function ppRememberModel() {
+  document.cookie = {{ model_cookie | tojson }} + '=' + encodeURIComponent(ppModelId)
+    + '; path=/demo/multimodal; max-age=31536000; samesite=lax';
+}
+{% if target %}ppRememberModel();{% endif %}
 
 // Persist the prompts across reloads so a page refresh doesn't lose typed text.
 // (Attached files aren't stored — they can't survive a reload.)
@@ -648,8 +659,12 @@ async function ppSend() {
 
 @app.route("/demo/multimodal")
 def demo_multimodal() -> str:
-    target = _resolve_target(request.args.get("id"))
-    model_id = str(target.uuid) if target else (request.args.get("id") or DEFAULT_MODEL_UUID)
+    explicit = request.args.get("id")
+    target = _resolve_target(explicit)
+    if not explicit:
+        # A remembered model that was deleted since falls back to the default.
+        target = _resolve_target(request.cookies.get(MODEL_COOKIE)) or target
+    model_id = str(target.uuid) if target else (explicit or DEFAULT_MODEL_UUID)
     # Only offer models the provider currently exposes; unavailable configs
     # (and their overrides) are hidden from the picker.
     tree = [(cfg, ovs) for cfg, ovs in list_model_configs_with_overrides() if cfg.available]
@@ -657,6 +672,7 @@ def demo_multimodal() -> str:
         MULTIMODAL_TEMPLATE,
         target=target,
         model_id=model_id,
+        model_cookie=MODEL_COOKIE,
         tree=tree,
     )
 

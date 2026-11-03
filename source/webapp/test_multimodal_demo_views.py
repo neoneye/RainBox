@@ -574,6 +574,31 @@ def test_selecting_override_renders_it_as_target(seeded_config_with_override):
     assert '<b id="pp-model-name">Picker override</b>' in body
 
 
+def test_the_last_picked_model_opens_without_an_id(seeded_config_with_override):
+    _cfg_uid, ov_uid = seeded_config_with_override
+    client = app.test_client()
+    client.set_cookie("pp_mm_model", ov_uid, path="/demo/multimodal")
+    body = client.get("/demo/multimodal").get_data(as_text=True)
+    assert '<b id="pp-model-name">Picker override</b>' in body
+    assert "ppRememberModel();" in body             # picking a model saves it
+
+
+def test_an_id_in_the_url_wins_over_the_remembered_model(seeded_config_with_override):
+    cfg_uid, ov_uid = seeded_config_with_override
+    client = app.test_client()
+    client.set_cookie("pp_mm_model", ov_uid, path="/demo/multimodal")
+    body = client.get(f"/demo/multimodal?id={cfg_uid}").get_data(as_text=True)
+    assert '<b id="pp-model-name">Gemma (picker test)</b>' in body
+
+
+def test_a_remembered_model_that_is_gone_falls_back_to_the_default():
+    client = app.test_client()
+    client.set_cookie("pp_mm_model", "00000000-0000-0000-0000-000000000000",
+                      path="/demo/multimodal")
+    body = client.get("/demo/multimodal").get_data(as_text=True)
+    assert "00ea3152-ff12-40e1-a63b-8f572de49edf" in body
+
+
 def test_picker_hides_unavailable_config_and_its_override():
     a = make_app()
     init_db(a)

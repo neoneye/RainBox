@@ -201,7 +201,10 @@ what a local model does with **image and audio input**, streaming the
 backend's OpenAI-compatible response verbatim (reasoning deltas included).
 
 - The target model is a `ModelConfig`/`ModelConfigOverride` picked by
-  `?id=<uuid>` (tree picker of available configs). `_backend_base` resolves
+  `?id=<uuid>` (tree picker of available configs). The last model picked
+  is kept in the `pp_mm_model` cookie, and the page opens on it when the URL
+  has no `?id` (a deleted one falls back to `DEFAULT_MODEL_UUID`).
+  `_backend_base` resolves
   the OpenAI-compatible base URL from the model's stored `api_base`, falling
   back to the provider registry's base URL + `/v1` — **never from caller
   input** (no SSRF).
