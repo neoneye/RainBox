@@ -3,8 +3,9 @@
 rainbox keeps heavyweight or credentialed integrations **out of the main
 process**: speech-to-text, text-to-speech, and the Telegram and Discord bridges each run as
 a separate small HTTP service with its own venv, and the web app talks to
-them over localhost HTTP. The multimodal demo is the odd one out — it lives in
-the web app but proxies to an LLM provider backend.
+them over localhost HTTP. The multimodal demo and the gemma4 speech-to-text
+page are the odd ones out — they live in the web app and proxy to a local LLM
+backend instead of a side service.
 
 Why separate processes: the voice models need their own dependency worlds
 (faster-whisper's CTranslate2; Kokoro's torch — neither belongs in the main
@@ -23,6 +24,7 @@ service is down (a health banner, not a crash).
 | Whisper STT | `http://127.0.0.1:5006` | `WHISPER_STT_URL` (webapp) |
 | Kokoro TTS | `http://127.0.0.1:5005` | `KOKORO_TTS_URL` (webapp) |
 | dots.tts clone | `http://127.0.0.1:5007` | `DOTS_TTS_URL` (webapp) |
+| gemma4 STT (Ollama) | `http://127.0.0.1:11434`, model `gemma4:e4b-mlx` | `OLLAMA_BASE_URL`, `GEMMA4_STT_MODEL` (webapp) |
 | Telegram bridge | outbound-only | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_IDS` (required); `TELEGRAM_ROOM_NAME`, `TELEGRAM_STATE_FILE`, `RAINBOX_URL` |
 | Discord bridge | outbound-only | connector mode: `BRIDGE_CONNECTOR`, the token under the connector's `token_env` name, `DISCORD_STATE_FILE`, `RAINBOX_URL` (the launcher sets all four); legacy env mode: `DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID`, `DISCORD_ALLOWED_USER_IDS` |
 
@@ -146,6 +148,21 @@ same-origin through the web app:
   interim re-transcribes of the growing buffer), final authoritative pass on
   stop. Proxies: `/demo_stt_whisper/health`, `/demo_stt_whisper/transcribe`
   (120s timeout).
+- **`/demo_stt_gemma4`** (`webapp/stt_gemma4_views.py`) — speech-to-text
+  with gemma4 on Ollama, no side service. gemma4's audio capability is input
+  only (it hears a clip and answers in text; it cannot speak), so this is the
+  Whisper page's counterpart, not a TTS one. Mic recording with device picker
+  + level meter, or an audio file; an editable instruction (default
+  "Transcribe this audio exactly.", so translating or summarizing the clip
+  works too); one pass on stop, no live interim pass. Ollama decodes WAV
+  only — webm/opus comes back as "media expansion produced no tokens" — so
+  the browser re-encodes every clip to 16 kHz mono 16-bit WAV with the Web
+  Audio API, and the proxy refuses anything that is not RIFF/WAVE. The clip
+  goes base64 in the user message's `images` list of Ollama's native
+  `/api/chat` (`think: false`, temperature 0). Proxies: `…/health` (Ollama's
+  `/api/show` for the model: reachable, and whether its capabilities include
+  `audio`), `…/transcribe` (300s timeout — the first call may load the
+  model). A 66-second clip transcribed whole.
 - **`/demo_tts_kokoro`** (`webapp/tts_kokoro_views.py`) — text, voice
   dropdown (populated from the service), speed slider, synthesize + download
   WAV. Proxies: `…/health`, `…/voices`, `…/synthesize` (60s timeout).
@@ -193,7 +210,7 @@ Every service tests against fakes, so no model/network is needed:
 `voice_stt_whisper/test_server.py`, `voice_tts_kokoro/test_server.py` /
 `test_voices.py` / `test_audio.py`, `telegram_service/test_bridge.py` /
 `test_telegram_api.py` / `test_rainbox_api.py`, and the webapp proxy suites
-`webapp/test_stt_whisper_views.py`, `test_tts_kokoro_views.py`,
+`webapp/test_stt_whisper_views.py`, `test_stt_gemma4_views.py`, `test_tts_kokoro_views.py`,
 `test_voice_echo_views.py`, `test_multimodal_demo_views.py`.
 
 ## See also
