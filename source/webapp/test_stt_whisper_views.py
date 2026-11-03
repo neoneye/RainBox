@@ -105,5 +105,5 @@ def test_nav_has_stt_link():
     resp = client.get("/demo_stt_whisper")
     body = resp.get_data(as_text=True)
     # The shared nav links to the STT page and marks it active on this page.
-    assert ">STT<" in body
+    assert ">STT whisper<" in body
     assert "pp-active" in body
