@@ -453,6 +453,18 @@ class TestChartGeometry:
         assert bar["upper_y"] >= 16  # _PAD_TOP: the bar must not enter the top padding
         assert bar["upper_y"] + bar["upper_h"] == pytest.approx(bar["lower_y"], abs=0.05)
 
+    def test_every_column_hovers_across_its_whole_slot(self):
+        """The tooltip answers anywhere in a column, not only on the drawn
+        bar: the slots tile the plot edge to edge, empty buckets included."""
+        chart = build_chart(self._buckets([0, 5, 100_000]), "prompt_tokens", 3600)
+        slots = [(b["slot_x"], b["slot_w"]) for b in chart["bars"]]
+        assert len(slots) == 3
+        for (x, w), (next_x, _w) in zip(slots, slots[1:]):
+            assert x + w == pytest.approx(next_x, abs=0.02)
+        for bar in chart["bars"]:
+            assert bar["slot_w"] > bar["width"]
+        assert chart["top"] + chart["plot_h"] == chart["baseline"]
+
     def test_gridline_labels_use_the_metrics_own_units(self):
         chart = build_chart(self._buckets([1000]), "p50_latency_ms", 3600)
         assert any("ms" in g["label"] or "s" in g["label"]

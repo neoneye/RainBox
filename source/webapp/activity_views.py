@@ -349,6 +349,10 @@ def build_chart(buckets: list[dict], metric: str, bucket_seconds: int) -> dict:
             lower, upper = height(bucket.get(field) or 0), 0.0
         bars.append(
             {
+                # The whole slot, top padding to axis, answers the hover —
+                # not just the drawn bar, which can be a 2px sliver.
+                "slot_x": round(_PAD_LEFT + slot * i, 2),
+                "slot_w": round(slot, 2),
                 "x": round(x, 2),
                 "width": round(bar_w, 2),
                 "lower_y": round(baseline - lower, 2),
@@ -382,6 +386,8 @@ def build_chart(buckets: list[dict], metric: str, bucket_seconds: int) -> dict:
     return {
         "width": _CHART_W,
         "height": _CHART_H,
+        "top": _PAD_TOP,
+        "plot_h": _PLOT_H,
         "baseline": baseline,
         "bars": bars,
         "gridlines": gridlines,
@@ -586,6 +592,9 @@ ACTIVITY_TEMPLATE = """
                      font-family: ui-monospace, monospace; font-size: 0.78rem;
                      line-height: 1.45; background: #fff; border: 1px solid #f2ddd9;
                      border-radius: 8px; padding: 0.7rem 0.8rem; }
+  /* Each column's hover area spans its whole slot; it shows only on hover. */
+  .pp-act svg .col .hit { fill: transparent; }
+  .pp-act svg .col:hover .hit { fill: #f1f3f6; }
 </style>
 <main class="pp-act">
   <h1>Activity</h1>
@@ -709,8 +718,9 @@ ACTIVITY_TEMPLATE = """
               fill="#9aa3af">{{ line.label }}</text>
       {% endfor %}
       {% for bar in chart.bars %}
-        {% if bar.lower_h > 0 or bar.upper_h > 0 %}
-        <g><title>{{ bar.title }}</title>
+        <g class="col"><title>{{ bar.title }}</title>
+          <rect class="hit" x="{{ bar.slot_x }}" y="{{ chart.top }}"
+                width="{{ bar.slot_w }}" height="{{ chart.plot_h }}" />
           {% if bar.lower_h > 0 %}
           <rect x="{{ bar.x }}" y="{{ bar.lower_y }}" width="{{ bar.width }}"
                 height="{{ bar.lower_h }}" fill="#9aa3af" />
@@ -720,7 +730,6 @@ ACTIVITY_TEMPLATE = """
                 height="{{ bar.upper_h }}" fill="#e8a33d" />
           {% endif %}
         </g>
-        {% endif %}
       {% endfor %}
       {% for tick in chart.x_labels %}
         <text x="{{ tick.x }}" y="{{ chart.baseline + 18 }}" text-anchor="middle"
