@@ -9,9 +9,19 @@ import io
 import wave
 from unittest.mock import patch
 
+import pytest
 import requests as real_requests
 
 from webapp.core import app
+
+
+@pytest.fixture(autouse=True)
+def no_activity_rows():
+    """Keep these proxy tests off /activity: the recorder is installed with
+    the app, so an unpatched call would write a row to the sandbox database.
+    Tests about the row patch it again and read what it was given."""
+    with patch("webapp.stt_gemma4_views.record_direct_call"):
+        yield
 
 
 class FakeResponse:
@@ -175,3 +185,30 @@ def test_recording_transcribes_live_and_a_late_pass_cannot_land():
     assert "setInterval(ppInterim, INTERIM_MS)" in body
     assert "mediaRecorder.start(1000)" in body       # chunks so far stay decodable
     assert "if (stopped || mine !== take || !res.ok) return;" in body
+
+
+def test_a_transcription_is_recorded_on_activity_without_the_clip():
+    fake = FakeResponse(json_data={"message": {"content": "The shed is blue."},
+                                   "prompt_eval_count": 80})
+    with patch("webapp.stt_gemma4_views.requests.post", return_value=fake), \
+            patch("webapp.stt_gemma4_views.record_direct_call") as record:
+        app.test_client().post("/demo_stt_gemma4/transcribe", data=_upload(_wav(seconds=2)),
+                               content_type="multipart/form-data")
+    kwargs = record.call_args.kwargs
+    assert kwargs["caller"] == "demo_stt_gemma4"
+    assert kwargs["provider"] == "ollama" and kwargs["model"] == "gemma4:e4b-mlx"
+    assert kwargs["response"] == "The shed is blue."
+    assert kwargs["raw"]["prompt_eval_count"] == 80
+    content = kwargs["messages"][0]["content"]
+    assert content.startswith("Transcribe this audio exactly.")
+    assert "[audio: 2.0s WAV, " in content and "RIFF" not in content
+
+
+def test_an_ollama_refusal_is_recorded_as_failed():
+    fake = FakeResponse(json_data={"error": "media expansion produced no tokens"},
+                        status_code=400)
+    with patch("webapp.stt_gemma4_views.requests.post", return_value=fake), \
+            patch("webapp.stt_gemma4_views.record_direct_call") as record:
+        app.test_client().post("/demo_stt_gemma4/transcribe", data=_upload(_wav()),
+                               content_type="multipart/form-data")
+    assert record.call_args.kwargs["error"] == "media expansion produced no tokens"

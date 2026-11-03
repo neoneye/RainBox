@@ -10,17 +10,27 @@ backend's SSE response straight back. Nothing is persisted.
 Direct OpenAI-compatible passthrough (not llama_index) is deliberate: the point
 is to see the raw multimodal request/response behavior, including backend errors
 like "this model can't do audio", verbatim.
+
+The relay reads the stream as it passes, only to record the call on
+/activity (`record_direct_call`, since no LlamaIndex event fires for it):
+the answer's text and the usage chunk that `stream_options.include_usage`
+asks the backend to send last (Ollama adds llama.cpp-style `timings` to it,
+which give the row its prefill and decode times). The prompt on that row shows each file as a
+line, never its bytes.
 """
 
 import base64
+import json
 from collections import namedtuple
+from datetime import UTC, datetime
 from uuid import UUID
 
 import requests
-from flask import Response, jsonify, render_template_string, request
+from flask import Response, jsonify, render_template_string, request, stream_with_context
 from werkzeug.datastructures import FileStorage
 
 import providers
+from llm.activity import record_direct_call
 from db import (
     get_model_config,
     get_model_config_override,
@@ -125,7 +135,78 @@ def _build_completion_body(
     if system:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": parts})
-    return {"model": model_name, "messages": messages, "stream": True}
+    return {"model": model_name, "messages": messages, "stream": True,
+            "stream_options": {"include_usage": True}}
+
+
+def _b64_size(b64: str) -> int:
+    """Decoded byte count of a base64 string, padding excluded."""
+    return len(b64) * 3 // 4 - (len(b64) - len(b64.rstrip("=")))
+
+
+def _activity_messages(body: dict) -> list[dict[str, str]]:
+    """The request as /activity shows it: the text as sent, each attached
+    file as one line naming its type and size instead of its base64."""
+    out: list[dict[str, str]] = []
+    for message in body.get("messages") or []:
+        content = message.get("content")
+        if isinstance(content, list):
+            lines: list[str] = []
+            for part in content:
+                kind = part.get("type")
+                if kind == "text":
+                    lines.append(part.get("text") or "")
+                elif kind == "image_url":
+                    url = (part.get("image_url") or {}).get("url") or ""
+                    mime = url[5:url.find(";")] if url.startswith("data:") and ";" in url else "?"
+                    b64 = url.split(",", 1)[-1]
+                    lines.append(f"[image: {mime}, {_b64_size(b64)} bytes]")
+                elif kind == "input_audio":
+                    audio = part.get("input_audio") or {}
+                    lines.append(f"[audio: {audio.get('format') or '?'}, "
+                                 f"{_b64_size(audio.get('data') or '')} bytes]")
+            content = "\n\n".join(line for line in lines if line)
+        out.append({"role": message.get("role") or "", "content": content or ""})
+    return out
+
+
+class _StreamTally:
+    """What an OpenAI-compatible SSE stream said, read off the bytes as they
+    are relayed: the answer's text, the usage chunk, and whether the backend
+    finished with `[DONE]`. Lines are buffered because a chunk can end mid-line."""
+
+    def __init__(self) -> None:
+        self._buffer = b""
+        self.text: list[str] = []
+        self.usage: dict | None = None
+        self.timings: dict | None = None
+        self.done = False
+
+    def feed(self, chunk: bytes) -> None:
+        self._buffer += chunk
+        while b"\n" in self._buffer:
+            line, self._buffer = self._buffer.split(b"\n", 1)
+            line = line.strip()
+            if not line.startswith(b"data:"):
+                continue
+            payload = line[5:].strip()
+            if payload == b"[DONE]":
+                self.done = True
+                continue
+            try:
+                obj = json.loads(payload)
+            except ValueError:
+                continue
+            if not isinstance(obj, dict):
+                continue
+            if obj.get("usage"):
+                self.usage = obj["usage"]
+            if isinstance(obj.get("timings"), dict):
+                self.timings = obj["timings"]
+            for choice in obj.get("choices") or []:
+                content = (choice.get("delta") or {}).get("content")
+                if content:
+                    self.text.append(content)
 
 
 def _backend_base(provider: str, arguments: dict) -> str | None:
@@ -612,6 +693,11 @@ def demo_multimodal_complete() -> Response | tuple[Response, int]:
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
+    activity = {
+        "started_at": datetime.now(UTC), "provider": target.provider,
+        "model": target.model_name, "model_uuid": target.uuid,
+        "caller": "demo_multimodal", "messages": _activity_messages(body),
+    }
     try:
         upstream = requests.post(
             f"{base}/chat/completions",
@@ -621,6 +707,7 @@ def demo_multimodal_complete() -> Response | tuple[Response, int]:
             timeout=PROXY_TIMEOUT,
         )
     except requests.RequestException as e:
+        record_direct_call(**activity, exc=e)
         return jsonify({"error": f"backend unreachable at {base}: {e}"}), 502
 
     # Non-2xx: forward the raw error body verbatim — seeing the backend's own
@@ -628,6 +715,8 @@ def demo_multimodal_complete() -> Response | tuple[Response, int]:
     if upstream.status_code != 200:
         content_type = upstream.headers.get("Content-Type", "text/plain")
         mimetype = content_type.split(";")[0].strip() or "text/plain"
+        record_direct_call(**activity, error=f"backend answered {upstream.status_code}: "
+                                             f"{upstream.content[:2000].decode('utf-8', 'replace')}")
         return Response(
             upstream.content,
             status=upstream.status_code,
@@ -635,15 +724,33 @@ def demo_multimodal_complete() -> Response | tuple[Response, int]:
         )
 
     def relay():
+        tally = _StreamTally()
+        failure: BaseException | None = None
         try:
             for chunk in upstream.iter_content(chunk_size=None):
                 if chunk:
+                    tally.feed(chunk)
                     yield chunk
+        except GeneratorExit:
+            raise  # the browser left: recorded below as a stream that never finished
+        except BaseException as e:
+            failure = e
+            raise
         finally:
             upstream.close()
+            error = None
+            if failure is None and not tally.done:
+                error = "the stream ended before [DONE] (the browser stopped reading, or the backend closed it)"
+            record_direct_call(
+                **activity,
+                raw={"usage": tally.usage, "timings": tally.timings},
+                response="".join(tally.text),
+                exc=failure,
+                error=error,
+            )
 
     return Response(
-        relay(),
+        stream_with_context(relay()),
         mimetype="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

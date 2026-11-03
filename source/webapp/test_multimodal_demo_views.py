@@ -222,6 +222,16 @@ def test_page_renders_not_found_for_unknown_id():
     assert "not found" in body.lower()
 
 
+
+@pytest.fixture(autouse=True)
+def no_activity_rows():
+    """Keep these proxy tests off /activity: the recorder is installed with
+    the app, so an unpatched call would write a row to the sandbox database.
+    Tests about the row patch it again and read what it was given."""
+    with patch("webapp.multimodal_demo_views.record_direct_call"):
+        yield
+
+
 class FakeStreamResponse:
     """Stand-in for a streaming requests.Response."""
 
@@ -725,3 +735,59 @@ def test_complete_400_when_openrouter_key_is_unset(
     assert resp.status_code == 400
     assert "OPENROUTER_API_KEY" in resp.get_data(as_text=True)
     post.assert_not_called()
+
+
+def test_a_streamed_answer_is_recorded_on_activity(seeded_model):
+    def fake_post(url, json=None, headers=None, stream=None, timeout=None):
+        assert json["stream_options"] == {"include_usage": True}
+        return FakeStreamResponse(chunks=[
+            b'data: {"choices":[{"delta":{"content":"A blue"}}]}\n\ndata: {"choi',
+            b'ces":[{"delta":{"content":" shed."}}]}\n\n',
+            b'data: {"choices":[],"usage":{"prompt_tokens":300,"completion_tokens":4}}\n\n',
+            b"data: [DONE]\n\n",
+        ])
+
+    with patch("webapp.multimodal_demo_views.requests.post", side_effect=fake_post), \
+            patch("webapp.multimodal_demo_views.record_direct_call") as record:
+        resp = app.test_client().post(
+            f"/demo/multimodal/complete?id={seeded_model}",
+            data={"system": "be terse", "user": "what is this?",
+                  "file": (io.BytesIO(b"RIFF....WAVEfmt "), "clip.wav", "audio/wav")},
+            content_type="multipart/form-data",
+        )
+        resp.get_data()
+    kwargs = record.call_args.kwargs
+    assert kwargs["caller"] == "demo_multimodal"
+    assert kwargs["response"] == "A blue shed."
+    assert kwargs["raw"]["usage"] == {"prompt_tokens": 300, "completion_tokens": 4}
+    assert kwargs["exc"] is None and kwargs["error"] is None
+    assert kwargs["messages"] == [
+        {"role": "system", "content": "be terse"},
+        {"role": "user", "content": "what is this?\n\n[audio: wav, 16 bytes]"},
+    ]
+
+
+def test_a_stream_that_never_finishes_is_recorded_as_failed(seeded_model):
+    def fake_post(url, json=None, headers=None, stream=None, timeout=None):
+        return FakeStreamResponse(chunks=[b'data: {"choices":[{"delta":{"content":"Hel"}}]}\n\n'])
+
+    with patch("webapp.multimodal_demo_views.requests.post", side_effect=fake_post), \
+            patch("webapp.multimodal_demo_views.record_direct_call") as record:
+        app.test_client().post(f"/demo/multimodal/complete?id={seeded_model}",
+                               data={"user": "hi"},
+                               content_type="multipart/form-data").get_data()
+    assert "before [DONE]" in record.call_args.kwargs["error"]
+    assert record.call_args.kwargs["response"] == "Hel"
+
+
+def test_a_backend_refusal_is_recorded_as_failed(seeded_model):
+    def fake_post(url, json=None, headers=None, stream=None, timeout=None):
+        return FakeStreamResponse(status_code=400, content=b'{"error":"no audio support"}',
+                                  content_type="application/json")
+
+    with patch("webapp.multimodal_demo_views.requests.post", side_effect=fake_post), \
+            patch("webapp.multimodal_demo_views.record_direct_call") as record:
+        app.test_client().post(f"/demo/multimodal/complete?id={seeded_model}",
+                               data={"user": "hi"}, content_type="multipart/form-data")
+    assert "backend answered 400" in record.call_args.kwargs["error"]
+    assert "no audio support" in record.call_args.kwargs["error"]

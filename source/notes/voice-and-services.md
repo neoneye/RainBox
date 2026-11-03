@@ -176,7 +176,9 @@ same-origin through the web app:
   `/api/chat` (`think: false`, temperature 0). Proxies: `…/health` (Ollama's
   `/api/show` for the model: reachable, and whether its capabilities include
   `audio`), `…/transcribe` (300s timeout — the first call may load the
-  model). A 66-second clip transcribed whole.
+  model). Every call, live passes included, is recorded on `/activity` under
+  caller `demo_stt_gemma4` (`record_direct_call`, since it bypasses
+  LlamaIndex). A 66-second clip transcribed whole.
 - **`/demo_tts_kokoro`** (`webapp/tts_kokoro_views.py`) — text, voice
   dropdown (populated from the service), speed slider, synthesize + download
   WAV. Proxies: `…/health`, `…/voices`, `…/synthesize` (60s timeout).
@@ -211,6 +213,12 @@ backend's OpenAI-compatible response verbatim (reasoning deltas included).
   the backend's own "this model can't hear" errors.
 - If the model config carries an `api_key`, it is forwarded as a Bearer
   token.
+- Each call is recorded on `/activity` under caller `demo_multimodal`. The
+  relay reads the stream as it passes: the answer's text, and the final
+  usage chunk the request asks for (`stream_options.include_usage`; Ollama
+  adds llama.cpp-style `timings` there, which give the row its prefill and
+  decode times). A stream that ends before `[DONE]` — the browser left —
+  and a backend refusal are recorded as failed.
 
 > **Control-plane caveat.** The proxy is unauthenticated, so any local
 > caller can drive the operator's configured models on the operator's API

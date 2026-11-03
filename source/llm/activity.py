@@ -37,6 +37,10 @@ row carries it instead.
 Caller attribution rides in on `instrument_tags({"caller": ...})` at the call
 site; anything untagged records as "unknown" so coverage can grow gradually
 without leaving holes in the totals.
+
+The few calls that skip LlamaIndex altogether — the audio and image demo
+pages post straight to the provider — report themselves through
+`record_direct_call`, which writes the same row through the same sink.
 """
 
 from __future__ import annotations
@@ -225,6 +229,15 @@ def extract_usage(raw: Any) -> dict[str, int | None]:
         out["prefill_ms"] = None if prefill_ns is None else prefill_ns // _NS_PER_MS
         out["decode_ms"] = None if decode_ns is None else decode_ns // _NS_PER_MS
         out["total_ms_provider"] = None if total_ns is None else total_ns // _NS_PER_MS
+
+    # llama.cpp-style timings, which Ollama's OpenAI-compatible stream sends
+    # beside `usage` in its last chunk: milliseconds, not nanoseconds.
+    timings = _get(raw, "timings")
+    if isinstance(timings, dict) and out["prefill_ms"] is None:
+        prompt_ms = timings.get("prompt_ms")
+        predicted_ms = timings.get("predicted_ms")
+        out["prefill_ms"] = None if prompt_ms is None else _int_or_none(round(prompt_ms))
+        out["decode_ms"] = None if predicted_ms is None else _int_or_none(round(predicted_ms))
 
     usage = _get(raw, "usage")
     if usage is not None:
@@ -646,6 +659,71 @@ def install_activity_recorder() -> ActivityRecorder | None:
     _installed = recorder
     logger.info("LLM activity recording enabled")
     return recorder
+
+
+def record_direct_call(
+    *,
+    started_at: datetime,
+    provider: str | None,
+    model: str | None,
+    caller: str,
+    messages: list[dict[str, str]],
+    raw: Any = None,
+    response: str | None = None,
+    exc: BaseException | None = None,
+    error: str | None = None,
+    model_uuid: UUID | None = None,
+) -> None:
+    """Record one call that went to a provider without LlamaIndex.
+
+    The demo pages that send audio and images (/demo_stt_gemma4,
+    /demo/multimodal) post straight to the backend, so no dispatcher event
+    ever fires for them; this is how they still get a row. `raw` is whatever
+    usage the provider returned — native Ollama's flat dict with its
+    nanosecond timings, or an OpenAI-compatible `usage` under a "usage" key.
+    `exc` or `error` marks the call failed, as `_on_failure` would.
+
+    `messages` is what the caller wants shown, never the media itself: a
+    base64 clip is megabytes of nothing to a reader, so callers describe it
+    in a line instead. For the same reason the row carries no prefix chain
+    and no cache estimate — a prompt that is mostly audio or image tokens
+    cannot be hashed into a text prefix, and its prefill time includes the
+    media encoder, which says nothing about the cache.
+
+    A no-op before `install_activity_recorder`, and total like the rest of
+    this module: a telemetry bug must not fail the demo request.
+    """
+    recorder = _installed
+    if recorder is None:
+        return
+    try:
+        _derived, origin = call_origin()
+        failed = exc is not None or error is not None
+        usage = extract_usage(raw)
+        row: dict[str, Any] = {
+            "started_at": started_at,
+            "finished_at": datetime.now(UTC),
+            "provider": provider,
+            "model": model,
+            "model_uuid": model_uuid,
+            "caller": caller,
+            "origin": origin,
+            "ok": not failed,
+            "error_category": error_category(exc, error) if failed else None,
+            "error_text": error_traceback(exc, error) if failed else None,
+            "prompt_tokens": usage["prompt_tokens"],
+            "completion_tokens": usage["completion_tokens"],
+            "prefill_ms": usage["prefill_ms"],
+            "decode_ms": usage["decode_ms"],
+            "total_ms": _elapsed_ms(started_at),
+            "cached_tokens_reported": usage["cached_tokens_reported"],
+            "messages": messages,
+            "response_text": response or None,
+        }
+    except Exception:
+        recorder._warn_once("could not build the activity row for a direct call")
+        return
+    recorder._emit(row)
 
 
 # Frames from these package roots are plumbing, not a call site. The recorder

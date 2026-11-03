@@ -13,15 +13,22 @@ produced no tokens" — so the browser re-encodes every recording or upload to
 16 kHz mono 16-bit WAV with the Web Audio API before posting it, and the proxy
 refuses anything that is not RIFF/WAVE. The model name comes from
 GEMMA4_STT_MODEL, never from the caller.
+
+Every transcribe call — live passes included — is recorded on /activity
+through `record_direct_call`, since no LlamaIndex event fires for it; the
+row's prompt shows the instruction and a line describing the clip.
 """
 
 import base64
 import io
 import os
 import wave
+from datetime import UTC, datetime
 
 import requests
 from flask import Response, jsonify, render_template_string, request
+
+from llm.activity import record_direct_call
 
 from .core import app
 
@@ -588,19 +595,32 @@ def demo_stt_gemma4_transcribe() -> Response | tuple[Response, int]:
         "messages": [{"role": "user", "content": prompt,
                       "images": [base64.b64encode(raw).decode("ascii")]}],
     }
+    duration = _wav_seconds(raw)
+    activity = {
+        "started_at": datetime.now(UTC), "provider": "ollama", "model": model,
+        "caller": "demo_stt_gemma4",
+        "messages": [{"role": "user", "content": f"{prompt}\n\n[audio: "
+                      f"{duration if duration is not None else '?'}s WAV, {len(raw)} bytes]"}],
+    }
     try:
         r = requests.post(f"{url}/api/chat", json=body, timeout=PROXY_TIMEOUT)
     except requests.RequestException as e:
+        record_direct_call(**activity, exc=e)
         return jsonify({"error": f"Ollama unreachable at {url}: {e}"}), 502
     try:
         reply = r.json()
     except ValueError:
+        record_direct_call(**activity, error=f"Ollama answered {r.status_code} without JSON")
         return jsonify({"error": f"transcription failed ({r.status_code})"}), 502
     if r.status_code != 200:
-        return jsonify({"error": reply.get("error") or f"transcription failed ({r.status_code})"}), r.status_code
+        error = reply.get("error") or f"transcription failed ({r.status_code})"
+        record_direct_call(**activity, raw=reply, error=error)
+        return jsonify({"error": error}), r.status_code
+    text = ((reply.get("message") or {}).get("content") or "").strip()
+    record_direct_call(**activity, raw=reply, response=text)
     return jsonify({
-        "text": ((reply.get("message") or {}).get("content") or "").strip(),
+        "text": text,
         "model": model,
-        "duration": _wav_seconds(raw),
+        "duration": duration,
         "prompt_tokens": reply.get("prompt_eval_count"),
     })

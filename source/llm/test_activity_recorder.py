@@ -1071,3 +1071,79 @@ class TestErrorFormatting:
     def test_no_exception_and_no_fallback_leaves_the_column_empty(self):
         assert error_traceback(None, None) is None
         assert error_category(None, None) == "failed"
+
+
+# --- calls made without LlamaIndex (the audio/image demo pages) -------------
+
+
+def test_a_direct_call_records_its_usage_and_answer(monkeypatch):
+    import llm.activity as activity
+    from datetime import UTC, datetime
+
+    recorder, rows = make_recorder()
+    monkeypatch.setattr(activity, "_installed", recorder)
+    activity.record_direct_call(
+        started_at=datetime.now(UTC), provider="ollama", model="llama3.2:3b",
+        caller="demo_page", messages=[{"role": "user", "content": "hi\n\n[audio: 2s WAV]"}],
+        raw=OLLAMA_RAW_WARM, response="The shed is blue.")
+    [row] = rows
+    assert row["ok"] is True and row["error_category"] is None
+    assert row["caller"] == "demo_page" and row["provider"] == "ollama"
+    assert row["prompt_tokens"] == 4032 and row["completion_tokens"] == 120
+    assert row["prefill_ms"] == 49 and row["decode_ms"] == 900
+    assert row["messages"] == [{"role": "user", "content": "hi\n\n[audio: 2s WAV]"}]
+    assert row["response_text"] == "The shed is blue."
+    assert "prefix_chain" not in row                  # media prompts are not hashed
+    assert row["origin"] and "test_activity_recorder" in row["origin"]
+
+
+def test_a_direct_call_reads_openai_compatible_usage(monkeypatch):
+    import llm.activity as activity
+    from datetime import UTC, datetime
+
+    recorder, rows = make_recorder()
+    monkeypatch.setattr(activity, "_installed", recorder)
+    activity.record_direct_call(
+        started_at=datetime.now(UTC), provider="jan", model="m", caller="demo_page",
+        messages=[], raw={"usage": {"prompt_tokens": 30, "completion_tokens": 5}})
+    assert rows[0]["prompt_tokens"] == 30 and rows[0]["completion_tokens"] == 5
+    assert rows[0]["prefill_ms"] is None
+
+
+def test_a_failed_direct_call_is_recorded_as_failed(monkeypatch):
+    import llm.activity as activity
+    from datetime import UTC, datetime
+
+    recorder, rows = make_recorder()
+    monkeypatch.setattr(activity, "_installed", recorder)
+    activity.record_direct_call(
+        started_at=datetime.now(UTC), provider="ollama", model="m", caller="demo_page",
+        messages=[], error="media expansion produced no tokens")
+    activity.record_direct_call(
+        started_at=datetime.now(UTC), provider="ollama", model="m", caller="demo_page",
+        messages=[], exc=ConnectionError("refused"))
+    assert [r["ok"] for r in rows] == [False, False]
+    assert rows[0]["error_category"] == "media expansion produced no tokens"
+    assert rows[1]["error_category"] == "ConnectionError"
+
+
+def test_a_direct_call_before_install_records_nothing(monkeypatch):
+    import llm.activity as activity
+    from datetime import UTC, datetime
+
+    monkeypatch.setattr(activity, "_installed", None)
+    activity.record_direct_call(started_at=datetime.now(UTC), provider=None, model=None,
+                                caller="demo_page", messages=[])   # no error, no row
+
+
+def test_stream_timings_give_a_direct_call_its_prefill_and_decode(monkeypatch):
+    import llm.activity as activity
+    from datetime import UTC, datetime
+
+    recorder, rows = make_recorder()
+    monkeypatch.setattr(activity, "_installed", recorder)
+    activity.record_direct_call(
+        started_at=datetime.now(UTC), provider="ollama", model="m", caller="demo_page",
+        messages=[], raw={"usage": {"prompt_tokens": 93, "completion_tokens": 266},
+                          "timings": {"prompt_ms": 165.4, "predicted_ms": 3993.0}})
+    assert rows[0]["prefill_ms"] == 165 and rows[0]["decode_ms"] == 3993
