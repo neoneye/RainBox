@@ -167,3 +167,11 @@ def test_transcribe_handles_unreachable():
                                       content_type="multipart/form-data")
     assert resp.status_code == 502
     assert "unreachable" in resp.get_json()["error"]
+
+
+def test_recording_transcribes_live_and_a_late_pass_cannot_land():
+    body = app.test_client().get("/demo_stt_gemma4").get_data(as_text=True)
+    assert 'id="live" checked' in body               # live is on by default
+    assert "setInterval(ppInterim, INTERIM_MS)" in body
+    assert "mediaRecorder.start(1000)" in body       # chunks so far stay decodable
+    assert "if (stopped || mine !== take || !res.ok) return;" in body

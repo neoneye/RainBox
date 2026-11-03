@@ -113,6 +113,7 @@ decodes.</p>
 <div class="row">
   <button id="record" onclick="ppToggle()">&#9679; Record</button>
   <span id="timer"></span>
+  <label class="muted" style="font-weight:400"><input type="checkbox" id="live" checked> Live transcript</label>
   <span class="muted" id="hint">Click record, allow the mic, speak, then stop to transcribe.</span>
 </div>
 
@@ -145,13 +146,19 @@ decodes.</p>
 let mediaRecorder = null;
 let chunks = [];
 let timerId = null;
+let interimId = null;     // rolling live-transcription timer
 let startedAt = 0;
+let mimeType = 'audio/webm';
+let take = 0;             // counts recordings, so a late live pass can't land in the next one
+let inflight = false;     // a live pass is in flight
+let stopped = true;       // recording stopped; the final pass owns the answer
 let audioCtx = null;      // Web Audio graph for the live mic-level meter
 let meterRaf = 0;
 let sawSignal = false;    // did the mic ever produce a non-trivial level?
 
 const SIGNAL_RMS = 0.01;  // RMS above this counts as "the mic is picking up sound"
 const WAV_RATE = 16000;   // what the model's audio encoder works at
+const INTERIM_MS = 2500;  // how often to re-transcribe the growing recording
 const DEVICE_KEY = 'stt_device_id';  // shared with the Whisper page
 
 let chosenId = '';        // the picked mic's deviceId; '' is the browser's default
@@ -371,13 +378,19 @@ async function ppToggle() {
   const micName = stream.getAudioTracks()[0].label;
   ppRefreshDevices();
   chunks = [];
+  take++;
+  stopped = false;
+  document.getElementById('transcript').value = '';
+  document.getElementById('meta').textContent = '';
   ppStartMeter(stream);
   mediaRecorder = new MediaRecorder(stream);
-  const mimeType = mediaRecorder.mimeType || 'audio/webm';
+  mimeType = mediaRecorder.mimeType || 'audio/webm';
   mediaRecorder.ondataavailable = function(e) { if (e.data.size) chunks.push(e.data); };
   mediaRecorder.onstop = function() {
     stream.getTracks().forEach(function(t) { t.stop(); });
     clearInterval(timerId);
+    clearInterval(interimId);
+    stopped = true;
     ppStopMeter();
     const btn = document.getElementById('record');
     btn.classList.remove('rec');
@@ -385,20 +398,60 @@ async function ppToggle() {
     document.getElementById('timer').textContent = '';
     ppTranscribe(new Blob(chunks, {type: mimeType}), micName ? 'mic: ' + micName : '');
   };
-  mediaRecorder.start();
+  // The container header lives only in the first chunk, so the chunks so far
+  // always make a decodable file for a live pass. A chunk every second.
+  mediaRecorder.start(1000);
   startedAt = Date.now();
   ppTick();
   timerId = setInterval(ppTick, 250);
+  interimId = setInterval(ppInterim, INTERIM_MS);
   const btn = document.getElementById('record');
   btn.classList.add('rec');
   btn.innerHTML = '&#9632; Stop';
-  document.getElementById('hint').textContent = 'Recording… click stop to transcribe.';
+  document.getElementById('hint').textContent = document.getElementById('live').checked
+    ? 'Recording… the transcript updates live; click stop for the final pass.'
+    : 'Recording… click stop to transcribe.';
+}
+
+// Live pass: re-transcribe everything recorded so far. Skipped while one is
+// already in flight (a pass over a long recording outlasts the timer), when
+// live is off, or once stopped; errors are left to the final pass.
+async function ppInterim() {
+  if (inflight || stopped || !chunks.length || !document.getElementById('live').checked) return;
+  const mine = take;
+  inflight = true;
+  try {
+    const wav = await ppToWav(new Blob(chunks, {type: mimeType}));
+    const res = await ppAsk(wav);
+    if (stopped || mine !== take || !res.ok) return;
+    document.getElementById('transcript').value = res.j.text || '';
+    document.getElementById('meta').textContent = 'live — ' +
+      (res.j.duration ? res.j.duration + 's heard, ' : '') + 'refining…';
+  } catch (e) {
+    /* a half-written chunk may not decode yet; the next pass or the final one covers it */
+  } finally {
+    inflight = false;
+  }
+}
+
+async function ppAsk(wav) {
+  const fd = new FormData();
+  fd.append('audio', wav, 'clip.wav');
+  fd.append('prompt', document.getElementById('prompt').value);
+  const r = await fetch('{{ url_for("demo_stt_gemma4_transcribe") }}', {method: 'POST', body: fd});
+  let j = {};
+  try { j = await r.json(); } catch (e) {}
+  return {ok: r.ok, status: r.status, j: j};
 }
 
 function ppPickFile(input) {
   const f = input.files && input.files[0];
   input.value = '';
-  if (f) { document.getElementById('error').textContent = ''; ppTranscribe(f, 'file: ' + f.name); }
+  if (f) {
+    document.getElementById('error').textContent = '';
+    document.getElementById('transcript').value = '';
+    ppTranscribe(f, 'file: ' + f.name);
+  }
 }
 
 // Decode whatever the browser recorded or was given, resample to 16 kHz
@@ -450,20 +503,15 @@ async function ppTranscribe(blob, source) {
   try { wav = await ppToWav(blob); }
   catch (e) { errEl.textContent = 'Could not decode that audio: ' + e; return; }
   ppPlay(wav);
-  const fd = new FormData();
-  fd.append('audio', wav, 'clip.wav');
-  fd.append('prompt', document.getElementById('prompt').value);
   btn.disabled = true;
-  out.value = '';
-  meta.textContent = '';
+  meta.textContent = out.value ? 'live — finishing…' : '';
   document.getElementById('hint').textContent = 'Transcribing…';
   const t0 = performance.now();
   try {
-    const r = await fetch('{{ url_for("demo_stt_gemma4_transcribe") }}', {method: 'POST', body: fd});
+    const res = await ppAsk(wav);
     const elapsed = (performance.now() - t0) / 1000;
-    let j = {};
-    try { j = await r.json(); } catch (e) {}
-    if (!r.ok) { errEl.textContent = j.error || ('Transcription failed (' + r.status + ').'); return; }
+    const j = res.j;
+    if (!res.ok) { errEl.textContent = j.error || ('Transcription failed (' + res.status + ').'); return; }
     out.value = j.text || '(empty answer)';
     const bits = [];
     if (source) bits.push(source);

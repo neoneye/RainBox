@@ -163,7 +163,12 @@ same-origin through the web app:
   names the mic the browser actually opened. A level meter runs while
   recording; an editable instruction (default
   "Transcribe this audio exactly.", so translating or summarizing the clip
-  works too); one pass on stop, no live interim pass. Ollama decodes WAV
+  works too). While recording, a live pass every 2.5s re-transcribes
+  everything recorded so far (skipped while one is in flight, so a long
+  recording updates less often; a "Live transcript" checkbox turns it off),
+  and the pass on stop replaces it. Each live pass re-sends the whole clip,
+  so a long recording keeps the GPU busy the whole time; a recording counter
+  keeps a late live pass out of the next recording. Ollama decodes WAV
   only — webm/opus comes back as "media expansion produced no tokens" — so
   the browser re-encodes every clip to 16 kHz mono 16-bit WAV with the Web
   Audio API, and the proxy refuses anything that is not RIFF/WAVE. The clip
