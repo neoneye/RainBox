@@ -75,6 +75,14 @@ STT_TEMPLATE = """
   #timer{font-variant-numeric:tabular-nums;color:#dc2626;font-weight:600}
   .meter{display:inline-block;width:220px;height:12px;background:#e5e7eb;border-radius:6px;overflow:hidden;vertical-align:middle}
   .meterbar{display:block;height:100%;width:0;background:#16a34a;transition:width 0.05s linear}
+  button.secondary{background:#0f766e}
+  button.secondary:hover{background:#115e59}
+  .mics{list-style:none;margin:0.5em 0 0;padding:0;max-width:640px}
+  .mics li{border:1px solid #e5e7eb;border-radius:8px;margin:0 0 6px}
+  .mics li.chosen{border-color:#2563eb;background:#eff6ff}
+  .mics label{display:flex;align-items:center;gap:10px;padding:8px 10px;font-weight:400;cursor:pointer}
+  .mics .name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mics .meter{width:140px;flex:none}
 </style>
 {% include "_nav.html" %}
 <div class="pp-content">
@@ -95,8 +103,11 @@ decodes.</p>
 </div>
 
 <div class="row">
-  <label for="device">Microphone</label>
-  <select id="device" onchange="ppSaveDevice()"><option value="">Default device</option></select>
+  <label>Microphone</label>
+  <button id="allowmics" class="secondary" onclick="ppAllowMics()" style="display:none">Show microphones</button>
+  <button id="testmics" class="secondary" onclick="ppTestToggle()" style="display:none">Test mics</button>
+  <span class="muted" id="michint"></span>
+  <ul class="mics" id="mics"></ul>
 </div>
 
 <div class="row">
@@ -143,8 +154,14 @@ const SIGNAL_RMS = 0.01;  // RMS above this counts as "the mic is picking up sou
 const WAV_RATE = 16000;   // what the model's audio encoder works at
 const DEVICE_KEY = 'stt_device_id';  // shared with the Whisper page
 
+let chosenId = '';        // the picked mic's deviceId; '' is the browser's default
+let testing = false;      // "Test mics" is running
+let testStreams = [];     // one open stream per mic while testing
+let testCtx = null;
+let testRaf = 0;
+
 function ppSaveDevice() {
-  try { localStorage.setItem(DEVICE_KEY, document.getElementById('device').value); }
+  try { localStorage.setItem(DEVICE_KEY, chosenId); }
   catch (e) { /* storage may be unavailable (private mode); not fatal */ }
 }
 
@@ -154,25 +171,131 @@ function ppSavedDevice() {
 }
 
 function ppAudioConstraints() {
-  const id = document.getElementById('device').value;
-  return {audio: id ? {deviceId: {exact: id}} : true};
+  return {audio: chosenId ? {deviceId: {exact: chosenId}} : true};
+}
+
+function ppRms(analyser, data) {
+  analyser.getByteTimeDomainData(data);
+  let sum = 0;
+  for (let i = 0; i < data.length; i++) { const v = (data[i] - 128) / 128; sum += v * v; }
+  return Math.sqrt(sum / data.length);
+}
+
+function ppChoose(id) {
+  chosenId = id;
+  ppSaveDevice();
+  document.querySelectorAll('#mics li').forEach(function(li) {
+    li.classList.toggle('chosen', li.dataset.id === id);
+    li.querySelector('input').checked = li.dataset.id === id;
+  });
+}
+
+// The browser names its microphones only once the site may use one, so this
+// asks for access a single time and closes the stream straight away.
+async function ppAllowMics() {
+  try {
+    const s = await navigator.mediaDevices.getUserMedia({audio: true});
+    s.getTracks().forEach(function(t) { t.stop(); });
+  } catch (e) {
+    document.getElementById('michint').textContent =
+      'The browser refused the microphone (' + e.name + '). Allow it for this site in the site settings, then reload.';
+    return;
+  }
+  await ppRefreshDevices();
 }
 
 async function ppRefreshDevices() {
-  const sel = document.getElementById('device');
+  const list = document.getElementById('mics');
+  const hint = document.getElementById('michint');
   let devices;
   try { devices = await navigator.mediaDevices.enumerateDevices(); }
-  catch (e) { return; }
+  catch (e) { hint.textContent = 'This browser cannot list microphones.'; return; }
   const mics = devices.filter(function(d) { return d.kind === 'audioinput'; });
-  const desired = sel.value || ppSavedDevice();
-  sel.innerHTML = '<option value="">Default device</option>';
+  const named = mics.some(function(d) { return d.label; });
+  document.getElementById('allowmics').style.display = named ? 'none' : '';
+  document.getElementById('testmics').style.display = named ? '' : 'none';
+  if (!named) {
+    list.innerHTML = '';
+    chosenId = '';
+    hint.textContent = mics.length
+      ? 'The browser names its microphones only once this site may use the mic.'
+      : 'No microphone found.';
+    return;
+  }
+  const wasTesting = testing;
+  if (wasTesting) ppStopTest();
+  const desired = chosenId || ppSavedDevice();
+  list.innerHTML = '';
   mics.forEach(function(d, i) {
-    const o = document.createElement('option');
-    o.value = d.deviceId;
-    o.textContent = d.label || ('Microphone ' + (i + 1) + ' (allow mic to see name)');
-    sel.appendChild(o);
+    const li = document.createElement('li');
+    li.dataset.id = d.deviceId;
+    const label = document.createElement('label');
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = 'mic';
+    radio.onchange = function() { ppChoose(d.deviceId); };
+    const name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = d.label || ('Microphone ' + (i + 1));
+    name.title = name.textContent;
+    const meter = document.createElement('span');
+    meter.className = 'meter';
+    meter.innerHTML = '<span class="meterbar"></span>';
+    label.append(radio, name, meter);
+    li.appendChild(label);
+    list.appendChild(li);
   });
-  if (desired && mics.some(function(d) { return d.deviceId === desired; })) sel.value = desired;
+  const ids = mics.map(function(d) { return d.deviceId; });
+  const pick = ids.indexOf(desired) >= 0 ? desired
+    : (ids.indexOf('default') >= 0 ? 'default' : ids[0]);
+  ppChoose(pick);
+  hint.textContent = (desired && pick !== desired)
+    ? 'The microphone picked last time is not connected; picked ' + mics[ids.indexOf(pick)].label + ' instead.'
+    : mics.length + (mics.length === 1 ? ' microphone.' : ' microphones. Test mics shows which one hears you.');
+  if (wasTesting) ppTestStart();
+}
+
+function ppTestToggle() {
+  if (testing) ppStopTest(); else ppTestStart();
+}
+
+// Open every listed mic at once and give each row its own level bar: the one
+// whose bar moves while you speak is the one that hears you.
+async function ppTestStart() {
+  testing = true;
+  const btn = document.getElementById('testmics');
+  btn.textContent = 'Stop test';
+  testCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (testCtx.state === 'suspended') testCtx.resume();
+  const meters = [];
+  for (const li of document.querySelectorAll('#mics li')) {
+    let s;
+    try { s = await navigator.mediaDevices.getUserMedia({audio: {deviceId: {exact: li.dataset.id}}}); }
+    catch (e) { li.querySelector('.name').title = 'could not open: ' + e.name; continue; }
+    if (!testing) { s.getTracks().forEach(function(t) { t.stop(); }); return; }
+    testStreams.push(s);
+    const analyser = testCtx.createAnalyser();
+    analyser.fftSize = 1024;
+    testCtx.createMediaStreamSource(s).connect(analyser);
+    meters.push({analyser: analyser, bar: li.querySelector('.meterbar')});
+  }
+  const data = new Uint8Array(1024);
+  (function tick() {
+    meters.forEach(function(m) {
+      m.bar.style.width = Math.min(100, Math.round(ppRms(m.analyser, data) * 300)) + '%';
+    });
+    testRaf = requestAnimationFrame(tick);
+  })();
+}
+
+function ppStopTest() {
+  testing = false;
+  cancelAnimationFrame(testRaf);
+  testStreams.forEach(function(s) { s.getTracks().forEach(function(t) { t.stop(); }); });
+  testStreams = [];
+  if (testCtx) { testCtx.close().catch(function() {}); testCtx = null; }
+  document.querySelectorAll('#mics .meterbar').forEach(function(b) { b.style.width = '0'; });
+  document.getElementById('testmics').textContent = 'Test mics';
 }
 
 function ppStartMeter(stream) {
@@ -189,10 +312,7 @@ function ppStartMeter(stream) {
     audioCtx.createMediaStreamSource(stream).connect(analyser);
     const data = new Uint8Array(analyser.fftSize);
     (function tick() {
-      analyser.getByteTimeDomainData(data);
-      let sum = 0;
-      for (let i = 0; i < data.length; i++) { const v = (data[i] - 128) / 128; sum += v * v; }
-      const rms = Math.sqrt(sum / data.length);
+      const rms = ppRms(analyser, data);
       bar.style.width = Math.min(100, Math.round(rms * 300)) + '%';
       if (rms >= SIGNAL_RMS) sawSignal = true;
       meterRaf = requestAnimationFrame(tick);
@@ -240,6 +360,7 @@ async function ppToggle() {
   if (mediaRecorder && mediaRecorder.state === 'recording') { mediaRecorder.stop(); return; }
   const errEl = document.getElementById('error');
   errEl.textContent = '';
+  ppStopTest();  // don't hold the mics open in two places at once
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia(ppAudioConstraints());
@@ -247,6 +368,7 @@ async function ppToggle() {
     errEl.textContent = 'Microphone access denied or unavailable: ' + e;
     return;
   }
+  const micName = stream.getAudioTracks()[0].label;
   ppRefreshDevices();
   chunks = [];
   ppStartMeter(stream);
@@ -261,7 +383,7 @@ async function ppToggle() {
     btn.classList.remove('rec');
     btn.innerHTML = '&#9679; Record';
     document.getElementById('timer').textContent = '';
-    ppTranscribe(new Blob(chunks, {type: mimeType}));
+    ppTranscribe(new Blob(chunks, {type: mimeType}), micName ? 'mic: ' + micName : '');
   };
   mediaRecorder.start();
   startedAt = Date.now();
@@ -276,7 +398,7 @@ async function ppToggle() {
 function ppPickFile(input) {
   const f = input.files && input.files[0];
   input.value = '';
-  if (f) { document.getElementById('error').textContent = ''; ppTranscribe(f); }
+  if (f) { document.getElementById('error').textContent = ''; ppTranscribe(f, 'file: ' + f.name); }
 }
 
 // Decode whatever the browser recorded or was given, resample to 16 kHz
@@ -317,7 +439,9 @@ function ppPlay(wav) {
   document.getElementById('player').style.display = '';
 }
 
-async function ppTranscribe(blob) {
+// `source` names where the clip came from (the mic the browser actually
+// opened, or the file), shown with the answer.
+async function ppTranscribe(blob, source) {
   const errEl = document.getElementById('error');
   const btn = document.getElementById('record');
   const out = document.getElementById('transcript');
@@ -342,6 +466,7 @@ async function ppTranscribe(blob) {
     if (!r.ok) { errEl.textContent = j.error || ('Transcription failed (' + r.status + ').'); return; }
     out.value = j.text || '(empty answer)';
     const bits = [];
+    if (source) bits.push(source);
     if (j.duration) bits.push('audio: ' + j.duration + 's');
     if (j.prompt_tokens) bits.push(j.prompt_tokens + ' prompt tokens');
     bits.push('answered in ' + elapsed.toFixed(1) + 's');
@@ -358,6 +483,12 @@ ppHealth();
 ppRefreshDevices();
 if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
   navigator.mediaDevices.addEventListener('devicechange', ppRefreshDevices);
+}
+// Granting the mic from the address bar names the devices without a reload.
+if (navigator.permissions && navigator.permissions.query) {
+  navigator.permissions.query({name: 'microphone'})
+    .then(function(p) { p.onchange = ppRefreshDevices; })
+    .catch(function() {});
 }
 </script>
 """

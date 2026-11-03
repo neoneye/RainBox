@@ -151,8 +151,17 @@ same-origin through the web app:
 - **`/demo_stt_gemma4`** (`webapp/stt_gemma4_views.py`) — speech-to-text
   with gemma4 on Ollama, no side service. gemma4's audio capability is input
   only (it hears a clip and answers in text; it cannot speak), so this is the
-  Whisper page's counterpart, not a TTS one. Mic recording with device picker
-  + level meter, or an audio file; an editable instruction (default
+  Whisper page's counterpart, not a TTS one. Mic recording or an audio file.
+  The mic picker is a list, one row per microphone the browser reports
+  (Chrome's "Default - …" entry included); the browser names devices only
+  once the site may use the mic, so before that a "Show microphones" button
+  asks once and closes the stream, and a grant from the address bar relists
+  without a reload. "Test mics" opens every mic at once with a level bar per
+  row, so the one that hears you is the one whose bar moves. The choice is
+  remembered under the Whisper page's localStorage key; a remembered mic that
+  is unplugged falls back to the default, saying so. The answer's meta line
+  names the mic the browser actually opened. A level meter runs while
+  recording; an editable instruction (default
   "Transcribe this audio exactly.", so translating or summarizing the clip
   works too); one pass on stop, no live interim pass. Ollama decodes WAV
   only — webm/opus comes back as "media expansion produced no tokens" — so

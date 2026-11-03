@@ -49,6 +49,16 @@ def test_page_renders_with_nav_model_and_prompt():
     assert "STT gemma4" in body          # the Voice menu links the page
 
 
+def test_the_mic_picker_lists_tests_and_names_the_mic_used():
+    body = app.test_client().get("/demo_stt_gemma4").get_data(as_text=True)
+    assert 'id="mics"' in body                      # one row per microphone
+    assert "ppAllowMics()" in body                  # names need mic permission first
+    assert "ppTestToggle()" in body                 # a level bar on every mic at once
+    assert "deviceId: {exact: li.dataset.id}" in body
+    assert "onchange = ppRefreshDevices" in body    # a grant from the address bar relists
+    assert "'mic: ' + micName" in body              # the answer says which mic recorded
+
+
 def test_model_and_server_come_from_the_environment(monkeypatch):
     monkeypatch.setenv("GEMMA4_STT_MODEL", "gemma4:e2b")
     monkeypatch.setenv("OLLAMA_BASE_URL", "http://127.0.0.1:9999/")
