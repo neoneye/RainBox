@@ -9,6 +9,7 @@ turns the first unrendered item's position into a cursor (proposal §7).
 
 from __future__ import annotations
 
+import logging
 import time as _time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -22,6 +23,8 @@ import db
 from diary.citations import format_citation, parse_citation
 from diary.parsing import (DATE_DIAGNOSTIC_CODES, DIAGNOSTIC_CODES, find_identifiers,
                            sha256_hex)
+
+logger = logging.getLogger(__name__)
 
 ROUTE_CAP = 20
 TIMELINE_BATCH = 30
@@ -664,6 +667,7 @@ def _search(req: DiaryRequest, sources: list[Any], embed_query: Callable | None,
                                            mode_override=vector_override)
                         ranks["vector"] = {str(pid): i + 1 for i, pid in enumerate(ids)}
                     except Exception:   # noqa: BLE001 — a vector failure never removes lexical results
+                        logger.warning("diary: vector route failed", exc_info=True)
                         db.session.rollback()
                         result.degraded_routes.append("vector_failed")
             result.timings_ms["vector"] = int((_time.monotonic() - t0) * 1000)

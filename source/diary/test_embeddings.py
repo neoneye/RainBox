@@ -93,6 +93,37 @@ def test_loopback_only(url, ok):
             emb.OllamaEmbedder(url)
 
 
+class _RecordingOllama(emb.OllamaEmbedder):
+    """The real adapter with its HTTP stood in: /api/ps lists `loaded`."""
+
+    def __init__(self, loaded):
+        super().__init__("http://127.0.0.1:11434")
+        self.listed, self.calls = loaded, []
+
+    def _request(self, path, body, timeout):
+        self.calls.append((path, body, timeout))
+        if path == "/api/ps":
+            return {"models": [{"name": n, "model": n} for n in self.listed]}
+        return {"embeddings": [[0.1] * 768 for _ in body["input"]]}
+
+
+def test_a_cold_model_gets_the_time_a_load_takes():
+    """Ollama aborts a load when the client hangs up first, so a 2 s budget
+    against an unloaded model failed every search until something else
+    loaded it."""
+    cold = _RecordingOllama(loaded=["gemma4:e4b-mlx"])
+    cold.embed(["q"], timeout=emb.QUERY_TIMEOUT_S)
+    path, body, timeout = cold.calls[-1]
+    assert path == "/api/embed" and timeout == emb.COLD_LOAD_TIMEOUT_S
+    assert body["keep_alive"] == emb.KEEP_ALIVE
+
+
+def test_a_loaded_model_keeps_the_callers_budget():
+    warm = _RecordingOllama(loaded=[emb.DEFAULT_MODEL])
+    warm.embed(["q"], timeout=emb.QUERY_TIMEOUT_S)
+    assert warm.calls[-1][2] == emb.QUERY_TIMEOUT_S
+
+
 @pytest.mark.parametrize("vec, ok", [
     ([0.1] * 768, True), ([0.0] * 768, False), ([0.1] * 767, False),
     ([float("nan")] + [0.1] * 767, False), ([float("inf")] + [0.1] * 767, False),

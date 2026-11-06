@@ -32,6 +32,13 @@ EMBED_DIM = 768
 BATCH_SIZE = 32
 QUERY_TIMEOUT_S = 2.0
 BATCH_TIMEOUT_S = 30.0
+# Ollama aborts a model load when the client hangs up first, so a request
+# that finds the model unloaded gets the time a load takes (under contention
+# from a busy chat model, more than QUERY_TIMEOUT_S).
+COLD_LOAD_TIMEOUT_S = 30.0
+# Keeps the model loaded between queries; Ollama's own default is 5 minutes,
+# shorter than the pause between questions in one conversation.
+KEEP_ALIVE = "30m"
 BATCH_RETRIES = 2
 INPUT_FORMATS = (1, 2)
 HNSW_EF_SEARCH = 100
@@ -106,8 +113,21 @@ class OllamaEmbedder:
                 return m["digest"]
         raise EmbeddingError(f"model {self.model!r} is not served at {self.base_url}")
 
+    def loaded(self) -> bool:
+        """Whether Ollama holds the model in memory now. Unknown counts as
+        loaded: the caller's own timeout then applies."""
+        try:
+            ps = self._request("/api/ps", None, QUERY_TIMEOUT_S)
+        except Exception:   # noqa: BLE001 — the embed request reports a real outage
+            return True
+        return any(m.get("name") == self.model or m.get("model") == self.model
+                   for m in ps.get("models", []))
+
     def embed(self, texts: list[str], *, timeout: float) -> list[list[float]]:
-        out = self._request("/api/embed", {"model": self.model, "input": texts}, timeout)
+        if not self.loaded():
+            timeout = max(timeout, COLD_LOAD_TIMEOUT_S)
+        out = self._request("/api/embed", {"model": self.model, "input": texts,
+                                           "keep_alive": KEEP_ALIVE}, timeout)
         vecs = out.get("embeddings")
         if not isinstance(vecs, list) or len(vecs) != len(texts):
             raise EmbeddingError("embedding response has the wrong shape")
