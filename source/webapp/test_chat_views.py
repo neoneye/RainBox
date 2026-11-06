@@ -406,10 +406,33 @@ def test_a_failed_send_restores_the_text_and_says_so():
     what was typed and leave the room looking like nothing happened — no
     message, no error. The text goes back in the box and the toast explains."""
     body = _body()
-    assert "await postJSON('/chat/api/rooms/' + currentRoom + '/messages', { text });" in body
+    assert "await postJSON('/chat/api/rooms/' + room + '/messages', { text });" in body
     assert "input.value = text;" in body
     assert ("chatToast('Message not sent: ' + e.message "
             "+ ' — your text is back in the box.');") in body
+
+
+def test_a_failure_from_another_server_on_the_port_is_named():
+    """While Rainbox restarts, macOS AirPlay Receiver answers on port 5000
+    with an empty 403. A response without Rainbox's marker header is named
+    by its Server header instead of passing for Rainbox's own refusal."""
+    body = _body()
+    assert "if (r.headers.get('X-Rainbox')) throw new Error(url + ' -> ' + r.status);" in body
+    assert "const who = r.headers.get('Server') || 'another server';" in body
+    assert "throw new Error('Rainbox is not answering. It may be restarting');" in body
+    resp = app.test_client().get("/chat")
+    assert resp.headers["X-Rainbox"] == "1"
+    assert app.test_client().get("/no-such-page").headers["X-Rainbox"] == "1"
+
+
+def test_the_composer_keeps_a_draft_per_room_until_the_server_has_it():
+    body = _body()
+    assert "input.addEventListener('input', draftSave);" in body
+    assert "localStorage.setItem(DRAFT_PREFIX + currentRoom, input.value);" in body
+    assert "draftLoad(uuid);        // each room keeps its own unsent text" in body
+    # Dropped only after the POST succeeded: the catch returns before this.
+    assert (body.index("your text is back in the box.')")
+            < body.index("else draftDrop(room);"))
 
 
 def test_agents_room_settings_panel_markers():

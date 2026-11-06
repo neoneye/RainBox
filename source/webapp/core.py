@@ -106,6 +106,18 @@ def _single_date_header(resp):
     return resp
 
 
+# Every response says it came from Rainbox. On macOS the AirPlay Receiver also
+# listens on port 5000 and answers anything sent while Rainbox is down (a
+# restart) with an empty 403; a page tells the two apart by this header.
+RAINBOX_HEADER = "X-Rainbox"
+
+
+@app.after_request
+def _mark_rainbox(resp):
+    resp.headers[RAINBOX_HEADER] = "1"
+    return resp
+
+
 # Record every LLM call this process makes to `llm_call` (the /activity page).
 # After init_db, because the recorder's sink writes through db.session.
 from llm.activity import install_activity_recorder  # noqa: E402

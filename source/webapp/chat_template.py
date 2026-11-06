@@ -975,27 +975,36 @@ async function applyStreamingUpdate(d){
   if (!base.streaming) delete streamingBase[d.message_id];
 }
 
+// A failed request says who failed it. Rainbox marks every response with
+// X-Rainbox; anything else answering on this port (macOS AirPlay Receiver
+// answers an empty 403 while Rainbox restarts) is named by its Server header.
+async function rainboxFetch(url, opts){
+  let r;
+  try { r = await fetch(url, opts); }
+  catch (e) { throw new Error('Rainbox is not answering. It may be restarting'); }
+  if (r.ok) return r;
+  if (r.headers.get('X-Rainbox')) throw new Error(url + ' -> ' + r.status);
+  const who = r.headers.get('Server') || 'another server';
+  throw new Error('Rainbox is not answering; ' + who + ' replied ' + r.status
+                  + ' on this port instead. Rainbox may be restarting');
+}
 async function getJSON(url){
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(url + ' -> ' + r.status);
-  return r.json();
+  return (await rainboxFetch(url)).json();
 }
 async function postJSON(url, body){
-  const r = await fetch(url, {
+  const r = await rainboxFetch(url, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(body),
   });
-  if (!r.ok) throw new Error(url + ' -> ' + r.status);
   return r.json();
 }
 async function putJSON(url, body){
-  const r = await fetch(url, {
+  const r = await rainboxFetch(url, {
     method: 'PUT',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(body),
   });
-  if (!r.ok) throw new Error(url + ' -> ' + r.status);
   return r.json();
 }
 // The open room's row from the tree payload (carries room_type + model_uuid).
@@ -2909,6 +2918,7 @@ async function selectRoom(uuid, scrollMsgId){
   log.innerHTML = '';
   syncStopButton();  // the previous room's button must not survive the switch
   syncRoomLayout();
+  draftLoad(uuid);        // each room keeps its own unsent text
   input.focus();
   // Open on the newest page — or, for a deep link, the page holding it.
   let pages = [];
@@ -2993,13 +3003,35 @@ async function loadRooms(selectUuid, scrollMsgId){
   else chatSyncUrl();  // nothing to open (no rooms) — clear a stale ?id=
 }
 
+// The composer's text is kept per room in localStorage as it is typed, so a
+// send that fails, a reload or a crashed tab never costs a typed message. The
+// draft is dropped only once the server has the message.
+const DRAFT_PREFIX = 'chat-draft:';
+function draftSave(){
+  if (!currentRoom) return;
+  try {
+    if (input.value) localStorage.setItem(DRAFT_PREFIX + currentRoom, input.value);
+    else localStorage.removeItem(DRAFT_PREFIX + currentRoom);
+  } catch (_) { /* storage unavailable (private mode) or full */ }
+}
+function draftLoad(uuid){
+  let text = '';
+  try { text = localStorage.getItem(DRAFT_PREFIX + uuid) || ''; } catch (_) {}
+  input.value = text;
+  autoGrow();
+}
+function draftDrop(uuid){
+  try { localStorage.removeItem(DRAFT_PREFIX + uuid); } catch (_) {}
+}
+
 async function send(){
   const text = input.value.trim();
-  if (!text || !currentRoom) return;
+  const room = currentRoom;
+  if (!text || !room) return;
   input.value = '';
   autoGrow();  // collapse back to one line after sending
   try {
-    await postJSON('/chat/api/rooms/' + currentRoom + '/messages', { text });
+    await postJSON('/chat/api/rooms/' + room + '/messages', { text });
   } catch (e) {
     // The composer was cleared optimistically, so a failed POST silently ate
     // what was typed and left the room looking like nothing happened. Put the
@@ -3011,6 +3043,9 @@ async function send(){
     chatToast('Message not sent: ' + e.message + ' — your text is back in the box.');
     return;
   }
+  // Text typed into this room while the send was in flight is a new draft.
+  if (room === currentRoom && input.value) draftSave();
+  else draftDrop(room);
   // don't wait for the SSE round-trip; force the scroll because this row is
   // the operator's own — they are following the conversation, not reading back.
   // Sent from an older page, the conversation continues on the newest: go there.
@@ -4080,6 +4115,7 @@ function autoGrow(){
   input.style.height = input.scrollHeight + 'px';
 }
 input.addEventListener('input', autoGrow);
+input.addEventListener('input', draftSave);
 autoGrow();
 
 // Enter sends; Shift+Enter inserts a newline (textarea default).
