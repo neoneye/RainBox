@@ -199,12 +199,13 @@ NAV_TEMPLATE = """
         <a href="{{ url_for('agent_models_page') }}" class="{{ 'pp-active' if request.endpoint == 'agent_models_page' }}">Agent models</a>
       </div>
     </details>
-    <details class="pp-dd {{ 'pp-active' if request.endpoint in ('benchmark_basic_page', 'benchmark_editdocument_page', 'benchmark_kanban_page', 'benchmark_story_page') }}">
+    <details class="pp-dd {{ 'pp-active' if request.endpoint in ('benchmark_basic_page', 'benchmark_editdocument_page', 'benchmark_kanban_page', 'benchmark_story_page', 'benchmark_vision_page') }}">
       <summary>Benchmark &#9662;</summary>
       <div class="pp-dd-menu">
         <a href="{{ url_for('benchmark_basic_page') }}" class="{{ 'pp-active' if request.endpoint == 'benchmark_basic_page' }}">Basic</a>
         <a href="{{ url_for('benchmark_kanban_page') }}" class="{{ 'pp-active' if request.endpoint == 'benchmark_kanban_page' }}">Kanban</a>
         <a href="{{ url_for('benchmark_story_page') }}" class="{{ 'pp-active' if request.endpoint == 'benchmark_story_page' }}">Story</a>
+        <a href="{{ url_for('benchmark_vision_page') }}" class="{{ 'pp-active' if request.endpoint == 'benchmark_vision_page' }}">Vision</a>
         {# Last, and out of alphabetical order with it: the experimental one. #}
         <a href="{{ url_for('benchmark_editdocument_page') }}" class="{{ 'pp-active' if request.endpoint == 'benchmark_editdocument_page' }}">Edit document</a>
       </div>
@@ -257,6 +258,9 @@ story_benchmark_runner = BenchmarkRunner(spec_set="story")
 
 from benchmarks.editdocument_runner import BenchmarkEditDocumentRunner
 benchmark_editdocument_runner = BenchmarkEditDocumentRunner(app)
+
+from benchmarks.vision_runner import VisionBenchmarkRunner
+vision_benchmark_runner = VisionBenchmarkRunner()
 
 
 def _sync_one_provider(

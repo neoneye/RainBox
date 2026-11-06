@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`rainbox` has four benchmark harnesses, each with its own page,
+`rainbox` has five benchmark harnesses, each with its own page,
 background runner, and live-updating results grid:
 
 - **`/benchmark_basic`** — coding/format probes (base64 decode/encode, reverse
@@ -22,22 +22,14 @@ background runner, and live-updating results grid:
   is ten LLM calls. The suite read for *cache* behaviour, which is why it is
   the one with a warm-up toggle. Code: `benchmarks/story.py`,
   `webapp/benchmark_story_views.py`.
+- **`/benchmark_vision`** — vision models reading the text in one image, with
+  what each answer cost: time, thinking time, reasoning and output tokens,
+  decode speed. Its own runner and storage, described under
+  **Vision benchmark** below. Code: `benchmarks/vision_ocr.py`,
+  `benchmarks/vision_runner.py`, `benchmarks/vision_worker.py`,
+  `db/benchmark_vision.py`, `webapp/benchmark_vision_views.py`.
 
-Three further benchmarks have no page and no runner.
-
-**`benchmarks/vision_ocr.py`** asks vision models to read the text in one
-fixed image, `benchmarks/fixtures/ocr_corners.png`: a word in each corner
-(the bottom two rotated 45°) and one in the center. Six cases: list every word,
-then one question per location. A case passes when the answer contains each
-expected word, case-insensitive and as a whole word; extra words don't fail a
-location case, but they show as "also named". It takes the model uuids from
-`/model?id=…`, only reads those rows, and sends the image straight to the
-provider's OpenAI-compatible endpoint, as `/demo/multimodal` does:
-
-```
-DATABASE_URL=postgresql+psycopg://localhost/rainbox_production \
-    python -m benchmarks.vision_ocr <uuid> [<uuid> …] [--trials N]
-```
+Two further benchmarks have no page and no runner.
 
 **`benchmarks/roster_completeness.py`** asks whether an incomplete roster's
 caveat actually stops a model inferring absence — a claim about model
@@ -267,3 +259,69 @@ pegged GPU or manual restart.
 Each row pays subprocess startup — a fresh Python, the llama-index import, and a
 Postgres connection (~2–4s) — before its first trial. Warmup is skipped in the
 child when consecutive rows share a model (it's already resident).
+
+## Vision benchmark
+
+`/benchmark_vision` asks vision models about one fixed image,
+`benchmarks/fixtures/ocr_corners.png`: a word in each corner (the bottom two
+rotated 45°) and one in the center. Six cases: list every word, then one
+question per location. A case passes when the answer contains each expected
+word, case-insensitive and as a whole word. Extra words don't fail a location
+case; they show as "also named", so a model that answers every question with
+the whole list can be seen without being scored wrong.
+
+It does not reuse `BenchmarkRunner`, for three reasons:
+
+- **Targets.** The other suites benchmark overrides with structured output.
+  Here the question is which models take an image, so the page lists every
+  available config *and* override whose model Ollama reports with the
+  `vision` capability (`/api/show`, asked once per process). Other providers
+  don't say, so their models are listed as "vision unknown".
+- **Transport.** Ollama models go through Ollama's native `/api/chat`
+  stream, the API the app's own Ollama client speaks. That way an override's
+  `thinking`, `temperature`, `context_window` and `max_tokens` mean what they
+  mean in chat, and the reply carries exact load, prefill and decode
+  durations. Other providers get the OpenAI-compatible stream with
+  `include_usage`, as `/demo/multimodal` sends it, and take timings from a
+  llama.cpp `timings` object when one comes back.
+- **What is measured.** The grid of the other suites holds one tally per
+  cell. Here each answer has its own figures, and the answer text is what
+  explains a number, so storage is per trial.
+
+### Measures
+
+Per answer: wall time; time to the first token; *thinking*, the time from the
+first token to the first answer token (0 when the model answered straight
+away); prompt tokens with the cached share; output tokens; reasoning tokens;
+decode tokens/s; prefill; load. Neither API counts reasoning tokens
+separately, only the output total. The reasoning figure is that total split
+by the length of the reasoning and answer text, and the page marks it ≈.
+Thinking time and output tokens are the exact signals.
+
+### Storage
+
+`benchmark_vision_trial` stores one row per answer as it arrives. A `run_uuid`
+groups the answers one Start produced for one target. After each target, its
+runs past the newest five are pruned (`prune_vision_runs`). The page reads
+`…/results` (every retained run, without reasoning text) and fetches a trial's
+reasoning from `…/reasoning` only when it is opened. `…/state` carries only
+what is running now, plus a `revision` that moves on every stored answer;
+the page refetches results when it moves. A run that never reached every
+case is tagged *partial*, so its score isn't read as a full one.
+
+### Running
+
+Rows run one after another, each in a child process
+(`benchmarks/vision_worker.py`) that a Stop SIGKILLs, under the shared
+one-suite slot.
+The parent resolves the target and sends it whole, so the child needs no
+database. A warm-up "hi" goes first unless the previous row used the same
+model. The trial count (1–10) and the warm-up toggle are remembered per
+browser, along with the selected models.
+
+The same cases run from the CLI, which only reads the model rows:
+
+```
+DATABASE_URL=postgresql+psycopg://localhost/rainbox_production \
+    python -m benchmarks.vision_ocr <uuid> [<uuid> …] [--trials N]
+```

@@ -1965,6 +1965,59 @@ class BenchmarkResult(db.Model):
     )
 
 
+
+class BenchmarkVisionTrial(db.Model):
+    """One trial of the /benchmark_vision suite: one case asked of one model
+    once, with its verdict and what the call cost.
+
+    Per trial rather than per cell (unlike benchmark_result): the page reads
+    timings and token counts per answer, and the answer text is what tells you
+    why a case failed. A `run_uuid` groups the trials one Start produced for
+    one target; retention keeps that target's newest runs (see
+    db.benchmark_vision).
+
+    Target labels are denormalized for the reason benchmark_result gives: a
+    removed override's runs should still say what was measured.
+    """
+
+    __tablename__ = "benchmark_vision_trial"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
+    run_uuid: Mapped[UUID] = mapped_column()
+    run_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    target_uuid: Mapped[UUID] = mapped_column()
+    target_label: Mapped[str] = mapped_column(Text, default="")
+    model_name: Mapped[str] = mapped_column(Text, default="")
+    provider: Mapped[str] = mapped_column(Text, default="")
+    config_fingerprint: Mapped[str] = mapped_column(Text, default="")
+    case_name: Mapped[str] = mapped_column(Text)
+    trial_index: Mapped[int] = mapped_column()
+    passed: Mapped[bool] = mapped_column(default=False)
+    missing: Mapped[list] = mapped_column(JSONB, default=list)
+    also_named: Mapped[list] = mapped_column(JSONB, default=list)
+    error: Mapped[str | None] = mapped_column(Text)
+    content: Mapped[str] = mapped_column(Text, default="")
+    reasoning: Mapped[str] = mapped_column(Text, default="")
+    # Seconds. NULL is a figure the backend did not report.
+    elapsed: Mapped[float] = mapped_column(default=0.0)
+    first_token: Mapped[float | None] = mapped_column()
+    thinking: Mapped[float | None] = mapped_column()
+    load_s: Mapped[float | None] = mapped_column()
+    prefill_s: Mapped[float | None] = mapped_column()
+    decode_s: Mapped[float | None] = mapped_column()
+    prompt_tokens: Mapped[int | None] = mapped_column()
+    cached_tokens: Mapped[int | None] = mapped_column()
+    output_tokens: Mapped[int | None] = mapped_column()
+    # An estimate: the output total split by reasoning vs answer characters.
+    reasoning_tokens: Mapped[int | None] = mapped_column()
+    done_reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    __table_args__ = (
+        Index("ix_benchmark_vision_trial_target", "target_uuid", "run_started_at"),
+    )
+
 # --- diary memory ------------------------------------------------------------
 # Read-only search over the operator's diary files. Contract and rationale:
 # notes/proposals/2026-09-21-diary-memory-representation-proposals.md (§4).
