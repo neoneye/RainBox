@@ -108,9 +108,9 @@ def diary_register_source(manifest: Any, *, pilot: bool = False) -> tuple[DiaryS
     (source, created)."""
     from diary.config import build_parser_config, config_fingerprint, manifest_to_json
 
-    room = db.session.query(Chatroom).filter_by(uuid=manifest.room_uuid).one_or_none()
-    if room is None:
-        raise DiaryError(f"room {manifest.room_uuid} does not exist")
+    for room_uuid in manifest.room_uuids:
+        if db.session.query(Chatroom).filter_by(uuid=room_uuid).one_or_none() is None:
+            raise DiaryError(f"room {room_uuid} does not exist")
     parser_config = build_parser_config(manifest)
     fingerprint = config_fingerprint(parser_config)
     config = manifest_to_json(manifest)
@@ -126,7 +126,7 @@ def diary_register_source(manifest: Any, *, pilot: bool = False) -> tuple[DiaryS
                 raise DiaryError(f"root overlaps source {other.name!r}")
         source = DiarySource(
             uuid=uuid4(), name=manifest.name, root_path=manifest.root,
-            room_uuid=manifest.room_uuid, agent_uuid=manifest.agent_uuid,
+            room_uuids=list(manifest.room_uuids), agent_uuid=manifest.agent_uuid,
             timezone=manifest.timezone, sensitivity=manifest.sensitivity,
             allow_remote_models=manifest.allow_remote_models, config=config,
             parser_config=parser_config, parser_fingerprint=fingerprint,
@@ -139,7 +139,7 @@ def diary_register_source(manifest: Any, *, pilot: bool = False) -> tuple[DiaryS
             raise DiaryError("a root change needs a new source; citations are bound to the old tree")
         if source.pilot != pilot:
             raise DiaryError("the pilot marker is set at creation and cannot change")
-        source.room_uuid = manifest.room_uuid
+        source.room_uuids = list(manifest.room_uuids)
         source.agent_uuid = manifest.agent_uuid
         source.timezone = manifest.timezone
         source.sensitivity = manifest.sensitivity

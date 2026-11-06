@@ -140,7 +140,7 @@ class DiaryResult:
 
 
 def eligible_sources(ctx: DiaryContext, source_name: str | None = None) -> list[Any]:
-    """Sources this context may read: the room's enabled private sources
+    """Sources this context may read: the enabled private sources listing the room
     (agent-restricted ones only for that agent), narrowed to those allowing
     remote models when the turn's models are not all local. The trusted
     probe context may add its one selected source even while disabled."""
@@ -149,7 +149,7 @@ def eligible_sources(ctx: DiaryContext, source_name: str | None = None) -> list[
     for s in q.all():
         trusted = ctx.trusted_source is not None and s.uuid == ctx.trusted_source
         if not trusted:
-            if ctx.room_uuid is None or s.room_uuid != ctx.room_uuid or not s.enabled:
+            if ctx.room_uuid is None or ctx.room_uuid not in s.room_uuids or not s.enabled:
                 continue
             if s.agent_uuid is not None and s.agent_uuid != ctx.agent_uuid:
                 continue
@@ -165,7 +165,7 @@ def diary_available(room_uuid: UUID, agent_uuid: UUID | None, models_local: bool
     """Whether `diary_query` should be offered this turn, and if not, why
     (for the trace): no_source, no_ready_source or remote_models."""
     sources = [s for s in db.session.query(db.DiarySource)
-               .filter(db.DiarySource.room_uuid == room_uuid,
+               .filter(db.DiarySource.room_uuids.any(room_uuid),
                        db.DiarySource.sensitivity == "private").all()
                if s.agent_uuid is None or s.agent_uuid == agent_uuid]
     if not sources:

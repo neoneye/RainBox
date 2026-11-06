@@ -359,6 +359,17 @@ def _ensure_diary_schema() -> None:
     """The diary pieces create_all cannot express: the deferred composite FK
     that lets a file's current pointer name only a generation of that same
     file. Guarded, so a migrated database starts without taking a lock."""
+    # A source lists the rooms it is readable in. A table holding one room
+    # per source gets that room as its one-element list.
+    if _column_exists("diary_source", "room_uuid"):
+        db.session.execute(sa.text(
+            "ALTER TABLE diary_source ADD COLUMN IF NOT EXISTS room_uuids uuid[]"))
+        db.session.execute(sa.text(
+            "UPDATE diary_source SET room_uuids = ARRAY[room_uuid] WHERE room_uuids IS NULL"))
+        db.session.execute(sa.text(
+            "ALTER TABLE diary_source ALTER COLUMN room_uuids SET NOT NULL"))
+        db.session.execute(sa.text("ALTER TABLE diary_source DROP COLUMN room_uuid"))
+        db.session.commit()
     # pg_trgm backs close-spelling search (diary.fuzzy) and the optional
     # literal accelerator. Installed only where the server offers it; without
     # it diary search simply has no typo tolerance.

@@ -26,10 +26,10 @@ WARM_PASSES = 3
 
 
 def trusted_context(source: Any, *, vectors: str | None = None) -> DiaryContext:
-    """The operator's probe context: the source's own room and agent, the
+    """The operator's probe context: the source's first room and its agent, the
     selected source readable even while disabled. Exclusions and quarantine
     still apply. Not constructible from action args."""
-    return DiaryContext(room_uuid=source.room_uuid, agent_uuid=source.agent_uuid,
+    return DiaryContext(room_uuid=source.room_uuids[0], agent_uuid=source.agent_uuid,
                         models_local=True, trusted_source=source.uuid,
                         vector_mode_override=vectors)
 

@@ -33,7 +33,7 @@ def app_ctx():
 def manifest_for(root: Path, room_uuid, name: str, **changes):
     raw = {
         "schema_version": 1, "name": name, "root": str(root),
-        "room_uuid": str(room_uuid), "agent_uuid": None,
+        "room_uuids": [str(room_uuid)], "agent_uuid": None,
         "timezone": "Europe/Copenhagen", "sensitivity": "private",
         "include_suffixes": [".txt"],
         "dialect_rules": [{"prefix": "current/", "dialect": "timed"},
@@ -123,6 +123,9 @@ def test_register_refuses_root_change_and_unknown_room(source, tmp_path):
         db.diary_register_source(manifest_for(other.resolve(), room, src.name))
     with pytest.raises(db.DiaryError, match="does not exist"):
         db.diary_register_source(manifest_for(other.resolve(), uuid.uuid4(), "no-room-src"))
+    with pytest.raises(db.DiaryError, match="does not exist"):
+        db.diary_register_source(manifest_for(root, room, src.name,
+                                              room_uuids=[str(room), str(uuid.uuid4())]))
 
 
 def test_secret_source_cannot_be_enabled(source):

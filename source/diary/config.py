@@ -36,7 +36,7 @@ SENSITIVITIES = ("private", "secret")
 MANIFEST_SCHEMA_VERSION = 1
 
 _MANIFEST_KEYS = {
-    "schema_version", "name", "root", "room_uuid", "agent_uuid", "timezone",
+    "schema_version", "name", "root", "room_uuids", "agent_uuid", "timezone",
     "sensitivity", "allow_remote_models", "include_suffixes", "dialect_rules",
     "month_languages", "command_tokens", "author_tokens", "clock_prefixes",
     "decimal_hour_spans", "file_dialects", "file_overrides",
@@ -71,7 +71,7 @@ class FileOverride:
 class Manifest:
     name: str
     root: str
-    room_uuid: UUID
+    room_uuids: tuple[UUID, ...]
     agent_uuid: UUID | None
     timezone: str
     sensitivity: str
@@ -174,10 +174,14 @@ def load_manifest(raw: Any, *, check_root: bool = True) -> Manifest:
     else:
         root = os.path.normpath(root)
 
+    rooms_raw = raw.get("room_uuids")
+    _require(isinstance(rooms_raw, list) and bool(rooms_raw),
+             "room_uuids must be a non-empty list of room UUIDs")
     try:
-        room_uuid = UUID(str(raw.get("room_uuid")))
+        room_uuids = tuple(UUID(str(r)) for r in rooms_raw)
     except ValueError as exc:
-        raise ManifestError("room_uuid must be a UUID") from exc
+        raise ManifestError("room_uuids must be a non-empty list of room UUIDs") from exc
+    _require(len(set(room_uuids)) == len(room_uuids), "room_uuids lists a room twice")
     agent_raw = raw.get("agent_uuid")
     try:
         agent_uuid = None if agent_raw is None else UUID(str(agent_raw))
@@ -259,7 +263,7 @@ def load_manifest(raw: Any, *, check_root: bool = True) -> Manifest:
         overrides[norm] = _parse_override(norm, ov)
 
     return Manifest(
-        name=name, root=root, room_uuid=room_uuid, agent_uuid=agent_uuid,
+        name=name, root=root, room_uuids=room_uuids, agent_uuid=agent_uuid,
         timezone=tz, sensitivity=sensitivity, allow_remote_models=allow_remote,
         include_suffixes=tuple(suffixes), dialect_rules=tuple(rules),
         month_languages=tuple(languages), command_tokens=tuple(commands),
@@ -372,7 +376,7 @@ def manifest_to_json(manifest: Manifest) -> dict[str, Any]:
         "schema_version": MANIFEST_SCHEMA_VERSION,
         "name": manifest.name,
         "root": manifest.root,
-        "room_uuid": str(manifest.room_uuid),
+        "room_uuids": [str(r) for r in manifest.room_uuids],
         "agent_uuid": str(manifest.agent_uuid) if manifest.agent_uuid else None,
         "timezone": manifest.timezone,
         "sensitivity": manifest.sensitivity,

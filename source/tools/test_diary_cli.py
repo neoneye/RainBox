@@ -57,7 +57,7 @@ def workspace(tmp_path):
     manifest = tmp_path / "manifest.json"
     manifest.write_text(json.dumps({
         "schema_version": 1, "name": name, "root": str(root.resolve()),
-        "room_uuid": str(room), "timezone": "Europe/Copenhagen",
+        "room_uuids": [str(room)], "timezone": "Europe/Copenhagen",
         "dialect_rules": [{"prefix": "current/", "dialect": "timed"},
                           {"prefix": "daily/", "dialect": "daily"},
                           {"prefix": "archive/", "dialect": "changelog"}],

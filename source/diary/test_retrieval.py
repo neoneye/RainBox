@@ -14,7 +14,7 @@ import sqlalchemy as sa
 import db
 from diary.action import DiaryRequestError, diary_query, validate_request
 from diary.ingest import sync_source
-from diary.retrieval import DiaryContext
+from diary.retrieval import DiaryContext, diary_available
 from db.test_diary import manifest_for
 
 FIXTURE = Path(__file__).resolve().parent.parent / "data" / "diary_fixture"
@@ -147,6 +147,29 @@ def test_other_room_other_agent_and_remote_models(live):
     db.diary_register_source(m)
     db.diary_set_enabled(live.src.uuid, True)
     assert live.q(mode="search", query="physiotherapy").data["error"] == "unavailable"
+
+
+def test_a_source_listing_two_rooms_answers_in_both_and_only_there(live):
+    second = uuid.uuid4()
+    db.session.add(db.Chatroom(uuid=second, name="diary-read-second", created_by=uuid.uuid4()))
+    db.session.commit()
+    try:
+        m = manifest_for(live.root, live.room, live.src.name,
+                         room_uuids=[str(live.room), str(second)])
+        db.diary_register_source(m)
+        db.diary_set_enabled(live.src.uuid, True)
+        for room in (live.room, second):
+            assert diary_available(room, live.agent, True) == (True, "available")
+            obs = diary_query({"mode": "search", "query": "physiotherapy"},
+                              live.ctx(room_uuid=room), budget=BUDGET)
+            assert obs.ok and citations(obs)
+        assert diary_available(uuid.uuid4(), live.agent, True) == (False, "no_source")
+    finally:
+        db.session.rollback()
+        db.session.execute(sa.delete(db.DiaryCursor).where(db.DiaryCursor.room_uuid == second))
+        db.session.execute(sa.delete(db.RetrievalEvent).where(db.RetrievalEvent.room_uuid == second))
+        db.session.execute(sa.delete(db.Chatroom).where(db.Chatroom.uuid == second))
+        db.session.commit()
 
 
 def test_allow_remote_models_opts_in(live):

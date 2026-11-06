@@ -1984,15 +1984,15 @@ DIARY_SEARCH_VECTOR_SQL = (
 
 
 class DiarySource(db.Model):
-    """One configured diary directory, bound to one room (and optionally one
-    agent). The row is the runtime configuration; the CLI writes it from a
-    validated manifest. Sources start disabled."""
+    """One configured diary directory, readable in the rooms it lists (and
+    optionally by one agent there). The row is the runtime configuration; the
+    CLI writes it from a validated manifest. Sources start disabled."""
 
     __tablename__ = "diary_source"
     uuid: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     name: Mapped[str] = mapped_column(Text, unique=True)
     root_path: Mapped[str] = mapped_column(Text, unique=True)
-    room_uuid: Mapped[UUID] = mapped_column()
+    room_uuids: Mapped[list[UUID]] = mapped_column(ARRAY(sa.Uuid))
     agent_uuid: Mapped[UUID | None] = mapped_column()
     timezone: Mapped[str] = mapped_column(Text)
     sensitivity: Mapped[str] = mapped_column(Text)
