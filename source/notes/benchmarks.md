@@ -23,7 +23,22 @@ background runner, and live-updating results grid:
   the one with a warm-up toggle. Code: `benchmarks/story.py`,
   `webapp/benchmark_story_views.py`.
 
-Two further benchmarks have no page and no runner.
+Three further benchmarks have no page and no runner.
+
+**`benchmarks/vision_ocr.py`** asks vision models to read the text in one
+fixed image, `benchmarks/fixtures/ocr_corners.png`: a word in each corner
+(the bottom two rotated 45°) and one in the center. Six cases: list every word,
+then one question per location. A case passes when the answer contains each
+expected word, case-insensitive and as a whole word; extra words don't fail a
+location case, but they show as "also named". It takes the model uuids from
+`/model?id=…`, only reads those rows, and sends the image straight to the
+provider's OpenAI-compatible endpoint, as `/demo/multimodal` does:
+
+```
+DATABASE_URL=postgresql+psycopg://localhost/rainbox_production \
+    python -m benchmarks.vision_ocr <uuid> [<uuid> …] [--trials N]
+```
+
 **`benchmarks/roster_completeness.py`** asks whether an incomplete roster's
 caveat actually stops a model inferring absence — a claim about model
 behaviour, so it cannot be a unit test. It renders the same list twice, with

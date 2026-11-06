@@ -394,7 +394,7 @@ def seeded_model_ollama():
 
 
 class _StubOllamaProvider:
-    """Minimal Provider stand-in exposing only what _backend_base needs."""
+    """Minimal Provider stand-in exposing only what request_base_url needs."""
 
     def base_url(self) -> str:
         return "http://127.0.0.1:11434"
@@ -409,7 +409,7 @@ def test_complete_resolves_ollama_base_from_provider_registry(seeded_model_ollam
         return FakeStreamResponse(chunks=[b"data: [DONE]\n\n"])
 
     with patch(
-        "webapp.multimodal_demo_views.providers.get",
+        "providers.registry.get",
         return_value=_StubOllamaProvider(),
     ), patch("webapp.multimodal_demo_views.requests.post", side_effect=fake_post):
         resp = client.post(

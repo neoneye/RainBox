@@ -69,3 +69,22 @@ def request_api_key(provider_id: str, arguments: dict[str, Any]) -> str | None:
             )
         return env_key
     return None
+
+
+def request_base_url(provider_id: str, arguments: dict[str, Any]) -> str | None:
+    """The OpenAI-compatible base URL (no trailing slash) for a raw HTTP call
+    to this model's provider — the companion of `request_api_key` for anything
+    that bypasses `llm.prepare_llm`.
+
+    Jan/LM Studio rows store the full base (including `/v1`) in
+    `arguments["api_base"]`. Ollama rows store none, or only the native
+    `base_url` without `/v1`; they use the provider's base URL with `/v1`
+    appended. Returns None for an unregistered provider id with no
+    `api_base`."""
+    api_base = str(arguments.get("api_base") or "").strip()
+    if api_base:
+        return api_base.rstrip("/")
+    try:
+        return get(provider_id).base_url().rstrip("/") + "/v1"
+    except KeyError:
+        return None

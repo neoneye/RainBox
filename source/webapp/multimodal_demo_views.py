@@ -3,9 +3,10 @@
 A throwaway page to build intuition about how the model handles image/audio
 input. The browser posts a system prompt, a user prompt, and one optional file
 (image OR audio) to a same-origin proxy, which reads the target ModelConfig
-(read-only) for its backend base URL/model_name (see `_backend_base`), builds
-an OpenAI-compatible multimodal /chat/completions request, and streams the
-backend's SSE response straight back. Nothing is persisted.
+(read-only) for its backend base URL/model_name (see
+`providers.request_base_url`), builds an OpenAI-compatible multimodal
+/chat/completions request, and streams the backend's SSE response straight
+back. Nothing is persisted.
 
 Direct OpenAI-compatible passthrough (not llama_index) is deliberate: the point
 is to see the raw multimodal request/response behavior, including backend errors
@@ -209,22 +210,6 @@ class _StreamTally:
                 content = (choice.get("delta") or {}).get("content")
                 if content:
                     self.text.append(content)
-
-
-def _backend_base(provider: str, arguments: dict) -> str | None:
-    """The OpenAI-compatible base URL (no trailing slash) to send this
-    model's requests to. Jan/LM Studio models store the full base
-    (including `/v1`) in `arguments["api_base"]`. Ollama models store none —
-    they use the provider's default base URL, discovered via the provider
-    registry, with `/v1` appended. Returns None if neither source yields a
-    base (e.g. an unregistered provider id)."""
-    api_base = (arguments.get("api_base") or "").strip()
-    if api_base:
-        return api_base.rstrip("/")
-    try:
-        return providers.get(provider).base_url().rstrip("/") + "/v1"
-    except KeyError:
-        return None
 
 
 _Target = namedtuple("_Target", "uuid kind display_name provider model_name arguments")
@@ -689,7 +674,7 @@ def demo_multimodal_complete() -> Response | tuple[Response, int]:
     if not user.strip() and not files:
         return jsonify({"error": "nothing to send: provide a prompt or a file"}), 400
 
-    base = _backend_base(target.provider, target.arguments)
+    base = providers.request_base_url(target.provider, target.arguments)
     if base is None:
         return jsonify({"error": "could not resolve a backend URL for this model"}), 400
 
