@@ -553,6 +553,31 @@ def recover_interrupted_assistant_run(
     return run
 
 
+#: The terminal statuses of a run that did not answer: the step limit, a
+#: repeated failure or the operator's Stop (`stopped`), a crash (`failed`), and
+#: the supervisor's kill (`killed`). What such a run posts is a notice the code
+#: wrote, never an answer.
+UNFINISHED_RUN_STATUSES: tuple[str, ...] = ("stopped", "failed", "killed")
+
+
+def unfinished_run_uuids(run_uuids: list[str]) -> set[str]:
+    """Which of `run_uuids` ended without answering (UNFINISHED_RUN_STATUSES),
+    as strings. One query; a value that is not a uuid is skipped."""
+    wanted: list[UUID] = []
+    for raw in run_uuids:
+        try:
+            wanted.append(UUID(str(raw)))
+        except (ValueError, TypeError):
+            continue
+    if not wanted:
+        return set()
+    rows = (db.session.query(AssistantRun.uuid)
+            .filter(AssistantRun.uuid.in_(wanted),
+                    AssistantRun.status.in_(UNFINISHED_RUN_STATUSES))
+            .all())
+    return {str(row.uuid) for row in rows}
+
+
 def get_assistant_run(run_uuid: UUID) -> AssistantRun | None:
     """One run row by uuid (the primary key / log-greppable identifier), or None."""
     return db.session.get(AssistantRun, run_uuid)

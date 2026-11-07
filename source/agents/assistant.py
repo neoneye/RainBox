@@ -6290,10 +6290,21 @@ class AssistantAgent(ModelGroupAgent):
         auditor reads last, and check 1 of its instructions sends it back to
         the request. Same ElementTree escaping guarantee too.
         """
-        # Tiers 0 and 1.
+        # Tiers 0 and 1. The notices of earlier turns that did not answer
+        # ("I couldn't complete this within the step limit") stay out of the
+        # auditor's history: it reads that history to resolve what the
+        # request refers to, and a notice refers to nothing — but the auditor
+        # read one as a constraint and bounced a correct answer for not
+        # acknowledging it, over and over. The deciding call keeps them.
+        unfinished = db.unfinished_run_uuids([
+            str((m.get("meta") or {}).get("assistant_run_uuid"))
+            for m in (messages or [])[:-1]
+            if (m.get("meta") or {}).get("assistant_run_uuid")])
         prompt = AssistantPromptBuilder(
             self, "reply_audit", messages=messages,
-            blocks=("identity", "calibration"))
+            blocks=("identity", "calibration"),
+            history_skip=lambda m: str(
+                (m.get("meta") or {}).get("assistant_run_uuid")) in unfinished)
         prompt.append_turn_instructions(REPLY_AUDIT_TURN_INSTRUCTIONS)
         if self._criteria_markdown:
             prompt.append_text(
@@ -6301,7 +6312,12 @@ class AssistantAgent(ModelGroupAgent):
         if self._reply_language_markdown:
             prompt.append_text(
                 "reply_language_markdown", self._reply_language_markdown)
-        steps = [e for e in scratchpad if isinstance(e, AssistantTurnStep)]
+        # A `rejected` step is the loop's feedback to the deciding call — a
+        # bounced reply, a decision sent back as invalid — not something the
+        # turn observed. Shown to the auditor, its own earlier bounce quoted
+        # back to it anchored every later audit on the same complaint.
+        steps = [e for e in scratchpad if isinstance(e, AssistantTurnStep)
+                 and e.status != "rejected"]
         if steps:
             observations = prompt.append_element(
                 "turn_observations", authority="fresh_evidence")
@@ -8772,6 +8788,7 @@ class AssistantPromptBuilder:
         *,
         messages: list[dict[str, Any]],
         blocks: tuple[str, ...] = AssistantAgent._ALL_STATIC_BLOCKS,
+        history_skip: Callable[[dict[str, Any]], bool] | None = None,
     ) -> None:
         """`container_tag` names the tree for a reader and never reaches the
         model: _render_sections serializes the root's children as top-level
@@ -8780,6 +8797,12 @@ class AssistantPromptBuilder:
         `blocks` selects this call's tier-1 head. Keep the per-call sets
         nested (see _ALL_STATIC_BLOCKS): a call taking a block another call
         skips ends the shared prefix there.
+
+        `history_skip` leaves matching messages out of this call's history,
+        after the recent window is taken, so the window is the same one every
+        call reads. A call that skips one stops sharing the turn's prefix at
+        that message — the price of keeping it out of one call's view rather
+        than out of the assistant's.
         """
         self._agent = agent
         self._root = ET.Element(container_tag)
@@ -8828,6 +8851,8 @@ class AssistantPromptBuilder:
         # to here.
         context = messages[:-1][-agent.MAX_RECENT_MESSAGES:] if messages else []
         history = ET.SubElement(self._root, "conversation_history_xml")
+        if history_skip is not None:
+            context = [m for m in context if not history_skip(m)]
         if context:
             for message in context:
                 agent._append_prompt_message(history, message)

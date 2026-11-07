@@ -69,8 +69,21 @@ consumes the step limit. Each loop iteration:
    `diary_query`), which it reads whole: it checks the reply's claims against
    what was recalled, so it must see at least what the reply's writer saw. Cut,
    a recalled fact's middle was missing from the audit alone, and a reply
-   quoting it was sent back as unsupported (5 of 6 replays; 0 of 6 whole). The
-   audit resolves
+   quoting it was sent back as unsupported (5 of 6 replays; 0 of 6 whole).
+   Two things are held out of the auditor's view, because each was read as
+   a defect in a correct answer. Its own earlier bounces (`rejected` steps,
+   the loop's feedback to the deciding call) are not observations: quoted
+   back to it, its complaint anchored every later audit of the turn. And
+   its history leaves out the notices of earlier turns that ended without
+   answering — any message whose `meta.assistant_run_uuid` names a run that
+   ended `stopped`, `failed` or `killed` (`db.unfinished_run_uuids`). The
+   auditor reads that history to resolve what the request refers to; a
+   "couldn't complete this within the step limit" notice refers to nothing,
+   but the auditor read it as a constraint the answer had to acknowledge.
+   Replayed, the two together took that false bounce from 17 of 18 to 3 of
+   18; rewording the checks instead measured no better, or worse. The
+   deciding call keeps both in its history; the audit gives up its shared
+   prefix from the first notice it skips. The audit resolves
    its model through the `assistant.reply_audit` slot, else
    `assistant.default`; it fails open, so an unbound or unreachable
    auditor sends the message. Every verdict lands in its own `reply_audit`

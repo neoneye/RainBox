@@ -282,6 +282,74 @@ def test_the_auditor_sees_the_evidence_and_not_the_argument(
     assert "RATIONALIZATION-CANARY" not in user_prompt  # not the reasoning
 
 
+def test_the_auditor_does_not_see_its_own_earlier_bounces(app_ctx, audit_call):
+    """A bounced reply is the loop's feedback to the deciding call, not an
+    observation. Shown to the auditor, its own complaint quoted back to it
+    anchored every later audit of the turn on the same complaint."""
+    from agents.assistant import AssistantTurnStep
+
+    audit_call["verdict"] = ReplyAudit(reason="sound", verdict="send")
+    scratchpad = [
+        AssistantTurnStep(step_index=0, action="python_run",
+                          args={"code": "print(12 * 0.3048)"}, status="ok",
+                          observation="3.6576"),
+        AssistantTurnStep(step_index=1, action="python_run",
+                          args={"code": "print(12 * 0.3048"}, status="failed",
+                          observation="SyntaxError: '(' was never closed"),
+        AssistantTurnStep(step_index=2, action="reply",
+                          args={"message": "3.66 meters"}, status="rejected",
+                          observation="BOUNCE-CANARY: does not address it"),
+    ]
+    _agent()._reply_audit(
+        _reply("12 feet is 3.6576 meters."),
+        messages=[{"sender_type": "human", "text": "how much is 12 feet?"}],
+        scratchpad=scratchpad)
+    _system, user_prompt = audit_call["prompts"][0]
+    assert "3.6576" in user_prompt
+    assert "was never closed" in user_prompt       # a failed step is evidence
+    assert "BOUNCE-CANARY" not in user_prompt      # its own bounce is not
+
+
+def test_the_auditor_does_not_see_notices_of_turns_that_did_not_answer(
+        app_ctx, audit_call):
+    """The production false bounce: two earlier turns ended at the step
+    limit, and the auditor read their notice as a constraint the correct
+    answer failed to acknowledge. A run that ended without answering posts a
+    notice the code wrote; the auditor's history leaves it out, and keeps
+    every answer a finished run gave."""
+    stopped = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=ASSISTANT_UUID)
+    db.finish_run(stopped, "stopped", final_summary="step limit reached")
+    finished = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=ASSISTANT_UUID)
+    db.finish_run(finished, "finished", final_summary="answered")
+    try:
+        audit_call["verdict"] = ReplyAudit(reason="sound", verdict="send")
+        messages = [
+            {"sender_type": "human", "text": "what is 1 foot in meters"},
+            {"sender_type": "agent", "sender_uuid": str(ASSISTANT_UUID),
+             "text": "FINISHED-CANARY: 1 foot is 0.3048 meters.",
+             "meta": {"assistant_run_uuid": str(finished.uuid)}},
+            {"sender_type": "human", "text": "and 12 feet?"},
+            {"sender_type": "agent", "sender_uuid": str(ASSISTANT_UUID),
+             "text": "NOTICE-CANARY: I couldn't complete this within the "
+                     "step limit.",
+             "meta": {"assistant_run_uuid": str(stopped.uuid)}},
+            {"sender_type": "human", "text": "how much is 12 feet?"},
+        ]
+        _agent()._reply_audit(
+            _reply("12 feet is 3.6576 meters."), messages=messages,
+            scratchpad=[])
+        _system, user_prompt = audit_call["prompts"][0]
+        assert "FINISHED-CANARY" in user_prompt
+        assert "and 12 feet?" in user_prompt
+        assert "NOTICE-CANARY" not in user_prompt
+    finally:
+        db.session.query(AssistantRun).filter(
+            AssistantRun.uuid.in_([stopped.uuid, finished.uuid])).delete()
+        db.session.commit()
+
+
 # --- the loop -----------------------------------------------------------------
 
 
