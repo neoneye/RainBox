@@ -226,8 +226,16 @@ same-origin through the web app:
   cloning is slow off-GPU and the first request also downloads the model).
 - **`/demo_voice_echo`** (`webapp/voice_echo_views.py`) — the round trip:
   record → transcribe → speak the transcript back, with per-leg latency.
-  Adds no endpoints of its own; it reuses the STT and TTS proxies (needs
-  both services up).
+  "Listen with" picks Whisper, gemma4 or LFM3; "Speak with" picks Kokoro or
+  LFM3. Adds no endpoints of its own; it calls the picked engines' STT and
+  TTS proxies, so Whisper and Kokoro need their side services up while
+  gemma4 and LFM3 need only Ollama. gemma4 and LFM3 take WAV only, so for
+  them the recording is re-encoded in the browser with the gemma4 STT page's
+  `TO_WAV_JS` (shared, not copied); Whisper gets the recorder's webm/ogg.
+  The voice list reloads per TTS engine, and the speed slider hides for
+  LFM3 (speed 1 only). The badges also check the `audio` / `speech`
+  capability for the Ollama engines. The picks and the voice per engine are
+  remembered in localStorage.
 
 ## Multimodal demo (`/demo/multimodal`)
 

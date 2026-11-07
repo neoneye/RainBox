@@ -60,6 +60,40 @@ def _wav_seconds(raw: bytes) -> float | None:
         return None
 
 
+# The browser-side WAV encoder, shared with /demo_voice_echo: Ollama decodes
+# WAV only, so every page that sends a clip to Ollama re-encodes it first.
+TO_WAV_JS = """
+const WAV_RATE = 16000;   // what the model's audio encoder works at
+
+// Decode whatever the browser recorded or was given, resample to 16 kHz
+// mono, and write it out as a 16-bit PCM WAV: the format Ollama decodes.
+async function ppToWav(blob) {
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  let decoded;
+  try { decoded = await ctx.decodeAudioData(await blob.arrayBuffer()); }
+  finally { ctx.close().catch(function() {}); }
+  const frames = Math.max(1, Math.ceil(decoded.duration * WAV_RATE));
+  const off = new OfflineAudioContext(1, frames, WAV_RATE);
+  const src = off.createBufferSource();
+  src.buffer = decoded;
+  src.connect(off.destination);
+  src.start();
+  const pcm = (await off.startRendering()).getChannelData(0);
+  const view = new DataView(new ArrayBuffer(44 + pcm.length * 2));
+  function ascii(at, s) { for (let i = 0; i < s.length; i++) view.setUint8(at + i, s.charCodeAt(i)); }
+  ascii(0, 'RIFF'); view.setUint32(4, 36 + pcm.length * 2, true); ascii(8, 'WAVE');
+  ascii(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true); view.setUint32(24, WAV_RATE, true);
+  view.setUint32(28, WAV_RATE * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+  ascii(36, 'data'); view.setUint32(40, pcm.length * 2, true);
+  for (let i = 0; i < pcm.length; i++) {
+    const s = Math.max(-1, Math.min(1, pcm[i]));
+    view.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return new Blob([view], {type: 'audio/wav'});
+}
+"""
+
 # The page is shared: /demo_stt_lfm3 renders this same template with its own
 # title, intro, instruction default, download name and proxy URLs. The proxy
 # answers {"text", "duration", "prompt_tokens"?} or {"error"}.
@@ -169,7 +203,6 @@ let meterRaf = 0;
 let sawSignal = false;    // did the mic ever produce a non-trivial level?
 
 const SIGNAL_RMS = 0.01;  // RMS above this counts as "the mic is picking up sound"
-const WAV_RATE = 16000;   // what the model's audio encoder works at
 const INTERIM_MS = 2500;  // how often to re-transcribe the growing recording
 const DEVICE_KEY = 'stt_device_id';  // shared with the Whisper page
 
@@ -466,34 +499,7 @@ function ppPickFile(input) {
   }
 }
 
-// Decode whatever the browser recorded or was given, resample to 16 kHz
-// mono, and write it out as a 16-bit PCM WAV: the format Ollama decodes.
-async function ppToWav(blob) {
-  const ctx = new (window.AudioContext || window.webkitAudioContext)();
-  let decoded;
-  try { decoded = await ctx.decodeAudioData(await blob.arrayBuffer()); }
-  finally { ctx.close().catch(function() {}); }
-  const frames = Math.max(1, Math.ceil(decoded.duration * WAV_RATE));
-  const off = new OfflineAudioContext(1, frames, WAV_RATE);
-  const src = off.createBufferSource();
-  src.buffer = decoded;
-  src.connect(off.destination);
-  src.start();
-  const pcm = (await off.startRendering()).getChannelData(0);
-  const view = new DataView(new ArrayBuffer(44 + pcm.length * 2));
-  function ascii(at, s) { for (let i = 0; i < s.length; i++) view.setUint8(at + i, s.charCodeAt(i)); }
-  ascii(0, 'RIFF'); view.setUint32(4, 36 + pcm.length * 2, true); ascii(8, 'WAVE');
-  ascii(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true); view.setUint32(24, WAV_RATE, true);
-  view.setUint32(28, WAV_RATE * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
-  ascii(36, 'data'); view.setUint32(40, pcm.length * 2, true);
-  for (let i = 0; i < pcm.length; i++) {
-    const s = Math.max(-1, Math.min(1, pcm[i]));
-    view.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-  }
-  return new Blob([view], {type: 'audio/wav'});
-}
-
+""" + TO_WAV_JS + """
 function ppPlay(wav) {
   const audioEl = document.getElementById('audio');
   if (audioEl.dataset.objurl) URL.revokeObjectURL(audioEl.dataset.objurl);

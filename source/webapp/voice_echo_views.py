@@ -1,14 +1,29 @@
-"""Voice echo demo: speak -> transcribe (Whisper STT) -> speak it back (Kokoro TTS).
+"""Voice echo demo: speak -> transcribe -> speak it back.
 
-This page is pure orchestration in the browser. It reuses the same-origin proxy
-routes already registered by stt_whisper_views.py and tts_kokoro_views.py, so it
-adds no new proxy endpoints — just the combined page. Both backing services must
-be running (see voice_stt_whisper/ and voice_tts_kokoro/).
+This page is pure orchestration in the browser. Two pickers choose the models:
+"Listen with" is Whisper, gemma4 or LFM3 (stt_whisper_views.py,
+stt_gemma4_views.py, stt_lfm3_views.py) and "Speak with" is Kokoro or LFM3
+(tts_kokoro_views.py, tts_lfm3_views.py). It calls those pages' same-origin
+proxy routes, so it adds no proxy endpoints of its own. Whisper and Kokoro are
+side services that must be running; gemma4 and LFM3 need only Ollama.
+
+The engine tables below are what the page knows about each one:
+
+- STT `wav`: the proxy takes WAV only (Ollama decodes no other format), so the
+  browser re-encodes the recording with the STT page's TO_WAV_JS first.
+  Whisper takes the recorder's webm/ogg as is.
+- `need`: the health field that must be true besides `reachable` — the model
+  has the `audio` (hears) or `speech` (speaks) capability.
+- TTS `speed`: whether the engine takes a speed; LFM3 supports speed 1 only,
+  so the slider hides for it.
+
+The picks, and the voice per TTS engine, are remembered in localStorage.
 """
 
-from flask import render_template_string
+from flask import render_template_string, url_for
 
 from .core import app
+from .stt_gemma4_views import TO_WAV_JS
 
 ECHO_TEMPLATE = """
 <!doctype html>
@@ -38,13 +53,26 @@ ECHO_TEMPLATE = """
 {% include "_nav.html" %}
 <div class="pp-content">
 <h1>Voice echo</h1>
-<p class="muted">Say something — it gets transcribed by
-<a href="{{ url_for('demo_stt_whisper') }}">Whisper STT</a>, then spoken back by
-<a href="{{ url_for('demo_tts_kokoro') }}">Kokoro TTS</a>. Both services must be running.</p>
+<p class="muted">Say something — it gets transcribed, then spoken back. Pick
+the model that listens and the one that speaks. Whisper and Kokoro are side
+services that must be running; gemma4 and LFM3 need only Ollama.</p>
 
 <div class="row">
-  STT: <span id="sttstatus" class="badge unknown">checking&hellip;</span>
-  &nbsp; TTS: <span id="ttsstatus" class="badge unknown">checking&hellip;</span>
+  <label for="stt">Listen with</label>
+  <select id="stt" onchange="ppPickStt()">
+    {% for e in stt_engines %}<option value="{{ e.id }}">{{ e.name }}</option>{% endfor %}
+  </select>
+  <span id="sttstatus" class="badge unknown">checking&hellip;</span>
+  <a id="sttpage" class="muted" href="#">its page</a>
+</div>
+
+<div class="row">
+  <label for="tts">Speak with</label>
+  <select id="tts" onchange="ppPickTts()">
+    {% for e in tts_engines %}<option value="{{ e.id }}">{{ e.name }}</option>{% endfor %}
+  </select>
+  <span id="ttsstatus" class="badge unknown">checking&hellip;</span>
+  <a id="ttspage" class="muted" href="#">its page</a>
 </div>
 
 <div class="row">
@@ -55,11 +83,13 @@ ECHO_TEMPLATE = """
 
 <div class="row">
   <label for="voice">Voice</label>
-  <select id="voice"><option>loading&hellip;</option></select>
+  <select id="voice" onchange="ppSaveVoice()"><option>loading&hellip;</option></select>
+  <span id="speedctl">
   &nbsp;&nbsp;
   <label for="speed">Speed</label>
   <input type="range" id="speed" min="0.5" max="2.0" step="0.1" value="1.0">
   <span id="speedval">1.0&times;</span>
+  </span>
 </div>
 
 <div class="row">
@@ -89,6 +119,7 @@ ECHO_TEMPLATE = """
 </div>
 
 <script>
+""" + TO_WAV_JS + """
 let mediaRecorder = null;
 let chunks = [];
 let timerId = null;
@@ -101,7 +132,17 @@ let sawSignal = false;
 let testStream = null;
 
 const DEVICE_KEY = 'stt_device_id';  // shared with the STT page
+const STT_KEY = 'voice_echo_stt';
+const TTS_KEY = 'voice_echo_tts';
+const VOICE_KEY = 'voice_echo_voice_';  // + TTS engine id
 const SIGNAL_RMS = 0.01;
+const STT = {{ stt_engines|tojson }};
+const TTS = {{ tts_engines|tojson }};
+
+function ppStore(key, value) { try { localStorage.setItem(key, value); } catch (e) {} }
+function ppLoad(key) { try { return localStorage.getItem(key) || ''; } catch (e) { return ''; } }
+function ppStt() { return STT.find(function(e) { return e.id === document.getElementById('stt').value; }) || STT[0]; }
+function ppTts() { return TTS.find(function(e) { return e.id === document.getElementById('tts').value; }) || TTS[0]; }
 
 function ppSaveDevice() {
   try { localStorage.setItem(DEVICE_KEY, document.getElementById('device').value); } catch (e) {}
@@ -113,37 +154,66 @@ function ppExt() {
   return (mimeType && mimeType.indexOf('ogg') >= 0) ? 'ogg' : 'webm';
 }
 
-// --- service health badges ------------------------------------------------
-async function ppHealthOne(url, el) {
+// --- engine pickers + health badges ---------------------------------------
+// `need` names the health field that must also be true: the model hears
+// (audio) or speaks (speech). The badge's tooltip carries the error.
+async function ppHealthOne(engine, el) {
   const badge = document.getElementById(el);
+  badge.className = 'badge unknown'; badge.textContent = 'checking…'; badge.title = '';
   try {
-    const r = await fetch(url);
+    const r = await fetch(engine.health);
     const j = await r.json();
-    if (r.ok && j.reachable) { badge.className = 'badge ok'; badge.textContent = 'reachable'; return true; }
+    if (r.ok && j.reachable && (!engine.need || j[engine.need])) {
+      badge.className = 'badge ok'; badge.textContent = 'reachable'; return;
+    }
+    if (r.ok && j.reachable) {
+      badge.className = 'badge bad'; badge.textContent = engine.need === 'speech' ? 'cannot speak' : 'cannot hear';
+      return;
+    }
+    if (j.error) badge.title = j.error;
   } catch (e) {}
   badge.className = 'badge bad'; badge.textContent = 'unreachable';
-  return false;
 }
-function ppHealth() {
-  ppHealthOne('{{ url_for("demo_stt_whisper_health") }}', 'sttstatus');
-  ppHealthOne('{{ url_for("demo_tts_kokoro_health") }}', 'ttsstatus');
+function ppPickStt() {
+  const e = ppStt();
+  ppStore(STT_KEY, e.id);
+  document.getElementById('sttpage').href = e.page;
+  ppHealthOne(e, 'sttstatus');
+}
+function ppPickTts() {
+  const e = ppTts();
+  ppStore(TTS_KEY, e.id);
+  document.getElementById('ttspage').href = e.page;
+  document.getElementById('speedctl').style.display = e.speed ? '' : 'none';
+  ppHealthOne(e, 'ttsstatus');
+  ppVoices();
+}
+function ppRestorePick(id, key, engines) {
+  const saved = ppLoad(key);
+  if (engines.some(function(e) { return e.id === saved; })) document.getElementById(id).value = saved;
 }
 
-// --- TTS voices -----------------------------------------------------------
+// --- TTS voices (the list depends on the engine) ---------------------------
+function ppSaveVoice() { ppStore(VOICE_KEY + ppTts().id, document.getElementById('voice').value); }
 async function ppVoices() {
   const sel = document.getElementById('voice');
+  const engine = ppTts();
+  sel.innerHTML = '<option value="">loading…</option>';
   try {
-    const r = await fetch('{{ url_for("demo_tts_kokoro_voices") }}');
+    const r = await fetch(engine.voices);
     const j = await r.json();
+    if (engine !== ppTts()) return;  // the pick changed while this was loading
     sel.innerHTML = '';
     (j.voices || []).forEach(function(v) {
       const o = document.createElement('option');
-      o.value = v.id; o.textContent = v.name + ' — ' + v.lang;
+      o.value = v.id; o.textContent = v.lang ? v.name + ' — ' + v.lang : v.name;
       sel.appendChild(o);
     });
-    if (!sel.options.length) sel.innerHTML = '<option value="">(no voices)</option>';
+    if (!sel.options.length) { sel.innerHTML = '<option value="">(no voices)</option>'; return; }
+    const saved = ppLoad(VOICE_KEY + engine.id);
+    if (saved && Array.from(sel.options).some(function(o) { return o.value === saved; })) sel.value = saved;
   } catch (e) {
-    sel.innerHTML = '<option value="">(TTS unreachable)</option>';
+    if (engine === ppTts()) sel.innerHTML = '<option value="">(TTS unreachable)</option>';
   }
 }
 document.getElementById('speed').addEventListener('input', function() {
@@ -266,13 +336,22 @@ async function ppRun(blob) {
   document.getElementById('timer').textContent = '';
 
   // 1) transcribe
-  document.getElementById('hint').textContent = 'Transcribing…';
+  const stt = ppStt();
+  const tts = ppTts();
+  document.getElementById('hint').textContent = 'Transcribing with ' + stt.name + '…';
   let text = '';
   const tStt = performance.now();
   try {
     const fd = new FormData();
-    fd.append('audio', blob, 'clip.' + ppExt());
-    const r = await fetch('{{ url_for("demo_stt_whisper_transcribe") }}', {method: 'POST', body: fd});
+    if (stt.wav) {
+      let wav;
+      try { wav = await ppToWav(blob); }
+      catch (e) { errEl.textContent = 'Could not decode the recording: ' + e; ppDone(); return; }
+      fd.append('audio', wav, 'clip.wav');
+    } else {
+      fd.append('audio', blob, 'clip.' + ppExt());
+    }
+    const r = await fetch(stt.transcribe, {method: 'POST', body: fd});
     if (!r.ok) {
       let msg = 'Transcription failed (' + r.status + ').';
       try { const j = await r.json(); if (j.error) msg = j.error; } catch (e) {}
@@ -284,7 +363,8 @@ async function ppRun(blob) {
     document.getElementById('transcript').value = text || '(no speech detected)';
     const bits = [];
     if (j.language) bits.push('language: ' + j.language);
-    bits.push('transcribed in ' + sttSecs + 's');
+    if (j.duration) bits.push('audio: ' + j.duration + 's');
+    bits.push(stt.name + ' transcribed in ' + sttSecs + 's');
     document.getElementById('meta').textContent = bits.join(' · ');
   } catch (e) {
     errEl.textContent = 'STT request failed: ' + e; ppDone(); return;
@@ -293,15 +373,12 @@ async function ppRun(blob) {
   if (!text) { document.getElementById('hint').textContent = 'Nothing to speak — say something and try again.'; ppDone(); return; }
 
   // 2) speak it back
-  document.getElementById('hint').textContent = 'Synthesizing speech…';
+  document.getElementById('hint').textContent = 'Speaking with ' + tts.name + '…';
   const tTts = performance.now();
   try {
-    const payload = {
-      text: text,
-      voice: document.getElementById('voice').value,
-      speed: parseFloat(document.getElementById('speed').value),
-    };
-    const r = await fetch('{{ url_for("demo_tts_kokoro_synthesize") }}', {
+    const payload = {text: text, voice: document.getElementById('voice').value};
+    if (tts.speed) payload.speed = parseFloat(document.getElementById('speed').value);
+    const r = await fetch(tts.synthesize, {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
     });
     if (!r.ok) {
@@ -316,7 +393,7 @@ async function ppRun(blob) {
     audioEl.dataset.objurl = url; audioEl.src = url;
     document.getElementById('player').style.display = '';
     const ttsSecs = ((performance.now() - tTts) / 1000).toFixed(1);
-    document.getElementById('meta').textContent += ' · spoken in ' + ttsSecs + 's';
+    document.getElementById('meta').textContent += ' · ' + tts.name + ' spoke in ' + ttsSecs + 's';
     audioEl.play().catch(function() {});
   } catch (e) {
     errEl.textContent = 'TTS request failed: ' + e;
@@ -330,8 +407,10 @@ function ppDone() {
   document.getElementById('hint').textContent = 'Click record, allow the mic, speak, then stop to hear it back.';
 }
 
-ppHealth();
-ppVoices();
+ppRestorePick('stt', STT_KEY, STT);
+ppRestorePick('tts', TTS_KEY, TTS);
+ppPickStt();
+ppPickTts();
 ppRefreshDevices();
 if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
   navigator.mediaDevices.addEventListener('devicechange', ppRefreshDevices);
@@ -340,6 +419,34 @@ if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
 """
 
 
+def _stt_engines() -> list[dict]:
+    return [
+        {"id": "whisper", "name": "Whisper", "wav": False, "need": None,
+         "page": url_for("demo_stt_whisper"), "health": url_for("demo_stt_whisper_health"),
+         "transcribe": url_for("demo_stt_whisper_transcribe")},
+        {"id": "gemma4", "name": "gemma4", "wav": True, "need": "audio",
+         "page": url_for("demo_stt_gemma4"), "health": url_for("demo_stt_gemma4_health"),
+         "transcribe": url_for("demo_stt_gemma4_transcribe")},
+        {"id": "lfm3", "name": "LFM3", "wav": True, "need": "audio",
+         "page": url_for("demo_stt_lfm3"), "health": url_for("demo_stt_lfm3_health"),
+         "transcribe": url_for("demo_stt_lfm3_transcribe")},
+    ]
+
+
+def _tts_engines() -> list[dict]:
+    return [
+        {"id": "kokoro", "name": "Kokoro", "speed": True, "need": None,
+         "page": url_for("demo_tts_kokoro"), "health": url_for("demo_tts_kokoro_health"),
+         "voices": url_for("demo_tts_kokoro_voices"),
+         "synthesize": url_for("demo_tts_kokoro_synthesize")},
+        {"id": "lfm3", "name": "LFM3", "speed": False, "need": "speech",
+         "page": url_for("demo_tts_lfm3"), "health": url_for("demo_tts_lfm3_health"),
+         "voices": url_for("demo_tts_lfm3_voices"),
+         "synthesize": url_for("demo_tts_lfm3_synthesize")},
+    ]
+
+
 @app.route("/demo_voice_echo")
 def demo_voice_echo() -> str:
-    return render_template_string(ECHO_TEMPLATE)
+    return render_template_string(ECHO_TEMPLATE, stt_engines=_stt_engines(),
+                                  tts_engines=_tts_engines())
