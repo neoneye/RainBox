@@ -85,6 +85,49 @@ def test_a_link_is_kept_only_when_the_turn_showed_it():
     assert dropped == [{**entries[1], "reason": DROP_NOT_SEEN}]
 
 
+def _cite(n: int) -> str:
+    return f"diary:{uuid4()}:{n}00-{n}99"
+
+
+def test_seen_links_inside_a_copied_summary_line_are_kept_under_its_name():
+    shown, unshown = _cite(1), _cite(2)
+    also_shown = _cite(3)
+    line = (f'search: 3 excerpts shown earlier. Reopen with {{"mode": "read", '
+            f'"citation": ...}}: {shown} {unshown} {also_shown} …')
+    observation = f"excerpt one [{shown}]\nexcerpt three [{also_shown}]"
+    kept, dropped = check_seen([{"name": "Diary search", "link": line}], [observation])
+    assert kept == [{"name": "Diary search", "link": shown},
+                    {"name": "Diary search", "link": also_shown}]
+    assert dropped == [{"name": "Diary search", "link": line,
+                        "reason": f"{DROP_NOT_SEEN}; kept the 2 links inside it"}]
+
+
+def test_a_web_address_inside_a_sentence_is_kept_without_its_punctuation():
+    url = "https://example.org/page?id=7"
+    kept, dropped = check_seen([{"name": "Page", "link": f"see ({url})."}], [f"fetched {url}"])
+    assert kept == [{"name": "Page", "link": url}]
+    assert dropped[0]["reason"] == f"{DROP_NOT_SEEN}; kept the 1 link inside it"
+
+
+def test_an_unseen_citation_is_dropped_however_it_is_wrapped():
+    entries = [{"name": "Old", "link": _cite(4)},
+               {"name": "Old wrapped", "link": f"from an earlier answer: {_cite(5)}"}]
+    kept, dropped = check_seen(entries, [f"this turn showed {_cite(6)}"])
+    assert kept == []
+    assert [d["reason"] for d in dropped] == [DROP_NOT_SEEN, DROP_NOT_SEEN]
+
+
+def test_rescued_links_stop_at_the_limit_and_are_not_repeated():
+    cites = [_cite(i) for i in range(MAX_REPLY_SOURCES + 5)]
+    observation = " ".join(cites)
+    entries = [{"name": "First", "link": cites[0]},
+               {"name": "All", "link": "results: " + " ".join(cites)}]
+    kept, _dropped = check_seen(entries, [observation])
+    assert len(kept) == MAX_REPLY_SOURCES
+    assert [k["link"] for k in kept] == cites[:MAX_REPLY_SOURCES]
+    assert kept[0]["name"] == "First"
+
+
 # --- resolving ------------------------------------------------------------------------------
 
 

@@ -9,6 +9,15 @@ earlier answer said. Every kept link is resolved here into a kind and a page
 the chat can open. Nothing is bounced: a link that fails a check is dropped
 and the drop is reported, with its reason, on the reply's step.
 
+One repair is made instead of a drop. A small model sometimes copies a whole
+line of an observation into `link` — a read's summary with the items it
+returned listed inside it — rather than one item. The line as a whole was
+never shown verbatim, but the items in it were: each link inside it (a token
+holding a uuid, such as a diary citation, or a web address) that this turn
+showed is kept as a source of its own, under the entry's name, and the report
+says how many were kept from it. A link this turn never showed is dropped
+however it is wrapped.
+
 Design: docs/superpowers/specs/2026-11-02-reply-sources-design.md.
 """
 
@@ -34,6 +43,22 @@ DROP_TOO_LONG = f"link longer than {MAX_SOURCE_LINK_CHARS} characters"
 DROP_DUPLICATE = "same link as an earlier source"
 DROP_OVER_LIMIT = f"more than {MAX_REPLY_SOURCES} sources"
 DROP_NOT_A_LIST = "sources is not a list"
+
+# What a link-shaped token inside a longer link may be wrapped in: quotes,
+# brackets, and the punctuation of the sentence around it.
+_WRAPPING = "\"'`()[]{}<>,;.:…"
+
+
+def links_inside(text: str) -> list[str]:
+    """The link-shaped tokens in `text`, in order: whitespace-separated words,
+    stripped of wrapping punctuation, that hold a full uuid (a uuid, a diary
+    citation) or are a web address."""
+    out: list[str] = []
+    for word in text.split():
+        token = word.strip(_WRAPPING)
+        if token and (_UUID.search(token) or token.startswith(("http://", "https://"))):
+            out.append(token)
+    return out
 
 
 def normalize_sources(raw: Any) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
@@ -79,15 +104,33 @@ def check_seen(
     entries: list[dict[str, str]], seen_texts: Iterable[str]
 ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     """`(kept, dropped)`: an entry is kept when its link occurs verbatim in one
-    of `seen_texts` — this turn's observations and the request message."""
+    of `seen_texts` — this turn's observations and the request message. An
+    entry that is not, but holds links that are (`links_inside`), is reported
+    dropped and those links are kept in its place, under its name, up to
+    MAX_REPLY_SOURCES in all."""
     texts = [t for t in seen_texts if t]
+
+    def seen(link: str) -> bool:
+        return any(link in text for text in texts)
+
     kept: list[dict[str, str]] = []
     dropped: list[dict[str, str]] = []
     for entry in entries:
-        if any(entry["link"] in text for text in texts):
-            kept.append(entry)
-        else:
-            dropped.append({**entry, "reason": DROP_NOT_SEEN})
+        if seen(entry["link"]):
+            if all(k["link"] != entry["link"] for k in kept):
+                kept.append(entry)
+            continue
+        rescued = 0
+        for link in links_inside(entry["link"]):
+            if len(kept) >= MAX_REPLY_SOURCES:
+                break
+            if link != entry["link"] and seen(link) and all(k["link"] != link for k in kept):
+                kept.append({"name": entry["name"], "link": link})
+                rescued += 1
+        reason = DROP_NOT_SEEN
+        if rescued:
+            reason += f"; kept the {rescued} link{'s' if rescued > 1 else ''} inside it"
+        dropped.append({**entry, "reason": reason})
     return kept, dropped
 
 
