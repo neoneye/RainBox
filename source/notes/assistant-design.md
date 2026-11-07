@@ -660,6 +660,18 @@ block, not at the end of the enum.
 The operator can turn capabilities off at runtime via the
 `assistant.disabled_capabilities` setting (a JSON list of names, editable on
 `/settings`); `capability_report()` exposes the effective set for inspection.
+
+In a chat room, the sidebar's Settings mode lists the assistant's tools under
+**Tools** (`room_tools(room_uuid)`, served at `/chat/api/rooms/<room>/tools`).
+It shows them as a turn in that room gets them: one row per family, on / off
+/ "n of m on", with each tool's summary, a *writes* tag on write tools, and
+why a tool is off: turned off in Settings, or not offered in this room. The
+room-specific part is the diary: the row names the diary sources readable in
+the room and, when `diary_query` is not offered there, says why (the
+`diary_available` reason). The list leaves out the conversation family and
+internal capabilities, since neither is something the operator configures.
+It is read-only, because the setting is global: one room's panel turning a
+tool off would change every room. It links to `/settings` instead.
 Internal capabilities (`prompt_exposed=False`) are undo inverses: the model
 can never request them — validation rejects them — and they are dispatched
 only by `undo_write_intent`.

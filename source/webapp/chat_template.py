@@ -160,6 +160,20 @@ CHAT_TEMPLATE: str = """
   .room-sidebar .ds-trouble-row button:hover{background:#f1f5f9}
   .room-sidebar .ds-trouble-row button:disabled{background:#f8fafc;color:#9ca3af;cursor:default}
   .room-sidebar .ds-note{color:#888;font-size:0.85rem}
+  .room-sidebar .ds-tools{font-size:0.85rem;margin:0 0 0.4em}
+  .room-sidebar .ds-tool summary{cursor:pointer;padding:0.25em 0.2em;border-radius:6px;color:#1f2937}
+  .room-sidebar .ds-tool summary:hover{background:#f3f4f6}
+  .room-sidebar .ds-tool-state{float:right;font-size:0.72rem;padding:0.05em 0.55em;border-radius:1em;margin-top:0.1em}
+  .room-sidebar .ds-tool-state.on{background:#dcfce7;color:#166534}
+  .room-sidebar .ds-tool-state.part{background:#fef3c7;color:#92400e}
+  .room-sidebar .ds-tool-state.off{background:#f3f4f6;color:#6b7280}
+  .room-sidebar .ds-tool .ds-note{margin:0.2em 0 0.3em 1.1em}
+  .room-sidebar .ds-tool ul{margin:0.15em 0 0.5em;padding-left:2.1em;color:#374151}
+  .room-sidebar .ds-tool li{margin:0.1em 0}
+  .room-sidebar .ds-tool li.off{color:#9ca3af}
+  .room-sidebar .ds-tool .w{font-size:0.68rem;color:#6b7280;border:1px solid #e5e7eb;border-radius:4px;padding:0 0.3em;margin-left:0.3em}
+  .room-sidebar .ds-tools-foot{color:#888;font-size:0.78rem;margin:0.3em 0 0}
+  .room-sidebar .ds-tools-foot a{color:#2563eb;text-decoration:none}
   .room-sidebar .src-for{color:#888;font-size:0.8rem;margin:0 0 0.6em}
   .room-sidebar .src-for button{font:inherit;color:#2563eb;background:none;border:none;padding:0;cursor:pointer}
   .room-sidebar .src-list{margin:0;padding-left:1.4em}
@@ -3289,6 +3303,99 @@ async function renderAgentsSettings(){
     return;
   }
   members.forEach(m => renderPersonaMemberSection(m, members.length > 1));
+  await renderToolsSection(room);
+}
+
+// Families the operator has opened in the Tools list, kept across re-renders
+// of the panel (a persona change redraws it).
+const openToolFamilies = new Set();
+
+// The assistant's tools in this room, one row per family, as a turn here
+// would get them: the operator's on/off setting applied, and the diary
+// checked for this room. Read-only: the setting is global, so it is changed
+// on /settings rather than from one room's panel.
+async function renderToolsSection(room){
+  let data;
+  try {
+    data = await getJSON('/chat/api/rooms/' + room + '/tools');
+  } catch (e) {
+    return;
+  }
+  if (room !== currentRoom || activeSidebarMode() !== 'settings') return;  // changed while loading
+  const families = data.tools || [];
+  if (!families.length) return;
+
+  const label = document.createElement('span');
+  label.className = 'ds-label';
+  label.textContent = 'Tools';
+  sidebarEl.appendChild(label);
+
+  const list = document.createElement('div');
+  list.className = 'ds-tools';
+  families.forEach(f => {
+    const total = f.tools.length;
+    const on = f.tools.filter(t => t.on).length;
+    const d = document.createElement('details');
+    d.className = 'ds-tool';
+    d.open = openToolFamilies.has(f.family);
+    d.addEventListener('toggle', () => {
+      if (d.open) openToolFamilies.add(f.family); else openToolFamilies.delete(f.family);
+    });
+    const sum = document.createElement('summary');
+    sum.textContent = f.label;
+    const state = document.createElement('span');
+    state.className = 'ds-tool-state ' + (on === total ? 'on' : (on ? 'part' : 'off'));
+    state.textContent = on === total ? 'on' : (on ? on + ' of ' + total + ' on' : 'off');
+    sum.appendChild(state);
+    d.appendChild(sum);
+
+    if (f.note){
+      const note = document.createElement('p');
+      note.className = 'ds-note';
+      note.textContent = f.note;
+      d.appendChild(note);
+    }
+    if (f.sources && f.sources.length){
+      const src = document.createElement('p');
+      src.className = 'ds-note';
+      src.textContent = 'Readable here: ' + f.sources.map(
+        x => x.enabled ? x.name : x.name + ' (off)').join(', ');
+      d.appendChild(src);
+    }
+    const ul = document.createElement('ul');
+    f.tools.forEach(t => {
+      const li = document.createElement('li');
+      li.className = t.on ? 'on' : 'off';
+      li.textContent = t.summary;
+      li.title = t.name + (t.on ? '' : ' (' + t.off_reason + ')');
+      if (t.write){
+        const w = document.createElement('span');
+        w.className = 'w';
+        w.textContent = 'writes';
+        w.title = 'Changes data.';
+        li.appendChild(w);
+      }
+      if (!t.on){
+        const why = document.createElement('span');
+        why.textContent = ' (' + t.off_reason + ')';
+        li.appendChild(why);
+      }
+      ul.appendChild(li);
+    });
+    d.appendChild(ul);
+    list.appendChild(d);
+  });
+  sidebarEl.appendChild(list);
+
+  const foot = document.createElement('p');
+  foot.className = 'ds-tools-foot';
+  foot.append('Turned on and off for every assistant room in ');
+  const a = document.createElement('a');
+  a.href = '/settings';
+  a.target = '_blank';
+  a.textContent = 'Settings';
+  foot.append(a, '.');
+  sidebarEl.appendChild(foot);
 }
 
 // One member's persona controls. `showName` labels the section with the

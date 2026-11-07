@@ -3897,6 +3897,113 @@ def capability_report() -> list[dict[str, Any]]:
     ]
 
 
+
+# How the room Settings panel names and orders each family. A family missing
+# here still shows, after these, under its own name. `conversation` is left out:
+# answering and asking back are part of every turn, not a configured tool.
+TOOL_FAMILY_LABELS: dict[str, str] = {
+    "memory": "Memory",
+    "diary": "Diary",
+    "kanban": "Kanban",
+    "workspace": "Workspace files",
+    "python": "Python",
+    "lookup": "Lookup",
+    "cron": "Reminders",
+    "skill": "Skills",
+}
+_UNLISTED_FAMILIES = frozenset({"conversation"})
+
+# Why diary_query is not offered in a room, as diary_available reports it.
+_DIARY_REASONS: dict[str, str] = {
+    "no_source": "No diary source is readable in this room.",
+    "no_enabled_source": "This room's diary sources are all turned off.",
+    "remote_models": ("Not every assistant model runs locally, and this "
+                      "room's diary sources are kept to local models."),
+    "no_ready_file": "This room's diary sources have no files ready yet.",
+    "check_failed": "Diary availability could not be checked.",
+}
+
+
+def room_tools(room_uuid: UUID) -> list[dict[str, Any]]:
+    """The assistant's tools in one room, grouped by family, as a turn there
+    would get them: enabled in code, not turned off by the operator's
+    `assistant.disabled_capabilities` setting, and — for the diary — readable
+    in this room. Needs an app context.
+
+    Tools the model never chooses itself (prompt_exposed=False: undo paths and
+    confirm-only deletes) are left out, and so is the conversation family.
+    Each family: {family, label, tools: [{name, summary, write, on,
+    off_reason}], note, sources}. `note` says why a whole family is off
+    in this room; `sources` lists the diary sources this room can read.
+    """
+    from agents.config import ASSISTANT_UUID
+
+    disabled = _disabled_capability_names()
+    by_family: dict[str, list[dict[str, Any]]] = {}
+    for name, cap in CAPABILITIES.items():
+        if not cap.prompt_exposed or cap.family in _UNLISTED_FAMILIES:
+            continue
+        if not cap.enabled:
+            off_reason: str | None = "not available in this version"
+        elif name.value in disabled:
+            off_reason = "turned off in Settings"
+        else:
+            off_reason = None
+        by_family.setdefault(cap.family, []).append({
+            "name": name.value,
+            "summary": cap.summary or cap.description,
+            "write": cap.write,
+            "on": off_reason is None,
+            "off_reason": off_reason,
+        })
+
+    order = list(TOOL_FAMILY_LABELS) + sorted(set(by_family) - set(TOOL_FAMILY_LABELS))
+    out: list[dict[str, Any]] = []
+    for family in order:
+        tools = by_family.get(family)
+        if not tools:
+            continue
+        entry: dict[str, Any] = {
+            "family": family,
+            "label": TOOL_FAMILY_LABELS.get(family, family.replace("_", " ").capitalize()),
+            "tools": tools,
+            "note": None,
+            "sources": None,
+        }
+        if family == "diary":
+            _room_diary(room_uuid, ASSISTANT_UUID, entry)
+        out.append(entry)
+    return out
+
+
+def _room_diary(room_uuid: UUID, agent_uuid: UUID, entry: dict[str, Any]) -> None:
+    """Fill the diary family's room-specific part: the sources readable here,
+    and — when diary_query is not offered here — why, with its tools off."""
+    from agents.model_groups import assistant_models_all_local
+    from diary.retrieval import diary_available
+
+    try:
+        rows = (db.session.query(db.DiarySource)
+                .filter(db.DiarySource.room_uuids.any(room_uuid),
+                        db.DiarySource.sensitivity == "private").all())
+        entry["sources"] = sorted(
+            ({"name": s.name, "enabled": bool(s.enabled)} for s in rows
+             if s.agent_uuid is None or s.agent_uuid == agent_uuid),
+            key=lambda x: x["name"])
+        local, _slot = assistant_models_all_local()
+        available, reason = diary_available(room_uuid, agent_uuid, local)
+    except Exception:   # noqa: BLE001 — a panel must render even if this fails
+        logger.exception("room_tools: diary availability check failed")
+        db.session.rollback()
+        available, reason = False, "check_failed"
+    if available:
+        return
+    entry["note"] = _DIARY_REASONS.get(reason, "Diary search is not offered in this room.")
+    for tool in entry["tools"]:
+        if tool["on"]:
+            tool["on"] = False
+            tool["off_reason"] = "not offered in this room"
+
 class AssistantAgent(ModelGroupAgent):
     """A bounded ReAct loop: decide a step, validate it, act, observe, repeat
     until a terminal reply or the step cap.

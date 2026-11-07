@@ -1062,6 +1062,21 @@ def chat_room_personas(room_uuid: str) -> Response:
     return jsonify({"members": rows})
 
 
+@app.route("/chat/api/rooms/<room_uuid>/tools")
+def chat_room_tools(room_uuid: str) -> Response:
+    """The assistant's tools in this room, grouped by family, for the Settings
+    panel: what a turn here would be offered (see agents.assistant.room_tools).
+    `tools` is empty when the room has no assistant."""
+    from agents.assistant import room_tools
+
+    ruuid = _parse_uuid(room_uuid)
+    if db.get_chatroom(ruuid) is None:
+        abort(404, "room not found")
+    if db.get_member_persona_row(ruuid, ASSISTANT_UUID) is None:
+        return jsonify({"tools": []})
+    return jsonify({"tools": room_tools(ruuid)})
+
+
 @app.route("/chat/api/rooms/<room_uuid>/members/<user_uuid>/persona",
            methods=["PUT"])
 def chat_member_persona(room_uuid: str, user_uuid: str) -> Response:
