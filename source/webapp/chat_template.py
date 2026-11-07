@@ -161,12 +161,19 @@ CHAT_TEMPLATE: str = """
   .room-sidebar .ds-trouble-row button:disabled{background:#f8fafc;color:#9ca3af;cursor:default}
   .room-sidebar .ds-note{color:#888;font-size:0.85rem}
   .room-sidebar .ds-tools{font-size:0.85rem;margin:0 0 0.4em}
-  .room-sidebar .ds-tool summary{cursor:pointer;padding:0.25em 0.2em;border-radius:6px;color:#1f2937}
+  .room-sidebar .ds-tool-row{position:relative}
+  .room-sidebar .ds-tool summary{cursor:pointer;padding:0.3em 2.9em 0.3em 0.2em;border-radius:6px;color:#1f2937}
   .room-sidebar .ds-tool summary:hover{background:#f3f4f6}
-  .room-sidebar .ds-tool-state{float:right;font-size:0.72rem;padding:0.05em 0.55em;border-radius:1em;margin-top:0.1em}
-  .room-sidebar .ds-tool-state.on{background:#dcfce7;color:#166534}
-  .room-sidebar .ds-tool-state.part{background:#fef3c7;color:#92400e}
-  .room-sidebar .ds-tool-state.off{background:#f3f4f6;color:#6b7280}
+  .room-sidebar .ds-tool-row.room-off summary{color:#9ca3af}
+  .room-sidebar .ds-tool-count{float:right;font-size:0.72rem;color:#92400e;margin-top:0.15em}
+  .room-sidebar .ds-switch{position:absolute;right:0.2em;top:0.35em;width:2.1em;height:1.2em;cursor:pointer}
+  .room-sidebar .ds-switch input{position:absolute;opacity:0;width:0;height:0}
+  .room-sidebar .ds-switch span{position:absolute;inset:0;background:#d1d5db;border-radius:1em;transition:background 0.15s}
+  .room-sidebar .ds-switch span::before{content:"";position:absolute;width:0.9em;height:0.9em;left:0.15em;top:0.15em;background:#fff;border-radius:50%;transition:transform 0.15s}
+  .room-sidebar .ds-switch input:checked + span{background:#2563eb}
+  .room-sidebar .ds-switch input:checked + span::before{transform:translateX(0.9em)}
+  .room-sidebar .ds-switch input:focus-visible + span{outline:2px solid #93c5fd;outline-offset:1px}
+  .room-sidebar .ds-switch input:disabled + span{opacity:0.5;cursor:wait}
   .room-sidebar .ds-tool .ds-note{margin:0.2em 0 0.3em 1.1em}
   .room-sidebar .ds-tool ul{margin:0.15em 0 0.5em;padding-left:2.1em;color:#374151}
   .room-sidebar .ds-tool li{margin:0.1em 0}
@@ -3306,14 +3313,14 @@ async function renderAgentsSettings(){
   await renderToolsSection(room);
 }
 
-// Families the operator has opened in the Tools list, kept across re-renders
-// of the panel (a persona change redraws it).
+// Families the operator has opened in the Tools list, kept across redraws
+// (a switch or a persona change redraws it).
 const openToolFamilies = new Set();
 
-// The assistant's tools in this room, one row per family, as a turn here
-// would get them: the operator's on/off setting applied, and the diary
-// checked for this room. Read-only: the setting is global, so it is changed
-// on /settings rather than from one room's panel.
+// The assistant's tools in this room, one switch per family, as a turn here
+// would get them: the room's switches, the global on/off setting, and the
+// diary checked for this room. A switch only narrows what Settings allows,
+// so a tool turned off there stays off here whatever the switch says.
 async function renderToolsSection(room){
   let data;
   try {
@@ -3322,19 +3329,36 @@ async function renderToolsSection(room){
     return;
   }
   if (room !== currentRoom || activeSidebarMode() !== 'settings') return;  // changed while loading
-  const families = data.tools || [];
-  if (!families.length) return;
+  if (!(data.tools || []).length) return;
 
   const label = document.createElement('span');
   label.className = 'ds-label';
   label.textContent = 'Tools';
   sidebarEl.appendChild(label);
-
   const list = document.createElement('div');
   list.className = 'ds-tools';
+  sidebarEl.appendChild(list);
+  drawToolFamilies(list, room, data.tools);
+
+  const foot = document.createElement('p');
+  foot.className = 'ds-tools-foot';
+  foot.append('Switches apply to this room only. A tool turned off in ');
+  const a = document.createElement('a');
+  a.href = '/settings';
+  a.target = '_blank';
+  a.textContent = 'Settings';
+  foot.append(a, ' stays off in every room.');
+  sidebarEl.appendChild(foot);
+}
+
+function drawToolFamilies(list, room, families){
+  list.innerHTML = '';
   families.forEach(f => {
     const total = f.tools.length;
     const on = f.tools.filter(t => t.on).length;
+    const row = document.createElement('div');
+    row.className = 'ds-tool-row' + (f.room_on ? '' : ' room-off');
+
     const d = document.createElement('details');
     d.className = 'ds-tool';
     d.open = openToolFamilies.has(f.family);
@@ -3343,17 +3367,23 @@ async function renderToolsSection(room){
     });
     const sum = document.createElement('summary');
     sum.textContent = f.label;
-    const state = document.createElement('span');
-    state.className = 'ds-tool-state ' + (on === total ? 'on' : (on ? 'part' : 'off'));
-    state.textContent = on === total ? 'on' : (on ? on + ' of ' + total + ' on' : 'off');
-    sum.appendChild(state);
+    // Switched on, but not every tool runs: say how many do.
+    if (f.room_on && on < total){
+      const count = document.createElement('span');
+      count.className = 'ds-tool-count';
+      count.textContent = on ? on + ' of ' + total : 'unavailable';
+      count.title = on ? 'Some tools are turned off in Settings.' : (f.note || 'Turned off in Settings.');
+      sum.appendChild(count);
+    }
     d.appendChild(sum);
 
-    if (f.note){
-      const note = document.createElement('p');
-      note.className = 'ds-note';
-      note.textContent = f.note;
-      d.appendChild(note);
+    // Switched off here: said once for the family, not on every tool.
+    const note = f.room_on ? f.note : 'Switched off in this room.';
+    if (note){
+      const p = document.createElement('p');
+      p.className = 'ds-note';
+      p.textContent = note;
+      d.appendChild(p);
     }
     if (f.sources && f.sources.length){
       const src = document.createElement('p');
@@ -3375,7 +3405,7 @@ async function renderToolsSection(room){
         w.title = 'Changes data.';
         li.appendChild(w);
       }
-      if (!t.on){
+      if (!t.on && f.room_on){
         const why = document.createElement('span');
         why.textContent = ' (' + t.off_reason + ')';
         li.appendChild(why);
@@ -3383,19 +3413,38 @@ async function renderToolsSection(room){
       ul.appendChild(li);
     });
     d.appendChild(ul);
-    list.appendChild(d);
-  });
-  sidebarEl.appendChild(list);
+    row.appendChild(d);
 
-  const foot = document.createElement('p');
-  foot.className = 'ds-tools-foot';
-  foot.append('Turned on and off for every assistant room in ');
-  const a = document.createElement('a');
-  a.href = '/settings';
-  a.target = '_blank';
-  a.textContent = 'Settings';
-  foot.append(a, '.');
-  sidebarEl.appendChild(foot);
+    // The switch sits beside the summary, not in it, so flipping it does not
+    // also open or close the family.
+    const sw = document.createElement('label');
+    sw.className = 'ds-switch';
+    sw.title = (f.room_on ? 'Turn ' : 'Let the assistant use ') + f.label +
+      (f.room_on ? ' off in this room' : ' tools in this room');
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = !!f.room_on;
+    box.setAttribute('aria-label', f.label + ' in this room');
+    box.addEventListener('change', () => setRoomToolFamily(list, room, f.family, box));
+    sw.append(box, document.createElement('span'));
+    row.appendChild(sw);
+    list.appendChild(row);
+  });
+}
+
+// Store one switch, then redraw the list from what the server holds, so the
+// panel never shows a state that did not save.
+async function setRoomToolFamily(list, room, family, box){
+  box.disabled = true;
+  try {
+    const data = await putJSON('/chat/api/rooms/' + room + '/tools/' + encodeURIComponent(family),
+      {on: box.checked});
+    if (room === currentRoom) drawToolFamilies(list, room, data.tools || []);
+  } catch (e) {
+    box.checked = !box.checked;
+    box.disabled = false;
+    alert('Could not change the switch: ' + e.message);
+  }
 }
 
 // One member's persona controls. `showName` labels the section with the

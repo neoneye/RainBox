@@ -673,6 +673,14 @@ class ChatroomMember(db.Model):
     # to that exact revision, so editing the persona no longer reaches this
     # member until the pin is released.
     persona_revision_uuid: Mapped[UUID | None] = mapped_column(default=None)
+    # Tool families (the assistant capability `family`, e.g. "kanban") this
+    # participant may not use in this room — the room Settings panel's
+    # switches. Empty = every family the global setting allows. It only
+    # narrows: a capability turned off in `assistant.disabled_capabilities`
+    # stays off whatever this says. On the membership row for the reason the
+    # persona is: each assistant in a room has its own.
+    disabled_tool_families: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), default=list, server_default="{}")
     __table_args__ = (
         Index("chatroom_member_unique", "room_uuid", "user_uuid", unique=True),
     )

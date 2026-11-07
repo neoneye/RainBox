@@ -1077,6 +1077,27 @@ def chat_room_tools(room_uuid: str) -> Response:
     return jsonify({"tools": room_tools(ruuid)})
 
 
+@app.route("/chat/api/rooms/<room_uuid>/tools/<family>", methods=["PUT"])
+def chat_room_tool_family(room_uuid: str, family: str) -> Response:
+    """Switch one tool family on or off for the assistant in this room, from
+    its next turn. Body {"on": bool}. Returns the room's tools as GET does,
+    so the panel redraws from what is stored."""
+    from agents.assistant import room_tools, switchable_tool_families
+
+    ruuid = _parse_uuid(room_uuid)
+    if db.get_chatroom(ruuid) is None:
+        abort(404, "room not found")
+    if db.get_member_persona_row(ruuid, ASSISTANT_UUID) is None:
+        abort(404, "this room has no assistant")
+    if family not in switchable_tool_families():
+        abort(400, f"no switchable tool family named {family!r}")
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or not isinstance(data.get("on"), bool):
+        abort(400, 'body must be {"on": true|false}')
+    db.set_member_tool_family(ruuid, ASSISTANT_UUID, family, data["on"])
+    return jsonify({"tools": room_tools(ruuid)})
+
+
 @app.route("/chat/api/rooms/<room_uuid>/members/<user_uuid>/persona",
            methods=["PUT"])
 def chat_member_persona(room_uuid: str, user_uuid: str) -> Response:

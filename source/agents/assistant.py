@@ -3924,21 +3924,30 @@ _DIARY_REASONS: dict[str, str] = {
 }
 
 
+def switchable_tool_families() -> list[str]:
+    """The families the room Settings panel offers a switch for: every family
+    with a tool the model can choose, except conversation."""
+    return sorted({c.family for c in CAPABILITIES.values()
+                   if c.prompt_exposed and c.family not in _UNLISTED_FAMILIES})
+
+
 def room_tools(room_uuid: UUID) -> list[dict[str, Any]]:
     """The assistant's tools in one room, grouped by family, as a turn there
     would get them: enabled in code, not turned off by the operator's
-    `assistant.disabled_capabilities` setting, and — for the diary — readable
-    in this room. Needs an app context.
+    `assistant.disabled_capabilities` setting, not switched off for this
+    room, and — for the diary — readable in this room. Needs an app context.
 
     Tools the model never chooses itself (prompt_exposed=False: undo paths and
     confirm-only deletes) are left out, and so is the conversation family.
-    Each family: {family, label, tools: [{name, summary, write, on,
-    off_reason}], note, sources}. `note` says why a whole family is off
-    in this room; `sources` lists the diary sources this room can read.
+    Each family: {family, label, room_on, tools: [{name, summary, write, on,
+    off_reason}], note, sources}. `room_on` is the room's switch. `note`
+    says why a whole family is off in this room; `sources` lists the diary
+    sources this room can read.
     """
     from agents.config import ASSISTANT_UUID
 
     disabled = _disabled_capability_names()
+    room_off = db.member_disabled_tool_families(room_uuid, ASSISTANT_UUID)
     by_family: dict[str, list[dict[str, Any]]] = {}
     for name, cap in CAPABILITIES.items():
         if not cap.prompt_exposed or cap.family in _UNLISTED_FAMILIES:
@@ -3963,15 +3972,24 @@ def room_tools(room_uuid: UUID) -> list[dict[str, Any]]:
         tools = by_family.get(family)
         if not tools:
             continue
+        room_on = family not in room_off
         entry: dict[str, Any] = {
             "family": family,
             "label": TOOL_FAMILY_LABELS.get(family, family.replace("_", " ").capitalize()),
+            "room_on": room_on,
             "tools": tools,
             "note": None,
             "sources": None,
         }
         if family == "diary":
             _room_diary(room_uuid, ASSISTANT_UUID, entry)
+        if not room_on:
+            # Switched off here: the room's own reason wins over the diary's.
+            entry["note"] = None
+            for tool in tools:
+                if tool["on"] or tool["off_reason"] == "not offered in this room":
+                    tool["on"] = False
+                    tool["off_reason"] = "switched off in this room"
         out.append(entry)
     return out
 
@@ -4318,6 +4336,9 @@ class AssistantAgent(ModelGroupAgent):
             step_limit=self.step_limit,
         )
         run = self._run
+        # The room's own tool switches narrow the set first, so a family
+        # switched off here is never offered, whatever else allows it.
+        self._apply_room_tool_switches(room_uuid, run)
         # diary_query is offered only where it can work: an enabled source
         # for this room and models that may see its text. Why it was hidden
         # goes on the run, for /assistant.
@@ -7584,6 +7605,31 @@ class AssistantAgent(ModelGroupAgent):
                     "kind": str(source.get("kind") or ""),
                     "link": str(source["link"])})
                 item.text = str(source.get("name") or "")
+
+    def _apply_room_tool_switches(self, room_uuid: UUID | None, run: Any) -> None:
+        """Drop the tool families switched off for this assistant in this room
+        (the room Settings panel). The conversation family is never dropped:
+        the turn must still be able to answer. What was switched off goes on
+        the run, for /assistant."""
+        if room_uuid is None:
+            return
+        try:
+            off = db.member_disabled_tool_families(room_uuid, self.agent_uuid)
+        except Exception:   # noqa: BLE001 — unreadable switches leave the set as is
+            logger.exception("assistant: room tool switches could not be read")
+            db.session.rollback()
+            return
+        off -= _UNLISTED_FAMILIES
+        if not off:
+            return
+        for name in [n for n, c in self._caps.items() if c.family in off]:
+            self._caps.pop(name, None)
+        try:
+            run.metadata_ = {**(run.metadata_ or {}),
+                             "room_disabled_tool_families": sorted(off)}
+            db.session.commit()
+        except Exception:   # noqa: BLE001 — trace detail only
+            db.session.rollback()
 
     def _apply_diary_availability(self, room_uuid: UUID, run: Any) -> None:
         self._diary_models_local = False

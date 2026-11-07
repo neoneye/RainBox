@@ -662,16 +662,24 @@ The operator can turn capabilities off at runtime via the
 `/settings`); `capability_report()` exposes the effective set for inspection.
 
 In a chat room, the sidebar's Settings mode lists the assistant's tools under
-**Tools** (`room_tools(room_uuid)`, served at `/chat/api/rooms/<room>/tools`).
-It shows them as a turn in that room gets them: one row per family, on / off
-/ "n of m on", with each tool's summary, a *writes* tag on write tools, and
-why a tool is off: turned off in Settings, or not offered in this room. The
-room-specific part is the diary: the row names the diary sources readable in
-the room and, when `diary_query` is not offered there, says why (the
-`diary_available` reason). The list leaves out the conversation family and
-internal capabilities, since neither is something the operator configures.
-It is read-only, because the setting is global: one room's panel turning a
-tool off would change every room. It links to `/settings` instead.
+**Tools** (`room_tools(room_uuid)`, served at `/chat/api/rooms/<room>/tools`),
+as a turn in that room gets them. There is one row per family, each with a
+switch. Opening a row lists each tool's summary, with a *writes* tag on write
+tools and the reason a tool is off: turned off in Settings, switched off in
+this room, or not offered in this room. The diary row names the diary
+sources readable in the room and, when `diary_query` is not offered there,
+says why (the `diary_available` reason). The conversation family and the
+internal capabilities are left out, since neither is something the operator
+configures.
+
+The switches are per room and per assistant:
+`chatroom_member.disabled_tool_families`, beside the persona binding, written
+by `PUT /chat/api/rooms/<room>/tools/<family>` with `{"on": bool}`. At the
+start of a turn, `_apply_room_tool_switches` drops those families from the
+operator-effective set, before the diary check, and records them on the run
+as `room_disabled_tool_families`. A switch only narrows: a capability turned
+off in `assistant.disabled_capabilities` stays off whatever the room says, and
+the conversation family has no switch, so a turn can always answer.
 Internal capabilities (`prompt_exposed=False`) are undo inverses: the model
 can never request them — validation rejects them — and they are dispatched
 only by `undo_write_intent`.

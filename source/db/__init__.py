@@ -679,6 +679,9 @@ def init_db(app: Flask) -> None:
         # going (or stopped) reads against its planned size.
         _add_column_if_missing("benchmark_vision_trial", "trials_per_case",
                                "trials_per_case INTEGER")
+        # The room Settings panel's per-room tool switches.
+        _add_column_if_missing("chatroom_member", "disabled_tool_families",
+                               "disabled_tool_families TEXT[] NOT NULL DEFAULT '{}'")
         db.session.execute(sa.text(
             "CREATE UNIQUE INDEX IF NOT EXISTS memory_rejected_value_key_uniq "
             "ON memory_rejected_value (scope, "

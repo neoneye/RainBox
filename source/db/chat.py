@@ -348,6 +348,34 @@ def set_member_persona(
     return member
 
 
+def member_disabled_tool_families(room_uuid: UUID, user_uuid: UUID) -> set[str]:
+    """The tool families this participant has switched off in this room;
+    empty when none are, or when the user is not a member."""
+    member = get_member_persona_row(room_uuid, user_uuid)
+    return set(member.disabled_tool_families or []) if member is not None else set()
+
+
+def set_member_tool_family(
+    room_uuid: UUID, user_uuid: UUID, family: str, on: bool
+) -> ChatroomMember:
+    """Switch one tool family on or off for this participant in this room.
+    Applies from its next turn. Raises LookupError when that user is not a
+    member of that room. The caller checks that `family` is one the panel
+    offers; this stores whatever it is given."""
+    member = get_member_persona_row(room_uuid, user_uuid)
+    if member is None:
+        raise LookupError(f"user {user_uuid} is not a member of room {room_uuid}")
+    families = set(member.disabled_tool_families or [])
+    if on:
+        families.discard(family)
+    else:
+        families.add(family)
+    # A new list, so SQLAlchemy sees the change to an ARRAY column.
+    member.disabled_tool_families = sorted(families)
+    db.session.commit()
+    return member
+
+
 def edit_chat_message(message_id: int, text: str) -> ChatMessage:
     """Replace a message's text (direct-room message editing). Re-detects
     content_type and NOTIFYs with the row's kind + streaming:false + the new
