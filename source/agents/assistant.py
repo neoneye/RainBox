@@ -5875,7 +5875,8 @@ class AssistantAgent(ModelGroupAgent):
         # Model calls timeline cannot draw a bar for.
         usage: dict[str, int] = {}
         requested_at = datetime.now(UTC)
-        with capture_reasoning() as tally:
+        with self._tagged_call("assistant.second_opinion"), \
+                capture_reasoning() as tally:
             try:
                 verdict, model_uuid = structured_llm_call(
                     "assistant.second_opinion", model_uuids,
@@ -6178,7 +6179,8 @@ class AssistantAgent(ModelGroupAgent):
                 log=self._turn_log or None,
                 action=self.REPLY_AUDIT_ACTION,
             )
-        with capture_reasoning() as tally:
+        with self._tagged_call("assistant.reply_audit"), \
+                capture_reasoning() as tally:
             try:
                 audit, model_uuid = structured_llm_call(
                     "assistant.reply_audit", model_uuids,
@@ -6445,7 +6447,8 @@ class AssistantAgent(ModelGroupAgent):
         # succeeding group member's usage is written here; `ms` is that
         # attempt's, which is what the throughput figure divides by.
         usage: dict[str, int] = {}
-        with capture_reasoning() as tally:
+        with self._tagged_call("assistant.response_language_classifier"), \
+                capture_reasoning() as tally:
             try:
                 result, model_uuid = structured_llm_call(
                     "assistant.response_language_classifier",
@@ -8306,6 +8309,19 @@ class AssistantAgent(ModelGroupAgent):
                 # column has always held for rows that are not a call.
                 model_group_uuid=self.model_group_uuid,
             )
+
+    @contextmanager
+    def _tagged_call(self, caller_tag: str):
+        """Name this turn's run (and the step, inside `_logging_step`) on the
+        `llm_call` rows of a call made through `structured_llm_call`, which
+        keeps the tags active around it. The decide call tags itself
+        (`StructuredLLMAgent._instrument_tags`); the second opinion, reply
+        audit and language classifier would otherwise record no run, and
+        /activity could not link them to the turn."""
+        from llama_index.core.instrumentation.dispatcher import instrument_tags
+
+        with instrument_tags(self._instrument_tags(caller_tag)):
+            yield
 
     @contextmanager
     def _logging_step(self, step_uuid: UUID):

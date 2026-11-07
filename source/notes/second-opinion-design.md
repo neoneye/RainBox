@@ -129,7 +129,11 @@ reviewer with different failure modes — but reviewing with the same group
 still catches what the deciding pass missed. No other slot is consulted: a
 bound `assistant.memory_filter` must never silently hand the review to the
 relevance-scoring model. The call itself goes through `structured_llm_call`
-(one structured call, falling back across the group's members).
+(one structured call, falling back across the group's members). Its
+`llm_call` row names the turn's run and the member that answered
+(`AssistantAgent._tagged_call`), so /activity links it to the run. It names no
+step: the review runs beside its step, and /assistant pairs it by time within
+the run.
 
 ## Fails open
 

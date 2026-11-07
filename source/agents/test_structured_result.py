@@ -675,3 +675,56 @@ def test_whitespace_runaway_spares_pretty_printed_json():
     check_whitespace_runaway(" " * (WHITESPACE_RUNAWAY_CHARS - 1))
     with pytest.raises(WhitespaceRunaway):
         check_whitespace_runaway('{"a": "b"' + "\n    " * 40)
+
+
+def test_the_group_call_keeps_the_turns_run_and_names_its_member(monkeypatch):
+    """The second opinion, reply audit and language classifier go through
+    structured_llm_call, which used to replace every tag with its caller label
+    — so their `llm_call` rows named no run and /activity could not link them
+    to the turn. The run and step around the call now ride along, and each
+    member's attempt names that member."""
+    from llama_index.core.instrumentation.dispatcher import active_instrument_tags
+
+    import agents.model_groups as mg
+    from agents.assistant import AssistantAgent
+
+    uuids, names, calls, prepare = _two_member_group(monkeypatch)
+    seen: list[dict] = []
+
+    def watching(provider, model_name, args):
+        inner = prepare(provider, model_name, args)
+        structured = inner.as_structured_llm()
+
+        def stream_chat(messages):
+            seen.append(dict(active_instrument_tags.get()))
+            yield from structured.stream_chat(messages)
+        return SimpleNamespace(as_structured_llm=lambda *_a, **_k: SimpleNamespace(
+            stream_chat=stream_chat))
+    monkeypatch.setattr(mg, "prepare_llm", watching)
+
+    agent = AssistantAgent.__new__(AssistantAgent)
+    agent._log_run_uuid, agent._log_step_uuid = uuid4(), None
+    agent._last_model_uuid = uuid4()      # the decide call's, not this one's
+    with agent._tagged_call("assistant.second_opinion"):
+        mg.structured_llm_call(
+            "assistant.second_opinion", uuids, "Answer briefly.", "Hello", _Reply)
+
+    assert [t["model_uuid"] for t in seen] == [str(u) for u in uuids]
+    for tags in seen:
+        assert tags["caller"] == "assistant.second_opinion"
+        assert tags["run_uuid"] == str(agent._log_run_uuid)
+        # The review runs beside its step, not as it, so it names none.
+        assert "step_uuid" not in tags
+
+    # Inside a step (the reply audit's), the step rides along too.
+    seen.clear()
+    step_uuid = uuid4()
+    with agent._logging_step(step_uuid), agent._tagged_call("assistant.reply_audit"):
+        mg.structured_llm_call(
+            "assistant.reply_audit", uuids[1:], "Answer briefly.", "Hello", _Reply)
+    assert seen[0]["step_uuid"] == str(step_uuid)
+
+    # A caller with nothing around it still records only its own tags.
+    seen.clear()
+    mg.structured_llm_call("eval.x", uuids[1:], "Answer briefly.", "Hello", _Reply)
+    assert seen == [{"caller": "eval.x", "model_uuid": str(uuids[1])}]

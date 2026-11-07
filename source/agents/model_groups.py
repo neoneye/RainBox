@@ -99,6 +99,10 @@ def structured_llm_call(
     jobs (recall filter, second opinion, reply audit, language classifier) come
     through this helper.
 
+    Tags already active around the call (`instrument_tags`) ride along under
+    the caller label, so a caller that names its run and step there gets the
+    row joined back to them. `model_uuid` is always the member being asked.
+
     Pass `usage_out` to have this call's cost written into it as
     {input, output, ms, requested_at} — StructuredLLMAgent's `_last_usage`
     plus when the answering member was asked, which after a fallback is not
@@ -140,7 +144,9 @@ def structured_llm_call(
     # though `.raw` is the parsed model, not a usage dict.
     from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
 
-    from llama_index.core.instrumentation.dispatcher import instrument_tags
+    from llama_index.core.instrumentation.dispatcher import (
+        active_instrument_tags, instrument_tags,
+    )
 
     from agents.base import (ModelGroupAgent, WhitespaceRunaway,
                              check_whitespace_runaway, truncate_middle)
@@ -179,7 +185,14 @@ def structured_llm_call(
                 )
                 deadline = time.monotonic() + timeout_s
                 last = None
-                with instrument_tags({"caller": agent_name}), \
+                # The enclosing block's tags (an assistant turn's run and step,
+                # via AssistantAgent._tagged_call) are kept, so the row joins
+                # back to the turn that made it. `caller` and `model_uuid` are
+                # this call's own: the member being asked is known only here.
+                call_tags = {**active_instrument_tags.get(),
+                             "caller": agent_name,
+                             "model_uuid": str(model_uuid)}
+                with instrument_tags(call_tags), \
                         capture_reasoning() as tally:
                     stream = sllm.stream_chat(messages)
                     try:
