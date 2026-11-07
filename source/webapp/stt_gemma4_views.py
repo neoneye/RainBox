@@ -26,7 +26,8 @@ import wave
 from datetime import UTC, datetime
 
 import requests
-from flask import Response, jsonify, render_template_string, request
+from flask import Response, jsonify, render_template_string, request, url_for
+from markupsafe import Markup
 
 from llm.activity import record_direct_call
 
@@ -59,9 +60,16 @@ def _wav_seconds(raw: bytes) -> float | None:
         return None
 
 
+# The page is shared: /demo_stt_lfm3 renders this same template with its own
+# title, intro, instruction default, download name and proxy URLs. The proxy
+# answers {"text", "duration", "prompt_tokens"?} or {"error"}.
+INTRO = ("Transcribes speech with <code>{model}</code> on Ollama. gemma4 hears "
+         "audio but only answers in text, so this page listens; it cannot speak. "
+         "The clip is sent as 16&nbsp;kHz mono WAV, the one audio format Ollama decodes.")
+
 STT_TEMPLATE = """
 <!doctype html>
-<title>gemma4 STT &mdash; rainbox</title>
+<title>{{ title }} &mdash; rainbox</title>
 <style>
   body{font-family:system-ui,sans-serif;margin:0;padding:0}
   .row{margin:1em 0}
@@ -93,11 +101,8 @@ STT_TEMPLATE = """
 </style>
 {% include "_nav.html" %}
 <div class="pp-content">
-<h1>gemma4 STT</h1>
-<p class="muted">Transcribes speech with <code>{{ model }}</code> on Ollama.
-gemma4 hears audio but only answers in text, so this page listens; it cannot
-speak. The clip is sent as 16&nbsp;kHz mono WAV, the one audio format Ollama
-decodes.</p>
+<h1>{{ title }}</h1>
+<p class="muted">{{ intro }}</p>
 
 <div class="row">
   Model: <span id="status" class="badge unknown">checking&hellip;</span>
@@ -106,7 +111,7 @@ decodes.</p>
 
 <div class="row">
   <label for="prompt">Instruction</label><br>
-  <textarea id="prompt" rows="2">{{ default_prompt }}</textarea>
+  <textarea id="prompt" rows="2" placeholder="{{ prompt_placeholder }}">{{ default_prompt }}</textarea>
 </div>
 
 <div class="row">
@@ -137,7 +142,7 @@ decodes.</p>
 
 <div class="row" id="player" style="display:none">
   <audio id="audio" controls></audio>
-  <div><a id="download" download="gemma4-clip.wav">Download the .wav that was sent</a></div>
+  <div><a id="download" download="{{ download_name }}">Download the .wav that was sent</a></div>
 </div>
 
 <div class="row">
@@ -349,7 +354,7 @@ async function ppHealth() {
   const badge = document.getElementById('status');
   const msg = document.getElementById('statusmsg');
   try {
-    const r = await fetch('{{ url_for("demo_stt_gemma4_health") }}');
+    const r = await fetch('{{ health_url }}');
     const j = await r.json();
     if (r.ok && j.reachable && j.audio) {
       badge.className = 'badge ok'; badge.textContent = 'hears audio';
@@ -445,7 +450,7 @@ async function ppAsk(wav) {
   const fd = new FormData();
   fd.append('audio', wav, 'clip.wav');
   fd.append('prompt', document.getElementById('prompt').value);
-  const r = await fetch('{{ url_for("demo_stt_gemma4_transcribe") }}', {method: 'POST', body: fd});
+  const r = await fetch('{{ transcribe_url }}', {method: 'POST', body: fd});
   let j = {};
   try { j = await r.json(); } catch (e) {}
   return {ok: r.ok, status: r.status, j: j};
@@ -551,9 +556,14 @@ if (navigator.permissions && navigator.permissions.query) {
 
 @app.route("/demo_stt_gemma4")
 def demo_stt_gemma4() -> str:
+    model = _model()
     return render_template_string(
-        STT_TEMPLATE, ollama_url=_ollama_url(), model=_model(),
-        default_prompt=DEFAULT_PROMPT)
+        STT_TEMPLATE, title="gemma4 STT", ollama_url=_ollama_url(),
+        intro=Markup(INTRO).format(model=model),
+        default_prompt=DEFAULT_PROMPT, prompt_placeholder="",
+        download_name="gemma4-clip.wav",
+        health_url=url_for("demo_stt_gemma4_health"),
+        transcribe_url=url_for("demo_stt_gemma4_transcribe"))
 
 
 @app.route("/demo_stt_gemma4/health")

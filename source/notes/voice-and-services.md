@@ -26,6 +26,7 @@ service is down (a health banner, not a crash).
 | dots.tts clone | `http://127.0.0.1:5007` | `DOTS_TTS_URL` (webapp) |
 | gemma4 STT (Ollama) | `http://127.0.0.1:11434`, model `gemma4:e4b-mlx` | `OLLAMA_BASE_URL`, `GEMMA4_STT_MODEL` (webapp) |
 | LFM3-Audio TTS (Ollama) | `http://127.0.0.1:11434`, model `lfm3-audio:2b-mlx-bf16` | `OLLAMA_BASE_URL`, `LFM3_TTS_MODEL` (webapp) |
+| LFM3-Audio STT (Ollama) | `http://127.0.0.1:11434`, model `lfm3-audio:2b-mlx-bf16` | `OLLAMA_BASE_URL`, `LFM3_STT_MODEL` (webapp) |
 | Telegram bridge | outbound-only | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_IDS` (required); `TELEGRAM_ROOM_NAME`, `TELEGRAM_STATE_FILE`, `RAINBOX_URL` |
 | Discord bridge | outbound-only | connector mode: `BRIDGE_CONNECTOR`, the token under the connector's `token_env` name, `DISCORD_STATE_FILE`, `RAINBOX_URL` (the launcher sets all four); legacy env mode: `DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID`, `DISCORD_ALLOWED_USER_IDS` |
 
@@ -180,6 +181,22 @@ same-origin through the web app:
   model). Every call, live passes included, is recorded on `/activity` under
   caller `demo_stt_gemma4` (`record_direct_call`, since it bypasses
   LlamaIndex). A 66-second clip transcribed whole.
+- **`/demo_stt_lfm3`** (`webapp/stt_lfm3_views.py`) — speech-to-text with
+  LFM3-Audio on Ollama, no side service. The same page as `/demo_stt_gemma4`:
+  it renders that module's `STT_TEMPLATE` with its own title, intro,
+  instruction default, download name and proxy URLs, so mic picker, live
+  passes, file upload and the WAV re-encode are shared. The instruction field
+  picks the route. Empty (the default) goes to Ollama's OpenAI-compatible
+  `/v1/audio/transcriptions` (multipart `file` + `model`): plain recognition
+  in the spoken language. Filled goes to native `/api/chat` with the clip in
+  `images`, as on the gemma4 page, for translating, summarizing or asking
+  about the clip. Plain transcription does not go through chat because LFM3,
+  asked there to "transcribe" a Danish clip, answers in English. Proxies:
+  `…/health` (`/api/show`, `audio` capability), `…/transcribe` (WAV only,
+  300s timeout). Errors in either shape (`{"error": "…"}` or OpenAI-style
+  `{"error": {"message": …}}`) come back as `{"error": "…"}`. Every call is
+  recorded on `/activity` under caller `demo_stt_lfm3`; a plain
+  transcription's prompt reads `[transcription]` plus the clip line.
 - **`/demo_tts_kokoro`** (`webapp/tts_kokoro_views.py`) — text, voice
   dropdown (populated from the service), speed slider, synthesize + download
   WAV. Proxies: `…/health`, `…/voices`, `…/synthesize` (60s timeout).
@@ -253,7 +270,7 @@ Every service tests against fakes, so no model/network is needed:
 `voice_stt_whisper/test_server.py`, `voice_tts_kokoro/test_server.py` /
 `test_voices.py` / `test_audio.py`, `telegram_service/test_bridge.py` /
 `test_telegram_api.py` / `test_rainbox_api.py`, and the webapp proxy suites
-`webapp/test_stt_whisper_views.py`, `test_stt_gemma4_views.py`, `test_tts_kokoro_views.py`, `test_tts_lfm3_views.py`,
+`webapp/test_stt_whisper_views.py`, `test_stt_gemma4_views.py`, `test_stt_lfm3_views.py`, `test_tts_kokoro_views.py`, `test_tts_lfm3_views.py`,
 `test_voice_echo_views.py`, `test_multimodal_demo_views.py`.
 
 ## See also

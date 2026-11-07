@@ -26,6 +26,7 @@ from . import tts_lfm3_views  # noqa: F401,E402
 from . import tts_dotstts_views  # noqa: F401,E402
 from . import stt_whisper_views  # noqa: F401,E402
 from . import stt_gemma4_views  # noqa: F401,E402
+from . import stt_lfm3_views  # noqa: F401,E402
 from . import voice_echo_views  # noqa: F401,E402
 from . import multimodal_demo_views  # noqa: F401,E402
 from . import cron_views  # noqa: F401,E402
