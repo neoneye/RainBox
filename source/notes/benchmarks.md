@@ -275,8 +275,10 @@ It does not reuse `BenchmarkRunner`, for three reasons:
 - **Targets.** The other suites benchmark overrides with structured output.
   Here the question is which models take an image, so the page lists every
   available config *and* override whose model is known to have vision.
-  Ollama says so in its `/api/show` capabilities (asked once per process),
-  LM Studio marks vision models `type: "vlm"`, and OpenRouter's catalog lists
+  Ollama says so in its `/api/show` capabilities (asked once per process):
+  `vision` *and* `completion`, since a decision model reports `vision` with
+  `decision` instead and cannot answer in text. LM Studio marks vision
+  models `type: "vlm"`, and OpenRouter's catalog lists
   `image` among a model's input modalities. A model whose provider does not
   say (Jan), or could not be asked, is left out.
 - **Transport.** Ollama models go through Ollama's native `/api/chat`

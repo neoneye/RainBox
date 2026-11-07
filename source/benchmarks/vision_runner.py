@@ -32,14 +32,19 @@ _WORKER_MODULE = "benchmarks.vision_worker"
 LABEL = "Vision benchmark"
 MAX_TRIALS = 10
 
-# (Ollama base URL, model name) -> has the "vision" capability. Asked once per
-# process: a model's capabilities do not change while it is installed.
+# (Ollama base URL, model name) -> reads images and answers in text. Asked once
+# per process: a model's capabilities do not change while it is installed.
 _vision_cache: dict[tuple[str, str], bool] = {}
 
 
 def ollama_has_vision(base_url: str, model_name: str) -> bool | None:
-    """Whether Ollama lists "vision" among the model's capabilities, or None
-    when Ollama could not be asked (not cached, so a later page load retries)."""
+    """Whether Ollama lists both "vision" and "completion" among the model's
+    capabilities, or None when Ollama could not be asked (not cached, so a
+    later page load retries).
+
+    "completion" is the model writing text. A decision model reports
+    "vision" with "decision" instead: it takes the image but cannot answer
+    the question, so it is no target for this benchmark."""
     key = (base_url, model_name)
     if key in _vision_cache:
         return _vision_cache[key]
@@ -50,7 +55,7 @@ def ollama_has_vision(base_url: str, model_name: str) -> bool | None:
         caps = resp.json().get("capabilities") or []
     except (requests.RequestException, ValueError):
         return None
-    _vision_cache[key] = "vision" in caps
+    _vision_cache[key] = "vision" in caps and "completion" in caps
     return _vision_cache[key]
 
 

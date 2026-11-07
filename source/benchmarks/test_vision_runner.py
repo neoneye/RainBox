@@ -124,3 +124,19 @@ def test_openrouter_vision_models_take_image_input():
             {"id": "c"}]
     with patch("providers.openrouter.fetch_catalog", return_value=rows):
         assert openrouter_vision_models() == {"a"}
+
+
+@pytest.mark.parametrize("caps, listed", [
+    (["completion", "vision", "tools", "thinking"], True),
+    # A decision model takes the image but writes no text answer.
+    (["decision", "vision"], False),
+    (["completion", "tools"], False),
+])
+def test_ollama_vision_needs_a_text_answer(caps, listed):
+    from benchmarks import vision_runner
+    vision_runner._vision_cache.clear()
+    resp = type("R", (), {"raise_for_status": lambda self: None,
+                          "json": lambda self: {"capabilities": caps}})()
+    with patch("benchmarks.vision_runner.requests.post", return_value=resp):
+        assert vision_runner.ollama_has_vision("http://h", "m") is listed
+    vision_runner._vision_cache.clear()
