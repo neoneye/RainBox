@@ -48,6 +48,7 @@ from agents.config import (
     ASSISTANT_DECIDE_UUID,
     ASSISTANT_DEFAULT_UUID,
     ASSISTANT_MEMORY_FILTER_UUID,
+    ASSISTANT_PYTHON_PROGRAM_UUID,
     ASSISTANT_REPLY_AUDIT_UUID,
     ASSISTANT_REQUEST_SUMMARY_UUID,
     ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID,
@@ -188,6 +189,41 @@ MEMORY_QUERIES_REQUEST: str = (
     "source on a recalled line — given as a search text returns that fact "
     "and the facts filed under it, exactly. {tried}"
 )
+
+
+#: The program writer's prompts (AssistantAgent._write_python_program). A
+#: short call of its own rather than the deciding conversation continued: that
+#: conversation's system prompt asks for one JSON decision, and a continuation
+#: asked for plain source still answered in JSON now and then.
+PYTHON_PROGRAM_SYSTEM_PROMPT: str = "You write small, correct Python programs."
+PYTHON_PROGRAM_REQUEST: str = (
+    "The user asked:\n\n<request>\n{request}\n</request>\n\n"
+    "Write a self-contained Python program that does this:\n\n"
+    "<description>\n{description}\n</description>\n\n"
+    "It runs in a sandbox: standard library plus numpy, sympy and mpmath, no "
+    "network, no files, 30 seconds of CPU. print() the computed value as it "
+    "is; round or format it only where the description says to. Reply with "
+    "only the program, in one ```python fenced block."
+)
+
+_PYTHON_FENCE = re.compile(r"```[ \t]*(?:python3?|py)?[ \t]*\n(.*?)```", re.S | re.I)
+
+
+def python_program_from_text(text: str) -> str:
+    """The program in the writer's answer: its fenced block, or the whole
+    answer when it wrote bare source. Raises ValueError, naming the line, when
+    the program does not compile — the writer is asked again with that, inside
+    the same call, rather than the step running a program that cannot run."""
+    match = _PYTHON_FENCE.search(text)
+    code = (match.group(1) if match else text).strip("\n")
+    if not code.strip():
+        raise ValueError("it contains no program.")
+    try:
+        compile(code, "<job>", "exec")
+    except SyntaxError as e:
+        raise ValueError(
+            f"the program does not compile: line {e.lineno}: {e.msg}.") from e
+    return code + "\n"
 
 
 class SecondOpinionProblem(BaseModel):
@@ -2369,9 +2405,12 @@ def _action_python_run(
     operator data, so it needs no ctx."""
     from tools.python_sandbox.sandbox import SandboxUnavailable, run_python
 
+    # The program is written by its own call from args.description
+    # (AssistantAgent._write_python_program) and lands here as args.code.
     code = str(args.get("code", ""))
     if not code.strip():
-        return AssistantObservation(ok=False, text="blocked: empty code")
+        return AssistantObservation(
+            ok=False, text="blocked: no program was written for this description")
     # The sandbox run is this action's whole cost, and an action's wall-clock
     # reaches the trace only as the phases it records: without one, the seconds
     # the program ran are an unaccounted gap between the review that approved
@@ -3631,23 +3670,28 @@ CAPABILITIES: dict[AssistantActionName, Capability] = {
     ),
     AssistantActionName.PYTHON_RUN: Capability(
         name=AssistantActionName.PYTHON_RUN, family="python",
-        description=('write and run a small self-contained Python program in a '
-                     'sandbox — for exact math (e.g. multiplying big numbers) '
-                     'and string manipulation (reversal, regex search, parsing). '
+        description=('run a small self-contained Python program in a sandbox '
+                     '— for exact math (e.g. multiplying big numbers) and '
+                     'string manipulation (reversal, regex search, parsing). '
                      'Standard library plus numpy, sympy, and mpmath (e.g. '
                      'sympy.prime, sympy.factorint); no other packages, no '
-                     'network, no files. print() intermediate results and/or '
-                     'end with an expression whose value is returned. Killed if '
-                     'it exceeds 30s CPU or 100 MB memory — prefer an efficient '
-                     'algorithm or sympy over brute force, and if killed, retry '
-                     'with a faster approach before giving up. '
-                     'An independent reviewer checks your reason, reasoning, '
-                     'and code against the request and user profile before '
-                     'the program runs; if it rejects, fix the listed problems '
-                     'and submit a revised program. '
-                     'args: {"code": "..."}'),
+                     'network, no files. Killed if it exceeds 30s CPU or 100 '
+                     'MB memory — ask for an efficient algorithm or sympy over '
+                     'brute force, and if killed, retry with a faster approach '
+                     'before giving up. You describe the program; a separate '
+                     'step writes it from your description and runs it. '
+                     'Describe it in plain words: what it computes, every input '
+                     'value exactly as the user gave it, and what it must '
+                     'print. Standard constants, conversion factors and '
+                     'formulas need no lookup: the program knows them. Do not '
+                     'write code. An independent reviewer checks your reason, '
+                     'reasoning, and the written program against the request '
+                     'and user profile before it runs; if it rejects, revise '
+                     'the description to fix the listed problems. '
+                     'args: {"description": "..."}'),
         summary="run a small Python program in a sandbox",
-        required_args=("code",), action=_action_python_run,
+        required_args=("description",), optional_args=frozenset({"code"}),
+        action=_action_python_run,
         read=False, timeout_seconds=60, output_cap_chars=8000,
         second_opinion=True,
     ),
@@ -4118,6 +4162,7 @@ class AssistantAgent(ModelGroupAgent):
     REPLY_AUDIT_ACTION: str = "reply_audit"
     RECALL_FILTER_ACTION: str = "recall_filter"
     MEMORY_QUERIES_ACTION: str = "memory_queries"
+    PYTHON_PROGRAM_ACTION: str = "python_program"
     # How many times one writing call's search texts are sent back for
     # overlapping. Past it the texts run as written: a model that will not
     # vary them must not cost the search.
@@ -4696,6 +4741,14 @@ class AssistantAgent(ModelGroupAgent):
                             followup_turns=followup_turns,
                             model_response=model_response,
                             tried=list(self._turn_queries))})
+                if decision.action is AssistantActionName.PYTHON_RUN:
+                    # The decision describes the program; it is written as
+                    # plain source by its own call, and the step records what
+                    # it ran.
+                    decision = decision.model_copy(update={
+                        "args": self._write_python_program(
+                            decision, step_index=step_index,
+                            messages=messages)})
                 self._set_activity(f"running {decision.action.value}")
                 step_row = self._open_step(
                     step_index=step_index, decision=decision, usage=usage,
@@ -4812,8 +4865,8 @@ class AssistantAgent(ModelGroupAgent):
                                 "second_opinion rejected this "
                                 f"{decision.action.value}; the program was "
                                 f"NOT executed. Problems:\n{listing}\n"
-                                "Fix these problems and submit a revised "
-                                "program, or choose a different action."
+                                "Fix these problems in a revised "
+                                "description, or choose a different action."
                             ),
                             data={"second_opinion": review},
                         )
@@ -5266,6 +5319,156 @@ class AssistantAgent(ModelGroupAgent):
             error=error,
             model_group_uuid=model_group_uuid,
             model_uuid=self._last_model_uuid,
+            input_tokens=usage.get("input"),
+            output_tokens=usage.get("output"),
+            duration_ms=usage.get("ms"),
+        )
+        db.clear_assistant_call_checkpoint(self._run)
+
+    def _write_python_program(
+        self,
+        decision: AssistantStepDecision,
+        *,
+        step_index: int,
+        messages: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """The arguments a python_run step runs with: the deciding call's
+        description, and the program written from it by a call of its own.
+
+        The deciding call answers in JSON, and a program written there is a
+        JSON string value: its newlines escaped, its quotes escaped, its
+        closing brackets one character from the object's own. The programs
+        that failed to compile in production all lost a closing bracket that
+        way — `print(math.sqrt(83838)`, `print(737372 * 1609.34}}` — and
+        replayed, the same decision lost it again in most tries. Written as
+        plain source from the request and the description, none did.
+
+        The writer sees the request as well as the description: given the
+        description alone, it once rounded a cube root to an integer because
+        nothing told it the volume was not a perfect cube. An answer that does
+        not compile goes back to it with the error (`python_program_from_text`)
+        inside the same call.
+
+        Falls back to the decision's own arguments when the slot has no
+        models, the description is empty, or the call fails. A program the
+        decision wrote itself still runs then; without one the step reports
+        that no program was written (`_action_python_run`)."""
+        from agents.model_groups import (
+            resolve_assistant_model_uuids, text_llm_call,
+        )
+
+        args = dict(decision.args)
+        description = str(args.get("description") or "").strip()
+        models, group_from = resolve_assistant_model_uuids(
+            ASSISTANT_PYTHON_PROGRAM_UUID)
+        if not models or not description:
+            return args
+        request, _attrs = self._request_text(messages[-1] if messages else None)
+        user_prompt = PYTHON_PROGRAM_REQUEST.format(
+            request=request, description=description)
+        self._set_activity("writing the python_run program")
+        requested_at = datetime.now(UTC)
+        step_uuid = uuid4()
+        group_uuid = self._slot_group(ASSISTANT_PYTHON_PROGRAM_UUID)
+        if self._run is not None:
+            db.checkpoint_assistant_call(
+                self._run,
+                step_index=step_index,
+                system_prompt=PYTHON_PROGRAM_SYSTEM_PROMPT,
+                user_prompt=user_prompt,
+                requested_at=requested_at,
+                model_group_uuid=group_uuid,
+                log=self._turn_log or None,
+                action=self.PYTHON_PROGRAM_ACTION,
+            )
+        from llm import capture_reasoning
+
+        usage: dict[str, Any] = {}
+        attempts: list[dict[str, Any]] = []
+        record: dict[str, Any] = dict(
+            step_index=step_index, step_uuid=step_uuid,
+            model_group_uuid=group_uuid, user_prompt=user_prompt,
+            requested_at=requested_at, usage=usage, attempts=attempts)
+        with self._logging_step(step_uuid), \
+                self._tagged_call("assistant.python_program"), \
+                capture_reasoning() as tally:
+            try:
+                code, text, model_uuid = text_llm_call(
+                    "assistant.python_program", models,
+                    PYTHON_PROGRAM_SYSTEM_PROMPT, user_prompt,
+                    python_program_from_text,
+                    usage_out=usage, attempts_out=attempts,
+                    observer=_InFlightCheckpoint(self),
+                )
+            except Exception as exc:
+                logger.warning("assistant: writing the python_run program "
+                               "failed (%s via %s)", exc, group_from)
+                self._record_python_program_step(
+                    phase="failed", error=f"{type(exc).__name__}: {exc}",
+                    reasoning=tally.reasoning_text.strip() or None,
+                    response=tally.content_text.strip() or None,
+                    model_uuid=None, **record)
+                return args
+        self._record_python_program_step(
+            phase="observed", error=None,
+            reasoning=tally.reasoning_text.strip() or None,
+            response=text, model_uuid=model_uuid, **record)
+        return {**args, "code": code}
+
+    def _record_python_program_step(
+        self,
+        *,
+        step_index: int,
+        step_uuid: UUID,
+        phase: str,
+        model_group_uuid: UUID | None,
+        user_prompt: str,
+        requested_at: datetime,
+        usage: dict[str, Any],
+        attempts: list[dict[str, Any]],
+        reasoning: str | None,
+        response: str | None,
+        model_uuid: UUID | None,
+        error: str | None,
+    ) -> None:
+        """Persist the program-writing call as its own code-driven step row.
+
+        Code-driven: the loop issued it once the decision chose python_run,
+        and it consumes none of the step budget. Its answer is its result —
+        the program is on `model_response`, and what it printed is the
+        python_run step's own observation."""
+        reason = "write the python_run program"
+        self._steps.append({
+            "step_index": step_index,
+            "phase": phase,
+            "action": self.PYTHON_PROGRAM_ACTION,
+            "reason": reason,
+            "error": error,
+            "code_driven": True,
+        })
+        if self._run is None:
+            return
+        db.append_assistant_step(
+            run_uuid=self._run.uuid,
+            uuid=step_uuid,
+            step_index=step_index,
+            phase=phase,  # type: ignore[arg-type]
+            action=self.PYTHON_PROGRAM_ACTION,
+            reason=reason,
+            system_prompt=PYTHON_PROGRAM_SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            log=self._turn_log or None,
+            reasoning=reasoning,
+            model_response=response,
+            rejected_attempts=attempts or None,
+            code_driven=True,
+            # When the answering member was asked: after a fallback or a
+            # rejected answer, not when the call began.
+            requested_at=(datetime.fromisoformat(usage["requested_at"])
+                          if usage.get("requested_at") else requested_at),
+            error=error,
+            model_group_uuid=model_group_uuid,
+            model_uuid=model_uuid,
             input_tokens=usage.get("input"),
             output_tokens=usage.get("output"),
             duration_ms=usage.get("ms"),
@@ -6022,6 +6225,12 @@ class AssistantAgent(ModelGroupAgent):
             ET.SubElement(proposed, "model_reasoning").text = reasoning[
                 : self.SECOND_OPINION_MAX_REASONING_CHARS
             ]
+        # What the deciding call asked for, then the program written from it
+        # (`_write_python_program`): a program can be wrong because the
+        # description was, or in spite of it.
+        description = str(decision.args.get("description") or "").strip()
+        if description:
+            ET.SubElement(proposed, "program_description").text = description
         code = str(decision.args.get("code", ""))
         ET.SubElement(proposed, "python_program").text = code[
             : self.SECOND_OPINION_MAX_CODE_CHARS

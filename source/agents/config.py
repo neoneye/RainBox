@@ -107,6 +107,7 @@ ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID: UUID = UUID(
     "6d4ef68c-8b63-4f55-b704-b3a2b416d9a7")
 ASSISTANT_REPLY_AUDIT_UUID: UUID = UUID("5c8e3a17-4d92-4b6f-8a30-1e7c9f2b45d8")
 ASSISTANT_RUN_SUMMARIZER_UUID: UUID = UUID("5d9a8c74-1e2b-4f3a-bc6d-7a0e9f481c25")
+ASSISTANT_PYTHON_PROGRAM_UUID: UUID = UUID("6fa4ebf0-9975-4349-b9ef-f7f0855acf6e")
 
 # The in-flight progress bubble, posted at enqueue time (the moment a human
 # message triggers a turn) so it appears immediately — before the agent process
@@ -234,6 +235,11 @@ agent_config: dict[str, AgentConfigEntry] = {
         "uuid": ASSISTANT_REPLY_AUDIT_UUID,
         "requires_structured_output": True,
         "description": "binding-only: the model that AUDITS a finished reply message before it is sent — checks it against the request (every sub-question answered), the turn's constraints, the operator settings and the turn's observations, and returns it with problems when it is not sound. Fails open: unbound or failing, the message is sent.",
+    },
+    "assistant.python_program": {
+        "uuid": ASSISTANT_PYTHON_PROGRAM_UUID,
+        "requires_structured_output": False,
+        "description": "binding-only: the model that WRITES the program a python_run step runs, as plain Python source, from the request and the description the deciding call gave. Plain text rather than structured output: code written inside a JSON string lost its closing brackets. Unbound or failing, the step reports that no program was written.",
     },
     "assistant.response_language_classifier": {
         "uuid": ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID,

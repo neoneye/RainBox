@@ -764,7 +764,29 @@ only by `undo_write_intent`.
   env). The parent kills the job past 30s CPU (`RLIMIT_CPU`), 100 MB memory
   growth above the post-load baseline (RSS polling), or 60s wall clock.
   Touches no operator data. Gated by the second-opinion review (next
-  section). Needs node + a one-time `npm install` in
+  section).
+
+  The deciding call does not write the program. Its arguments are
+  `{"description": "..."}` — what to compute, every input value as the user
+  gave it, what to print — and `_write_python_program` has the program
+  written from the request and that description by a call of its own
+  (`assistant.python_program` slot, falling back to `assistant.default`),
+  answering in plain text through `model_groups.text_llm_call`. A program
+  written inside the decision's JSON is a JSON string value, and the
+  programs that failed to compile in production had all lost a closing
+  bracket to the JSON around it (`print(math.sqrt(83838)`,
+  `print(737372 * 1609.34}}`); replayed, those decisions lost it again in
+  most tries, and the plain-text writer in none. The writer is a short
+  prompt of its own, not the deciding conversation continued: that
+  conversation's system prompt asks for one JSON decision, and asked for
+  plain source it still answered in JSON now and then. It sees the request
+  as well as the description — from the description alone it once rounded a
+  cube root to an integer. An answer that does not compile goes back to it
+  with the error inside the same call (`python_program_from_text`). The call
+  is a code-driven `python_program` step row; the python_run step records
+  both `description` and `code`. Unbound or failing, the decision's own
+  `code` runs if it wrote one; otherwise the step fails with "no program was
+  written". Needs node + a one-time `npm install` in
   `tools/python_sandbox` (`tools.doctor` checks); otherwise the model sees a
   `blocked:` observation. Design spec:
   `docs/superpowers/specs/2026-07-19-python-sandbox-design.md` (repo root).

@@ -18,6 +18,7 @@ from agents.config import (
     ASSISTANT_DECIDE_UUID,
     ASSISTANT_DEFAULT_UUID,
     ASSISTANT_MEMORY_FILTER_UUID,
+    ASSISTANT_PYTHON_PROGRAM_UUID,
     ASSISTANT_REPLY_AUDIT_UUID,
     ASSISTANT_REQUEST_SUMMARY_UUID,
     ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID,
@@ -38,6 +39,7 @@ STEP_SLOTS = [
     ASSISTANT_REPLY_AUDIT_UUID,
     ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID,
     ASSISTANT_RUN_SUMMARIZER_UUID,
+    ASSISTANT_PYTHON_PROGRAM_UUID,
 ]
 
 
@@ -70,6 +72,7 @@ def test_the_slot_roster_is_exactly_the_assistants_calls():
         "assistant.reply_audit",
         "assistant.response_language_classifier",
         "assistant.run_summarizer",
+        "assistant.python_program",
     }
 
 
@@ -81,16 +84,23 @@ def test_slot_names_are_the_activity_caller_tags():
                            send=lambda _: None)
     for purpose in ("decide", "acceptance_criteria", "request_summary",
                     "memory_filter", "second_opinion", "reply_audit",
-                    "response_language_classifier"):
+                    "response_language_classifier", "python_program"):
         assert agent._caller_tag(purpose) in agent_config, purpose
 
 
-def test_every_slot_requires_structured_output():
-    """Every call behind these slots parses into a Pydantic model, so a group
-    that does not promise structured output must not be offerable for one."""
+#: The slots whose call answers in plain text (model_groups.text_llm_call).
+PLAIN_TEXT_SLOTS = {"assistant.python_program"}
+
+
+def test_every_structured_slot_requires_structured_output():
+    """Every other call behind these slots parses into a Pydantic model, so a
+    group that does not promise structured output must not be offerable for
+    one. The program writer answers in plain source — the point of its own
+    call — so any group may run it."""
     for name, entry in agent_config.items():
         if name.startswith("assistant."):
-            assert entry.get("requires_structured_output") is True, name
+            assert (entry.get("requires_structured_output") is True) is (
+                name not in PLAIN_TEXT_SLOTS), name
 
 
 def test_role_name_maps_a_slot_uuid_back_to_its_name():

@@ -466,10 +466,12 @@ def _generic_action(event: dict) -> list[dict]:
 
 
 def _python_run(event: dict) -> list[dict]:
-    """A program and its output, as a program and its output."""
+    """What the program was asked to do, the program written from that, and
+    its output."""
     payload = event.get("payload") or {}
     args = payload.get("args") or {}
     return _blocks(
+        _block("description", args.get("description")),
         _block("code", args.get("code")),
         _block("output", _result_text(payload)),
         _block("error", payload.get("error")),

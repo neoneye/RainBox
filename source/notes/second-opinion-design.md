@@ -38,7 +38,8 @@ before `_dispatch_action`:
   failed observation ("second_opinion rejected this python_run; the program
   was NOT executed. Problems: …"), which flows back through the scratchpad;
   the action signature also lands in `failed_actions`, so the model must
-  revise the program — resubmitting it verbatim is blocked by the loop.
+  revise the description — resubmitting the same program verbatim is blocked
+  by the loop.
 
 ## The verdict
 
@@ -109,7 +110,8 @@ ElementTree so dynamic content cannot close or forge a section tag:
    §Acceptance criteria). The criteria are part of what "serves the request" means: a
    program converting to yards should fail review when they say meters.
 3. `<proposed_step action="…">` — `<stated_reason>`, `<model_reasoning>`
-   (omitted for non-reasoning models), `<python_program>`
+   (omitted for non-reasoning models), `<program_description>` (what the
+   deciding call asked for), `<python_program>` (the program written from it)
 4. `<verdict_request>` — list real problems (or none), then set approved
 5. `<user_settings_yaml>` / `<user_expertise_yaml>` / `<user_profile>` — who is asking
 6. `<current_local_time>`

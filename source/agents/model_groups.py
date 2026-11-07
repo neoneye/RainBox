@@ -2,8 +2,8 @@
 
 Two concerns that every structured call in the system shares, and that no
 single agent owns: resolving a binding chain to a group's members
-(`resolve_*`), and making one structured-output call against those members
-with fallback (`structured_llm_call`).
+(`resolve_*`), and making one call against those members with fallback —
+structured (`structured_llm_call`) or plain text (`text_llm_call`).
 
 They live apart from any agent because the callers are not agents. The
 assistant's recall filter, second opinion, reply audit and language classifier
@@ -272,6 +272,196 @@ def structured_llm_call(
     )
 
 
+#: How many times one member is sent its own unusable answer back, with the
+#: reason, before the group moves on. The same bound the structured path
+#: gives a rejected response (ModelGroupAgent.REJECTED_RESPONSE_RETRIES).
+TEXT_CALL_REJECTION_RETRIES: int = 2
+
+
+def text_llm_call(
+    agent_name: str,
+    candidate_model_uuids: list[UUID],
+    system_prompt: str,
+    user_prompt: str,
+    parse: Any,
+    *,
+    usage_out: dict[str, Any] | None = None,
+    attempts_out: list[dict[str, Any]] | None = None,
+    observer: Any = None,
+) -> tuple[Any, str, UUID]:
+    """One plain-text call, falling back through a model group's members.
+    Returns (parse(text), text, answering_model_uuid); raises RuntimeError
+    when every member fails.
+
+    `structured_llm_call` without the schema: for an answer that is worse for
+    being written inside JSON. Code is the case it exists for — a program
+    written as a JSON string value lost its closing brackets to the JSON
+    around it, where the same model writing plain source did not.
+
+    `parse` turns the answer into what the caller wants and raises ValueError
+    when it cannot. That answer goes back to the same member as its own turn,
+    followed by the reason, up to TEXT_CALL_REJECTION_RETRIES times before the
+    group moves on: an unusable answer is usually one correction away from a
+    usable one, and the next member, told nothing, is no likelier to avoid it.
+
+    Tags, `usage_out`, `attempts_out` and `observer` behave as they do on
+    `structured_llm_call`. A rejected answer is recorded in `attempts_out`
+    with `outcome: "rejected"` and the feedback it earned."""
+    if not candidate_model_uuids:
+        raise RuntimeError(
+            f"agent {agent_name} has no model group bound (assign one on /agentmodel)"
+        )
+    from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
+    from llama_index.core.instrumentation.dispatcher import (
+        active_instrument_tags, instrument_tags,
+    )
+
+    from agents.base import (ModelGroupAgent, WhitespaceRunaway,
+                             check_whitespace_runaway, truncate_middle)
+    from llm import capture_reasoning
+    from llm.activity import close_stream
+
+    base = [
+        ChatMessage(role=MessageRole.SYSTEM, content=system_prompt),
+        ChatMessage(role=MessageRole.USER, content=user_prompt),
+    ]
+    last_error: Exception | None = None
+    for model_uuid in candidate_model_uuids:
+        corrections: list[ChatMessage] = []
+        rejections = 0
+        runaway_retries = 0
+        while True:
+            token_counter = TokenCountingHandler()
+            attempt_at = datetime.now(UTC)
+            t0 = time.monotonic()
+            model_name = ""
+            reasoning: str | None = None
+            text = ""
+            try:
+                _provider_id, model_name, args = db.resolved_model_kwargs(model_uuid)
+                timeout_s = float(args.get("request_timeout") or args.get("timeout") or 60.0)
+                if observer is not None:
+                    observer.started(model_uuid, model_name, timeout_s)
+                the_llm = prepare_llm(_provider_id, model_name,
+                                      {**args, "max_retries": 0})
+                the_llm.callback_manager = CallbackManager([token_counter])
+                deadline = time.monotonic() + timeout_s
+                call_tags = {**active_instrument_tags.get(),
+                             "caller": agent_name,
+                             "model_uuid": str(model_uuid)}
+                with instrument_tags(call_tags), capture_reasoning() as tally:
+                    stream = the_llm.stream_chat(base + corrections)
+                    last = None
+                    try:
+                        for last in stream:
+                            text = (tally.content_text
+                                    or getattr(getattr(last, "message", None),
+                                               "content", None)
+                                    or "")
+                            if observer is not None:
+                                observer.progress(
+                                    model_uuid, model_name,
+                                    tally.reasoning_text.strip() or None,
+                                    text.strip() or None)
+                            check_whitespace_runaway(text)
+                            if time.monotonic() > deadline:
+                                raise TimeoutError(
+                                    f"text stream exceeded {timeout_s:.0f}s "
+                                    "(model still generating)")
+                    except BaseException as abandoned:
+                        close_stream(stream, abandoned)
+                        raise
+                    finally:
+                        reasoning = tally.reasoning_text.strip() or None
+                        text = (tally.content_text or text or "").strip()
+                if last is None or not text:
+                    raise RuntimeError("text stream produced no answer")
+                try:
+                    result = parse(text)
+                except ValueError as e:
+                    if rejections >= TEXT_CALL_REJECTION_RETRIES:
+                        raise
+                    rejections += 1
+                    feedback = [
+                        {"role": "assistant", "content": text},
+                        {"role": "user", "content": (
+                            f"That answer cannot be used: {e}\n\nAnswer the "
+                            "same request again, without that fault, and "
+                            "with nothing but the answer itself.")},
+                    ]
+                    if attempts_out is not None:
+                        attempts_out.append({
+                            "outcome": "rejected",
+                            "model_uuid": str(model_uuid),
+                            "model_name": model_name,
+                            "requested_at": attempt_at.isoformat(),
+                            "ms": int((time.monotonic() - t0) * 1000),
+                            "input_tokens": token_counter.prompt_llm_token_count,
+                            "output_tokens": token_counter.completion_llm_token_count,
+                            "reasoning": truncate_middle(
+                                reasoning or "",
+                                ModelGroupAgent.REJECTED_ATTEMPT_REASONING_CHARS) or None,
+                            "response": truncate_middle(
+                                text, ModelGroupAgent.REJECTED_RESPONSE_ECHO_CHARS),
+                            "error": f"ValueError: {e}",
+                            "feedback": feedback,
+                        })
+                    logger.warning(
+                        "agent %s: model %s gave an unusable answer (%s); "
+                        "asking it again with the reason", agent_name,
+                        model_uuid, e)
+                    corrections.extend(
+                        ChatMessage(role=MessageRole(t["role"]), content=t["content"])
+                        for t in feedback)
+                    continue
+                if usage_out is not None:
+                    usage_out.update({
+                        "input": token_counter.prompt_llm_token_count,
+                        "output": token_counter.completion_llm_token_count,
+                        "ms": int((time.monotonic() - t0) * 1000),
+                        "requested_at": attempt_at.isoformat(),
+                    })
+                return result, text, model_uuid
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    "agent %s: model %s failed (%s); trying next in group",
+                    agent_name, model_uuid, e,
+                )
+                if observer is not None:
+                    try:
+                        observer.failed(model_uuid, model_name, e,
+                                        reasoning, text or None)
+                    except Exception:   # noqa: BLE001 — watching must not cost the call
+                        logger.warning("agent %s: observer failed", agent_name,
+                                       exc_info=True)
+                if attempts_out is not None:
+                    attempts_out.append({
+                        "outcome": "failed",
+                        "model_uuid": str(model_uuid),
+                        "model_name": model_name,
+                        "requested_at": attempt_at.isoformat(),
+                        "ms": int((time.monotonic() - t0) * 1000),
+                        "input_tokens": token_counter.prompt_llm_token_count,
+                        "output_tokens": token_counter.completion_llm_token_count,
+                        "reasoning": truncate_middle(
+                            reasoning or "",
+                            ModelGroupAgent.REJECTED_ATTEMPT_REASONING_CHARS) or None,
+                        "response": truncate_middle(
+                            text, ModelGroupAgent.REJECTED_RESPONSE_ECHO_CHARS) or None,
+                        "error": f"{type(e).__name__}: {e}",
+                    })
+                if (isinstance(e, WhitespaceRunaway)
+                        and runaway_retries < ModelGroupAgent.WHITESPACE_RUNAWAY_RETRIES):
+                    runaway_retries += 1
+                    continue
+            break
+    raise RuntimeError(
+        f"agent {agent_name}: all {len(candidate_model_uuids)} models "
+        f"in the group failed; last error: {last_error}"
+    )
+
+
 def assistant_slot_uuids() -> list[UUID]:
     """Every `assistant.*` model slot: one per model call the assistant makes."""
     from agents.config import (
@@ -279,6 +469,7 @@ def assistant_slot_uuids() -> list[UUID]:
         ASSISTANT_DECIDE_UUID,
         ASSISTANT_DEFAULT_UUID,
         ASSISTANT_MEMORY_FILTER_UUID,
+        ASSISTANT_PYTHON_PROGRAM_UUID,
         ASSISTANT_REPLY_AUDIT_UUID,
         ASSISTANT_REQUEST_SUMMARY_UUID,
         ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID,
@@ -289,7 +480,8 @@ def assistant_slot_uuids() -> list[UUID]:
     return [ASSISTANT_DEFAULT_UUID, ASSISTANT_DECIDE_UUID, ASSISTANT_ACCEPTANCE_CRITERIA_UUID,
             ASSISTANT_REQUEST_SUMMARY_UUID, ASSISTANT_MEMORY_FILTER_UUID,
             ASSISTANT_SECOND_OPINION_UUID, ASSISTANT_REPLY_AUDIT_UUID,
-            ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID, ASSISTANT_RUN_SUMMARIZER_UUID]
+            ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID, ASSISTANT_RUN_SUMMARIZER_UUID,
+            ASSISTANT_PYTHON_PROGRAM_UUID]
 
 
 def model_base_url(member_uuid: UUID) -> str | None:

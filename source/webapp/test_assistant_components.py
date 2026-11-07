@@ -55,6 +55,20 @@ def test_python_run_shows_its_code_and_output():
     assert ">4<" in html or "4" in html
 
 
+def test_python_run_shows_what_the_program_was_asked_to_do():
+    """The decision describes the program and a call of its own writes it, so
+    a wrong result is either a wrong description or a wrong program — the
+    pane shows both to tell which."""
+    html = render_event_detail(_event(
+        "action", "python_run",
+        payload={"args": {"description": "Add two and two.",
+                          "code": "print(2 + 2)"},
+                 "observation": {"text": "4"}}))
+
+    assert "Add two and two." in html
+    assert html.index("Add two and two.") < html.index("print(2 + 2)")
+
+
 def test_an_llm_pane_reports_the_call_cost():
     html = render_event_detail(_event(
         "llm", "decide → reply",

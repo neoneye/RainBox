@@ -83,7 +83,7 @@ def _python_run(code: str) -> AssistantStepDecision:
     return AssistantStepDecision(
         reason="compute the conversion",
         action=AssistantActionName.PYTHON_RUN,
-        args={"code": code},
+        args={"description": "convert the user's value", "code": code},
     )
 
 
