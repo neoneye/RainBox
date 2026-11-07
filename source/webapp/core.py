@@ -215,11 +215,11 @@ NAV_TEMPLATE = """
       <div class="pp-dd-menu">
         <a href="{{ url_for('demo_tts_kokoro') }}" class="{{ 'pp-active' if request.endpoint == 'demo_tts_kokoro' }}">TTS kokoro</a>
         <a href="{{ url_for('demo_tts_lfm3') }}" class="{{ 'pp-active' if request.endpoint == 'demo_tts_lfm3' }}">TTS lfm3</a>
-        <a href="{{ url_for('demo_tts_dotstts') }}" class="{{ 'pp-active' if request.endpoint == 'demo_tts_dotstts' }}">Clone</a>
         <a href="{{ url_for('demo_stt_whisper') }}" class="{{ 'pp-active' if request.endpoint == 'demo_stt_whisper' }}">STT whisper</a>
         <a href="{{ url_for('demo_stt_gemma4') }}" class="{{ 'pp-active' if request.endpoint == 'demo_stt_gemma4' }}">STT gemma4</a>
         <a href="{{ url_for('demo_stt_lfm3') }}" class="{{ 'pp-active' if request.endpoint == 'demo_stt_lfm3' }}">STT lfm3</a>
         <a href="{{ url_for('demo_voice_echo') }}" class="{{ 'pp-active' if request.endpoint == 'demo_voice_echo' }}">Echo</a>
+        <a href="{{ url_for('demo_tts_dotstts') }}" class="{{ 'pp-active' if request.endpoint == 'demo_tts_dotstts' }}">Clone</a>
       </div>
     </details>
     <a href="{{ url_for('find_page') }}" class="{{ 'pp-active' if request.endpoint == 'find_page' }}">Find</a>
