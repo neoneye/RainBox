@@ -28,6 +28,7 @@ from typing import Any
 from uuid import UUID
 
 from flask import abort, render_template_string, request, url_for
+from markupsafe import Markup, escape
 
 import db
 from llm.activity_metrics import MIN_CALIBRATION_CALLS
@@ -239,6 +240,13 @@ def cache_reading(call: Any) -> tuple[str, str, str]:
             "unjudged",
         )
     return ("—", "not recorded", "")
+
+
+def dotted_breaks(text: str | None) -> Markup:
+    """`text` escaped, with a <wbr> after each dot: a dotted name such as
+    `memory.embeddings._default_embed` may then wrap between its parts, and
+    nowhere else, when its table cell runs out of room."""
+    return Markup(".<wbr>").join(escape(text or "").split("."))
 
 
 def pct(value: float | None) -> str:
@@ -500,6 +508,7 @@ def build_context(args: Any, now: datetime) -> dict:
         "exact": exact,
         "cache_reading": cache_reading,
         "pct": pct,
+        "dotted_breaks": dotted_breaks,
         "ms": ms,
         "duration": duration,
         "format_metric": format_metric,
@@ -535,8 +544,10 @@ ACTIVITY_TEMPLATE = """
                      letter-spacing: 0.04em; }
   .pp-act .tile .v { font-size: 1.7rem; font-weight: 600; margin-top: 0.15rem; }
   .pp-act .tile .n { color: #6c757d; font-size: 0.82rem; margin-top: 0.2rem; }
+  /* A table that still cannot fit scrolls inside its own panel, so the page
+     itself never scrolls sideways. */
   .pp-act .panel { border: 1px solid #e5e7eb; border-radius: 10px; padding: 1rem;
-                   margin-bottom: 1.6rem; }
+                   margin-bottom: 1.6rem; overflow-x: auto; }
   .pp-act .panel h2 { margin: 0 0 0.1rem; font-size: 1.05rem; }
   .pp-act .panel .note { color: #6c757d; font-size: 0.85rem; margin: 0 0 0.8rem; }
   .pp-act svg { width: 100%; height: auto; display: block; }
@@ -563,6 +574,13 @@ ACTIVITY_TEMPLATE = """
   .pp-act td.name { font-weight: 600; }
   .pp-act .muted { color: #6c757d; }
   .pp-act td.origin { font-family: ui-monospace, monospace; font-size: 0.8rem; }
+  /* The three long cells of Recent calls — caller, origin, error — wrap, but
+     only when the window is too narrow for one line, and only where a break
+     reads naturally: after a dot in a dotted name (<wbr>), and before an
+     origin's "in <function>", which stays whole. On a wide screen every row
+     is still one line. */
+  .pp-act td.wrap { white-space: normal; }
+  .pp-act td.wrap .whole { white-space: nowrap; }
   .pp-act .warn { color: #b06f00; }
   .pp-act .bad { color: #c0392b; }
   .pp-act a.bad { text-decoration: underline; text-underline-offset: 2px; }
@@ -884,8 +902,9 @@ ACTIVITY_TEMPLATE = """
         <td class="muted">{{ call.started_at.strftime('%b %-d %H:%M:%S')
                              if call.started_at else '—' }}</td>
         <td class="name">{{ call.model or '—' }}</td>
-        <td class="muted">{{ call.caller }}</td>
-        <td class="muted origin">{{ call.origin or '—' }}</td>
+        <td class="muted wrap">{{ dotted_breaks(call.caller) }}</td>
+        {% set where, _, fn = (call.origin or '—').partition(' in ') %}
+        <td class="muted origin wrap">{{ where }}{% if fn %} <span class="whole">in {{ fn }}</span>{% endif %}</td>
         <td class="num" title="{{ exact(call.prompt_tokens, 'tokens') }}">{{ si(call.prompt_tokens) }}</td>
         {% set cache_text, cache_hover, cache_cls = cache_reading(call) %}
         <td class="num {{ cache_cls }}" title="{{ cache_hover }}">{{ cache_text }}</td>
@@ -893,8 +912,8 @@ ACTIVITY_TEMPLATE = """
         <td class="num" title="{{ exact(call.completion_tokens, 'tokens') }}">{{ si(call.completion_tokens) }}</td>
         <td class="num" title="{{ exact(call.prefill_ms, 'ms') }}">{{ ms(call.prefill_ms) }}</td>
         <td class="num" title="{{ exact(call.total_ms, 'ms') }}">{{ ms(call.total_ms) }}</td>
-        <td>{% if not call.ok %}<span class="bad">{{ call.error_category
-            or 'failed' }}</span>{% endif %}</td>
+        <td class="wrap">{% if not call.ok %}<span class="bad">{{
+            dotted_breaks(call.error_category or 'failed') }}</span>{% endif %}</td>
         <td><a class="inspect" href="{{ url_for('activity_call_page',
                call_uuid=call.uuid) }}">inspect</a></td>
       </tr>

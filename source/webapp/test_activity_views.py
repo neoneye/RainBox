@@ -267,7 +267,19 @@ class TestOriginColumn:
         add_call(model, origin="benchmarks/story.py:412 in _take_turn")
         body = client.get("/activity?range=24h").get_data(as_text=True)
         assert "Origin" in body
-        assert "benchmarks/story.py:412 in _take_turn" in body
+        # The function stays whole, so a narrow window breaks before "in".
+        assert 'benchmarks/story.py:412 <span class="whole">in _take_turn</span>' in body
+
+    def test_dotted_names_may_break_only_after_a_dot(self, client, model):
+        add_call(model, caller="unit-test.caller.long_name")
+        body = client.get("/activity?range=24h").get_data(as_text=True)
+        assert "unit-test.<wbr>caller.<wbr>long_name" in body
+
+    def test_dotted_breaks_escapes_the_text(self):
+        from webapp.activity_views import dotted_breaks
+
+        assert str(dotted_breaks("a.<b>")) == "a.<wbr>&lt;b&gt;"
+        assert str(dotted_breaks(None)) == ""
 
     def test_a_call_with_no_origin_shows_a_dash_not_a_blank_cell(
         self, client, model
