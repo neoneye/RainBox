@@ -172,6 +172,17 @@ def test_each_rejection_ground_names_its_category_tag():
         assert category in SECOND_OPINION_TURN_INSTRUCTIONS
 
 
+
+def test_output_formatting_is_outside_the_review():
+    """Display preferences belong to the reply. A reviewer that applied the
+    profile's number format to a program's print rejected a correct
+    computation, then rejected the formatted revision for rounding, and the
+    turn spent its steps resending the two until the limit."""
+    text = SECOND_OPINION_TURN_INSTRUCTIONS
+    assert "How the program prints its result is not under review." in text
+    assert "never reject one for printing more or fewer digits" in text
+
+
 def test_problem_texts_reads_both_shapes():
     """One helper renders problems wherever they are shown, so a legacy inline
     payload of strings and a new payload of objects both display as text."""

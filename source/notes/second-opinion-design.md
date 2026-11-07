@@ -79,6 +79,16 @@ reject only for problems that would change or invalidate the result —
   beyond stdlib + numpy/sympy/mpmath);
 - the stated reason misrepresents what the program does.
 
+How the program prints its result is outside the review. The profile's
+display preferences (number format, decimal places, how dates and times are
+written) govern the final reply, which the reply audit checks against them;
+a program printing a plain value is correct. A format preference matters to
+the reviewer only when the program reads a value the user wrote in that
+format. A reviewer that applies `number_format` to a program's `print` asks
+for fixed decimals, then rejects the revision for rounding. That leaves the
+assistant no program the reviewer will pass, and it spends the turn resending
+both until the step limit.
+
 Everything else is approved: a rejection costs the assistant one of its few
 steps, so style preferences and hypothetical concerns never reject. The
 prompt also declares everything under review — including comments and strings

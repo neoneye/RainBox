@@ -707,6 +707,14 @@ ground below carries the `category` to tag a problem of that kind with:
 
 Use `other` only for a real problem none of these grounds covers.
 
+How the program prints its result is not under review. The profile's display
+preferences — number format, decimal places, how dates and times are written
+— decide how the final reply shows the result, and the reply is checked
+against them on its own. A program that prints a plain, unformatted value is
+correct, so never reject one for printing more or fewer digits, or a
+different notation, than the reply will use. A format preference matters here
+only when the program reads a value the user wrote in that format.
+
 Approve everything else. A rejection costs the assistant one of its few steps,
 so style preferences, micro-optimisations, and hypothetical concerns are never
 grounds to reject. When you reject, each problem must tell the assistant what
