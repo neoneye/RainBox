@@ -14,8 +14,9 @@ The engine tables below are what the page knows about each one:
   Whisper takes the recorder's webm/ogg as is.
 - `need`: the health field that must be true besides `reachable` — the model
   has the `audio` (hears) or `speech` (speaks) capability.
-- TTS `speed`: whether the engine takes a speed; LFM3 supports speed 1 only,
-  so the slider hides for it.
+- TTS `speed`: whether the engine's proxy takes a speed (both do; LFM3's
+  proxy applies it with ffmpeg after synthesis). The slider hides for an
+  engine that does not.
 
 The picks, and the voice per TTS engine, are remembered in localStorage.
 """
@@ -439,7 +440,7 @@ def _tts_engines() -> list[dict]:
          "page": url_for("demo_tts_kokoro"), "health": url_for("demo_tts_kokoro_health"),
          "voices": url_for("demo_tts_kokoro_voices"),
          "synthesize": url_for("demo_tts_kokoro_synthesize")},
-        {"id": "lfm3", "name": "LFM3", "speed": False, "need": "speech",
+        {"id": "lfm3", "name": "LFM3", "speed": True, "need": "speech",
          "page": url_for("demo_tts_lfm3"), "health": url_for("demo_tts_lfm3_health"),
          "voices": url_for("demo_tts_lfm3_voices"),
          "synthesize": url_for("demo_tts_lfm3_synthesize")},

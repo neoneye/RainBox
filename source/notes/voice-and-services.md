@@ -25,7 +25,7 @@ service is down (a health banner, not a crash).
 | Kokoro TTS | `http://127.0.0.1:5005` | `KOKORO_TTS_URL` (webapp) |
 | dots.tts clone | `http://127.0.0.1:5007` | `DOTS_TTS_URL` (webapp) |
 | gemma4 STT (Ollama) | `http://127.0.0.1:11434`, model `gemma4:e4b-mlx` | `OLLAMA_BASE_URL`, `GEMMA4_STT_MODEL` (webapp) |
-| LFM3-Audio TTS (Ollama) | `http://127.0.0.1:11434`, model `lfm3-audio:2b-mlx-bf16` | `OLLAMA_BASE_URL`, `LFM3_TTS_MODEL` (webapp) |
+| LFM3-Audio TTS (Ollama) | `http://127.0.0.1:11434`, model `lfm3-audio:2b-mlx-bf16` | `OLLAMA_BASE_URL`, `LFM3_TTS_MODEL`, `FFMPEG_BIN` (webapp; ffmpeg for speeds other than 1) |
 | LFM3-Audio STT (Ollama) | `http://127.0.0.1:11434`, model `lfm3-audio:2b-mlx-bf16` | `OLLAMA_BASE_URL`, `LFM3_STT_MODEL` (webapp) |
 | Telegram bridge | outbound-only | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_IDS` (required); `TELEGRAM_ROOM_NAME`, `TELEGRAM_STATE_FILE`, `RAINBOX_URL` |
 | Discord bridge | outbound-only | connector mode: `BRIDGE_CONNECTOR`, the token under the connector's `token_env` name, `DISCORD_STATE_FILE`, `RAINBOX_URL` (the launcher sets all four); legacy env mode: `DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID`, `DISCORD_ALLOWED_USER_IDS` |
@@ -209,8 +209,15 @@ same-origin through the web app:
   `/v1/audio/speech` (`response_format` `wav`; Ollama also takes `pcm`, not
   `mp3`), which answers with 24 kHz mono 16-bit WAV. Ollama streams that WAV,
   so its RIFF and data sizes are the `0xFFFFFFFF` placeholder (a reader sees
-  ~24.8 hours); the proxy writes the real sizes before answering. Only speed 1
-  is supported, so there is no speed slider. Ollama's OpenAI-style errors
+  ~24.8 hours); the proxy writes the real sizes before answering. Ollama
+  speaks at speed 1 only (any other `speed` is refused), so the page's speed
+  slider (0.5–2.0, remembered in localStorage) is applied afterwards: the
+  proxy pipes the WAV through `ffmpeg -filter:a atempo=<speed>`, which keeps
+  the pitch, and the downloaded file has the new speed. ffmpeg comes from
+  PATH or `FFMPEG_BIN`; without it any speed but 1 is a 500 naming the
+  missing binary. LFM3's own clip length for the same text varies between
+  runs (4.6–5.8s for one sentence), so compare speeds on one clip, not
+  across syntheses. Ollama's OpenAI-style errors
   (`{"error": {"message": …}}`, e.g. an unknown voice) are flattened to
   `{"error": "…"}`. Proxies: `…/health` (`/api/show`: reachable, and whether
   the capabilities include `speech`), `…/voices`, `…/synthesize` (300s
@@ -232,8 +239,8 @@ same-origin through the web app:
   gemma4 and LFM3 need only Ollama. gemma4 and LFM3 take WAV only, so for
   them the recording is re-encoded in the browser with the gemma4 STT page's
   `TO_WAV_JS` (shared, not copied); Whisper gets the recorder's webm/ogg.
-  The voice list reloads per TTS engine, and the speed slider hides for
-  LFM3 (speed 1 only). The badges also check the `audio` / `speech`
+  The voice list reloads per TTS engine; the speed slider applies to both
+  (for LFM3 through its proxy's ffmpeg step). The badges also check the `audio` / `speech`
   capability for the Ollama engines. The picks and the voice per engine are
   remembered in localStorage.
 

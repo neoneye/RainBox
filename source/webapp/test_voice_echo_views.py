@@ -46,7 +46,7 @@ def test_engines_that_take_only_wav_get_the_encoder():
     assert stt["whisper"]["wav"] is False
     assert stt["gemma4"]["wav"] is True and stt["lfm3"]["wav"] is True
     assert tts["kokoro"]["speed"] is True
-    assert tts["lfm3"]["speed"] is False and tts["lfm3"]["need"] == "speech"
+    assert tts["lfm3"]["speed"] is True and tts["lfm3"]["need"] == "speech"
     body = app.test_client().get("/demo_voice_echo").get_data(as_text=True)
     assert body.count("async function ppToWav") == 1
 

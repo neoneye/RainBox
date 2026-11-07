@@ -11,7 +11,12 @@ comes from LFM3_TTS_MODEL, never from the caller.
   with 24 kHz mono 16-bit WAV. Ollama writes that WAV as a stream, so the RIFF
   and data chunk sizes are the 0xFFFFFFFF placeholder; once the whole body is
   in, the proxy writes the real sizes so players and downloads show the true
-  length. The endpoint supports speed 1 only, so the page has no speed control.
+  length.
+- Ollama's endpoint speaks at speed 1 only, so the speed slider (0.5-2.0, like
+  Kokoro's) is applied afterwards: the proxy pipes the WAV through ffmpeg's
+  `atempo` filter, which changes the tempo and keeps the pitch. The downloaded
+  file has the new speed. ffmpeg is found on PATH, or at FFMPEG_BIN; without
+  it any speed but 1 answers with an error naming the missing binary.
 - Ollama's OpenAI-style errors ({"error": {"message": ...}}) are flattened to
   {"error": "..."} like the other demo proxies.
 
@@ -23,6 +28,7 @@ its response describes the clip instead of carrying the audio.
 import io
 import os
 import struct
+import subprocess
 import wave
 from datetime import UTC, datetime
 
@@ -37,6 +43,8 @@ DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434"
 DEFAULT_MODEL = "lfm3-audio:2b-mlx-bf16"
 PROXY_TIMEOUT = 300  # seconds; the first request may also load the model
 HEALTH_TIMEOUT = 3  # seconds; the status badge must not hang on a dead server
+SPEED_MIN, SPEED_MAX = 0.5, 2.0
+FFMPEG_TIMEOUT = 60  # seconds; a tempo change of even a long clip is quick
 
 
 def _ollama_url() -> str:
@@ -75,6 +83,30 @@ def _fix_wav_sizes(raw: bytes) -> bytes:
     return raw
 
 
+def _ffmpeg() -> str:
+    return os.environ.get("FFMPEG_BIN", "ffmpeg")
+
+
+def _change_speed(wav: bytes, speed: float) -> bytes:
+    """`wav` played `speed` times as fast, same pitch (ffmpeg's atempo).
+
+    Raises RuntimeError with a readable reason when ffmpeg is missing or fails.
+    """
+    cmd = [_ffmpeg(), "-hide_banner", "-loglevel", "error", "-f", "wav", "-i", "pipe:0",
+           "-filter:a", f"atempo={speed}", "-map_metadata", "-1", "-f", "wav", "pipe:1"]
+    try:
+        done = subprocess.run(cmd, input=wav, capture_output=True, timeout=FFMPEG_TIMEOUT)
+    except FileNotFoundError:
+        raise RuntimeError(f"changing the speed needs ffmpeg, and {_ffmpeg()!r} was not "
+                           "found (install it, or set FFMPEG_BIN)") from None
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"ffmpeg took over {FFMPEG_TIMEOUT}s to change the speed") from None
+    if done.returncode != 0 or not done.stdout:
+        reason = done.stderr.decode("utf-8", "replace").strip() or f"exit code {done.returncode}"
+        raise RuntimeError(f"ffmpeg could not change the speed: {reason}")
+    return done.stdout
+
+
 def _wav_seconds(raw: bytes) -> float | None:
     try:
         with wave.open(io.BytesIO(raw)) as w:
@@ -101,7 +133,7 @@ TTS_TEMPLATE = """
   body{font-family:system-ui,sans-serif;margin:0;padding:0}
   .row{margin:1em 0}
   textarea{width:100%;max-width:640px;font-family:inherit;font-size:1rem;padding:8px}
-  select{vertical-align:middle}
+  select,input[type=range]{vertical-align:middle}
   button{padding:8px 18px;border:none;border-radius:8px;background:#2563eb;color:#fff;cursor:pointer;font-size:0.95rem}
   button:hover{background:#1d4ed8}
   button:disabled{background:#9ca3af;cursor:default}
@@ -118,7 +150,8 @@ TTS_TEMPLATE = """
 <h1>LFM3-Audio TTS</h1>
 <p class="muted">Synthesizes speech with <code>{{ model }}</code> on Ollama
 (its OpenAI-compatible <code>/v1/audio/speech</code>). No side service: Ollama
-must be running with the model pulled.</p>
+must be running with the model pulled. The model speaks at one speed; the
+slider changes the tempo afterwards with ffmpeg, keeping the pitch.</p>
 
 <div class="row">
   Ollama: <span id="status" class="badge unknown">checking&hellip;</span>
@@ -133,6 +166,10 @@ must be running with the model pulled.</p>
 <div class="row">
   <label for="voice">Voice</label>
   <select id="voice"><option>loading&hellip;</option></select>
+  &nbsp;&nbsp;
+  <label for="speed">Speed</label>
+  <input type="range" id="speed" min="{{ speed_min }}" max="{{ speed_max }}" step="0.05" value="1.0">
+  <span id="speedval">1.00&times;</span>
 </div>
 
 <div class="row">
@@ -184,13 +221,29 @@ async function ppVoices() {
   }
 }
 
+const SPEED_KEY = 'tts_lfm3_speed';
+function ppShowSpeed() {
+  document.getElementById('speedval').textContent =
+    parseFloat(document.getElementById('speed').value).toFixed(2) + '×';
+}
+document.getElementById('speed').addEventListener('input', function() {
+  ppShowSpeed();
+  try { localStorage.setItem(SPEED_KEY, this.value); } catch (e) {}
+});
+try {
+  const saved = localStorage.getItem(SPEED_KEY);
+  if (saved) document.getElementById('speed').value = saved;
+} catch (e) {}
+ppShowSpeed();
+
 async function ppSpeak() {
   const errEl = document.getElementById('error');
   const btn = document.getElementById('speak');
   errEl.textContent = '';
   const text = document.getElementById('text').value.trim();
   if (!text) { errEl.textContent = 'Please enter some text.'; return; }
-  const payload = {text: text, voice: document.getElementById('voice').value};
+  const speed = parseFloat(document.getElementById('speed').value);
+  const payload = {text: text, voice: document.getElementById('voice').value, speed: speed};
   btn.disabled = true; btn.textContent = 'Synthesizing…';
   const started = performance.now();
   try {
@@ -209,7 +262,8 @@ async function ppSpeak() {
     const took = ((performance.now() - started) / 1000).toFixed(1);
     const secs = r.headers.get('X-Audio-Seconds');
     document.getElementById('meta').textContent =
-      (secs ? secs + 's of audio, ' : '') + 'synthesized in ' + took + 's';
+      (secs ? secs + 's of audio' + (speed !== 1 ? ' at ' + speed.toFixed(2) + '×' : '') + ', ' : '') +
+      'synthesized in ' + took + 's';
     const audioEl = document.getElementById('audio');
     if (audioEl.dataset.objurl) { URL.revokeObjectURL(audioEl.dataset.objurl); }
     const url = URL.createObjectURL(blob);
@@ -251,7 +305,8 @@ def _show() -> dict | tuple[Response, int]:
 
 @app.route("/demo_tts_lfm3")
 def demo_tts_lfm3() -> str:
-    return render_template_string(TTS_TEMPLATE, ollama_url=_ollama_url(), model=_model())
+    return render_template_string(TTS_TEMPLATE, ollama_url=_ollama_url(), model=_model(),
+                                  speed_min=SPEED_MIN, speed_max=SPEED_MAX)
 
 
 @app.route("/demo_tts_lfm3/health")
@@ -281,6 +336,12 @@ def demo_tts_lfm3_synthesize() -> Response | tuple[Response, int]:
     if not text:
         return jsonify({"error": "text must not be empty"}), 400
     voice = str(payload.get("voice") or "").strip()
+    try:
+        speed = float(payload.get("speed", 1.0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "speed must be a number"}), 400
+    if not SPEED_MIN <= speed <= SPEED_MAX:
+        return jsonify({"error": f"speed must be between {SPEED_MIN} and {SPEED_MAX}"}), 400
     url, model = _ollama_url(), _model()
     body = {"model": model, "input": text, "response_format": "wav"}
     if voice:
@@ -288,7 +349,8 @@ def demo_tts_lfm3_synthesize() -> Response | tuple[Response, int]:
     activity = {
         "started_at": datetime.now(UTC), "provider": "ollama", "model": model,
         "caller": "demo_tts_lfm3",
-        "messages": [{"role": "user", "content": f"[voice: {voice or 'default'}]\n\n{text}"}],
+        "messages": [{"role": "user", "content": f"[voice: {voice or 'default'}"
+                      f"{f', speed: {speed}' if speed != 1 else ''}]\n\n{text}"}],
     }
     try:
         r = requests.post(f"{url}/v1/audio/speech", json=body, timeout=PROXY_TIMEOUT)
@@ -299,7 +361,14 @@ def demo_tts_lfm3_synthesize() -> Response | tuple[Response, int]:
         error = _error_message(r)
         record_direct_call(**activity, error=error)
         return jsonify({"error": error}), r.status_code
-    wav = _fix_wav_sizes(r.content)
+    wav = r.content
+    if speed != 1:
+        try:
+            wav = _change_speed(wav, speed)
+        except RuntimeError as e:
+            record_direct_call(**activity, error=str(e))
+            return jsonify({"error": str(e)}), 500
+    wav = _fix_wav_sizes(wav)
     seconds = _wav_seconds(wav)
     record_direct_call(**activity, response=f"[audio: {seconds if seconds is not None else '?'}s "
                                             f"WAV, {len(wav)} bytes]")
