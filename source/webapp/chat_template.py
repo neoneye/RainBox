@@ -161,6 +161,7 @@ CHAT_TEMPLATE: str = """
   .room-sidebar .ds-trouble-row button:disabled{background:#f8fafc;color:#9ca3af;cursor:default}
   .room-sidebar .ds-note{color:#888;font-size:0.85rem}
   .room-sidebar .ds-tools{font-size:0.85rem;margin:0 0 0.4em}
+  .room-sidebar .ds-label.ds-tools-label{margin-top:1.8em}
   .room-sidebar .ds-tool-row{position:relative}
   .room-sidebar .ds-tool summary{cursor:pointer;padding:0.3em 2.9em 0.3em 0.2em;border-radius:6px;color:#1f2937}
   .room-sidebar .ds-tool summary:hover{background:#f3f4f6}
@@ -3332,7 +3333,8 @@ async function renderToolsSection(room){
   if (!(data.tools || []).length) return;
 
   const label = document.createElement('span');
-  label.className = 'ds-label';
+  // Extra room above: Tools is its own section, not another persona line.
+  label.className = 'ds-label ds-tools-label';
   label.textContent = 'Tools';
   sidebarEl.appendChild(label);
   const list = document.createElement('div');
