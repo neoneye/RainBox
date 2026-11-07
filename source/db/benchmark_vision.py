@@ -44,9 +44,11 @@ def record_vision_trial(
     model_name: str,
     provider: str,
     config_fingerprint: str,
+    trials_per_case: int | None,
     trial: dict[str, Any],
 ) -> BenchmarkVisionTrial:
-    """Store one trial, as `Trial.to_json()` shaped it."""
+    """Store one trial, as `Trial.to_json()` shaped it. `trials_per_case` is
+    what its run was started with."""
     row = BenchmarkVisionTrial(
         run_uuid=run_uuid,
         run_started_at=run_started_at,
@@ -55,6 +57,7 @@ def record_vision_trial(
         model_name=model_name,
         provider=provider,
         config_fingerprint=config_fingerprint,
+        trials_per_case=trials_per_case,
         case_name=trial["case"],
         **{k: trial.get(k) for k in _TRIAL_FIELDS if trial.get(k) is not None},
     )
@@ -107,6 +110,7 @@ def vision_runs() -> dict[str, list[dict[str, Any]]]:
                 "model_name": row.model_name,
                 "provider": row.provider,
                 "config_fingerprint": row.config_fingerprint,
+                "trials_per_case": row.trials_per_case,
                 "trials": [],
             }
             runs[row.run_uuid] = run

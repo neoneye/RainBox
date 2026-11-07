@@ -675,6 +675,10 @@ def init_db(app: Flask) -> None:
         # so a restored row can show it next to the model like a live one does.
         _add_column_if_missing("benchmark_result", "warmup_elapsed",
                                "warmup_elapsed DOUBLE PRECISION")
+        # The trials per case a vision run was started with, so a run still
+        # going (or stopped) reads against its planned size.
+        _add_column_if_missing("benchmark_vision_trial", "trials_per_case",
+                               "trials_per_case INTEGER")
         db.session.execute(sa.text(
             "CREATE UNIQUE INDEX IF NOT EXISTS memory_rejected_value_key_uniq "
             "ON memory_rejected_value (scope, "

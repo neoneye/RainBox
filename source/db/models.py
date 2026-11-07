@@ -1990,6 +1990,10 @@ class BenchmarkVisionTrial(db.Model):
     model_name: Mapped[str] = mapped_column(Text, default="")
     provider: Mapped[str] = mapped_column(Text, default="")
     config_fingerprint: Mapped[str] = mapped_column(Text, default="")
+    # What the run was started with; with the case count it gives the run's
+    # planned size, so a run in progress or stopped reads "3/18", not "3/3".
+    # NULL on rows stored before the run recorded it.
+    trials_per_case: Mapped[int | None] = mapped_column()
     case_name: Mapped[str] = mapped_column(Text)
     trial_index: Mapped[int] = mapped_column()
     passed: Mapped[bool] = mapped_column(default=False)

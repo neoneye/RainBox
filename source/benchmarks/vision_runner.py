@@ -239,6 +239,7 @@ class VisionBenchmarkRunner:
                         "run_uuid": uuid4(),
                         "started_at": datetime.now(UTC),
                         "fingerprint": db.benchmark_fingerprint(args),
+                        "trials_per_case": trials,
                     }
                     with self._lock:
                         self._state["current"] = {
@@ -295,6 +296,7 @@ class VisionBenchmarkRunner:
                 model_name=target.model_name,
                 provider=target.provider,
                 config_fingerprint=run["fingerprint"],
+                trials_per_case=run.get("trials_per_case"),
                 trial=trial,
             )
         except Exception:

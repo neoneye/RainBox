@@ -22,11 +22,11 @@ def _trial(case="center", index=0, passed=True, **extra):
             "output_tokens": 40, "reasoning_tokens": 30, "done_reason": "stop", **extra}
 
 
-def _record(run_uuid, started_at, trial, target=_TARGET):
+def _record(run_uuid, started_at, trial, target=_TARGET, trials_per_case=3):
     return db.record_vision_trial(
         run_uuid=run_uuid, run_started_at=started_at, target_uuid=target,
         target_label="lfm3", model_name="lfm3-vl:2b", provider="ollama",
-        config_fingerprint="cfg", trial=trial)
+        config_fingerprint="cfg", trials_per_case=trials_per_case, trial=trial)
 
 
 @pytest.fixture(autouse=True)
@@ -49,6 +49,9 @@ def test_runs_read_back_newest_first_with_trials_in_order():
                                                      missing=["cat"], content="bug"))
         runs = db.vision_runs()[str(_TARGET)]
     assert [r["run_uuid"] for r in runs] == [str(new), str(old)]
+    # The planned size travels with the run, so two answers of a 3-per-case
+    # run read against 18, not 2.
+    assert runs[0]["trials_per_case"] == 3
     assert [t["case"] for t in runs[0]["trials"]] == ["center", "top_left"]
     second = runs[0]["trials"][1]
     assert second["passed"] is False and second["missing"] == ["cat"]

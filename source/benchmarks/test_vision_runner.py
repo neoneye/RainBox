@@ -30,11 +30,13 @@ def test_a_trial_event_is_stored_and_bumps_the_revision():
     runner._state["current"] = {"uuid": target.uuid, "label": "lfm3", "phase": "starting",
                                 "case": None, "trial": None, "since": 0}
     run = {"run_uuid": uuid4(), "started_at": None, "fingerprint": "f"}
+    run["trials_per_case"] = 3
     with patch("benchmarks.vision_runner.db.record_vision_trial") as record:
         runner._apply_event(target, run, {"t": "trial_start", "case": "center", "trial": 1})
         assert runner.get_state()["current"]["case"] == "center"
         runner._apply_event(target, run, {"t": "trial", "trial": {"case": "center"}})
     assert record.call_count == 1
+    assert record.call_args.kwargs["trials_per_case"] == 3
     state = runner.get_state()
     assert state["trials_done"] == 1 and state["revision"] == 1
 

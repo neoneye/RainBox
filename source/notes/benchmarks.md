@@ -308,8 +308,11 @@ runs past the newest five are pruned (`prune_vision_runs`). The page reads
 `…/results` (every retained run, without reasoning text) and fetches a trial's
 reasoning from `…/reasoning` only when it is opened. `…/state` carries only
 what is running now, plus a `revision` that moves on every stored answer;
-the page refetches results when it moves. A run that never reached every
-case is tagged *partial*, so its score isn't read as a full one.
+the page refetches results when it moves. Each trial also stores the trials
+per case its run was started with, so scores count against the run's planned
+size: three right answers into a 3-per-case run read 3/18 with a "3 ran" tag,
+whether the run is still going or was stopped, and only a finished run gets a
+verdict colour.
 
 ### Running
 

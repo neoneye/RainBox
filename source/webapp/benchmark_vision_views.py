@@ -264,15 +264,28 @@ function summarize(trials) {
     tps: pick('decode_tps'), prefill: pick('prefill_s'),
   };
 }
-// A run that did not reach every case (stopped, or the worker died) — its
-// score covers only what ran, so it must not read as a clean result.
-function partial(run) {
-  const ran = new Set(run.trials.map(t => t.case));
-  return CASES.some(c => !ran.has(c.name));
+// The trials of each case a run was started with. A run stored before that
+// was recorded falls back to the most trials any of its cases got.
+function perCase(run) {
+  if (run.trials_per_case) return run.trials_per_case;
+  return Math.max(1, ...CASES.map(c => run.trials.filter(t => t.case === c.name).length));
 }
-function scoreClass(s) {
-  if (!s.n) return '';
-  return s.correct === s.n ? 'score-full' : (s.correct ? 'score-part' : 'score-none');
+function planned(run) { return perCase(run) * CASES.length; }
+// Scores count against the planned size, so a run still going (or stopped)
+// reads 3/18, not 3/3. Until every answer is in there is no verdict colour.
+function scoreClass(s, total) {
+  if (!s.n || s.n < total) return '';
+  return s.correct === total ? 'score-full' : (s.correct ? 'score-part' : 'score-none');
+}
+function scoreCell(s, total, live) {
+  let html = s.correct + '/' + total;
+  if (s.errors) html += ' <span class="bad" title="requests that failed">' + s.errors + ' err</span>';
+  if (s.n < total) {
+    const why = live ? 'still running' : 'stopped before every answer ran';
+    html += ' <span class="tag" title="' + s.n + ' of ' + total + ' answers ran; ' + why + '.">' +
+            s.n + ' ran</span>';
+  }
+  return '<td class="num ' + scoreClass(s, total) + '">' + html + '</td>';
 }
 function kpiCells(s) {
   const prompt = s.prompt === null ? fmt(null) :
@@ -337,29 +350,28 @@ function render() {
       '<small>' + esc(t.model_name) + ' · ' + esc(t.provider) + '</small>' +
       (t.settings ? '<small class="settings">' + esc(t.settings) + '</small>' : '') + '</td>';
     if (s) {
-      html += '<td class="num ' + scoreClass(s) + '">' + s.correct + '/' + s.n +
-              (s.errors ? ' <span class="bad" title="requests that failed">' + s.errors + ' err</span>' : '') +
-              (partial(run) ? ' <span class="tag" title="This run stopped before every case ran.">partial</span>' : '') +
-              '</td>' +
-              kpiCells(s) + '<td class="num">' + when(run.started_at) + '</td>';
+      const live = isCur && run === runs[0];
+      html += scoreCell(s, planned(run), live) + kpiCells(s) + '<td class="num">' + when(run.started_at) + '</td>';
     } else {
       html += '<td colspan="10" class="muted">no runs yet</td>';
     }
     html += '<td>' + (t.removed ? '' : '<button class="run-one" data-uuid="' + t.uuid + '"' +
             (running || (state && state.blocked_by) ? ' disabled' : '') + '>Run</button>') + '</td></tr>';
-    if (expanded.has(t.uuid) && run) html += detailRow(t, runs, run);
+    if (expanded.has(t.uuid) && run) html += detailRow(t, runs, run, isCur && run === runs[0]);
   }
   if (!html) html = '<tr><td colspan="13" class="muted">No vision models found. Ollama, LM Studio and OpenRouter say which of their models take images; models from other providers are not listed.</td></tr>';
   els.body.innerHTML = html;
   tick();
 }
 
-function detailRow(t, runs, run) {
+function detailRow(t, runs, run, live) {
   let opts = '';
   for (const r of runs) {
     const s = summarize(r.trials);
+    const total = planned(r);
     opts += '<option value="' + r.run_uuid + '"' + (r === run ? ' selected' : '') + '>' +
-            when(r.started_at) + ' · ' + s.correct + '/' + s.n + (partial(r) ? ' · partial' : '') + '</option>';
+            when(r.started_at) + ' · ' + s.correct + '/' + total +
+            (s.n < total ? ' · ' + s.n + ' ran' : '') + '</option>';
   }
   let html = '<tr class="detail"><td></td><td colspan="12">' +
     '<div class="detail-head"><label>Run <select class="run-pick" data-uuid="' + t.uuid + '">' + opts +
@@ -369,11 +381,15 @@ function detailRow(t, runs, run) {
     '</tr>';
   for (const c of CASES) {
     const trials = run.trials.filter(x => x.case === c.name);
-    if (!trials.length) continue;
+    const head = '<tr><td><code>' + esc(c.name) + '</code><br><span class="muted">expects ' +
+                 esc(c.expected.join(', ')) + '</span></td>';
+    if (!trials.length) {
+      html += head + '<td class="num">0/' + perCase(run) + '</td><td colspan="8" class="muted">' +
+              (live ? 'not run yet' : 'not run') + '</td></tr>';
+      continue;
+    }
     const s = summarize(trials);
-    html += '<tr><td><code>' + esc(c.name) + '</code><br><span class="muted">expects ' +
-            esc(c.expected.join(', ')) + '</span></td>' +
-            '<td class="num ' + scoreClass(s) + '">' + s.correct + '/' + s.n + '</td>' + kpiCells(s) + '</tr>' +
+    html += head + scoreCell(s, perCase(run), live) + kpiCells(s) + '</tr>' +
             // The answers get the table's full width: they are what explains a number.
             '<tr class="answers"><td colspan="10">' + trials.map(trialHtml).join('') + '</td></tr>';
   }
