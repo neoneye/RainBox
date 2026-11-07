@@ -213,7 +213,7 @@ NAV_TEMPLATE = """
     <details class="pp-dd {{ 'pp-active' if request.endpoint in ('demo_tts_kokoro', 'demo_tts_lfm3', 'demo_tts_dotstts', 'demo_stt_whisper', 'demo_stt_gemma4', 'demo_voice_echo') }}">
       <summary>Voice &#9662;</summary>
       <div class="pp-dd-menu">
-        <a href="{{ url_for('demo_tts_kokoro') }}" class="{{ 'pp-active' if request.endpoint == 'demo_tts_kokoro' }}">TTS</a>
+        <a href="{{ url_for('demo_tts_kokoro') }}" class="{{ 'pp-active' if request.endpoint == 'demo_tts_kokoro' }}">TTS kokoro</a>
         <a href="{{ url_for('demo_tts_lfm3') }}" class="{{ 'pp-active' if request.endpoint == 'demo_tts_lfm3' }}">TTS lfm3</a>
         <a href="{{ url_for('demo_tts_dotstts') }}" class="{{ 'pp-active' if request.endpoint == 'demo_tts_dotstts' }}">Clone</a>
         <a href="{{ url_for('demo_stt_whisper') }}" class="{{ 'pp-active' if request.endpoint == 'demo_stt_whisper' }}">STT whisper</a>

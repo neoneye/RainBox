@@ -99,5 +99,5 @@ def test_nav_has_tts_link():
     resp = client.get("/demo_tts_kokoro")
     body = resp.get_data(as_text=True)
     # The shared nav links to the TTS page and marks it active on this page.
-    assert ">TTS<" in body
+    assert ">TTS kokoro<" in body
     assert "pp-active" in body
