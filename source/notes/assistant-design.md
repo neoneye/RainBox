@@ -145,6 +145,16 @@ it as a `message_sources` sibling after that reply, not as lines in its
 text. The turn instructions call those items places to look, not facts: a
 follow-up reads one again by its link.
 
+Every read reports the items it showed the model as `shown_items` on its
+observation's data: diary passages by citation, recalled facts by uuid, the
+kanban task or board read, kanban and find matches. A kept source that is
+one of them takes its kind and page, and its name when the model gave none.
+The shown items the reply did not cite are its unused sources, posted as
+`meta["unused_sources"]` (at most 50) and listed on the reply's step: what
+the turn checked and found nothing of relevance in. The Sources panel
+filters the two with All / Used / Unused. Unused sources stay out of the
+next turn's prompt.
+
 Running out of steps posts a "couldn't complete this within the step limit"
 message with a link to the run's inspector page and finishes the run
 `stopped`. A turn also stops early when the model resends failed actions:

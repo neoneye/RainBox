@@ -64,6 +64,13 @@ def test_action_wraps_observation_with_compact(live):
     assert len(obs.text) <= CAPABILITIES[DIARY].output_cap_chars   # the slice never fires
 
 
+def test_action_lists_the_passages_it_showed(live):
+    obs = _action_diary_query(_ctx(live), {"mode": "search", "query": "physiotherapy"})
+    shown = obs.data["shown_items"]
+    assert [i["link"] for i in shown] == obs.data["injected"] and shown
+    assert all(i["kind"] == "diary passage" and i["name"] for i in shown)
+
+
 def test_action_respects_models_local(live):
     obs = _action_diary_query(_ctx(live, local=False), {"mode": "search", "query": "physiotherapy"})
     assert not obs.ok and obs.data["error"] == "unavailable"

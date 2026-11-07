@@ -1321,6 +1321,10 @@ def test_find_uuid_resolves_a_fragment(app_ctx):
         matches = json.loads(obs.text)["matches"]
         (m,) = [m for m in matches if m["uuid"] == board["uuid"]]
         assert m["kind"] == "kanban board" and m["match"] == "substring"
+        # What the read showed, for the reply's used and unused sources.
+        (item,) = [i for i in obs.data["shown_items"] if i["link"] == board["uuid"]]
+        assert item == {"link": board["uuid"], "name": "Find action board",
+                        "kind": "kanban board", "url": m["url"]}
     finally:
         db.kanban_delete_board(UUID(board["uuid"]))
 

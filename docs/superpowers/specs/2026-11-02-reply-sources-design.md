@@ -113,6 +113,31 @@ this turn, by its link, with the action that reads that kind of item.
   with the mode remembered.
 - **Room change.** Switching rooms forgets the chosen reply.
 
+### Unused sources
+
+A turn often checks more than its reply cites: a diary search shows a dozen
+passages and the answer rests on three. The rest are kept too, as the reply's
+unused sources, so the operator can see what was looked at and judged
+irrelevant.
+
+- Every read reports what it showed as `shown_items` on its observation's
+  data, `[{"name", "link", "kind"?, "url"?}]`: `diary_query` its injected
+  passages (kind `diary passage`, named path · date), `memory_query` its
+  admitted facts, `kanban_read` the task or board, `kanban_query` and
+  `find_uuid` their matches (with their kind and page).
+- A kept source found among them takes their kind and page, and their name
+  when the model gave none.
+- The shown items whose link no source has are stored as
+  `chat_message.meta["unused_sources"]`, resolved like sources, first showing
+  first, at most 50 (`MAX_UNUSED_SOURCES`). The reply's step lists them after
+  the drops.
+- The pill counts the sources; a reply that cited none but checked items
+  says "N unused".
+- The Sources panel has a segmented control, All / Used / Unused, each with
+  its count, remembered per viewer. In All, the unused items follow the used
+  ones, muted and tagged "unused".
+- `message_sources` in the next turn's prompt lists used sources only.
+
 ## Out of scope
 
 - Writes are not sources. A write's link is still appended to the reply text

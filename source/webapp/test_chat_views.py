@@ -748,6 +748,9 @@ def test_a_reply_s_sources_open_in_the_sidebar():
     pill_at = body.index("pill.className = 'sources-btn';")
     assert menu_at < pill_at
     assert "sources.length === 1 ? '1 source' : sources.length + ' sources'" in body
+    # A reply that cited nothing but checked items still gets a pill.
+    assert "if ((sources.length || unused.length) && !m.streaming){" in body
+    assert "!sources.length ? unused.length + ' unused'" in body
     assert "pill.addEventListener('click', () => openSources(m.uuid));" in body
     # The panel.
     assert "else if (mode === 'sources') renderSources();" in body
@@ -755,6 +758,12 @@ def test_a_reply_s_sources_open_in_the_sidebar():
     assert "list.className = 'src-list';" in body
     assert "a.target = '_blank';" in body
     assert "No reply in view lists sources." in body
+    # All / Used / Unused, remembered per viewer.
+    assert "filter.className = 'src-filter';" in body
+    assert "[['all', 'All', used.length + unused.length], ['used', 'Used', used.length]," in body
+    assert "['unused', 'Unused', unused.length]]" in body
+    assert "localStorage.setItem(SOURCES_FILTER_KEY, value)" in body
+    assert "tag.textContent = 'unused';" in body
     # A room switch forgets the chosen reply; an unpinned panel follows new ones.
     assert "currentRoom = uuid;\n  sourcesMessageUuid = null;" in body
     assert "if (activeSidebarMode() === 'sources' && !sourcesMessageUuid) renderSources();" in body

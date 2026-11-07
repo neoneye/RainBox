@@ -18,6 +18,11 @@ showed is kept as a source of its own, under the entry's name, and the report
 says how many were kept from it. A link this turn never showed is dropped
 however it is wrapped.
 
+Every read also reports the items it showed the model (`shown_items` on its
+observation's data: a diary passage, a stored fact, a kanban task, a find
+match). Those the reply did not cite are kept beside its sources as its
+unused sources: what the turn checked and found nothing of relevance in.
+
 Design: docs/superpowers/specs/2026-11-02-reply-sources-design.md.
 """
 
@@ -30,6 +35,9 @@ from typing import Any, Callable, Iterable
 MAX_REPLY_SOURCES = 20
 # A title, not a description.
 MAX_SOURCE_NAME_CHARS = 120
+# Items a turn checked without citing them; a wide diary search shows a few
+# dozen at most.
+MAX_UNUSED_SOURCES = 50
 # Longer than any uuid, URL or path an observation shows in one piece.
 MAX_SOURCE_LINK_CHARS = 500
 
@@ -140,12 +148,15 @@ def resolve_source(
 ) -> dict[str, Any]:
     """`{"name", "link", "kind", "url"}` for one kept entry.
 
-    A full uuid is looked up (`db.describe_uuid`) for its kind and page,
+    An entry that already names its kind (a read's shown item) keeps its kind
+    and page as given. Otherwise a full uuid is looked up (`db.describe_uuid`) for its kind and page,
     falling back to the Find page, which resolves any uuid; a web address is
     its own page; anything else is a path with no page."""
     link = entry["link"]
     name = entry.get("name") or ""
-    if _UUID.fullmatch(link):
+    if entry.get("kind"):
+        kind, url = str(entry["kind"]), entry.get("url") or None
+    elif _UUID.fullmatch(link):
         try:
             match = describe_uuid(link)
         except Exception:   # noqa: BLE001 — an unresolved kind still links to /find
@@ -161,22 +172,64 @@ def resolve_source(
     return {"name": name or link, "link": link, "kind": kind, "url": url}
 
 
+def _shown_by_link(shown: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """The turn's shown items by link, the first showing of each."""
+    out: dict[str, dict[str, Any]] = {}
+    for item in shown:
+        link = str((item or {}).get("link") or "").strip()
+        if link and link not in out:
+            out[link] = {**item, "link": link}
+    return out
+
+
 def reply_sources(
     raw: Any,
     seen_texts: Iterable[str],
     describe_uuid: Callable[[str], dict[str, Any] | None],
+    shown: Iterable[dict[str, Any]] = (),
 ) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     """`(sources, dropped)` for a reply's `sources` argument: normalized,
-    checked against what the turn showed, and resolved."""
+    checked against what the turn showed, and resolved. A kept link that a
+    read listed among its shown items takes that item's kind and page, and its
+    name when the model gave none."""
     entries, dropped = normalize_sources(raw)
     kept, unseen = check_seen(entries, seen_texts)
-    return [resolve_source(e, describe_uuid) for e in kept], dropped + unseen
+    by_link = _shown_by_link(shown)
+    resolved = []
+    for e in kept:
+        item = by_link.get(e["link"])
+        if item is not None:
+            e = {**e, "name": e.get("name") or str(item.get("name") or ""),
+                 "kind": item.get("kind"), "url": item.get("url")}
+        resolved.append(resolve_source(e, describe_uuid))
+    return resolved, dropped + unseen
+
+
+def unused_sources(
+    shown: Iterable[dict[str, Any]],
+    sources: list[dict[str, Any]],
+    describe_uuid: Callable[[str], dict[str, Any] | None],
+) -> list[dict[str, Any]]:
+    """The items this turn's reads showed that the reply did not cite, in the
+    order they were shown, resolved like sources, at most MAX_UNUSED_SOURCES."""
+    cited = {s["link"] for s in sources}
+    out: list[dict[str, Any]] = []
+    for link, item in _shown_by_link(shown).items():
+        if link in cited:
+            continue
+        if len(out) >= MAX_UNUSED_SOURCES:
+            break
+        out.append(resolve_source(
+            {"name": str(item.get("name") or "")[:MAX_SOURCE_NAME_CHARS], "link": link,
+             "kind": item.get("kind"), "url": item.get("url")}, describe_uuid))
+    return out
 
 
 def sources_report(sources: list[dict[str, Any]],
-                   dropped: list[dict[str, str]]) -> str:
+                   dropped: list[dict[str, str]],
+                   unused: list[dict[str, Any]] = ()) -> str:
     """The reply step's observation text: what was kept, then what was dropped
-    and why."""
+    and why, then what the turn checked and did not cite."""
     lines = [f"sources: {len(sources)}"]
     for i, s in enumerate(sources, start=1):
         lines.append(f"{i}. {s['name']} — {s['link']} ({s['kind']})")
@@ -185,4 +238,8 @@ def sources_report(sources: list[dict[str, Any]],
         for d in dropped:
             label = f"{d['name']} — " if d.get("name") else ""
             lines.append(f"- {label}{d['link']}: {d['reason']}")
+    if unused:
+        lines.append(f"unused: {len(unused)}")
+        for u in unused:
+            lines.append(f"- {u['name']} — {u['link']} ({u['kind']})")
     return "\n".join(lines)

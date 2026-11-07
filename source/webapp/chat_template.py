@@ -189,6 +189,14 @@ CHAT_TEMPLATE: str = """
   .room-sidebar .src-name{font-size:0.9rem;word-break:break-word}
   .room-sidebar .src-meta{color:#6c757d;font-size:0.75rem;margin-top:0.15em}
   .room-sidebar .src-link{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all;user-select:all}
+  /* All / Used / Unused: which of the reply's items the panel lists. */
+  .room-sidebar .src-filter{display:flex;margin:0 0 0.8em;border:1px solid #cbd5e1;border-radius:6px;overflow:hidden}
+  .room-sidebar .src-filter button{flex:1;font:inherit;font-size:0.8rem;padding:4px 6px;background:#fff;color:#495057;border:none;border-left:1px solid #cbd5e1;cursor:pointer;white-space:nowrap}
+  .room-sidebar .src-filter button:first-child{border-left:none}
+  .room-sidebar .src-filter button[aria-pressed="true"]{background:#2563eb;color:#fff}
+  .room-sidebar .src-list li.src-unused .src-name,
+  .room-sidebar .src-list li.src-unused .src-name a{color:#6c757d}
+  .room-sidebar .src-tag{display:inline-block;font-size:0.7rem;color:#6c757d;border:1px solid #cbd5e1;border-radius:999px;padding:0 6px;margin-right:0.4em}
   /* History panel: the open room's pages, oldest first (renderHistory). */
   .room-sidebar .hist-nav{display:flex;align-items:center;justify-content:space-between;gap:0.5em;margin:0.4em 0 0.8em;
                           font-size:0.85rem;color:#374151;font-variant-numeric:tabular-nums}
@@ -732,6 +740,13 @@ let sidebarVisible = false;
 // The reply the Sources panel lists, by message uuid: set by its pill, cleared
 // on a room switch. null lists the newest reply in view that has sources.
 let sourcesMessageUuid = null;
+// Which of that reply's items the panel lists: 'all' | 'used' | 'unused'.
+const SOURCES_FILTER_KEY = 'chat_sources_filter';
+let sourcesFilter = 'all';
+try {
+  const savedFilter = localStorage.getItem(SOURCES_FILTER_KEY);
+  if (savedFilter === 'used' || savedFilter === 'unused') sourcesFilter = savedFilter;
+} catch (e) {}
 try {
   const saved = localStorage.getItem(SIDEBAR_MODE_KEY);
   if (saved === 'members' || saved === 'stats' || saved === 'settings'
@@ -1937,17 +1952,21 @@ function makeMessage(m){
   // Overflow (...) menu, always present: "Copy message id" copies the UUID;
   // direct rooms also get "Retry" (re-ask the model from this turn).
   actions.appendChild(buildMessageMenu(m));
-  // Sources pill: on the same line as the actions, after them.
-  const sources = (m.meta || {}).sources;
-  if (Array.isArray(sources) && sources.length && !m.streaming){
+  // Sources pill: on the same line as the actions, after them. It counts the
+  // sources the reply cited; a reply that cited none but checked items counts
+  // those as unused.
+  const sources = replySources(m, 'used');
+  const unused = replySources(m, 'unused');
+  if ((sources.length || unused.length) && !m.streaming){
     const pill = document.createElement('button');
     pill.type = 'button';
     pill.className = 'sources-btn';
     pill.dataset.messageUuid = m.uuid;
-    pill.title = 'Show what this reply rests on';
+    pill.title = 'Show what this reply rests on (' + sources.length + ' used, '
+      + unused.length + ' unused)';
     pill.innerHTML = LUCIDE_LINK_SVG;
-    pill.appendChild(document.createTextNode(
-      sources.length === 1 ? '1 source' : sources.length + ' sources'));
+    pill.appendChild(document.createTextNode(!sources.length ? unused.length + ' unused'
+      : sources.length === 1 ? '1 source' : sources.length + ' sources'));
     pill.addEventListener('click', () => openSources(m.uuid));
     actions.appendChild(pill);
   }
@@ -3202,18 +3221,26 @@ function openSources(messageUuid){
   renderSidebar();
 }
 
+// A reply's items: 'used' are the sources it cited (meta.sources), 'unused'
+// the items its reads showed that it did not cite (meta.unused_sources).
+function replySources(row, which){
+  const list = ((row && row.meta) || {})[which === 'used' ? 'sources' : 'unused_sources'];
+  return Array.isArray(list) ? list : [];
+}
+
 // The reply the Sources panel lists: the chosen one while it is in view, else
-// the newest reply in view that has sources.
+// the newest reply in view that has sources, used or unused.
 function sourcedRow(){
   const rows = [...log.querySelectorAll('.msg')].map(el => el._row)
-    .filter(r => r && Array.isArray((r.meta || {}).sources) && r.meta.sources.length);
+    .filter(r => r && (replySources(r, 'used').length || replySources(r, 'unused').length));
   const chosen = sourcesMessageUuid && rows.find(r => r.uuid === sourcesMessageUuid);
   return chosen || (rows.length ? rows[rows.length - 1] : null);
 }
 
 // The Sources panel: the items one reply rests on (meta.sources, checked and
-// resolved by agents/reply_sources.py), numbered, each linked to its page
-// when it has one, with its kind and its link to copy.
+// resolved by agents/reply_sources.py) and the items its turn checked without
+// citing (meta.unused_sources), filtered by All / Used / Unused, numbered,
+// each linked to its page when it has one, with its kind and its link to copy.
 function renderSources(){
   sidebarEl.innerHTML = '';
   const h = document.createElement('h3');
@@ -3241,10 +3268,42 @@ function renderSources(){
   forLine.appendChild(document.createTextNode('For '));
   forLine.appendChild(go);
   sidebarEl.appendChild(forLine);
+  const used = replySources(row, 'used');
+  const unused = replySources(row, 'unused');
+  const filter = document.createElement('div');
+  filter.className = 'src-filter';
+  filter.setAttribute('role', 'group');
+  filter.setAttribute('aria-label', 'Which sources to list');
+  [['all', 'All', used.length + unused.length], ['used', 'Used', used.length],
+   ['unused', 'Unused', unused.length]].forEach(([value, label, count]) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label + ' ' + count;
+    b.setAttribute('aria-pressed', sourcesFilter === value ? 'true' : 'false');
+    b.addEventListener('click', () => {
+      sourcesFilter = value;
+      try { localStorage.setItem(SOURCES_FILTER_KEY, value); } catch (e) {}
+      renderSources();
+    });
+    filter.appendChild(b);
+  });
+  sidebarEl.appendChild(filter);
+  const shown = [];
+  if (sourcesFilter !== 'unused') used.forEach(s => shown.push([s, false]));
+  if (sourcesFilter !== 'used') unused.forEach(s => shown.push([s, true]));
+  if (!shown.length){
+    const note = document.createElement('p');
+    note.className = 'ds-note';
+    note.textContent = sourcesFilter === 'used' ? 'This reply cited nothing.'
+      : 'Every item this reply checked, it cited.';
+    sidebarEl.appendChild(note);
+    return;
+  }
   const list = document.createElement('ol');
   list.className = 'src-list';
-  row.meta.sources.forEach(source => {
+  shown.forEach(([source, isUnused]) => {
     const item = document.createElement('li');
+    if (isUnused) item.className = 'src-unused';
     const name = document.createElement('div');
     name.className = 'src-name';
     const label = source.name || source.link || '';
@@ -3260,6 +3319,13 @@ function renderSources(){
     }
     const meta = document.createElement('div');
     meta.className = 'src-meta';
+    if (isUnused && sourcesFilter === 'all'){
+      const tag = document.createElement('span');
+      tag.className = 'src-tag';
+      tag.textContent = 'unused';
+      tag.title = 'Checked this turn; the reply did not cite it';
+      meta.appendChild(tag);
+    }
     meta.appendChild(document.createTextNode((source.kind || '') + ' · '));
     const link = document.createElement('span');
     link.className = 'src-link';

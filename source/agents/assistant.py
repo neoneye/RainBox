@@ -56,7 +56,7 @@ from agents.config import (
     ASSISTANT_SECOND_OPINION_UUID,
     ASSISTANT_WORKING_NOTICE,
 )
-from agents.reply_sources import reply_sources, sources_report
+from agents.reply_sources import reply_sources, sources_report, unused_sources
 
 logger = logging.getLogger(__name__)
 
@@ -1419,6 +1419,16 @@ MEMORY_QUERY_WORD_MIN_CHARS: int = 4
 RECALLED_MEMORY_LEGEND: str = "{memory_uuid}, {memory_tags}: {memory_text}"
 
 
+def _shown_item(link: Any, name: Any = "", **extra: Any) -> dict[str, Any]:
+    """One item a read showed the model, for its observation's `shown_items`
+    (agents/reply_sources.py): its link, a one-line name, and its kind and page
+    when the read already knows them."""
+    one_line = " ".join(str(name or "").split())
+    item: dict[str, Any] = {"link": str(link), "name": one_line[:120]}
+    item.update({k: v for k, v in extra.items() if v})
+    return item
+
+
 def _fact_line(uuid: str, tags: str, text: str) -> tuple[str, bool]:
     """Render one recalled-fact line (see RECALLED_MEMORY_LEGEND), shortening
     text over the per-fact cap and marking it with a `truncate{cap}` tag.
@@ -1473,7 +1483,9 @@ def _query_memory_full(ctx: AssistantActionContext, uuid_str: str) -> AssistantO
             tags += f", {entry['path']}"
         text, _ = fence_recalled_memory(f"{uuid_str}, {tags}: {answer}")
         return AssistantObservation(
-            ok=True, text=text, data={"matched": True, "uuid": uuid_str, "source": "seed"})
+            ok=True, text=text, data={"matched": True, "uuid": uuid_str, "source": "seed",
+                                      "shown_items": [_shown_item(
+                                          uuid_str, entry.get("path") or answer)]})
     try:
         claim = db.get_memory_claim(UUID(uuid_str))
     except Exception:
@@ -1482,7 +1494,8 @@ def _query_memory_full(ctx: AssistantActionContext, uuid_str: str) -> AssistantO
         text, _ = fence_recalled_memory(
             f"{uuid_str}, {claim.kind}, {claim.sensitivity}: {claim.text}")
         return AssistantObservation(
-            ok=True, text=text, data={"matched": True, "uuid": uuid_str, "source": "claim"})
+            ok=True, text=text, data={"matched": True, "uuid": uuid_str, "source": "claim",
+                                      "shown_items": [_shown_item(uuid_str, claim.text)]})
     return none
 
 
@@ -2079,7 +2092,16 @@ def _action_diary_query(ctx: AssistantActionContext, args: dict[str, Any]) -> As
         DiaryContext(room_uuid=ctx.room_uuid, agent_uuid=ctx.agent_uuid,
                      models_local=ctx.models_local),
         embed_query=_diary_query_embedder(), journal_id=ctx.journal_id)
-    return AssistantObservation(ok=obs.ok, text=obs.text, data=obs.data, compact=obs.compact)
+    data = obs.data
+    if obs.ok:
+        returned = {r["citation"]: r for r in data.get("returned") or []}
+        shown = []
+        for cite in data.get("injected") or []:
+            r = returned.get(cite) or {}
+            label = " · ".join(p for p in (r.get("path"), r.get("date_local")) if p)
+            shown.append(_shown_item(cite, label, kind="diary passage"))
+        data = {**data, "shown_items": shown}
+    return AssistantObservation(ok=obs.ok, text=obs.text, data=data, compact=obs.compact)
 
 
 def _action_query_memory(
@@ -2304,6 +2326,7 @@ def _recalled_facts_observation(
     # model — and the operator reading the trace — can tell apart answers whose
     # text alone is ambiguous (two uptime strings vs a load average, …).
     fact_lines: list[str] = []
+    fact_items: list[dict[str, Any]] = []
     truncated_count = 0
     for s in overlay + upstream:
         tags = f"seed/{s.source}" + (", dynamic" if s.kind == "dynamic" else "")
@@ -2311,6 +2334,7 @@ def _recalled_facts_observation(
             tags += f", {s.path}"
         line, tr = _fact_line(s.uuid, tags, s.answer)
         fact_lines.append(line)
+        fact_items.append(_shown_item(s.uuid, s.path or s.answer))
         truncated_count += tr
     # Remembered facts go through the SAME renderer, from their fields — not by
     # rendering format_memory_context() to a string and parsing it back apart.
@@ -2321,6 +2345,7 @@ def _recalled_facts_observation(
             ", ".join(m.evidence_summary) or "no evidence")
         line, tr = _fact_line(str(m.uuid), tags, m.text)
         fact_lines.append(line)
+        fact_items.append(_shown_item(m.uuid, m.text))
         truncated_count += tr
 
     # (C) Admission: take facts in rank order while each still fits, drop the
@@ -2364,6 +2389,7 @@ def _recalled_facts_observation(
         data={"qa_static": sum(1 for s in seeds if s.kind == "static"),
               "qa_dynamic": sum(1 for s in seeds if s.kind == "dynamic"),
               "memory": len(memories), "truncated": truncated_count, "omitted": omitted,
+              "shown_items": fact_items[:len(kept)],
               "recall_filter": recall_filter_debug, "timing": timing},
     )
 
@@ -2492,7 +2518,8 @@ def _action_kanban_read(
         }
         return AssistantObservation(
             ok=True, text=json.dumps(payload, indent=2, ensure_ascii=False),
-            data={"task_uuid": str(task_uuid)},
+            data={"task_uuid": str(task_uuid),
+                  "shown_items": [_shown_item(task_uuid, task["title"])]},
         )
     board_raw = args.get("board_uuid")
     if board_raw:
@@ -2505,7 +2532,8 @@ def _action_kanban_read(
             return AssistantObservation(ok=False, text="no such kanban board")
         return AssistantObservation(
             ok=True, text=json.dumps(document, indent=2, ensure_ascii=False),
-            data={"board_uuid": str(board_uuid)},
+            data={"board_uuid": str(board_uuid),
+                  "shown_items": [_shown_item(board_uuid, document.get("name"))]},
         )
     tree = db.kanban_load_tree()
     folders, boards = tree["folders"], tree["boards"]
@@ -2554,7 +2582,9 @@ def _action_kanban_query(
     return AssistantObservation(
         ok=True,
         text=json.dumps({"candidates": candidates}, indent=2, ensure_ascii=False),
-        data={"count": len(candidates)},
+        data={"count": len(candidates),
+              "shown_items": [_shown_item(c["uuid"], c.get("name"), kind=c.get("kind"),
+                                          url=c.get("url")) for c in candidates]},
     )
 
 
@@ -2573,7 +2603,9 @@ def _action_find_uuid(
     return AssistantObservation(
         ok=True,
         text=json.dumps({"matches": matches}, indent=2, ensure_ascii=False),
-        data={"count": len(matches)},
+        data={"count": len(matches),
+              "shown_items": [_shown_item(m["uuid"], m.get("name"), kind=m.get("kind"),
+                                          url=m.get("url")) for m in matches]},
     )
 
 
@@ -4216,6 +4248,10 @@ class AssistantAgent(ModelGroupAgent):
         # The request and every observation this run showed the model: the
         # texts a reply's source link must occur in to be kept.
         self._turn_seen: list[str] = []
+        # The items this run's reads showed (their observations' `shown_items`):
+        # what a reply's sources take their kind from, and the rest of which
+        # the reply keeps as its unused sources.
+        self._turn_shown: list[dict[str, Any]] = []
         # Set only by pin_model_group (evals); None on every live turn, where
         # each call resolves its own assistant.* slot.
         self._pinned_model_group: UUID | None = None
@@ -4552,6 +4588,7 @@ class AssistantAgent(ModelGroupAgent):
             # Every text this turn showed the model that a reply's source may
             # be cited from: the request, then each observation as it lands.
             self._turn_seen = [str((messages[-1] if messages else {}).get("text") or "")]
+            self._turn_shown = []
             # Failed actions also make no progress when repeated verbatim. Keep
             # their signatures, with what each failed with, so the loop can
             # return a corrective observation without re-running the same
@@ -4707,17 +4744,21 @@ class AssistantAgent(ModelGroupAgent):
                             ))
                             continue
                     sources: list[dict[str, Any]] = []
+                    unused: list[dict[str, Any]] = []
                     if reply_entry is not None:
                         sources, dropped = reply_sources(
                             decision.args.get("sources"), self._turn_seen,
-                            db.describe_uuid)
+                            db.describe_uuid, shown=self._turn_shown)
+                        unused = unused_sources(self._turn_shown, sources,
+                                                db.describe_uuid)
                         self._settle_step(
                             reply_step, phase="final", entry=reply_entry,
                             observation=({"ok": True,
-                                          "text": sources_report(sources, dropped),
+                                          "text": sources_report(sources, dropped, unused),
                                           "data": {"sources": sources,
-                                                   "dropped_sources": dropped}}
-                                         if sources or dropped else None))
+                                                   "dropped_sources": dropped,
+                                                   "unused_sources": unused}}
+                                         if sources or dropped or unused else None))
                     else:
                         self._record_step(
                             step_index=step_index, phase="final", decision=decision,
@@ -4735,6 +4776,8 @@ class AssistantAgent(ModelGroupAgent):
                     meta = self._final_meta(pending_proposal)
                     if sources:
                         meta["sources"] = sources
+                    if unused:
+                        meta["unused_sources"] = unused
                     db.post_chat_message(room_uuid, self.agent_uuid, text,
                                          kind="message", meta=meta)
                     db.finish_run(run, "finished", final_summary=text[:200])
@@ -4945,6 +4988,9 @@ class AssistantAgent(ModelGroupAgent):
                     failed_actions.setdefault(action_sig, observation.text)
                 else:
                     self._turn_seen.append(observation.text)
+                    shown = (observation.data or {}).get("shown_items")
+                    if isinstance(shown, list):
+                        self._turn_shown.extend(i for i in shown if isinstance(i, dict))
                 preview = observation.text[: self.MAX_OBSERVATION_PREVIEW_CHARS]
                 self._settle_step(
                     step_row,

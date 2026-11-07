@@ -20,6 +20,8 @@ from agents.reply_sources import (
     reply_sources,
     resolve_source,
     sources_report,
+    unused_sources,
+    MAX_UNUSED_SOURCES,
 )
 from agents.test_assistant_actions import (  # noqa: F401 — fixtures
     _agent,
@@ -186,15 +188,55 @@ def test_the_report_lists_the_kept_then_the_dropped():
     ]
 
 
+POND = "pond-notes.md"
+
+
+def test_unused_sources_are_the_shown_items_the_reply_did_not_cite():
+    shown = [{"link": SHED_UUID, "name": "shed"},
+             {"link": POND, "name": "Pond notes", "kind": "diary passage"},
+             {"link": POND, "name": "again"},          # shown twice, listed once
+             {"link": "", "name": "no link"}]
+    sources, _ = reply_sources([{"name": "Shed", "link": SHED_UUID}], [SHED_UUID],
+                               _no_match, shown=shown)
+    assert unused_sources(shown, sources, _no_match) == [
+        {"name": "Pond notes", "link": POND, "kind": "diary passage", "url": None}]
+
+
+def test_a_cited_shown_item_lends_the_source_its_kind_page_and_name():
+    shown = [{"link": SHED_UUID, "name": "Garden shed", "kind": "kanban task",
+              "url": "/kanban?id=x"}]
+    sources, _ = reply_sources([SHED_UUID], [SHED_UUID], _no_match, shown=shown)
+    assert sources == [{"name": "Garden shed", "link": SHED_UUID,
+                        "kind": "kanban task", "url": "/kanban?id=x"}]
+    named, _ = reply_sources([{"name": "Shed", "link": SHED_UUID}], [SHED_UUID],
+                             _no_match, shown=shown)
+    assert named[0]["name"] == "Shed"                   # the model's name wins
+
+
+def test_unused_sources_are_capped():
+    shown = [{"link": f"note-{i}.md"} for i in range(MAX_UNUSED_SOURCES + 5)]
+    unused = unused_sources(shown, [], _no_match)
+    assert len(unused) == MAX_UNUSED_SOURCES
+    assert unused[0] == {"name": "note-0.md", "link": "note-0.md", "kind": "path", "url": None}
+
+
+def test_the_report_ends_with_the_unused():
+    report = sources_report([], [], [{"name": "Pond notes", "link": POND,
+                                      "kind": "diary passage", "url": None}])
+    assert report.splitlines() == [
+        "sources: 0", "unused: 1", f"- Pond notes — {POND} (diary passage)"]
+
+
 # --- the loop --------------------------------------------------------------------------------
 
 
-def _reply_with_sources(room, sources):
+def _reply_with_sources(room, sources, shown_items=None):
     """One read whose observation shows SHED_UUID, then a reply citing `sources`."""
     room_uuid, message_uuid = room
     agent = _agent()
     agent._dispatch_action = lambda ctx, decision: AssistantObservation(
-        ok=True, text=f"{SHED_UUID}, garden.shed: the shed is blue")
+        ok=True, text=f"{SHED_UUID}, garden.shed: the shed is blue",
+        data={"shown_items": shown_items} if shown_items else None)
     agent._decide_next_step = scripted_decisions(
         _decision(AssistantActionName.FIND_UUID, query="0b1e2c3d"),
         _decision(AssistantActionName.REPLY, message="The shed is blue.",
@@ -225,9 +267,27 @@ def test_the_reply_posts_the_sources_its_turn_showed(room):
     assert "dropped: 1" in step.observation["text"]
 
 
+def test_the_reply_keeps_what_its_reads_showed_and_it_did_not_cite(room):
+    reply, step = _reply_with_sources(
+        room, [{"name": "Garden shed", "link": SHED_UUID}],
+        shown_items=[{"link": SHED_UUID, "name": "garden.shed"},
+                     {"link": POND, "name": "Pond notes", "kind": "diary passage"}])
+    assert [s["link"] for s in reply["meta"]["sources"]] == [SHED_UUID]
+    assert reply["meta"]["unused_sources"] == [
+        {"name": "Pond notes", "link": POND, "kind": "diary passage", "url": None}]
+    assert step.observation["data"]["unused_sources"] == reply["meta"]["unused_sources"]
+    assert "unused: 1" in step.observation["text"]
+
+
+def test_a_reply_citing_nothing_still_keeps_what_was_checked(room):
+    reply, _ = _reply_with_sources(room, None, shown_items=[{"link": POND, "name": "Pond"}])
+    assert "sources" not in reply["meta"]
+    assert [u["link"] for u in reply["meta"]["unused_sources"]] == [POND]
+
+
 def test_a_reply_without_sources_posts_none(room):
     reply, step = _reply_with_sources(room, None)
-    assert "sources" not in reply["meta"]
+    assert "sources" not in reply["meta"] and "unused_sources" not in reply["meta"]
     assert step.observation is None
 
 
