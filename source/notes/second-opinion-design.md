@@ -119,7 +119,15 @@ ElementTree so dynamic content cannot close or forge a section tag:
 Reasoning is capped at 4 000 chars and code at 8 000
 (`SECOND_OPINION_MAX_*_CHARS`), keeping the head in both cases — tail
 truncation would drop the code's ending, often the answer expression. No
-conversation history: the current request is the whole contract.
+conversation history: the current request and the criteria are the whole
+contract, and the criteria already carry what the request means read through
+the history. Its `conversation_history_xml` renders empty
+(`history_skip`). Given the history, the reviewer checked a program against
+an earlier turn's numbers: a program computing the square root of 83338, as
+asked, was rejected for not being the 83838 of the turn before (18 of 30
+replays; 0 of 18 with no history). The cost is the turn's shared prefix,
+which the runtime was reusing almost none of for the review anyway (261 of
+4,871 tokens on a turn's first review); reviews still share each other's.
 
 ## Model binding
 

@@ -231,3 +231,57 @@ def test_a_decision_without_a_description_is_sent_back():
         reason="compute", action=AssistantActionName.PYTHON_RUN,
         args={"code": "print(1)"}))
     assert problem is not None and "'description'" in problem
+
+
+# --- a computation that already ran -------------------------------------------
+
+
+def test_a_finished_computation_is_refused_inside_the_decide_call():
+    """The model reran a finished square root at every step to the limit;
+    refused with the output it already had, it replied with it."""
+    agent = _agent()
+    agent._turn_computes = {
+        "compute the square root of 83338 and print it.": (0, "288.68321738542403")}
+    validate = agent._repeat_read_validator()
+
+    with pytest.raises(ValueError) as refused:
+        validate(_describe("Compute the square root of 83338  and print it."))
+    assert "already ran at step 1" in str(refused.value)
+    assert "288.68321738542403" in str(refused.value)
+    # A different computation is not a repeat — and word order is meaning.
+    validate(_describe("Compute the square root of 83838 and print it."))
+
+
+def test_the_refusals_are_bounded():
+    agent = _agent()
+    agent._turn_computes = {"add two and two.": (0, "4")}
+    validate = agent._repeat_read_validator()
+    for _ in range(agent.READ_REPEAT_REJECTIONS):
+        with pytest.raises(ValueError):
+            validate(_describe("Add two and two."))
+    validate(_describe("Add two and two."))      # past the bound it stands
+
+
+def test_a_repeat_past_the_refusals_gets_the_earlier_output(
+        room, monkeypatch, sandbox_calls):
+    """The loop answers it with what the computation printed rather than
+    writing, reviewing and running the program again."""
+    room_uuid, message_uuid = room
+    prompts = _writer(monkeypatch, answer="print(12 * 0.3048)")
+    _approve(monkeypatch)
+    agent = _agent()
+    agent._decide_next_step = scripted_decisions(
+        _describe("Convert 12 feet to meters."),
+        _describe("Convert 12 feet to meters."),
+        _reply("3.6576 meters"))
+
+    agent.handle(uuid4(), {"room_uuid": str(room_uuid),
+                           "message_uuid": str(message_uuid)})
+
+    assert sandbox_calls == ["print(12 * 0.3048)\n"]
+    assert len(prompts) == 1                     # written once
+    runs = [s for s in db.list_assistant_steps(agent._run.uuid)
+            if s.action == "python_run"]
+    assert [s.phase for s in runs] == ["observed", "observed"]
+    second = (runs[1].observation or {})["text"]
+    assert second.startswith("3.6576") and "was not run again" in second

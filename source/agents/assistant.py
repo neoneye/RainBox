@@ -2013,6 +2013,14 @@ def _read_key(action: str, args: dict[str, Any]) -> str:
     return f"{action}:{json.dumps(normal, sort_keys=True, default=str)}"
 
 
+def _compute_key(args: dict[str, Any]) -> str:
+    """A python_run's identity for repeat detection: its description, case-
+    folded with its whitespace collapsed. Not `_read_key`'s sorted words — a
+    computation's word order is its meaning ("subtract 5 from 10" is not
+    "subtract 10 from 5")."""
+    return " ".join(str(args.get("description") or "").casefold().split())
+
+
 def _query_words(text: str) -> set[str]:
     """The words two memory_query texts are compared by: case-folded,
     punctuation removed, the short joining words left out."""
@@ -4153,6 +4161,8 @@ class AssistantAgent(ModelGroupAgent):
     # it, not a 1200-char slice. (The raw action output is already capped by
     # output_cap_chars before this.)
     MAX_OBSERVATION_PREVIEW_CHARS: int = 12000
+    # How much of an earlier computation's output a refused repeat quotes.
+    COMPUTE_REPEAT_QUOTE_CHARS: int = 2000
     # How many replies the model's own self-audit may bounce per run before
     # the reply ships anyway. Two retries out of STEP_LIMIT=6 leaves the loop
     # room to work; an audit that never says "OK" must not fail the turn. A
@@ -4190,6 +4200,10 @@ class AssistantAgent(ModelGroupAgent):
         # This run's successful reads, by `_read_key`, with the step each ran
         # at: what the decide call's validator refuses a repeat of.
         self._turn_reads: dict[str, int] = {}
+        # This run's successful python_runs, by `_compute_key`, with the step
+        # each ran at and what it printed: what the decide call's validator
+        # refuses a repeat of, and what the loop answers a repeat with.
+        self._turn_computes: dict[str, tuple[int, str]] = {}
         # The memory_query texts searched this run: what the search-text call
         # is shown, and refuses a near-repeat of.
         self._turn_queries: list[str] = []
@@ -4527,6 +4541,7 @@ class AssistantAgent(ModelGroupAgent):
             # The same reads, keyed as `_read_key` keys them, with the step that
             # ran each — what the decide call's validator refuses a repeat of.
             self._turn_reads = {}
+            self._turn_computes = {}
             self._turn_queries = []
             # Every text this turn showed the model that a reply's source may
             # be cited from: the request, then each observation as it lands.
@@ -4741,7 +4756,13 @@ class AssistantAgent(ModelGroupAgent):
                             followup_turns=followup_turns,
                             model_response=model_response,
                             tried=list(self._turn_queries))})
-                if decision.action is AssistantActionName.PYTHON_RUN:
+                compute_key = (_compute_key(decision.args)
+                               if decision.action is AssistantActionName.PYTHON_RUN
+                               else "")
+                computed = (self._turn_computes.get(compute_key)
+                            if compute_key else None)
+                if (decision.action is AssistantActionName.PYTHON_RUN
+                        and computed is None):
                     # The decision describes the program; it is written as
                     # plain source by its own call, and the step records what
                     # it ran.
@@ -4804,6 +4825,17 @@ class AssistantAgent(ModelGroupAgent):
                         # not show (or count) them again.
                         data={k: v for k, v in prior.data.items() if k != "timing"},
                     )
+                elif computed is not None:
+                    # The validator's refusals ran out and the model asked for
+                    # the same computation again: answer with what it printed
+                    # rather than write, review and run the program anew.
+                    step, output = computed
+                    observation = AssistantObservation(
+                        ok=True,
+                        text=(f"{output}\n\nYou already ran this computation "
+                              f"at step {step + 1} of this run, so it was not "
+                              "run again. Its output is above: use reply now "
+                              "to answer with it."))
                 elif action_sig in failed_actions:
                     repeated_failures += 1
                     blocked = (decision.action.value, failed_actions[action_sig])
@@ -4900,6 +4932,9 @@ class AssistantAgent(ModelGroupAgent):
                         self._turn_queries.extend(
                             t for t in _memory_query_texts(decision.args)
                             if t not in self._turn_queries)
+                if compute_key and observation.ok and computed is None:
+                    self._turn_computes.setdefault(
+                        compute_key, (step_index, observation.text))
                 if not observation.ok:
                     failed_actions.setdefault(action_sig, observation.text)
                 else:
@@ -5115,11 +5150,32 @@ class AssistantAgent(ModelGroupAgent):
         the decision stands and the loop's own repeat handling answers it, so
         a model that will not move on cannot fail the call."""
         tried = dict(getattr(self, "_turn_reads", {}) or {})
+        computed = dict(getattr(self, "_turn_computes", {}) or {})
         refused = 0
 
         def validate(result: BaseModel) -> None:
             nonlocal refused
             decision = cast(AssistantStepDecision, result)
+            if decision.action is AssistantActionName.PYTHON_RUN:
+                # A computation is a read of arithmetic: the same description
+                # prints the same output. The prompt already said "never
+                # repeat an identical successful action"; the model reran a
+                # finished square root at every step to the limit (6 of 6
+                # replays), and refused here with the output it already had,
+                # replied with it (5 of 6).
+                key = _compute_key(decision.args)
+                prior = computed.get(key) if key else None
+                if prior is None or refused >= self.READ_REPEAT_REJECTIONS:
+                    return
+                refused += 1
+                step, output = prior
+                raise ValueError(
+                    f"this computation already ran at step {step + 1} of this "
+                    f"turn and printed:\n"
+                    f"{truncate_middle(output, self.COMPUTE_REPEAT_QUOTE_CHARS)}"
+                    "\nRunning it again prints the same. Choose reply now and "
+                    "answer the request from that output, or describe a "
+                    "different computation if the request needs one.")
             cap = self._caps.get(decision.action)
             if cap is None or not cap.read or not tried:
                 return
@@ -6198,15 +6254,21 @@ class AssistantAgent(ModelGroupAgent):
         and the clock. Built with ElementTree for the same escaping
         guarantee.
 
-        The turn's conversation history rides along as reference, the same as
-        the other calls carry it. What is AUTHORITATIVE here is the request
-        and the criteria, which turn_instructions states; carrying no history
-        would only cost this call the shared prefix every other call of the
-        turn reuses."""
+        No conversation history: the request and the criteria are the whole
+        contract, and the criteria already carry what the request means read
+        through the history. Given the history, the reviewer checked the
+        program against an earlier turn's numbers — a program computing the
+        square root of 83338, as asked, was rejected for not being the
+        83838 of the turn before (18 of 30 replays; with no history, 0 of
+        18). Little cache is lost: the first review of that turn reused 227
+        of its 4,851 prompt tokens — the program writer's call runs just
+        before it — and later reviews reuse each other's prefix, which an
+        empty history leaves intact."""
         # Tiers 0 and 1. verdict_request re-anchors the request below.
         prompt = AssistantPromptBuilder(
             self, "second_opinion_review", messages=messages,
-            blocks=("identity", "calibration", "profile"))
+            blocks=("identity", "calibration", "profile"),
+            history_skip=lambda _message: True)
         prompt.append_turn_instructions(SECOND_OPINION_TURN_INSTRUCTIONS)
 
         if self._reply_language_markdown:

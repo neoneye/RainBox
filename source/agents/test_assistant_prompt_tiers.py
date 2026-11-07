@@ -588,6 +588,20 @@ TURN_MESSAGES = [
 ] + [{"sender_type": "human", "text": "what is 2+2"}]
 
 
+#: Calls that carry no conversation history, and so share no prefix with the
+#: others. The reviewer: given the history, it checked a program against an
+#: earlier turn's numbers and rejected a correct one, and the runtime reused
+#: almost none of the shared prefix for it anyway (261 of 4,871 tokens on the
+#: first review of a turn). Its reviews still share a prefix with each other.
+OWN_PREFIX_CALLS = {"second_opinion"}
+
+
+def test_the_reviewer_carries_no_conversation_history(fully_populated_agent):
+    prompts = all_turn_prompts(fully_populated_agent, TURN_MESSAGES)
+    assert "turn message number" in prompts["decide"]
+    assert "turn message number" not in prompts["second_opinion"]
+
+
 def test_every_assistant_call_shares_the_turn_prefix(fully_populated_agent):
     """The property the single prompt builder exists to create.
 
@@ -599,7 +613,8 @@ def test_every_assistant_call_shares_the_turn_prefix(fully_populated_agent):
     user_settings_yaml.
 
     Written as a loop over all six calls rather than as pairs, so a seventh
-    call added later cannot quietly opt out.
+    call added later cannot quietly opt out — the one call that does is named
+    in OWN_PREFIX_CALLS, with why.
     """
     prompts = all_turn_prompts(fully_populated_agent, TURN_MESSAGES)
     required = "<user_settings_yaml>identity</user_settings_yaml>"
@@ -610,6 +625,8 @@ def test_every_assistant_call_shares_the_turn_prefix(fully_populated_agent):
     for name, prompt in prompts.items():
         for other_name, other in prompts.items():
             if name >= other_name:
+                continue
+            if name in OWN_PREFIX_CALLS or other_name in OWN_PREFIX_CALLS:
                 continue
             shared = common_prefix_len(prompt, other)
             # A slice shorter than the target cannot contain it, so this pins

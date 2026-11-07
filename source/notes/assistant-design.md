@@ -100,6 +100,15 @@ consumes the step limit. Each loop iteration:
    the decision stands and the loop answers the repeat with the first read's
    observation without dispatching it again. A run once spent all six steps
    on one identical query.
+   A python_run that already succeeded this turn is refused the same way,
+   with the output it printed: a computation is a read of arithmetic. It is
+   compared by `_compute_key` — the description case-folded with its
+   whitespace collapsed, but not word-sorted, because a computation's word
+   order is its meaning. Past the bound, the loop answers it with the
+   earlier output instead of writing, reviewing and running the program
+   again. A run with the square root at step 0 reran it at every step to the
+   limit (6 of 6 replays of its step 1); refused with its output, the model
+   replied with it (5 of 6).
    A decision whose action or arguments do not check out
    (`_validate_decision`: an unavailable action, a missing required
    argument, an unknown one) is refused inside the decide call the same way
