@@ -213,6 +213,26 @@ def test_a_cited_shown_item_lends_the_source_its_kind_page_and_name():
     assert named[0]["name"] == "Shed"                   # the model's name wins
 
 
+def test_a_shown_item_s_uuid_under_a_prefix_it_never_had_is_that_item():
+    shown = [{"link": SHED_UUID, "name": "garden.shed", "kind": "Q&A entry"}]
+    text = f"{SHED_UUID}, seed/user-overlay, garden.shed: the shed is blue"
+    sources, dropped = reply_sources([{"name": "Shed", "link": f"diary:{SHED_UUID}"}],
+                                     [text], _no_match, shown=shown)
+    assert sources == [{"name": "Shed", "link": SHED_UUID, "kind": "Q&A entry", "url": None}]
+    assert dropped[0]["reason"] == f"{DROP_NOT_SEEN}; kept the 1 link inside it"
+    assert unused_sources(shown, sources, _no_match) == []
+
+
+def test_a_uuid_inside_a_link_that_no_read_showed_as_an_item_stays_dropped():
+    # The source uuid inside a diary citation occurs in the observation, but
+    # the item shown was the citation: a wrong range is not rescued as the source.
+    cite = f"diary:{SHED_UUID}:1-5"
+    shown = [{"link": cite, "kind": "diary passage"}]
+    sources, dropped = reply_sources([f"diary:{SHED_UUID}:3-9"], [f"--- a.md · {cite}"],
+                                     _no_match, shown=shown)
+    assert sources == [] and dropped[0]["reason"] == DROP_NOT_SEEN
+
+
 def test_unused_sources_are_capped():
     shown = [{"link": f"note-{i}.md"} for i in range(MAX_UNUSED_SOURCES + 5)]
     unused = unused_sources(shown, [], _no_match)

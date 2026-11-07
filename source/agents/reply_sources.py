@@ -15,8 +15,10 @@ returned listed inside it — rather than one item. The line as a whole was
 never shown verbatim, but the items in it were: each link inside it (a token
 holding a uuid, such as a diary citation, or a web address) that this turn
 showed is kept as a source of its own, under the entry's name, and the report
-says how many were kept from it. A link this turn never showed is dropped
-however it is wrapped.
+says how many were kept from it. The same holds for a uuid inside a link
+that is one of the items this turn's reads showed (below): a fact's uuid
+given a `diary:` prefix it never had is that fact. A link this turn never
+showed is dropped however it is wrapped.
 
 Every read also reports the items it showed the model (`shown_items` on its
 observation's data: a diary passage, a stored fact, a kanban task, a find
@@ -109,14 +111,21 @@ def normalize_sources(raw: Any) -> tuple[list[dict[str, str]], list[dict[str, st
 
 
 def check_seen(
-    entries: list[dict[str, str]], seen_texts: Iterable[str]
+    entries: list[dict[str, str]], seen_texts: Iterable[str],
+    shown_links: Iterable[str] = (),
 ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     """`(kept, dropped)`: an entry is kept when its link occurs verbatim in one
     of `seen_texts` — this turn's observations and the request message. An
-    entry that is not, but holds links that are (`links_inside`), is reported
-    dropped and those links are kept in its place, under its name, up to
-    MAX_REPLY_SOURCES in all."""
+    entry that is not, but holds links that are (`links_inside`), or holds a
+    uuid that is one of `shown_links` (the links of the items this turn's
+    reads showed), is reported dropped and those links are kept in its place,
+    under its name, up to MAX_REPLY_SOURCES in all.
+
+    A bare uuid inside a link is kept only when it is a shown item: the uuid
+    inside a diary citation occurs in every observation that showed the
+    citation, and is a diary source, not the passage that was cited."""
     texts = [t for t in seen_texts if t]
+    items = set(shown_links)
 
     def seen(link: str) -> bool:
         return any(link in text for text in texts)
@@ -129,10 +138,12 @@ def check_seen(
                 kept.append(entry)
             continue
         rescued = 0
-        for link in links_inside(entry["link"]):
+        inside = [t for t in links_inside(entry["link"]) if seen(t)]
+        inside += [u for u in _UUID.findall(entry["link"]) if u in items]
+        for link in inside:
             if len(kept) >= MAX_REPLY_SOURCES:
                 break
-            if link != entry["link"] and seen(link) and all(k["link"] != link for k in kept):
+            if link != entry["link"] and all(k["link"] != link for k in kept):
                 kept.append({"name": entry["name"], "link": link})
                 rescued += 1
         reason = DROP_NOT_SEEN
@@ -192,9 +203,9 @@ def reply_sources(
     checked against what the turn showed, and resolved. A kept link that a
     read listed among its shown items takes that item's kind and page, and its
     name when the model gave none."""
-    entries, dropped = normalize_sources(raw)
-    kept, unseen = check_seen(entries, seen_texts)
     by_link = _shown_by_link(shown)
+    entries, dropped = normalize_sources(raw)
+    kept, unseen = check_seen(entries, seen_texts, by_link)
     resolved = []
     for e in kept:
         item = by_link.get(e["link"])

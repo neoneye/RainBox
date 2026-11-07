@@ -127,6 +127,10 @@ irrelevant.
   `find_uuid` their matches (with their kind and page).
 - A kept source found among them takes their kind and page, and their name
   when the model gave none.
+- A dropped link holding a uuid that is one of them keeps that item: a small
+  model sometimes writes a fact's uuid under a `diary:` prefix it copied from
+  a diary citation. Only shown items are rescued this way; the source uuid
+  inside a diary citation is never a passage.
 - The shown items whose link no source has are stored as
   `chat_message.meta["unused_sources"]`, resolved like sources, first showing
   first, at most 50 (`MAX_UNUSED_SOURCES`). The reply's step lists them after
