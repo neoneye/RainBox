@@ -1573,6 +1573,73 @@ def test_loop_does_not_dispatch_identical_failed_action_twice(room):
         _decide_steps(steps)[1].observation_preview or "")
 
 
+
+
+def _agent_messages(room_uuid):
+    """The assistant's chat messages in the room, oldest first."""
+    return [m for m in db.list_room_messages(room_uuid)
+            if m["sender_type"] == "agent" and m["kind"] == "message"]
+
+def test_resending_failed_actions_stops_the_turn_with_the_reason(room):
+    """The shape of a run that spent its steps resending refused programs: two
+    programs fail, then the first is sent again and again. The second repeat
+    ends the turn, before the step limit, with a message the code writes —
+    the failure quoted, no result invented."""
+    room_uuid, message_uuid = room
+    agent = _agent()
+    agent.step_limit = 6
+    calls = []
+
+    def fake_dispatch(ctx, decision):
+        calls.append(decision.args["query"])
+        return AssistantObservation(
+            ok=False, text=f"review rejected {decision.args['query']}:\n- keep two decimals")
+
+    agent._dispatch_action = fake_dispatch
+    first = _decision(AssistantActionName.MEMORY_QUERY, query="plain")
+    agent._decide_next_step = scripted_decisions(
+        first,
+        _decision(AssistantActionName.MEMORY_QUERY, query="rounded"),
+        first,
+        first,
+    )
+
+    result = agent.handle(
+        uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
+
+    assert result["status"] == "stopped"
+    assert calls == ["plain", "rounded"]
+    steps = _steps_for(result["assistant_run_uuid"])
+    assert _decide_phases(steps) == ["failed", "failed", "failed", "failed"]
+    posts = _agent_messages(room_uuid)
+    assert len(posts) == 1
+    text = posts[0]["text"]
+    assert "`memory_query` failed" in text
+    assert "> review rejected plain:" in text
+    assert "> - keep two decimals" in text
+    assert f"/assistant?id={result['assistant_run_uuid']}" in text
+    run = db.get_assistant_run(UUID(result["assistant_run_uuid"]))
+    assert run.final_summary == "repeated a failed action"
+
+
+def test_one_repeat_of_a_failed_action_still_gets_a_chance(room):
+    """The first repeat is answered with "already failed", not a stop: the
+    model may still change course."""
+    room_uuid, message_uuid = room
+    agent = _agent()
+    agent._dispatch_action = lambda ctx, decision: AssistantObservation(
+        ok=False, text="backend unavailable")
+    same = _decision(AssistantActionName.MEMORY_QUERY, query="x")
+    agent._decide_next_step = scripted_decisions(
+        same, same, _decision(AssistantActionName.REPLY, message="I could not look that up."))
+
+    result = agent.handle(
+        uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
+
+    assert result["status"] == "finished"
+    assert _agent_messages(room_uuid)[0]["text"] == "I could not look that up."
+
+
 def test_loop_records_failed_action_and_continues(room):
     """A blocked/forbidden read becomes a failed step (trace-before-action: the
     running row is committed first), and the loop continues to a terminal reply."""

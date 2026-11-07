@@ -4065,6 +4065,13 @@ class AssistantAgent(ModelGroupAgent):
     # How many times one decide call refuses a read this turn already ran
     # before letting the decision stand (_repeat_read_validator).
     READ_REPEAT_REJECTIONS: int = 2
+    # How many verbatim repeats of failed actions a turn takes before it
+    # stops and says what blocked it (_stop_on_repeated_failure). The first
+    # repeat gets the "already failed" observation and a chance to change
+    # course; past this, every further step is the same refusal.
+    FAILED_REPEAT_LIMIT: int = 2
+    # How much of the refusal the stop message quotes.
+    FAILED_REPEAT_QUOTE_CHARS: int = 600
     # How many times one decide call refuses a decision whose action or
     # arguments do not check out (_decide_validator).
     ARGUMENT_REJECTIONS: int = 2
@@ -4480,9 +4487,12 @@ class AssistantAgent(ModelGroupAgent):
             # be cited from: the request, then each observation as it lands.
             self._turn_seen = [str((messages[-1] if messages else {}).get("text") or "")]
             # Failed actions also make no progress when repeated verbatim. Keep
-            # their signatures so the loop can return a corrective observation
-            # without re-running the same doomed action.
-            failed_actions: set[str] = set()
+            # their signatures, with what each failed with, so the loop can
+            # return a corrective observation without re-running the same
+            # doomed action — and, once repeats pile up, stop and quote it.
+            failed_actions: dict[str, str] = {}
+            repeated_failures = 0
+            blocked: tuple[str, str] | None = None
             # Relative links a write surfaced (e.g. /kanban?id=...), appended to the
             # reply so the operator can jump to what just changed. Order-preserving.
             result_links: list[str] = []
@@ -4742,6 +4752,8 @@ class AssistantAgent(ModelGroupAgent):
                         data={k: v for k, v in prior.data.items() if k != "timing"},
                     )
                 elif action_sig in failed_actions:
+                    repeated_failures += 1
+                    blocked = (decision.action.value, failed_actions[action_sig])
                     observation = AssistantObservation(
                         ok=False,
                         text=("This exact action and arguments already failed "
@@ -4836,7 +4848,7 @@ class AssistantAgent(ModelGroupAgent):
                             t for t in _memory_query_texts(decision.args)
                             if t not in self._turn_queries)
                 if not observation.ok:
-                    failed_actions.add(action_sig)
+                    failed_actions.setdefault(action_sig, observation.text)
                 else:
                     self._turn_seen.append(observation.text)
                 preview = observation.text[: self.MAX_OBSERVATION_PREVIEW_CHARS]
@@ -4884,6 +4896,9 @@ class AssistantAgent(ModelGroupAgent):
                         step_index=step_index, messages=messages,
                         scratchpad=scratchpad,
                         triggered_by=decision.action.value)
+                if repeated_failures >= self.FAILED_REPEAT_LIMIT and blocked:
+                    return self._stop_on_repeated_failure(
+                        run, room_uuid, *blocked)
 
             # Ran out of steps without a terminal action. Link the run page so the
             # operator can inspect what it did before giving up (relative path as
@@ -7613,6 +7628,41 @@ class AssistantAgent(ModelGroupAgent):
                     "kind": str(source.get("kind") or ""),
                     "link": str(source["link"])})
                 item.text = str(source.get("name") or "")
+
+    def _stop_on_repeated_failure(
+        self, run: Any, room_uuid: UUID, action: str, why: str
+    ) -> dict[str, Any]:
+        """End the turn after the model resent failed actions
+        FAILED_REPEAT_LIMIT times, with a message the code writes: which
+        action failed, what it failed with, and the run link.
+
+        Not a reply the model writes. Steered away from a blocked action, the
+        model replied with the result the action would have produced — a
+        square root no step computed, four times in five replays, whatever the
+        steering said. A turn that cannot get past a failure says so and
+        quotes it, so the operator sees the blocker instead of a guess, and
+        the turn ends before spending its remaining steps on the same failure.
+        """
+        quote = why.strip()
+        if len(quote) > self.FAILED_REPEAT_QUOTE_CHARS:
+            quote = quote[: self.FAILED_REPEAT_QUOTE_CHARS].rstrip() + " …"
+        quoted = "\n".join("> " + line if line else ">" for line in quote.splitlines())
+        run_link = f"/assistant?id={run.uuid}"
+        msg = (
+            f"I couldn't complete this. `{action}` failed, and sending it "
+            "again unchanged only fails the same way, so I stopped instead of "
+            "guessing at an answer.\n\n"
+            f"What it failed with:\n\n{quoted}\n\n"
+            f"Inspect the run: [{run_link}]({run_link})"
+        )
+        db.post_chat_message(room_uuid, self.agent_uuid, msg, kind="message",
+                             meta=self._final_meta())
+        db.finish_run(run, "stopped", final_summary="repeated a failed action")
+        logger.warning(
+            "assistant run %s stopped: %s resent after failing, in room %s",
+            run.uuid, action, room_uuid)
+        self._request_summary(run)
+        return self._run_result("stopped", "repeated a failed action")
 
     def _apply_room_tool_switches(self, room_uuid: UUID | None, run: Any) -> None:
         """Drop the tool families switched off for this assistant in this room

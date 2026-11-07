@@ -125,7 +125,17 @@ follow-up reads one again by its link.
 
 Running out of steps posts a "couldn't complete this within the step limit"
 message with a link to the run's inspector page and finishes the run
-`stopped`. Any exception marks the run `failed` (against the step it died on)
+`stopped`. A turn also stops early when the model resends failed actions:
+an action repeated verbatim after it failed is not run again, but answered
+"already failed", and the second such repeat in a turn
+(`FAILED_REPEAT_LIMIT = 2`) ends it. `_stop_on_repeated_failure` posts a
+message the code writes, naming the action, quoting what it failed with, and
+linking the run, then finishes the run `stopped` with "repeated a failed
+action". The model is deliberately not asked to write that reply. Steered away
+from a blocked `python_run`, it replied with the result the program would
+have printed, a square root no step computed (4 of 5 replays, and still 4 of
+5 when the steering said a failed action produced no result). The first repeat
+is answered without stopping, so the model can still change course. Any exception marks the run `failed` (against the step it died on)
 and re-raises so the journal records the failure too. It also posts a visible
 `kind="notice"` failure message with the reason and run link. A notice is
 operational output, not conversation history, and atomically clears the
