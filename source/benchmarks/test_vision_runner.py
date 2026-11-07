@@ -81,3 +81,44 @@ def test_start_sizes_the_run_and_releases_the_slot_when_done():
 def test_settings_summary_names_thinking():
     assert _settings_summary({"thinking": False, "temperature": 0.2}) == "thinking off · t0.2"
     assert _settings_summary({}) == "thinking: model default"
+
+
+def test_vision_check_asks_ollama_for_its_capability():
+    from benchmarks.vision_runner import _VisionCheck
+    check = _VisionCheck()
+    with patch("benchmarks.vision_runner.ollama_has_vision", side_effect=[True, False, None]):
+        assert check("ollama", "lfm3-vl:2b", {"base_url": "http://h"}) is True
+        assert check("ollama", "llama3.2:3b", {"base_url": "http://h"}) is False
+        # Ollama unreachable: not known to take images, so not listed.
+        assert check("ollama", "gemma4:e4b", {"base_url": "http://h"}) is False
+
+
+def test_vision_check_reads_each_provider_list_once():
+    from benchmarks.vision_runner import _VisionCheck
+    check = _VisionCheck()
+    with patch("benchmarks.vision_runner.openrouter_vision_models",
+               return_value={"openai/gpt-4o-mini"}) as listed:
+        assert check("openrouter", "openai/gpt-4o-mini", {}) is True
+        assert check("openrouter", "deepseek/deepseek-r1", {}) is False
+    assert listed.call_count == 1
+
+
+def test_vision_check_leaves_out_providers_that_do_not_say():
+    from benchmarks.vision_runner import _VisionCheck
+    assert _VisionCheck()("jan", "gemma-3-4b", {}) is False
+
+
+def test_lm_studio_vision_models_are_the_vlm_rows():
+    from benchmarks.vision_runner import lm_studio_vision_models
+    rows = [{"id": "qwen2-vl", "type": "vlm"}, {"id": "llama-3", "type": "llm"}]
+    with patch("providers.lm_studio.PROVIDER.fetch_native_models", return_value=rows):
+        assert lm_studio_vision_models() == {"qwen2-vl"}
+
+
+def test_openrouter_vision_models_take_image_input():
+    from benchmarks.vision_runner import openrouter_vision_models
+    rows = [{"id": "a", "architecture": {"input_modalities": ["text", "image"]}},
+            {"id": "b", "architecture": {"input_modalities": ["text"]}},
+            {"id": "c"}]
+    with patch("providers.openrouter.fetch_catalog", return_value=rows):
+        assert openrouter_vision_models() == {"a"}

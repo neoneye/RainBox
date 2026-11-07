@@ -305,7 +305,7 @@ function rows() {
     if (known.has(uuid) || !runs.length) continue;
     const r = runs[0];
     out.push({uuid, label: r.target_label, model_name: r.model_name, provider: r.provider,
-              settings: '', vision: true, removed: true});
+              settings: '', removed: true});
   }
   return out;
 }
@@ -321,7 +321,6 @@ function render() {
     const isCur = cur && cur.uuid === t.uuid;
     const queued = running && state.queue.includes(t.uuid) && !isCur;
     let tags = '';
-    if (t.vision === null) tags += '<span class="tag" title="This provider does not say whether the model takes images.">vision unknown</span>';
     if (t.removed) tags += '<span class="tag">removed</span>';
     if (isCur) {
       const what = cur.phase === 'running' ? esc(cur.case) + ' #' + (cur.trial + 1) : esc(cur.phase.replace('_', ' '));
@@ -350,7 +349,7 @@ function render() {
             (running || (state && state.blocked_by) ? ' disabled' : '') + '>Run</button>') + '</td></tr>';
     if (expanded.has(t.uuid) && run) html += detailRow(t, runs, run);
   }
-  if (!html) html = '<tr><td colspan="13" class="muted">No vision models found among the available model configs.</td></tr>';
+  if (!html) html = '<tr><td colspan="13" class="muted">No vision models found. Ollama, LM Studio and OpenRouter say which of their models take images; models from other providers are not listed.</td></tr>';
   els.body.innerHTML = html;
   tick();
 }

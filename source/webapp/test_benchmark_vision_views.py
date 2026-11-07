@@ -6,7 +6,7 @@ from unittest.mock import patch
 from webapp.core import app
 
 _TARGETS = [{"uuid": "7f38095f-3ca2-4852-8ef6-58746672e03f", "kind": "config", "label": "lfm3",
-             "model_name": "lfm3-vl:2b", "provider": "ollama", "vision": True,
+             "model_name": "lfm3-vl:2b", "provider": "ollama",
              "settings": "thinking: model default"}]
 
 

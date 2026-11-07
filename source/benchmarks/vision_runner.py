@@ -32,8 +32,8 @@ _WORKER_MODULE = "benchmarks.vision_worker"
 LABEL = "Vision benchmark"
 MAX_TRIALS = 10
 
-# Ollama model name -> has the "vision" capability. Asked once per process:
-# a model's capabilities do not change while it is installed.
+# (Ollama base URL, model name) -> has the "vision" capability. Asked once per
+# process: a model's capabilities do not change while it is installed.
 _vision_cache: dict[tuple[str, str], bool] = {}
 
 
@@ -54,6 +54,47 @@ def ollama_has_vision(base_url: str, model_name: str) -> bool | None:
     return _vision_cache[key]
 
 
+def lm_studio_vision_models() -> set[str]:
+    """LM Studio model ids its native API marks as vision models
+    (`type: "vlm"`); empty when LM Studio is not running."""
+    import providers
+
+    rows = providers.get("lm_studio").fetch_native_models() or []
+    return {r["id"] for r in rows if r.get("type") == "vlm" and isinstance(r.get("id"), str)}
+
+
+def openrouter_vision_models() -> set[str]:
+    """OpenRouter model ids whose catalog entry takes images as input; empty
+    when no key is set or the catalog cannot be fetched."""
+    from providers import openrouter
+
+    rows = openrouter.fetch_catalog() or []
+    return {r["id"] for r in rows
+            if "image" in ((r.get("architecture") or {}).get("input_modalities") or [])}
+
+
+class _VisionCheck:
+    """Says whether a model takes images, asking each provider at most once
+    per page load. A provider that does not report it (Jan) answers no: the
+    page lists only models known to be vision-capable."""
+
+    def __init__(self) -> None:
+        self._lists: dict[str, set[str]] = {}
+
+    def __call__(self, provider: str, model_name: str, arguments: dict[str, Any]) -> bool:
+        if provider == "ollama":
+            import providers
+            base = str(arguments.get("base_url") or "") or providers.get("ollama").base_url()
+            return ollama_has_vision(base, model_name) is True
+        listers = {"lm_studio": lm_studio_vision_models,
+                   "openrouter": openrouter_vision_models}
+        if provider not in listers:
+            return False
+        if provider not in self._lists:
+            self._lists[provider] = listers[provider]()
+        return model_name in self._lists[provider]
+
+
 def _settings_summary(arguments: dict[str, Any]) -> str:
     """The settings that change a vision answer, for the row label."""
     parts: list[str] = []
@@ -69,24 +110,18 @@ def _settings_summary(arguments: dict[str, Any]) -> str:
 
 
 def vision_targets() -> list[dict[str, Any]]:
-    """Every available model config and override that can take an image,
+    """Every available model config and override whose model takes images,
     in /models tree order. Needs an app context.
 
-    Ollama says which models have vision, so the others are left out. Other
-    providers do not say; their models are listed with `vision: None` so the
-    operator can still try one."""
-    import providers
-
+    Ollama (`/api/show` capabilities), LM Studio (`type: "vlm"`) and
+    OpenRouter (the catalog's input modalities) say which models have
+    vision. A model whose provider does not say, or could not be asked, is
+    left out."""
+    has_vision = _VisionCheck()
     out: list[dict[str, Any]] = []
     for cfg, overrides in db.list_model_configs_with_overrides():
-        if not cfg.available:
+        if not cfg.available or not has_vision(cfg.provider, cfg.model_name, cfg.arguments):
             continue
-        vision: bool | None = None
-        if cfg.provider == "ollama":
-            base = str(cfg.arguments.get("base_url") or "") or providers.get("ollama").base_url()
-            vision = ollama_has_vision(base, cfg.model_name)
-            if vision is False:
-                continue
         rows = [(cfg.uuid, "config", cfg.effective_display_name)]
         rows += [(ov.uuid, "override", ov.effective_display_name) for ov in overrides]
         for uid, kind, label in rows:
@@ -100,7 +135,6 @@ def vision_targets() -> list[dict[str, Any]]:
                 "label": label,
                 "model_name": cfg.model_name,
                 "provider": cfg.provider,
-                "vision": vision,
                 "settings": _settings_summary(args),
             })
     return out
