@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import time as _time
 from typing import Any, Callable
+from uuid import UUID
 
 import db
 from diary.action import diary_query
@@ -25,11 +26,17 @@ MAX_PAGES = 40
 WARM_PASSES = 3
 
 
+# The probe reads outside any chat room. Its paging cursors still need a room
+# to be bound to, so they get this one, which no room has.
+PROBE_ROOM_UUID = UUID(int=0)
+
+
 def trusted_context(source: Any, *, vectors: str | None = None) -> DiaryContext:
-    """The operator's probe context: the source's first room and its agent, the
-    selected source readable even while disabled. Exclusions and quarantine
-    still apply. Not constructible from action args."""
-    return DiaryContext(room_uuid=source.room_uuids[0], agent_uuid=source.agent_uuid,
+    """The operator's probe context: no chat room (PROBE_ROOM_UUID), the
+    source's agent, the selected source readable even while disabled and
+    without a room's Diary switch. Exclusions and quarantine still apply.
+    Not constructible from action args."""
+    return DiaryContext(room_uuid=PROBE_ROOM_UUID, agent_uuid=source.agent_uuid,
                         models_local=True, trusted_source=source.uuid,
                         vector_mode_override=vectors)
 

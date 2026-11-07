@@ -699,14 +699,25 @@ as a turn in that room gets them. There is one row per family, each with a
 switch. Opening a row lists each tool's summary, with a *writes* tag on write
 tools and the reason a tool is off: turned off in Settings, switched off in
 this room, or not offered in this room. The diary row names the diary
-sources readable in the room and, when `diary_query` is not offered there,
-says why (the `diary_available` reason). The conversation family and the
+sources the room reads with its switch on and, when `diary_query` is not
+offered there, says why (the `diary_available` reason). The conversation
+family and the
 internal capabilities are left out, since neither is something the operator
 configures.
 
 The switches are per room and per assistant:
 `chatroom_member.disabled_tool_families`, beside the persona binding, written
-by `PUT /chat/api/rooms/<room>/tools/<family>` with `{"on": bool}`. At the
+by `PUT /chat/api/rooms/<room>/tools/<family>` with `{"on": bool}`. Every
+family starts on except the opt-in ones (`db.chat.OPT_IN_TOOL_FAMILIES`: the
+diary), which start off and are recorded in
+`chatroom_member.enabled_tool_families` when switched on. The Diary switch is
+the whole grant: a diary source names no rooms, so a room reads the diary
+(every enabled private source, an agent-restricted one only for its agent)
+exactly when its switch is on. Off by default because a room can have other
+people in it — a bridged Telegram or Discord chat — and the diary is the
+operator's private writing. `diary.retrieval.diary_switched_on` checks it,
+both when the turn decides whether to offer `diary_query` and again on every
+read. At the
 start of a turn, `_apply_room_tool_switches` drops those families from the
 operator-effective set, before the diary check, and records them on the run
 as `room_disabled_tool_families`. A switch only narrows: a capability turned

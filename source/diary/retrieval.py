@@ -142,17 +142,28 @@ class DiaryResult:
 # --- eligibility -------------------------------------------------------------------
 
 
+def diary_switched_on(room_uuid: UUID | None, agent_uuid: UUID | None) -> bool:
+    """Whether this room's Diary switch is on for this agent — the one grant
+    that makes the diary readable in a room. Off by default (an opt-in
+    family, db.chat.OPT_IN_TOOL_FAMILIES); no room, or no agent, is off."""
+    if room_uuid is None or agent_uuid is None:
+        return False
+    return "diary" not in db.member_disabled_tool_families(room_uuid, agent_uuid)
+
+
 def eligible_sources(ctx: DiaryContext, source_name: str | None = None) -> list[Any]:
-    """Sources this context may read: the enabled private sources listing the room
-    (agent-restricted ones only for that agent), narrowed to those allowing
-    remote models when the turn's models are not all local. The trusted
-    probe context may add its one selected source even while disabled."""
+    """Sources this context may read: in a room whose Diary switch is on, the
+    enabled private sources (agent-restricted ones only for that agent),
+    narrowed to those allowing remote models when the turn's models are not
+    all local. The trusted probe context may add its one selected source even
+    while disabled, and needs no switch."""
     q = db.session.query(db.DiarySource).filter(db.DiarySource.sensitivity == "private")
+    room_on = diary_switched_on(ctx.room_uuid, ctx.agent_uuid)
     rows = []
     for s in q.all():
         trusted = ctx.trusted_source is not None and s.uuid == ctx.trusted_source
         if not trusted:
-            if ctx.room_uuid is None or ctx.room_uuid not in s.room_uuids or not s.enabled:
+            if not room_on or not s.enabled:
                 continue
             if s.agent_uuid is not None and s.agent_uuid != ctx.agent_uuid:
                 continue
@@ -166,10 +177,12 @@ def eligible_sources(ctx: DiaryContext, source_name: str | None = None) -> list[
 
 def diary_available(room_uuid: UUID, agent_uuid: UUID | None, models_local: bool) -> tuple[bool, str]:
     """Whether `diary_query` should be offered this turn, and if not, why
-    (for the trace): no_source, no_ready_source or remote_models."""
+    (for the trace): switched_off, no_source, no_enabled_source,
+    remote_models or no_ready_file."""
+    if not diary_switched_on(room_uuid, agent_uuid):
+        return False, "switched_off"
     sources = [s for s in db.session.query(db.DiarySource)
-               .filter(db.DiarySource.room_uuids.any(room_uuid),
-                       db.DiarySource.sensitivity == "private").all()
+               .filter(db.DiarySource.sensitivity == "private").all()
                if s.agent_uuid is None or s.agent_uuid == agent_uuid]
     if not sources:
         return False, "no_source"

@@ -72,12 +72,27 @@ def test_write_tools_are_marked(room):
     assert memory["memory_query"]["write"] is False
 
 
-def test_diary_without_a_source_in_the_room_is_off_with_the_reason(room):
+def test_the_diary_starts_switched_off_and_says_so(room):
     diary = _families(room.uuid)["diary"]
-    assert diary["note"] == "No diary source is readable in this room."
-    assert diary["sources"] == []
-    assert all(not t["on"] and t["off_reason"] == "not offered in this room"
+    assert diary["room_on"] is False
+    assert diary["note"].startswith("Off until switched on here")
+    assert all(not t["on"] and t["off_reason"] == "switched off in this room"
                for t in diary["tools"])
+
+
+def test_switching_the_diary_on_is_stored_for_this_room_only(room):
+    other = _room([ASSISTANT_UUID])
+    try:
+        resp = _put(room.uuid, "diary", {"on": True})
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        diary = {f["family"]: f for f in resp.get_json()["tools"]}["diary"]
+        assert diary["room_on"] is True
+        assert "diary" not in db.member_disabled_tool_families(room.uuid, ASSISTANT_UUID)
+        assert _families(other.uuid)["diary"]["room_on"] is False
+        _put(room.uuid, "diary", {"on": False})
+        assert "diary" in db.member_disabled_tool_families(room.uuid, ASSISTANT_UUID)
+    finally:
+        db.delete_chatroom(other.uuid)
 
 
 def test_a_room_without_the_assistant_lists_nothing(ctx):
@@ -100,8 +115,10 @@ def _put(room_uuid, family, body):
         return app.test_client().put(f"/chat/api/rooms/{room_uuid}/tools/{family}", json=body)
 
 
-def test_every_family_starts_switched_on(room):
-    assert all(f["room_on"] for f in _families(room.uuid).values())
+def test_every_family_but_the_diary_starts_switched_on(room):
+    families = _families(room.uuid)
+    assert all(f["room_on"] for name, f in families.items() if name != "diary")
+    assert families["diary"]["room_on"] is False
 
 
 def test_switching_a_family_off_stores_it_for_this_room_only(room):
@@ -113,7 +130,7 @@ def test_switching_a_family_off_stores_it_for_this_room_only(room):
         assert kanban["room_on"] is False
         assert all(not t["on"] and t["off_reason"] == "switched off in this room"
                    for t in kanban["tools"])
-        assert db.member_disabled_tool_families(room.uuid, ASSISTANT_UUID) == {"kanban"}
+        assert db.member_disabled_tool_families(room.uuid, ASSISTANT_UUID) == {"kanban", "diary"}
         assert _families(other.uuid)["kanban"]["room_on"] is True
     finally:
         db.delete_chatroom(other.uuid)

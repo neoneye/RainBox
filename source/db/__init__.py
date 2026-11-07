@@ -360,16 +360,28 @@ def _ensure_diary_schema() -> None:
     """The diary pieces create_all cannot express: the deferred composite FK
     that lets a file's current pointer name only a generation of that same
     file. Guarded, so a migrated database starts without taking a lock."""
-    # A source lists the rooms it is readable in. A table holding one room
-    # per source gets that room as its one-element list.
-    if _column_exists("diary_source", "room_uuid"):
-        db.session.execute(sa.text(
-            "ALTER TABLE diary_source ADD COLUMN IF NOT EXISTS room_uuids uuid[]"))
-        db.session.execute(sa.text(
-            "UPDATE diary_source SET room_uuids = ARRAY[room_uuid] WHERE room_uuids IS NULL"))
-        db.session.execute(sa.text(
-            "ALTER TABLE diary_source ALTER COLUMN room_uuids SET NOT NULL"))
-        db.session.execute(sa.text("ALTER TABLE diary_source DROP COLUMN room_uuid"))
+    # Which rooms read the diary is each room's Diary switch, not a list on the
+    # source. A table that still lists rooms (`room_uuids`, or the single
+    # `room_uuid` before it) hands them to the switch — on for the source's
+    # agent (the assistant when it names none), unless that room switched the
+    # diary off — and the column goes.
+    for column, rooms in (("room_uuids", "unnest(s.room_uuids)"),
+                          ("room_uuid", "s.room_uuid")):
+        if not _column_exists("diary_source", column):
+            continue
+        from agents.config import ASSISTANT_UUID
+
+        db.session.execute(sa.text(f"""
+            UPDATE chatroom_member m
+               SET enabled_tool_families = array_append(m.enabled_tool_families, 'diary')
+              FROM (SELECT DISTINCT {rooms} AS room_uuid,
+                           COALESCE(s.agent_uuid, :assistant) AS agent_uuid
+                      FROM diary_source s) g
+             WHERE m.room_uuid = g.room_uuid AND m.user_uuid = g.agent_uuid
+               AND NOT 'diary' = ANY(m.enabled_tool_families)
+               AND NOT 'diary' = ANY(m.disabled_tool_families)"""),
+            {"assistant": ASSISTANT_UUID})
+        db.session.execute(sa.text(f"ALTER TABLE diary_source DROP COLUMN {column}"))
         db.session.commit()
     # pg_trgm backs close-spelling search (diary.fuzzy) and the optional
     # literal accelerator. Installed only where the server offers it; without
@@ -682,6 +694,8 @@ def init_db(app: Flask) -> None:
         # The room Settings panel's per-room tool switches.
         _add_column_if_missing("chatroom_member", "disabled_tool_families",
                                "disabled_tool_families TEXT[] NOT NULL DEFAULT '{}'")
+        _add_column_if_missing("chatroom_member", "enabled_tool_families",
+                               "enabled_tool_families TEXT[] NOT NULL DEFAULT '{}'")
         db.session.execute(sa.text(
             "CREATE UNIQUE INDEX IF NOT EXISTS memory_rejected_value_key_uniq "
             "ON memory_rejected_value (scope, "

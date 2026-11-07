@@ -3975,13 +3975,18 @@ _UNLISTED_FAMILIES = frozenset({"conversation"})
 
 # Why diary_query is not offered in a room, as diary_available reports it.
 _DIARY_REASONS: dict[str, str] = {
-    "no_source": "No diary source is readable in this room.",
-    "no_enabled_source": "This room's diary sources are all turned off.",
-    "remote_models": ("Not every assistant model runs locally, and this "
-                      "room's diary sources are kept to local models."),
-    "no_ready_file": "This room's diary sources have no files ready yet.",
+    "switched_off": "Switched off in this room.",
+    "no_source": "No diary source is registered.",
+    "no_enabled_source": "The diary sources are all turned off.",
+    "remote_models": ("Not every assistant model runs locally, and the "
+                      "diary sources are kept to local models."),
+    "no_ready_file": "The diary sources have no files ready yet.",
     "check_failed": "Diary availability could not be checked.",
 }
+# The diary row's note while the room's Diary switch is off: off is the
+# default (db.chat.OPT_IN_TOOL_FAMILIES), so a new room reads no diary.
+_DIARY_OFF_NOTE = ("Off until switched on here: the diary is readable only "
+                   "in rooms where this switch is on.")
 
 
 def switchable_tool_families() -> list[str]:
@@ -4045,7 +4050,8 @@ def room_tools(room_uuid: UUID) -> list[dict[str, Any]]:
             _room_diary(room_uuid, ASSISTANT_UUID, entry)
         if not room_on:
             # Switched off here: the room's own reason wins over the diary's.
-            entry["note"] = None
+            # The diary is off until switched on, so its row says so.
+            entry["note"] = (_DIARY_OFF_NOTE if family == "diary" else None)
             for tool in tools:
                 if tool["on"] or tool["off_reason"] == "not offered in this room":
                     tool["on"] = False
@@ -4055,15 +4061,15 @@ def room_tools(room_uuid: UUID) -> list[dict[str, Any]]:
 
 
 def _room_diary(room_uuid: UUID, agent_uuid: UUID, entry: dict[str, Any]) -> None:
-    """Fill the diary family's room-specific part: the sources readable here,
-    and — when diary_query is not offered here — why, with its tools off."""
+    """Fill the diary family's room-specific part: the sources this room
+    would read with its Diary switch on, and — when diary_query is not
+    offered here — why, with its tools off."""
     from agents.model_groups import assistant_models_all_local
     from diary.retrieval import diary_available
 
     try:
         rows = (db.session.query(db.DiarySource)
-                .filter(db.DiarySource.room_uuids.any(room_uuid),
-                        db.DiarySource.sensitivity == "private").all())
+                .filter(db.DiarySource.sensitivity == "private").all())
         entry["sources"] = sorted(
             ({"name": s.name, "enabled": bool(s.enabled)} for s in rows
              if s.agent_uuid is None or s.agent_uuid == agent_uuid),

@@ -30,10 +30,10 @@ def app_ctx():
         ctx.pop()
 
 
-def manifest_for(root: Path, room_uuid, name: str, **changes):
+def manifest_for(root: Path, name: str, **changes):
     raw = {
         "schema_version": 1, "name": name, "root": str(root),
-        "room_uuids": [str(room_uuid)], "agent_uuid": None,
+        "agent_uuid": None,
         "timezone": "Europe/Copenhagen", "sensitivity": "private",
         "include_suffixes": [".txt"],
         "dialect_rules": [{"prefix": "current/", "dialect": "timed"},
@@ -55,7 +55,7 @@ def source(app_ctx, tmp_path):
     db.session.add(db.Chatroom(uuid=room_uuid, name="diary-test", created_by=uuid.uuid4()))
     db.session.commit()
     name = f"diary-test-{uuid.uuid4().hex[:12]}"
-    src, created = db.diary_register_source(manifest_for(root.resolve(), room_uuid, name))
+    src, created = db.diary_register_source(manifest_for(root.resolve(), name))
     assert created
     try:
         yield src, root.resolve(), room_uuid
@@ -108,29 +108,55 @@ def test_register_starts_disabled_and_reregister_keeps_identity(source):
     assert src.enabled is False and src.policy_version == 1
     db.diary_exclude(src.uuid, "archive/ChangeLog.txt")
     db.diary_set_enabled(src.uuid, True)
-    again, created = db.diary_register_source(manifest_for(root, room, src.name, timezone="UTC"))
+    again, created = db.diary_register_source(manifest_for(root, src.name, timezone="UTC"))
     assert not created and again.uuid == src.uuid
     again = refresh(again)
     assert again.enabled is False and again.timezone == "UTC"
     assert db.diary_exclusions(src.uuid) == {"archive/ChangeLog.txt"}
 
 
-def test_register_refuses_root_change_and_unknown_room(source, tmp_path):
+def test_register_refuses_a_root_change(source, tmp_path):
     src, root, room = source
     other = tmp_path / "elsewhere"
     other.mkdir()
     with pytest.raises(db.DiaryError, match="root change"):
-        db.diary_register_source(manifest_for(other.resolve(), room, src.name))
-    with pytest.raises(db.DiaryError, match="does not exist"):
-        db.diary_register_source(manifest_for(other.resolve(), uuid.uuid4(), "no-room-src"))
-    with pytest.raises(db.DiaryError, match="does not exist"):
-        db.diary_register_source(manifest_for(root, room, src.name,
-                                              room_uuids=[str(room), str(uuid.uuid4())]))
+        db.diary_register_source(manifest_for(other.resolve(), src.name))
+
+
+def test_a_table_still_listing_rooms_hands_them_to_the_diary_switch(source):
+    """Startup: rooms a source still lists get the Diary switch on, except a
+    room that had switched the diary off, and the column goes."""
+    from agents.config import ASSISTANT_UUID
+
+    src, _root, room = source
+    second = uuid.uuid4()
+    db.session.add(db.Chatroom(uuid=second, name="diary-test-off", created_by=uuid.uuid4()))
+    db.session.commit()
+    for r in (room, second):
+        db.add_room_member(r, ASSISTANT_UUID)
+    off = db.get_member_persona_row(second, ASSISTANT_UUID)
+    off.disabled_tool_families = ["diary"]
+    db.session.execute(sa.text("ALTER TABLE diary_source ADD COLUMN room_uuids uuid[]"))
+    db.session.execute(sa.text("UPDATE diary_source SET room_uuids = ARRAY[:a, :b]::uuid[] "
+                               "WHERE uuid = :s"), {"a": room, "b": second, "s": src.uuid})
+    db.session.commit()
+    try:
+        db._ensure_diary_schema()
+        assert "diary" not in db.member_disabled_tool_families(room, ASSISTANT_UUID)
+        assert "diary" in db.member_disabled_tool_families(second, ASSISTANT_UUID)
+        assert not db._column_exists("diary_source", "room_uuids")
+    finally:
+        db.session.rollback()
+        db.session.execute(sa.text("ALTER TABLE diary_source DROP COLUMN IF EXISTS room_uuids"))
+        db.session.execute(sa.delete(db.ChatroomMember)
+                           .where(db.ChatroomMember.room_uuid.in_([room, second])))
+        db.session.execute(sa.delete(db.Chatroom).where(db.Chatroom.uuid == second))
+        db.session.commit()
 
 
 def test_secret_source_cannot_be_enabled(source):
     src, root, room = source
-    db.diary_register_source(manifest_for(root, room, src.name, sensitivity="secret"))
+    db.diary_register_source(manifest_for(root, src.name, sensitivity="secret"))
     with pytest.raises(db.DiaryError, match="secret"):
         db.diary_set_enabled(src.uuid, True)
 

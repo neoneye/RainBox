@@ -3379,8 +3379,9 @@ function drawToolFamilies(list, room, families){
     }
     d.appendChild(sum);
 
-    // Switched off here: said once for the family, not on every tool.
-    const note = f.room_on ? f.note : 'Switched off in this room.';
+    // Switched off here: said once for the family, not on every tool. A
+    // family that starts off (the diary) brings its own wording.
+    const note = f.room_on ? f.note : (f.note || 'Switched off in this room.');
     if (note){
       const p = document.createElement('p');
       p.className = 'ds-note';
@@ -3390,7 +3391,7 @@ function drawToolFamilies(list, room, families){
     if (f.sources && f.sources.length){
       const src = document.createElement('p');
       src.className = 'ds-note';
-      src.textContent = 'Readable here: ' + f.sources.map(
+      src.textContent = (f.room_on ? 'Readable here: ' : 'Readable here once switched on: ') + f.sources.map(
         x => x.enabled ? x.name : x.name + ' (off)').join(', ');
       d.appendChild(src);
     }

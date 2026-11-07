@@ -34,6 +34,12 @@ def app_ctx():
         ctx.pop()
 
 
+def switch_diary(room: uuid.UUID, agent: uuid.UUID, on: bool) -> None:
+    """The room Settings panel's Diary switch, for this agent in this room."""
+    db.add_room_member(room, agent)
+    db.set_member_tool_family(room, agent, "diary", on)
+
+
 class World:
     def __init__(self, root: Path, room: uuid.UUID, agent: uuid.UUID, src):
         self.root, self.room, self.agent, self.src = root, room, agent, src
@@ -63,20 +69,36 @@ def world(app_ctx, tmp_path):
     root = root.resolve()
     room, agent = uuid.uuid4(), uuid.uuid4()
     db.session.add(db.Chatroom(uuid=room, name="diary-read", created_by=uuid.uuid4()))
+    db.session.add(db.ChatUser(uuid=agent, name=f"diary-agent-{agent.hex[:8]}", user_type="agent"))
     db.session.commit()
+    switch_diary(room, agent, True)
     name = f"diary-read-{uuid.uuid4().hex[:12]}"
-    src, _ = db.diary_register_source(manifest_for(root, room, name))
+    src, _ = db.diary_register_source(manifest_for(root, name))
+    # A room with its Diary switch on reads every enabled source, so the
+    # sandbox's own (a pilot, say) would answer these queries too. Set them
+    # aside for the test — the flag only, no version bump — and put them back.
+    set_aside = list(db.session.execute(
+        sa.update(db.DiarySource)
+        .where(db.DiarySource.enabled.is_(True), db.DiarySource.uuid != src.uuid)
+        .values(enabled=False).returning(db.DiarySource.uuid)).scalars())
+    db.session.commit()
     w = World(root, room, agent, src)
     try:
         yield w
     finally:
         db.session.rollback()
+        if set_aside:
+            db.session.execute(sa.update(db.DiarySource)
+                               .where(db.DiarySource.uuid.in_(set_aside)).values(enabled=True))
+            db.session.commit()
         db.session.execute(sa.delete(db.DiaryCursor).where(db.DiaryCursor.room_uuid == room))
         db.session.execute(sa.delete(db.RetrievalEvent).where(db.RetrievalEvent.room_uuid == room))
         db.session.execute(sa.update(db.DiaryFile).where(db.DiaryFile.source_uuid == src.uuid)
                            .values(current_generation_uuid=None))
         db.session.execute(sa.delete(db.DiarySource).where(db.DiarySource.uuid == src.uuid))
+        db.session.execute(sa.delete(db.ChatroomMember).where(db.ChatroomMember.room_uuid == room))
         db.session.execute(sa.delete(db.Chatroom).where(db.Chatroom.uuid == room))
+        db.session.execute(sa.delete(db.ChatUser).where(db.ChatUser.uuid == agent))
         db.session.commit()
 
 
@@ -143,37 +165,45 @@ def test_other_room_other_agent_and_remote_models(live):
     assert diary_query({"mode": "search", "query": "physiotherapy"}, other, budget=BUDGET).data["error"] == "unavailable"
     remote = live.ctx(models_local=False)
     assert diary_query({"mode": "search", "query": "physiotherapy"}, remote, budget=BUDGET).data["error"] == "unavailable"
-    m = manifest_for(live.root, live.room, live.src.name, agent_uuid=str(uuid.uuid4()))
+    m = manifest_for(live.root, live.src.name, agent_uuid=str(uuid.uuid4()))
     db.diary_register_source(m)
     db.diary_set_enabled(live.src.uuid, True)
     assert live.q(mode="search", query="physiotherapy").data["error"] == "unavailable"
 
 
-def test_a_source_listing_two_rooms_answers_in_both_and_only_there(live):
-    second = uuid.uuid4()
-    db.session.add(db.Chatroom(uuid=second, name="diary-read-second", created_by=uuid.uuid4()))
+def test_the_diary_answers_in_every_room_whose_switch_is_on_and_only_there(live):
+    second, third = uuid.uuid4(), uuid.uuid4()
+    for room in (second, third):
+        db.session.add(db.Chatroom(uuid=room, name="diary-read-other", created_by=uuid.uuid4()))
     db.session.commit()
     try:
-        m = manifest_for(live.root, live.room, live.src.name,
-                         room_uuids=[str(live.room), str(second)])
-        db.diary_register_source(m)
-        db.diary_set_enabled(live.src.uuid, True)
+        switch_diary(second, live.agent, True)
         for room in (live.room, second):
             assert diary_available(room, live.agent, True) == (True, "available")
             obs = diary_query({"mode": "search", "query": "physiotherapy"},
                               live.ctx(room_uuid=room), budget=BUDGET)
             assert obs.ok and citations(obs)
-        assert diary_available(uuid.uuid4(), live.agent, True) == (False, "no_source")
+        # A room the assistant is in, its switch never touched: off.
+        db.add_room_member(third, live.agent)
+        assert diary_available(third, live.agent, True) == (False, "switched_off")
+        obs = diary_query({"mode": "search", "query": "physiotherapy"},
+                          live.ctx(room_uuid=third), budget=BUDGET)
+        assert not obs.ok and obs.data["error"] == "unavailable"
+        # Switched off again: off again, on the next read.
+        switch_diary(second, live.agent, False)
+        assert diary_available(second, live.agent, True) == (False, "switched_off")
     finally:
         db.session.rollback()
-        db.session.execute(sa.delete(db.DiaryCursor).where(db.DiaryCursor.room_uuid == second))
-        db.session.execute(sa.delete(db.RetrievalEvent).where(db.RetrievalEvent.room_uuid == second))
-        db.session.execute(sa.delete(db.Chatroom).where(db.Chatroom.uuid == second))
+        for room in (second, third):
+            db.session.execute(sa.delete(db.DiaryCursor).where(db.DiaryCursor.room_uuid == room))
+            db.session.execute(sa.delete(db.RetrievalEvent).where(db.RetrievalEvent.room_uuid == room))
+            db.session.execute(sa.delete(db.ChatroomMember).where(db.ChatroomMember.room_uuid == room))
+            db.session.execute(sa.delete(db.Chatroom).where(db.Chatroom.uuid == room))
         db.session.commit()
 
 
 def test_allow_remote_models_opts_in(live):
-    db.diary_register_source(manifest_for(live.root, live.room, live.src.name, allow_remote_models=True))
+    db.diary_register_source(manifest_for(live.root, live.src.name, allow_remote_models=True))
     db.diary_set_enabled(live.src.uuid, True)
     obs = diary_query({"mode": "search", "query": "physiotherapy"}, live.ctx(models_local=False), budget=BUDGET)
     assert obs.ok and citations(obs)

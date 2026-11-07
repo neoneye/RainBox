@@ -85,9 +85,9 @@ def _availability(agent, room, monkeypatch, local=(True, None)):
     return DIARY in agent._caps, run.metadata_.get("diary_availability")
 
 
-def test_hidden_without_a_source(app_ctx, monkeypatch):
+def test_hidden_while_the_room_switch_is_off(app_ctx, monkeypatch):
     shown, reason = _availability(_agent(), uuid.uuid4(), monkeypatch)
-    assert (shown, reason) == (False, "no_source")
+    assert (shown, reason) == (False, "switched_off")
 
 
 def test_hidden_until_enabled_then_shown(world, monkeypatch):
@@ -103,10 +103,11 @@ def test_hidden_until_enabled_then_shown(world, monkeypatch):
 def test_remote_model_hides_unless_source_opts_in(live, monkeypatch):
     from db.test_diary import manifest_for
     agent = _agent()
+    agent.agent_uuid = live.agent
     remote = (False, "assistant.reply_audit")
     assert _availability(agent, live.room, monkeypatch, remote) == \
         (False, "remote_models:assistant.reply_audit")
-    db.diary_register_source(manifest_for(live.root, live.room, live.src.name,
+    db.diary_register_source(manifest_for(live.root, live.src.name,
                                           allow_remote_models=True))
     db.diary_set_enabled(live.src.uuid, True)
     assert _availability(agent, live.room, monkeypatch, remote) == (True, "available")

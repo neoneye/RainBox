@@ -675,11 +675,15 @@ class ChatroomMember(db.Model):
     persona_revision_uuid: Mapped[UUID | None] = mapped_column(default=None)
     # Tool families (the assistant capability `family`, e.g. "kanban") this
     # participant may not use in this room — the room Settings panel's
-    # switches. Empty = every family the global setting allows. It only
-    # narrows: a capability turned off in `assistant.disabled_capabilities`
-    # stays off whatever this says. On the membership row for the reason the
-    # persona is: each assistant in a room has its own.
+    # switches. Empty = every family the global setting allows, except the
+    # opt-in ones (db.chat.OPT_IN_TOOL_FAMILIES, the diary), which are off
+    # until listed in `enabled_tool_families`. Both only narrow: a
+    # capability turned off in `assistant.disabled_capabilities` stays off
+    # whatever these say. On the membership row for the reason the persona
+    # is: each assistant in a room has its own.
     disabled_tool_families: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), default=list, server_default="{}")
+    enabled_tool_families: Mapped[list[str]] = mapped_column(
         ARRAY(Text), default=list, server_default="{}")
     __table_args__ = (
         Index("chatroom_member_unique", "room_uuid", "user_uuid", unique=True),
@@ -2049,15 +2053,15 @@ DIARY_SEARCH_VECTOR_SQL = (
 
 
 class DiarySource(db.Model):
-    """One configured diary directory, readable in the rooms it lists (and
-    optionally by one agent there). The row is the runtime configuration; the
-    CLI writes it from a validated manifest. Sources start disabled."""
+    """One configured diary directory, readable in every room whose Diary
+    switch is on (db.chat.OPT_IN_TOOL_FAMILIES), and optionally only by one
+    agent there. The row is the runtime configuration; the CLI writes it from
+    a validated manifest. Sources start disabled."""
 
     __tablename__ = "diary_source"
     uuid: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     name: Mapped[str] = mapped_column(Text, unique=True)
     root_path: Mapped[str] = mapped_column(Text, unique=True)
-    room_uuids: Mapped[list[UUID]] = mapped_column(ARRAY(sa.Uuid))
     agent_uuid: Mapped[UUID | None] = mapped_column()
     timezone: Mapped[str] = mapped_column(Text)
     sensitivity: Mapped[str] = mapped_column(Text)

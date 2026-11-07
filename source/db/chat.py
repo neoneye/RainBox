@@ -348,11 +348,23 @@ def set_member_persona(
     return member
 
 
+# Tool families that are off in a room until switched on there. The diary is
+# the operator's private writing, and a room may have other people in it (a
+# bridged Telegram or Discord chat), so it is readable only in the rooms where
+# its switch was turned on — the room Settings switch is the whole grant.
+OPT_IN_TOOL_FAMILIES: frozenset[str] = frozenset({"diary"})
+
+
 def member_disabled_tool_families(room_uuid: UUID, user_uuid: UUID) -> set[str]:
-    """The tool families this participant has switched off in this room;
-    empty when none are, or when the user is not a member."""
+    """The tool families that are off for this participant in this room: the
+    ones switched off, plus every opt-in family not switched on. When the
+    user is not a member, only the opt-in families."""
     member = get_member_persona_row(room_uuid, user_uuid)
-    return set(member.disabled_tool_families or []) if member is not None else set()
+    if member is None:
+        return set(OPT_IN_TOOL_FAMILIES)
+    switched_on = set(member.enabled_tool_families or [])
+    return (set(member.disabled_tool_families or [])
+            | (OPT_IN_TOOL_FAMILIES - switched_on))
 
 
 def set_member_tool_family(
@@ -361,17 +373,21 @@ def set_member_tool_family(
     """Switch one tool family on or off for this participant in this room.
     Applies from its next turn. Raises LookupError when that user is not a
     member of that room. The caller checks that `family` is one the panel
-    offers; this stores whatever it is given."""
+    offers; this stores whatever it is given. An opt-in family is recorded
+    in `enabled_tool_families` (on is the exception), any other family in
+    `disabled_tool_families` (off is the exception)."""
     member = get_member_persona_row(room_uuid, user_uuid)
     if member is None:
         raise LookupError(f"user {user_uuid} is not a member of room {room_uuid}")
-    families = set(member.disabled_tool_families or [])
-    if on:
-        families.discard(family)
+    if family in OPT_IN_TOOL_FAMILIES:
+        families = set(member.enabled_tool_families or [])
+        (families.add if on else families.discard)(family)
+        # A new list, so SQLAlchemy sees the change to an ARRAY column.
+        member.enabled_tool_families = sorted(families)
     else:
-        families.add(family)
-    # A new list, so SQLAlchemy sees the change to an ARRAY column.
-    member.disabled_tool_families = sorted(families)
+        families = set(member.disabled_tool_families or [])
+        (families.discard if on else families.add)(family)
+        member.disabled_tool_families = sorted(families)
     db.session.commit()
     return member
 
