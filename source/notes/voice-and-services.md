@@ -25,6 +25,7 @@ service is down (a health banner, not a crash).
 | Kokoro TTS | `http://127.0.0.1:5005` | `KOKORO_TTS_URL` (webapp) |
 | dots.tts clone | `http://127.0.0.1:5007` | `DOTS_TTS_URL` (webapp) |
 | gemma4 STT (Ollama) | `http://127.0.0.1:11434`, model `gemma4:e4b-mlx` | `OLLAMA_BASE_URL`, `GEMMA4_STT_MODEL` (webapp) |
+| LFM3-Audio TTS (Ollama) | `http://127.0.0.1:11434`, model `lfm3-audio:2b-mlx-bf16` | `OLLAMA_BASE_URL`, `LFM3_TTS_MODEL` (webapp) |
 | Telegram bridge | outbound-only | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_IDS` (required); `TELEGRAM_ROOM_NAME`, `TELEGRAM_STATE_FILE`, `RAINBOX_URL` |
 | Discord bridge | outbound-only | connector mode: `BRIDGE_CONNECTOR`, the token under the connector's `token_env` name, `DISCORD_STATE_FILE`, `RAINBOX_URL` (the launcher sets all four); legacy env mode: `DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID`, `DISCORD_ALLOWED_USER_IDS` |
 
@@ -182,6 +183,23 @@ same-origin through the web app:
 - **`/demo_tts_kokoro`** (`webapp/tts_kokoro_views.py`) — text, voice
   dropdown (populated from the service), speed slider, synthesize + download
   WAV. Proxies: `…/health`, `…/voices`, `…/synthesize` (60s timeout).
+- **`/demo_tts_lfm3`** (`webapp/tts_lfm3_views.py`) — text-to-speech with
+  LFM3-Audio on Ollama, no side service. Text, voice dropdown, synthesize +
+  download WAV, and a line with the clip length and synthesis time. The
+  voices are the `voices` list of Ollama's `/api/show` for the model
+  (`default`, then `female-<language>` / `male-<language>`, shown as
+  "Danish (female)"). Synthesis goes to Ollama's OpenAI-compatible
+  `/v1/audio/speech` (`response_format` `wav`; Ollama also takes `pcm`, not
+  `mp3`), which answers with 24 kHz mono 16-bit WAV. Ollama streams that WAV,
+  so its RIFF and data sizes are the `0xFFFFFFFF` placeholder (a reader sees
+  ~24.8 hours); the proxy writes the real sizes before answering. Only speed 1
+  is supported, so there is no speed slider. Ollama's OpenAI-style errors
+  (`{"error": {"message": …}}`, e.g. an unknown voice) are flattened to
+  `{"error": "…"}`. Proxies: `…/health` (`/api/show`: reachable, and whether
+  the capabilities include `speech`), `…/voices`, `…/synthesize` (300s
+  timeout — the first call may load the model). Every synthesis is recorded
+  on `/activity` under caller `demo_tts_lfm3`, the response describing the
+  clip instead of carrying it.
 - **`/demo_tts_dotstts`** (`webapp/tts_dotstts_views.py`) — voice cloning:
   a Kokoro-style synthesize section (voice dropdown, text, download WAV) plus
   an add-voice section that records via the mic (or accepts an upload),
@@ -235,7 +253,7 @@ Every service tests against fakes, so no model/network is needed:
 `voice_stt_whisper/test_server.py`, `voice_tts_kokoro/test_server.py` /
 `test_voices.py` / `test_audio.py`, `telegram_service/test_bridge.py` /
 `test_telegram_api.py` / `test_rainbox_api.py`, and the webapp proxy suites
-`webapp/test_stt_whisper_views.py`, `test_stt_gemma4_views.py`, `test_tts_kokoro_views.py`,
+`webapp/test_stt_whisper_views.py`, `test_stt_gemma4_views.py`, `test_tts_kokoro_views.py`, `test_tts_lfm3_views.py`,
 `test_voice_echo_views.py`, `test_multimodal_demo_views.py`.
 
 ## See also
