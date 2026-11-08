@@ -711,6 +711,27 @@ def test_a_rejected_attempt_carries_what_it_answered():
     assert attempt["payload"]["feedback"][0]["content"] == "<rejected_response>"
 
 
+def test_a_refused_decide_attempt_is_named_after_what_it_chose():
+    """A decide call refused for repeating a computation, then kept as a
+    reply: the refused row is the python_run it tried, not a rejected reply."""
+    step = _step("reply", at=10, ms=2000)
+    step.rejected_attempts = [
+        {"requested_at": _at(0).isoformat(), "ms": 4000,
+         "response": '{"reason": "again", "action": "python_run", "args": {}}',
+         "error": "RejectedResponse: this computation already ran"},
+        {"requested_at": _at(4).isoformat(), "ms": 3000,
+         "response": '```json\n{"action": "python_run"}\n```',
+         "error": "RejectedResponse: this computation already ran"},
+        {"requested_at": _at(7).isoformat(), "ms": 2000,
+         "response": '{"reason": "cut of', "error": "RejectedResponse: not JSON"}]
+
+    events = db.run_events(_run(finished=20), [step])
+
+    assert [e["label"] for e in events if e["variant"] == "rejected"] == [
+        "decide → python_run (rejected 1/3)", "decide → python_run (rejected 2/3)",
+        "decide (rejected 3/3)"]
+
+
 def test_a_group_member_that_failed_is_drawn_as_a_failed_call_before_the_answer():
     """A reply audit whose first member ran into the 60s deadline and whose
     second answered: the failed minute is a call of its own, labelled failed,

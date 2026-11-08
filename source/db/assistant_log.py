@@ -21,6 +21,7 @@ Two invariants hold everything else up:
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -88,6 +89,38 @@ def _call(label: str, kind: str, *, start, duration_ms, anchor: str = "",
             "detail": detail, "found": found, "payload": payload or {}}
 
 
+def _chosen_action(response: Any) -> str | None:
+    """The action a decide call's refused response chose, when it parses: the
+    `action` of its JSON object (a fenced block is unwrapped). None for a
+    response cut off, malformed, or naming no action."""
+    text = str(response or "").strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else ""
+        text = text.rsplit("```", 1)[0]
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        return None
+    action = parsed.get("action") if isinstance(parsed, dict) else None
+    return action if isinstance(action, str) and action else None
+
+
+def _attempt_label(step_action: str | None, code_driven: bool, response: Any,
+                   outcome: str) -> str:
+    """A refused or failed attempt's row label: what that attempt itself did.
+
+    A decide call that is refused is retried, and the step is named after the
+    action its kept response chose. The refused one may have chosen another —
+    a repeated python_run refused, then a reply — so it is labelled with its
+    own choice, `decide → python_run (rejected)`, not the step's `reply`. A
+    code-driven call has one purpose whatever it answered; it keeps the
+    step's name."""
+    if code_driven:
+        return f"{step_action or '—'} ({outcome})"
+    chosen = _chosen_action(response)
+    return f"decide → {chosen} ({outcome})" if chosen else f"decide ({outcome})"
+
+
 def _rejected_calls(step) -> list[dict]:
     """The calls this step made and threw away: responses that arrived and
     were refused by the schema or a validator, each retried with the reason
@@ -128,7 +161,8 @@ def _rejected_calls(step) -> list[dict]:
         ordinal = f" {index}/{len(attempts)}" if len(attempts) > 1 else ""
         outcome = "failed" if attempt.get("outcome") == "failed" else "rejected"
         calls.append(_call(
-            f"{step.action or '—'} ({outcome}{ordinal})", "rejected",
+            _attempt_label(step.action, bool(getattr(step, "code_driven", False)),
+                           attempt.get("response"), outcome + ordinal), "rejected",
             start=_parse_ts(attempt.get("requested_at")),
             duration_ms=attempt.get("ms"), anchor=str(step.uuid),
             model_uuid=attempt.get("model_uuid"),

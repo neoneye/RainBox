@@ -2320,8 +2320,9 @@ def test_a_rejected_attempt_is_a_call_on_the_waterfall_and_in_the_totals(
     try:
         page, md = _rendered(client, run)
         assert "kind-rejected" in page
-        assert "reply (rejected)" in page
-        assert "| reply (rejected) | rejected |" in md
+        # Its response named no action: a refused decide call.
+        assert "decide (rejected)" in page
+        assert "| decide (rejected) | rejected |" in md
 
         steps = db.list_assistant_steps(run.uuid)
         stats = db.assistant_run_stats(steps)
@@ -2360,7 +2361,7 @@ def test_the_kept_attempt_starts_where_the_rejected_one_ended(app_ctx, client):
         steps = db.list_assistant_steps(run.uuid)
         calls = db.assistant_llm_calls(steps)
 
-        assert [c["label"] for c in calls] == ["reply (rejected)", "decide → reply"]
+        assert [c["label"] for c in calls] == ["decide (rejected)", "decide → reply"]
         rejected, kept = calls
         assert rejected["start"] == datetime(
             2026, 8, 15, 15, 53, 5, tzinfo=UTC).astimezone()
@@ -2389,7 +2390,7 @@ def test_several_rejections_are_numbered_and_laid_end_to_end(app_ctx, client):
     try:
         calls = db.assistant_llm_calls(db.list_assistant_steps(run.uuid))
         assert [c["label"] for c in calls] == [
-            "reply (rejected 1/2)", "reply (rejected 2/2)", "decide → reply"]
+            "decide (rejected 1/2)", "decide (rejected 2/2)", "decide → reply"]
         # …and the kept attempt sits after the LAST rejection, not the first.
         assert calls[-1]["start"] == datetime(
             2026, 8, 15, 12, 0, 10, tzinfo=UTC).astimezone()
