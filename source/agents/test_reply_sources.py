@@ -233,6 +233,13 @@ def test_a_uuid_inside_a_link_that_no_read_showed_as_an_item_stays_dropped():
     assert sources == [] and dropped[0]["reason"] == DROP_NOT_SEEN
 
 
+def test_a_diary_link_opens_on_its_passage_page():
+    cite = f"diary:{SHED_UUID}:12-40"
+    assert resolve_source({"name": "", "link": cite}, _no_match) == {
+        "name": cite, "link": cite, "kind": "diary passage",
+        "url": f"/diary/passage?citation=diary:{SHED_UUID}:12-40"}
+
+
 def test_unused_sources_are_capped():
     shown = [{"link": f"note-{i}.md"} for i in range(MAX_UNUSED_SOURCES + 5)]
     unused = unused_sources(shown, [], _no_match)

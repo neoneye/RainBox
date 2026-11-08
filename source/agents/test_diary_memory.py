@@ -69,6 +69,7 @@ def test_action_lists_the_passages_it_showed(live):
     shown = obs.data["shown_items"]
     assert [i["link"] for i in shown] == obs.data["injected"] and shown
     assert all(i["kind"] == "diary passage" and i["name"] for i in shown)
+    assert shown[0]["url"] == "/diary/passage?citation=" + shown[0]["link"]
 
 
 def test_action_respects_models_local(live):

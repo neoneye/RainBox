@@ -57,5 +57,6 @@ from . import user_views  # noqa: F401,E402
 from . import find_views  # noqa: F401,E402
 from . import qa_entry_views  # noqa: F401,E402
 from . import activity_views  # noqa: F401,E402
+from . import diary_views  # noqa: F401,E402
 
 __all__ = ["app"]

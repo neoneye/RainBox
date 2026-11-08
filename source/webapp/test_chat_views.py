@@ -757,6 +757,8 @@ def test_a_reply_s_sources_open_in_the_sidebar():
     assert "function renderSources(){" in body
     assert "list.className = 'src-list';" in body
     assert "a.target = '_blank';" in body
+    # A diary link opens on its page, also on replies stored without a url.
+    assert "? '/diary/passage?citation=' + encodeURIComponent(source.link) : null);" in body
     assert "No reply in view lists sources." in body
     # All / Used / Unused, remembered per viewer.
     assert "filter.className = 'src-filter';" in body

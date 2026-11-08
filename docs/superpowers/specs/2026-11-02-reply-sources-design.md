@@ -60,6 +60,7 @@ replayed on gemma4:e4b-mlx with the new listing):
 | Link | kind | page url |
 |---|---|---|
 | a full uuid | `db.describe_uuid` (one indexed lookup per table, no fuzzy or mention scans): its kind (`memory claim`, `Q&A entry`, `kanban task`, `cron job`, …), else `record` | the match's url, else `/find?q=<uuid>` |
+| `diary:` (a citation) | `diary passage` | `/diary/passage?citation=<link>` |
 | `http://` / `https://` | `web` | the link |
 | anything else | `path` | none |
 
@@ -141,6 +142,17 @@ irrelevant.
   its count, remembered per viewer. In All, the unused items follow the used
   ones, muted and tagged "unused".
 - `message_sources` in the next turn's prompt lists used sources only.
+
+### The diary passage page
+
+`/diary/passage?citation=<link>` (`webapp/diary_views.py`) is where a diary
+source opens: the source, the file, the date of the entry the citation starts
+in, whether the cited revision's text is still in the file, and the file's
+text around the cited bytes (40 lines each side, `&whole=1` for all of it)
+with the cited bytes highlighted and scrolled to. A bare `diary:<revision>`
+shows the file from its start. An excluded file reads as not found. The chat
+links any `diary:` source to it, replies stored before diary sources carried
+a url included.
 
 ## Out of scope
 

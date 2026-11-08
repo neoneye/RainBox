@@ -152,7 +152,8 @@ one of them takes its kind and page, and its name when the model gave none.
 The shown items the reply did not cite are its unused sources, posted as
 `meta["unused_sources"]` (at most 50) and listed on the reply's step: what
 the turn checked and found nothing of relevance in. The Sources panel
-filters the two with All / Used / Unused. Unused sources stay out of the
+filters the two with All / Used / Unused. A diary source opens on `/diary/passage`, the cited
+bytes highlighted in their file. Unused sources stay out of the
 next turn's prompt.
 
 Running out of steps posts a "couldn't complete this within the step limit"

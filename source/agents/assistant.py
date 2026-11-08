@@ -56,7 +56,13 @@ from agents.config import (
     ASSISTANT_SECOND_OPINION_UUID,
     ASSISTANT_WORKING_NOTICE,
 )
-from agents.reply_sources import reply_sources, sources_report, unused_sources
+from agents.reply_sources import (
+    DIARY_PASSAGE_KIND,
+    diary_passage_url,
+    reply_sources,
+    sources_report,
+    unused_sources,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -2099,7 +2105,8 @@ def _action_diary_query(ctx: AssistantActionContext, args: dict[str, Any]) -> As
         for cite in data.get("injected") or []:
             r = returned.get(cite) or {}
             label = " · ".join(p for p in (r.get("path"), r.get("date_local")) if p)
-            shown.append(_shown_item(cite, label, kind="diary passage"))
+            shown.append(_shown_item(cite, label, kind=DIARY_PASSAGE_KIND,
+                                     url=diary_passage_url(cite)))
         data = {**data, "shown_items": shown}
     return AssistantObservation(ok=obs.ok, text=obs.text, data=data, compact=obs.compact)
 

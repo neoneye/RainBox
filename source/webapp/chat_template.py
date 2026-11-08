@@ -3307,9 +3307,13 @@ function renderSources(){
     const name = document.createElement('div');
     name.className = 'src-name';
     const label = source.name || source.link || '';
-    if (source.url){
+    // A diary link opens on its page, also on replies stored before diary
+    // sources carried that page.
+    const url = source.url || (String(source.link || '').startsWith('diary:')
+      ? '/diary/passage?citation=' + encodeURIComponent(source.link) : null);
+    if (url){
       const a = document.createElement('a');
-      a.href = source.url;
+      a.href = url;
       a.target = '_blank';
       a.rel = 'noopener';
       a.textContent = label;

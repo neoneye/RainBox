@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import re
 from typing import Any, Callable, Iterable
+from urllib.parse import quote
 
 # A reply cites the reads it rests on, not every line it saw.
 MAX_REPLY_SOURCES = 20
@@ -53,6 +54,16 @@ DROP_TOO_LONG = f"link longer than {MAX_SOURCE_LINK_CHARS} characters"
 DROP_DUPLICATE = "same link as an earlier source"
 DROP_OVER_LIMIT = f"more than {MAX_REPLY_SOURCES} sources"
 DROP_NOT_A_LIST = "sources is not a list"
+
+# A diary link (a citation, diary/citations.py) opens on its own page.
+DIARY_LINK_PREFIX = "diary:"
+DIARY_PASSAGE_KIND = "diary passage"
+
+
+def diary_passage_url(link: str) -> str:
+    """The /diary/passage page for a diary link."""
+    return "/diary/passage?citation=" + quote(link, safe=":-")
+
 
 # What a link-shaped token inside a longer link may be wrapped in: quotes,
 # brackets, and the punctuation of the sentence around it.
@@ -161,8 +172,9 @@ def resolve_source(
 
     An entry that already names its kind (a read's shown item) keeps its kind
     and page as given. Otherwise a full uuid is looked up (`db.describe_uuid`) for its kind and page,
-    falling back to the Find page, which resolves any uuid; a web address is
-    its own page; anything else is a path with no page."""
+    falling back to the Find page, which resolves any uuid; a diary link opens
+    on /diary/passage; a web address is its own page; anything else is a path
+    with no page."""
     link = entry["link"]
     name = entry.get("name") or ""
     if entry.get("kind"):
@@ -176,6 +188,8 @@ def resolve_source(
         url = (match or {}).get("url") or f"/find?q={link}"
         if not name:
             name = str((match or {}).get("name") or "")
+    elif link.startswith(DIARY_LINK_PREFIX):
+        kind, url = DIARY_PASSAGE_KIND, diary_passage_url(link)
     elif link.startswith(("http://", "https://")):
         kind, url = "web", link
     else:
