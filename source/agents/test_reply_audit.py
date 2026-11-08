@@ -407,6 +407,39 @@ def test_the_bounced_step_records_the_auditor_problems(room, monkeypatch):
     assert "the second question is unanswered" in (rejected[0].error or "")
 
 
+def test_the_retry_sees_the_returned_reply_but_not_its_argument(room, monkeypatch):
+    """A bounced reply stays in the turn's steps with its message and the
+    auditor's problems, but not the reason the model gave for it: the retry
+    read that reason as evidence and argued its way back to the refused
+    answer. The step row keeps the reason for /assistant."""
+    room_uuid, message_uuid = room
+    agent = _agent()
+    first = _reply("There are two.").model_copy(
+        update={"reason": "ARGUMENT-CANARY: the program's 3 was wrong"})
+    seen: list = []
+    queue = [first, _reply("There are three.")]
+
+    def decide(**kwargs):
+        seen.append(list(kwargs["scratchpad"]))
+        return queue.pop(0)
+
+    agent._decide_next_step = decide
+    audits = [(False, {"verdict": "revise", "reason": "contradicts",
+                       "problems": "PROBLEMS-CANARY: the program printed 3"}),
+              (True, {"verdict": "send", "problems": ""})]
+    monkeypatch.setattr(AssistantAgent, "_reply_audit",
+                        lambda self, decision, *, messages, scratchpad: audits.pop(0))
+    agent.handle(uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
+    retry_steps = seen[1]
+    prompt = agent._build_user_prompt(
+        messages=[{"sender_type": "human", "text": "count them"}],
+        scratchpad=retry_steps, step_index=len(retry_steps))
+    assert "There are two." in prompt and "PROBLEMS-CANARY" in prompt
+    assert "ARGUMENT-CANARY" not in prompt
+    rows = db.list_assistant_steps(agent._run.uuid)
+    assert any("ARGUMENT-CANARY" in (r.reason or "") for r in rows)
+
+
 def test_a_revise_with_no_problems_still_bounces(room, monkeypatch):
     """A verdict is a verdict. An auditor that says revise without saying why
     still blocks the message; the loop substitutes a placeholder complaint so

@@ -83,7 +83,14 @@ consumes the step limit. Each loop iteration:
    Replayed, the two together took that false bounce from 17 of 18 to 3 of
    18; rewording the checks instead measured no better, or worse. The
    deciding call keeps both in its history; the audit gives up its shared
-   prefix from the first notice it skips. The audit resolves
+   prefix from the first notice it skips. The bounced step the deciding
+   call sees keeps the returned message and the auditor's problems but not
+   the reason the model gave for the reply: that reason is the argument for
+   the refused answer, and the retry read it as evidence (a program that
+   printed 3, answered as 2 after the model called the output wrong, was
+   answered 3 in 8 of 10 retries without the reason and 0 of 6 with it;
+   marking the reason "not evidence" measured nothing). The step row keeps
+   the reason for /assistant. The audit resolves
    its model through the `assistant.reply_audit` slot, else
    `assistant.default`; it fails open, so an unbound or unreachable
    auditor sends the message. Every verdict lands in its own `reply_audit`

@@ -4741,13 +4741,23 @@ class AssistantAgent(ModelGroupAgent):
                                 self._step_budget += 1
                             self._settle_step(reply_step, phase="failed",
                                               error=rejection, entry=reply_entry)
+                            # The returned reply stays in the turn's steps with
+                            # what the audit found, but without the reason the
+                            # model gave for it: that reason is the argument
+                            # for the answer the audit refused, and the retry
+                            # reads it as evidence. Replayed on gemma4:e4b-mlx
+                            # (a computed 3 answered as 2 after the model
+                            # called the output wrong): the retry said 3 in
+                            # 8 of 10 without it and 0 of 6 with it; marking
+                            # it "not evidence" changed nothing. The step row
+                            # keeps the reason for /assistant.
                             scratchpad.append(AssistantTurnStep(
                                 step_index=step_index,
                                 action=decision.action.value,
                                 args=dict(decision.args),
                                 status="rejected",
                                 observation=rejection,
-                                reason=decision.reason,
+                                reason="",
                             ))
                             continue
                     sources: list[dict[str, Any]] = []
