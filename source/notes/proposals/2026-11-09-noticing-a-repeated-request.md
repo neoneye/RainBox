@@ -2,404 +2,525 @@
 
 **Status:** Proposal. Nothing here is built.
 **Date:** 2026-11-09
-**Related:** `2026-10-17-conversation-working-set.md` (carries earlier
-*evidence* into a turn; this proposal carries earlier *attempts*, and the two
-sit side by side), `2026-10-19-request-as-its-own-turn.md` (the
-`exchange_turns` layout, whose previous exchange a short follow-up leans on),
-`2026-08-31-turn-latency-and-prompt-redundancy.md` (read before placing any
-new block).
+**Related:** [The conversation working set](2026-10-17-conversation-working-set.md)
+(carries earlier evidence; this proposal carries earlier attempts),
+[The request as its own turn](2026-10-19-request-as-its-own-turn.md)
+(request placement and follow-up context),
+[Turn latency and prompt redundancy](2026-08-31-turn-latency-and-prompt-redundancy.md)
+(read before placing any new block).
 
 ## The problem, as observed
 
 Ask the assistant to count the R's in "Strawberry". It answers 2. Ask again:
 3. Again, now with "… use python for counting" on the end: 2. Again with
-"… try again": 3. By the fifth message the person asking is no longer asking
-how many R's there are. They are asking *why the answer keeps changing*, and
-nothing in the turn knows that.
+"… try again": 3. By the fifth message the person asking may be testing why
+the answer keeps changing. The assistant still treats each message as a first
+ask, follows the same route, and presents another answer without accounting
+for the earlier ones.
 
-Each of those five turns starts the same way:
+The earlier exchanges may be in `conversation_history_xml`, which carries
+the last 30 messages. But the instructions rightly say that old assistant
+answers are not authoritative evidence, and warn against answering an earlier
+request that resembles the current one. Neither rule makes the history of
+*attempts* explicit: how often this was asked, what was actually tried, whether
+a run failed, and what the assistant previously told the person asking.
 
-- `conversation_history_xml` holds the last 30 messages. The earlier attempts
-  may be in it or may already have scrolled out. When they are in it, the turn
-  instructions tell the model to treat them as context only — "Old assistant
-  answers in conversation_history_xml are never authoritative evidence" — and
-  warn that a history message "close to" the current request "is the trap:
-  answer the quoted request, not the one you have already answered".
-- Nothing counts. A request sent for the fifth time looks exactly like one
-  sent for the first time. Nothing says the earlier replies disagreed, or that
-  every earlier attempt took the same route (answer directly, never run the
-  code).
+An earlier answer is not evidence that its claim is true. It is evidence of
+what was said. That distinction is the basis of this proposal.
 
-Both rules are right about facts: an old answer is not evidence. They are
-silent about the *fact of repetition*, which is evidence of a different kind.
-It is evidence about the conversation, and it is the operator's own verdict on
-the earlier replies. A person who asks again has a reason, and the likely
-reasons all call for a different reply than a first ask does:
+Repetition alone does not establish dissatisfaction or an error. The operator
+may be retrying a failed run, checking consistency, asking for a fresh reading
+of changing data, or returning to a task after a break. The useful behavior is:
 
-- an earlier reply was wrong, and they want it fixed;
-- earlier replies disagreed, and they want to know which one holds;
-- they are testing whether the answer is stable, so a change of answer is
-  itself the finding;
-- the earlier attempt failed or stalled, and they are retrying.
+1. Recognize earlier attempts when they concern the current task.
+2. Verify the current answer, choosing a stronger method when one is needed.
+3. Acknowledge an explicit retry or a relevant inconsistency briefly.
+4. Correct an earlier answer only when fresh evidence establishes the error.
 
-In every case the right reply is the same shape:
-
-1. Notice the repeat.
-2. Say so in one sentence.
-3. Answer fresh, by a route the earlier attempts did not take.
-4. Name it plainly when earlier replies disagree with each other or with this
-   one.
-
-The failure today is the opposite: the loop takes the same path again, reaches
-an answer by chance, and presents it as if no earlier answer existed.
+Success in the Strawberry case is a verified count of **3** when counting R/r
+without regard to case, with a brief explanation that earlier answers
+disagreed. Changing the answer by chance, or merely adding an apology, does
+not count as success.
 
 ## The design
 
-A **repeat check** runs at the start of every turn, before the first model
-call. It finds earlier messages in the room that ask what the current message
-asks, and gathers how each was handled. When it finds any, the turn's prompts
-get a short `repeated_request` block, and the run records what was found.
+A **repeat check** runs once near the start of a turn, before reply planning.
+It finds earlier requests by the same person to the same agent in the same
+room, resolves their runs, and freezes a bounded record for the turn. Eligible
+matches produce a short `repeated_request` block. Detection results are
+recorded even when no block is injected.
 
-Six decisions shape it.
+The first release favors precision: exact repetitions and resolved short
+redos can reach the prompt; approximate matches are recorded for evaluation.
+Neither a text match nor a classifier result proves that an earlier reply was
+wrong. Five decisions shape the design.
 
-### 1. Detection is code, not judgment, except for one case
+### 1. Find candidates without confusing similar wording with the same task
 
-Three kinds of match, each decided by deterministic text comparison over the
-room's earlier human messages:
+**Scope and identity.** Take the room's most recent 1,000 human messages
+strictly before the triggering message, restricted to the past 14 days and
+after the latest context-invalidation marker. Filter to the same sender and
+to messages with a run by this agent. Use message IDs and stable timestamp /
+ID ordering, not display names or whichever message is newest when the worker
+starts. A queued later message must not enter an earlier turn's repeat check.
 
-| kind | what it catches | test |
+Reply planning and repeat detection must resolve the same triggering UUID.
+Today the prompt builder takes the last supplied message as current; supply
+history bounded through the trigger, not through the newest room message.
+If that identity cannot be established, skip injection and record the reason.
+Manual runs without a triggering message UUID also skip detection.
+
+Capture the context boundary before `handle()` removes marker rows. A marker
+is a hard boundary for requests, counts, routes, and inherited chains, not
+just reply excerpts. A profile switch must not turn another profile's task
+into this person's retry. A marker posted for the current turn also clears
+the eligible past, even though it follows the triggering message in storage.
+
+An **attempt** is one human message with at least one exactly linked run. A
+failed, stopped, or killed run still counts without a reply. Multiple
+executions of one message count as one user attempt; retain their separate
+run IDs and statuses. An ongoing run is labelled ongoing, not failed. The
+repeat check itself never cancels or restarts it.
+
+**Exact matches.** Compare complete stored text, normalizing only line endings.
+Preserve case, punctuation, spacing, and operands: in a character-counting
+task those can be the input. Never compare truncated prompt excerpts. Very
+short messages (initially fewer than 24 non-whitespace Unicode code points)
+go through the short-redo path below, even when identical. Otherwise unrelated
+instances of "again" would become one chain. This cutoff is a tuning choice,
+not subject detection. Even a long exact match is context to consider, not
+proof that the person wants an acknowledgement.
+
+Recorded redos never become direct anchors merely because their wording
+matches. A repeated "Can you try that again please?" must resolve against the
+current predecessor, even though it exceeds the short-message cutoff. Route
+it through the classifier and require a compatible anchor. Unrecognized
+context-dependent wording remains a limitation: the decide call must check
+that exact matches concern the current task before using their counts or
+history, and must not resolve a pronoun from text equality alone.
+
+**Approximate candidates.** Distinguish retrieval from confirmation:
+
+| kind | candidate test | initial use |
 |---|---|---|
-| `same` | the request re-sent, or re-typed with small differences | token similarity ≥ 0.85 |
-| `extended` | an earlier request with words added | every token of the earlier message appears, in order, in the current one, and at most 8 tokens are new |
-| `rephrased` | the same question in different words | IDF-weighted token overlap ≥ 0.6 |
+| `exact` | full-text equality as above, outside the short-message path | prompt and recording |
+| `same` | token-sequence similarity ≥ 0.85 | recording only |
+| `extended` | earlier token sequence is a prefix of the current one, with 1–8 added tokens | recording only |
+| `rephrased` | IDF-weighted token overlap ≥ 0.6 | recording only |
 
-All three share two more conditions.
+For reproducibility, token-sequence similarity is `2 × LCS(a, b) /
+(len(a) + len(b))`, where LCS is the longest common subsequence. Weighted
+overlap is weighted Jaccard over distinct tokens: intersection weight divided
+by union weight. Use `idf(t) = 1 + log((N + 1) / (df(t) + 1))` over the eligible
+sender's messages in the captured scope, excluding the current request. Empty
+inputs score zero. Record the matcher version and thresholds.
 
-**The number tokens must be identical.** "sqrt of 1764" and "sqrt of 1746" are
-the same task on a different input. They are not a repeat, and calling them
-one would make every calculator session look like a complaint.
+Bound approximate work separately from the message-count limit: skip pairs
+where either text exceeds 4,000 characters or 256 lexical tokens, without
+silently truncating them. Give fuzzy scoring a 50 ms per-turn work budget,
+visit candidates newest first, and record skipped counts and reasons. It is
+diagnostic work and may stop without affecting exact/redo detection. Compare
+exact requests using full-text digests plus equality checks; cap candidate
+text loading at 1 MiB per turn, record any scope shortening, and do not claim
+a complete count when a loading or comparison limit was reached. These are
+initial bounds to measure during recording, not latency guarantees.
 
-**Both messages must carry a subject.** A message with fewer than 3 tokens,
-or whose IDF-weighted token mass is under the room's median, matches nothing
-under these three tests, whether it is the earlier message or the current
-one. Without this floor every "thanks" or "why?" would match every earlier
-"thanks" or "why?". Under `extended`, an earlier "yes" would sit inside half of
-all later messages. Short messages go only through the bare-redo path below,
-which asks whether they redo something rather than whether they look alike.
+Lexical comparison uses NFKC plus casefolding and Unicode letter/mark/number
+runs, with letter/number boundaries split explicitly. Keep raw text alongside
+it. This is not universal word segmentation: an unspaced sentence can remain
+one token. Exact matching still works, and short messages can use the
+classifier. Do not claim multilingual paraphrase coverage from `\w+`.
 
-**Whose messages count.** Only earlier messages from the same sender as the
-current one, and only those this agent answered (they have a run, so they have
-a route and a reply to show). A re-ask is that person's verdict on the replies
-they got. Someone else in the room asking the same thing is not a retry. In a
-shared room, telling them "this was asked before" would point at another
-person's conversation.
+Before scoring, reject approximate pairs whose ordered numeric literals or
+explicit quoted/code inputs differ. Preserve signs, decimal separators,
+exponents, and case in those comparisons; do not silently equate ambiguous
+number formats. Require at least three lexical tokens on each side for fuzzy
+scoring. There is no room-median IDF floor: repeated subjects must not become
+ineligible merely because they have become common.
 
-Tokenization is language-generic, with no word lists:
+These guards are insufficient to establish identity. "Count R's in strawberry"
+and "Count R's in raspberry" share most words. Adding "but only uppercase
+letters" changes the answer. Approximate candidates therefore neither join
+chains nor trigger acknowledgements in the first release. Promoting them
+requires an evaluated task-identity check, not just a lower threshold.
 
-- NFKC normalization, then casefolding;
-- tokens are `\w+` runs under Unicode rules, so letters in any script count,
-  and digits are tokens of their own;
-- function words are handled by IDF computed over the room's own human
-  messages, not by a stopword table. A word that appears in most messages
-  weighs almost nothing. "strawberry" in a room that rarely says it weighs a
-  lot.
+**Short redos.** A short follow-up can ask to do the previous task again
+without naming it. Use one bounded classifier call, with no retry-phrase list:
 
-`extended` is the shape this kind of retrying actually takes: the request
-grows a suffix ("… use python for counting", "… try again"). It needs no
-knowledge of what the suffix means. It only needs the earlier message to be
-inside the new one.
+- **Trigger:** no eligible exact match; current text at most 120 Unicode code
+  points; the latest earlier human message in the room is from this sender
+  and has a run by this agent, within 6 hours and the same context boundary.
+  Do not skip a newer unanswered message to find a convenient older anchor.
+- **Input:** current message, immediate predecessor, and its resolved
+  request context when the predecessor is itself a redo, including method
+  refinements (decision 3). Classify a redo of "again" against the underlying
+  task. Do not supply old assistant answers.
+- **Question:** does this message repeat or request another attempt at the
+  same task with the same inputs? More detail, a changed operand, a new task,
+  and an acknowledgement are not redos. A method change such as "check it
+  with Python" can be a redo. Unclear references are `unknown`.
+- **Output:** `yes`, `no`, or `unknown`, after trimming whitespace and
+  casefolding. Any other output or failure becomes `unknown`. A `yes` links
+  the current message to the resolved predecessor's chain as kind `redo`.
+- **Limits:** one attempt on the first model resolved for the turn's decide
+  slot, a 5-second end-to-end deadline, no fallback cascade. Record model,
+  result, and elapsed time as a code-driven step. If the complete inputs
+  exceed a 2,000-character data budget, skip as `unknown`; do not classify a
+  cut task as if it were whole.
 
-The one case code cannot decide is the **bare redo**: a short message with no
-subject of its own, which only makes sense as "do the previous request again",
-in whatever language the operator writes. A table of retry phrases would be an
-English table in shipped code, so it is not an option. Instead:
+Failure must not prevent the ordinary turn from proceeding. Sharing a model
+binding does not guarantee zero model-load cost, and short ordinary messages
+will trigger the call too. Measure its hit rate and latency. Longer redos and
+ambiguous group-room references remain first-release limitations.
 
-- **Trigger.** The current message has at most 4 tokens, matches nothing under
-  the three tests, and the same sender has a previous exchange in the room (a
-  message of theirs answered by this agent).
-- **The call.** One small plain-text classifier call. It is shown the previous
-  request and the current message, and asked whether the current message asks
-  to redo the previous request. It answers `yes` or `no`, nothing else. Plain
-  text, because on these models it is the fastest of the output modes.
-- **What it must tell apart.** "Elaborate" and "more details" are short
-  follow-ups, not redos. The question must separate *do it again* from *say
-  more*. That distinction is the whole reason the call exists.
-- **When yes.** The current message joins the previous request's chain as kind
-  `redo`.
-- **When it fails** (unreachable, or anything other than yes/no), the check
-  records `redo: unknown` and the turn goes on without a block.
+### 2. Keep chains bounded, and make their counts honest
 
-It runs on the model group the turn already uses, so it costs no model load.
-Recording-only (see *Rollout*) measures how often it fires. The trigger is
-narrow by design, so most turns never make the call.
+For an exact match, collect directly matching earlier requests and in-scope
+recorded redos anchored to those requests. This finds "original → again →
+original" as well as repetitions of the full wording. For a classified redo,
+begin with its immediate predecessor and resolved anchor. Add compatible
+recorded ancestors, deduplicate by human message UUID, and order oldest first.
+"Original request → try again → again" is three attempts, including the current
+message. Select the newest compatible recorded anchor, or the newest directly
+matching full request when no recorded anchor exists. A new request starts
+with itself as anchor.
 
-### 2. Chains, so a redo of a redo still counts
+Inheritance does not waive eligibility. Recheck each referenced message's
+room, sender, agent linkage, context boundary, age, and position in the
+1,000-message snapshot. Reject forward references, cycles, missing/deleted
+messages, and incompatible anchors. Approximate similarity is not transitive:
+A≈B and B≈C must never silently create an A=C chain.
 
-Matches are recorded per run (see *Recording*). An earlier message that was
-itself recorded as a repeat of something brings its own chain along. So
-"again", sent after "… try again", which followed the original request, is the
-fourth attempt at one request, not a redo of the word "again".
+Store at most **100 eligible prior message IDs** in `chain`: the substantive
+anchor, when it is a prior message, plus the newest other IDs that fit. The
+separate `anchor_message` field references that same ID, not an extra attempt.
+Read bounded stored chains, with no unbounded recursive walk. An anchor must
+itself remain eligible. If missing or outside scope, an implicit redo cannot
+revive it.
 
-The chain for the current message is:
+`attempts` is the number of distinct retained prior messages **plus the
+current message**. It counts known attempts in this scope, not lifetime
+attempts. Set `chain_truncated=true` when the 100-ID cap, a loading limit,
+or a previously truncated ancestor makes the count incomplete; show "at least
+N known attempts" then. Do not add ancestors' totals: overlapping chains
+would double-count. The 14-day limit applies to counting as well as display.
 
-- every earlier message it matches directly;
-- plus the recorded chain of each of those (one hop is enough, because each
-  record already holds its whole chain);
-- ordered oldest first, with duplicates removed.
+`recent=true` means the newest eligible prior attempt was within 6 hours of
+the triggering message. Freeze this and relative times for the turn. Recency
+helps judge whether an acknowledgement is useful; it does not establish an
+error or an obligation to apologise.
 
-Records only exist from the first run that has this feature. There is no
-backfill: a chain in an older room simply starts at the first attempt the
-lexical tests can see.
+There is no historical rewrite. Older runs may contribute when their message
+link can be recovered exactly, but have no recorded redo ancestry. A missing
+legacy link is a gap, not permission to infer one from proximity.
 
-**Scope:** the room's most recent 1,000 human messages, not just the 30-message
-history window. A retry an hour later, after 40 messages of something else,
-is exactly the case the window loses. Comparing one short message against a
-thousand short messages costs milliseconds.
+### 3. Show what happened without reviving inaccessible reply text
 
-**Recency:** attempts older than 14 days are not listed, but they still count
-toward the total. A chain whose newest earlier attempt is within 6 hours is
-marked `recent="true"`. That is the case where acknowledging the repeat is
-clearly right. A question asked again a week later may be a new need, and the
-reply rule (decision 4) treats it more lightly.
+Each listed attempt contains:
 
-### 3. What an earlier attempt shows
+- **When and match kind**, relative to the frozen turn time.
+- **Request**, verbatim, middle-truncated to 200 characters and labelled when
+  cut. This is for recognition, never the matching input.
+- **Runs and status**, including no-reply and ongoing cases.
+- **Executed route**, such as `reply` or `python_run (failed) → reply`. Use
+  execution records and outcomes, not every row with an action name. Exclude
+  classifier, criteria, program-writing, and audit calls. Rejected Python is
+  not executed Python; unknown routes are not assumed to be `reply`. Collapse
+  legacy duplicate step phases.
+- **Summarizer outcome**, when available, labelled `summarizer_outcome`.
+  This is a weak self-assessment, separate from run status. A confidently
+  wrong answer can still have outcome `resolved`.
+- **Reply excerpt**, where admissible, middle-truncated to 160 characters
+  with the cut marked. Use the delivered message, not a proposed reply,
+  summary, or reasoning. If several replies were delivered, identify the one
+  shown and retain all exact message/run links in the record.
 
-For each listed attempt, up to the 5 most recent, the rest counted as
-`earlier="N"`:
+Routes contain action names and execution outcomes only: no arguments,
+programs, queries, or observations. Such text can contain details from a
+source the current turn is no longer allowed to read.
 
-- **when**, relative to now ("12 min earlier", "2 days earlier"), and the
-  match kind;
-- **the request**, verbatim, middle-truncated to 200 chars;
-- **the route**: the action names the run took, in order, and nothing else —
-  `reply`, or `python_run → reply`. This is what lets the loop change approach:
-  if no attempt ever ran the code, running it is the obvious next try. No
-  arguments, for the same reason the working set's search log carries none (an
-  argument can carry text from a source this turn may not be allowed to see);
-- **the grade**: the run summarizer's `outcome` word, when that run has one,
-  labelled as the summarizer's. It is a self-assessment, and a weak one: a
-  confidently wrong "2" is graded `resolved`. It is shown because `failed` is
-  a useful signal; it is never presented as truth;
-- **the reply excerpt**: the start and end of the reply that attempt
-  delivered, middle-truncated to 160 chars. This is the one place an old answer
-  enters the prompt on purpose. Seeing that four replies said "2, 3, 2, 3" is
-  how the loop learns that something is wrong. The block labels the excerpts as
-  what was said, not as evidence (decision 4).
+**Reply-text policy for the first release.** Only reuse excerpt text already
+present in that consumer's current admitted history, after its exclusions and
+truncation. Build the excerpt from that rendered history text, not the full
+stored reply. Otherwise show `excerpt="withheld"` with reason
+`not_in_admitted_history`. If no reply was delivered, use `reply="none"`.
+Withheld and absent are different states.
 
-**When a reply excerpt is withheld** (the attempt is still listed, with
-`excerpt="withheld"` and the reason):
+This limits contradiction detection beyond the 30-message window. Older
+requests, statuses, and routes still help recognize a retry and improve its
+method. Widening reply-text access requires a shared source-eligibility policy
+and is outside this first release.
 
-- **Remote models.** The earlier run used `diary_query`, its reply is outside
-  the 30-message history window, and `assistant_models_all_local()` is false
-  for this turn. An earlier reply can restate diary text, and the diary's rule
-  is that its text only reaches local models. The check is per turn and runs
-  whether or not `diary_query` is enabled in the room today. An earlier run may
-  have used it while it was enabled. Replies *inside* the window already reach
-  every model in full through `conversation_history_xml`. Withholding their
-  excerpt here would protect nothing, so the rule does not pretend to. That
-  existing exposure belongs to the history window's own policy, as the working
-  set proposal notes, and this block does not widen it.
-- **Context marker.** The earlier attempt sits before the room's latest
-  context-invalidation marker. The marker exists to say that answers from
-  before it may rest on facts that no longer hold, or on another profile's.
+Checking only whether the earlier run called `diary_query` is insufficient.
+A later reply can repeat diary text through history without calling it, and
+an old reply can repeat a memory claim that has since become secret. Being
+inside the last 30 messages also does not mean every model sees that text:
+second opinion excludes history, audit excludes some notices, and entries
+are truncated. Local-model checks alone do not settle these access questions.
 
-### 4. In the prompt, and what the model is told to do with it
+The existing history policy remains a separate concern. This proposal does
+not claim that admitted history has complete provenance; it limits the new
+excerpt channel to that consumer's existing exposure.
+
+**Resolved request for redos.** A bare redo needs its substantive anchor and
+the instructions added along its predecessor path, not merely 200-character
+excerpts. Record that ordered path separately from the merged attempt chain.
+Carry its whole user messages in a `redo_request` child, up to 2,000 serialized
+characters. Thus "count the letters → use Python → again" retains the Python
+instruction. Do not mix refinements from other branches or replace this path
+with a model-written summary. A full restatement starts a new request context;
+it may share attempt history without inheriting omitted method constraints.
+
+If the complete path cannot fit, has been clipped, or contains an ineligible
+message, omit redo injection and record why. The classifier uses the same
+complete context within its input budget. Never substitute a cut old task
+for missing instructions. The current message remains authoritative for new
+constraints and method changes.
+
+### 4. Make the context useful to every call that acts on it
+
+Example for the fifth request, with two earlier attempts shown:
 
 ```xml
 <repeated_request authority="context" content_is_data="true"
-                  attempts="5" recent="true">
-  <attempt when="2 h earlier" match="same" route="reply" graded="resolved">
+                  attempts="5" listed="2" omitted="2"
+                  recent="true" chain_truncated="false">
+  <attempt when="2 h earlier" match="exact" status="finished"
+           route="reply" summarizer_outcome="resolved">
     <request>count the number of R's in Strawberry</request>
     <reply_excerpt>There are 2 R's in "Strawberry".</reply_excerpt>
   </attempt>
-  <attempt when="1 h earlier" match="extended" route="reply" graded="resolved">
-    <request>count the number of R's in Strawberry.. use python for counting</request>
-    <reply_excerpt>Counting the letters, "Strawberry" has 3 R's.</reply_excerpt>
+  <attempt when="1 h earlier" match="exact" status="finished"
+           route="reply" summarizer_outcome="resolved">
+    <request>count the number of R's in Strawberry</request>
+    <reply_excerpt>There are 3 R's in "Strawberry".</reply_excerpt>
   </attempt>
-  …
 </repeated_request>
 ```
 
-The block has no note inside it. What it means, and what to do about it, is
-in `turn_instructions`, which the code owns, the same split the other blocks
-use. The rule added to the decide instructions:
+The block contains data. Its interpretation lives in code-owned
+`turn_instructions`, next to the existing rule about earlier answers:
 
-> `repeated_request`, when present, lists earlier messages in this room that
-> asked what the current request asks, and how each was handled. A person who
-> asks again has a reason: an earlier reply was wrong or incomplete, earlier
-> replies disagreed, or they are checking whether the answer holds. Answer the
-> current request fresh, under the same read rules as any request: an earlier
-> reply excerpt is what was said, never evidence for what is true. Where the
-> routes show that an approach was never tried, prefer it. When the block is
-> marked recent, open the reply with one short sentence saying that this was
-> asked before; when earlier replies disagree with each other or with this
-> answer, say so plainly and say which one was wrong. Do not apologise at
-> length. When the block is not marked recent, mention the earlier attempts
-> only if their replies disagree with this one.
+> `repeated_request` describes earlier attempts that may help with this
+> request. Earlier reply excerpts establish what was said, never what is
+> true. Read the current request first and preserve its inputs and
+> constraints. Ignore matching wording that refers to a different task. For
+> an explicit redo, `redo_request` supplies the task being
+> retried; it does not override the current message. Verify the answer fresh.
+> When an earlier method failed or left the result unverified, prefer an
+> available method that addresses that weakness. Do not change methods just
+> for novelty. Briefly acknowledge an explicit retry or a relevant
+> inconsistency, especially when recent. Repetition alone does not mean the
+> operator is unhappy. Say an earlier answer was wrong only when current
+> evidence establishes that under the same inputs and assumptions. A changed
+> answer about changing data can be correct. If excerpts are missing or cut,
+> do not invent the earlier answer or claim a disagreement you cannot see.
 
-That rule deliberately contains no sample sentence. On these models an example
-phrase in a prompt is copied into replies word for word. The acknowledgement
-has to be the model's own sentence, in the reply language the turn already
-chose.
+There is no sample acknowledgement sentence for small models to copy. The
+reply uses the language already chosen for the turn. A successful method may
+be repeated to confirm a stable answer; the objective is correctness, not
+route variety.
 
-It fits next to the existing "closeness is the trap" rule rather than against
-it. That rule stops the model from answering an *earlier* message instead of
-the current one. This rule tells it that the current message *is* the earlier
-one again, which is a different situation.
+Repeat context does not grant action permissions. Retrying a purchase,
+message, deletion, or other write still needs the ordinary authorization and
+duplicate-action checks. Second opinion must not approve a program merely
+because a repeat block is present.
 
-**Which calls get the block.** The block, and the rule that explains it, go to:
+**Consumers.** Five places need coordinated treatment:
 
-- **the decide call**, where the reply is written;
-- **the second-opinion review**, which today reviews `python_run` programs.
-  On a bare redo, or when the loop runs code to change route, the program can
-  look like more than the message asked for, and the reviewer would mark it
-  `[not_asked]`. Its rule gains: "when `repeated_request` is present, a program
-  that checks or recomputes what earlier attempts answered serves the request";
-- **the reply audit**, in two of its checks:
-  - Check 5 (support) would otherwise reject "my earlier answers said 2 and 3"
-    as a claim no observation supports. It becomes "against the turn's
-    observations, and for statements about earlier attempts, against
-    `repeated_request`". The block supports *what was said before*, never
-    *what is true*.
-  - Check 6 (how it addresses the user) treats an opening that restates the
-    question as a defect, and the acknowledgement could read as one. It gains
-    an exception: "when `repeated_request` is marked recent, one opening
-    sentence noting that the request was asked before is required, not a
-    restatement";
-- **the acceptance-criteria call**, when that call is enabled, because it
-  plans the reply.
+| call | information and rule |
+|---|---|
+| decide | attempts, admitted excerpts, and resolved redo request; choose and verify the next action |
+| acceptance criteria, when enabled | same task context; do not plan against the bare word "again" |
+| Python program writer | current request and complete redo context, including method refinements; preserve inputs in the decision description; no reply excerpts needed |
+| second-opinion review | resolved redo request and routes/statuses; judge whether recomputation serves this task under current constraints; no old reply text |
+| reply audit | attempts and excerpts admitted to its own history; support what was said, never factual correctness from an old reply |
 
-The classifier and the recall filter do not get it.
+Audit check 5 distinguishes evidence for the answer from evidence about an
+earlier reply. Check 6 permits one brief retry acknowledgement; it does not
+require an opening on every repeat. A reliable repeated answer with no
+meaningful discrepancy need not announce the repetition.
 
-**Placement.** The block is constant for the whole turn. It goes first in the
-dynamic tail (tier 3), before `active_skills`, so every decide call of the
-turn shares the prefix through it, and the tier-1-only calls are unaffected.
-The working set's `conversation_evidence` block is proposed for the same
-position and is not built. If it is built, this block goes right after it.
-Both are constant for the turn, and evidence ranks above context.
+The response-language classifier, recall filter, and redo classifier do not
+receive the block. The redo classifier gets only its bounded inputs from
+decision 1. The Python writer builds its own small prompt, so updating
+`AssistantPromptBuilder` alone will not reach it.
 
-**Source priority.** Context only, at the same rank as
-`conversation_history_xml`: "conversation_history_xml and repeated_request
-(context only)". It informs how to answer, never what is true.
+**Placement and freezing.** For builder-based consumers, place the block first
+in the dynamic tail, after that call's `turn_instructions` and before
+`active_skills` where present. If `conversation_evidence` exists, place this
+block immediately after it. Leave tiers 0 and 1 unchanged.
 
-**Budget.** The block is at most 1,500 chars, measured on the serialized
-block. Attempts are admitted newest first, and an attempt that does not fit
-is counted, not cut. A turn with no repeat gets no block and pays nothing.
+Freeze each consumer's permitted rendering once for the turn, including times,
+statuses, and grades. Renderings can differ because consumers admit different
+history. Repeated calls of the same kind use identical bytes. This preserves
+the existing shared head and enables reuse within that call kind; it does not
+make different instructions share a prefix past their divergence point.
+Cover `single_turn`, `request_turn`, and `exchange_turns`, preserving the
+current request's existing placement.
 
-### 5. Recording: the repeat goes on the run where it happened
+**Source priority.** Rank `repeated_request` alongside
+`conversation_history_xml`, as context only. Escape XML through the existing
+builder so request/reply text cannot forge instruction tags. The Python
+writer must also delimit the anchor as request context, not system policy.
 
-Each run records `assistant_run.metadata_["repeat"]`:
+**Budget.** The attempt portion, including wrapper and attributes, is at most
+1,500 serialized characters. The optional redo anchor adds at most 2,000,
+for a 3,500-character total cap per consumer. Admit at most five prior attempts,
+newest first, then display oldest first. If one does not fit, count it as
+omitted and continue trying smaller candidates. Count escaping and truncation
+markers in the budget. Never partially serialize an attempt to make it fit.
+
+`listed + omitted = attempts - 1`; `withheld` counts listed attempts whose
+reply text was withheld, not another category of attempt. No block means no
+injected tokens, but detection still costs queries and comparisons, and a
+triggered classifier still has latency.
+
+### 5. Record the observation on the run where the repeat happened
+
+Record `payload.message_uuid` as `metadata_["request_message"]` when the run
+is created, independently of the repeat setting. This is an exact identity
+link, not a detection result. Today `assistant_run` has no triggering-message
+column. Legacy links can come from journal payloads; delivered replies link
+back through `meta.assistant_run_uuid`. Do not use the inspector's
+nearest-message / time-window helpers for detection.
+
+An abbreviated `metadata_["repeat"]` record:
 
 ```json
-{"injected": true,
- "request_message": "<uuid of the human message this run answers>",
- "chain": ["<message uuid>", "<message uuid>"],
- "matches": [{"message": "<uuid>", "kind": "extended", "score": 1.0}],
- "redo_check": "not_needed",
- "recent": true, "attempts": 5, "listed": 4, "withheld": 0,
- "block_chars": 1180,
- "block": "<the exact serialized repeated_request block>"}
+{
+  "version": 1,
+  "mode": "on",
+  "injected": true,
+  "anchor_message": "<substantive request uuid>",
+  "chain": ["<prior human message uuid>", "<prior human message uuid>"],
+  "chain_truncated": false,
+  "matches": [{"message": "<uuid>", "kind": "exact", "score": 1.0}],
+  "redo_check": "not_needed",
+  "recent": true,
+  "attempts": 3,
+  "renderings": {
+    "decide": {"listed": 2, "omitted": 0, "withheld": 0,
+               "block_chars": 740, "block": "<exact serialized block>"}
+  }
+}
 ```
 
-- `request_message` is recorded because `assistant_run` has no column for the
-  message it answers. Today that link exists only through the journal
-  payload's `message_uuid` and the reply's `meta.assistant_run_uuid`. With it
-  recorded, a chain lookup reads one JSONB key instead of joining through the
-  journal.
-- `redo_check` is one of `not_needed`, `yes`, `no`, `unknown`.
-- `chain` is what the next run follows (decision 2).
-- `block` is the historical record. Rebuilding an old turn's block later could
-  differ (excerpts withheld under different gates, newer summarizer grades),
-  so replay and the inspector read what was recorded.
-- `injected` is false in the recording-only phase.
+Also record the snapshot cutoff, context marker, matcher configuration,
+candidate count, exact run/reply links, approximate candidates, omission
+reasons, and timings. Bound approximate diagnostics to the 20 highest-scoring
+pairs, with a count of the rest. Record no-match and error results too: an
+error means detection was unavailable, not that there was no repeat.
+
+`redo_check` is `not_needed`, `yes`, `no`, or `unknown`, with a separate reason
+for skips/failures. Store exact permitted renderings for all applicable
+consumers. In recording-only mode these are **would-send** renderings and
+`injected` is false. Do not log withheld text in another field or diagnostic.
+
+The recorded block explains a historical run. New live turns recheck
+eligibility rather than reinjecting old serialized blocks. Replaying a
+recorded prompt on another model also requires today's access rules; a trace
+is not authorization to send historical private context elsewhere.
 
 The /assistant inspector shows a "repeated request" row at the start of the
-turn, with the attempt count and links to the earlier runs. **The earlier runs
-are not marked.** The re-ask is a verdict that arrives later, so it belongs to
-the later run, where it happened. A run that delivered "2" ran without fault
-at the time and stays clean on the timeline. Earlier rows are never rewritten.
+turn, with known count, match basis, limits, and links to earlier runs.
+Recording-only rows say "would show — not given to the model"; approximate
+candidates say "possible match — recording only". The operator can mark a
+match correct, incorrect, or uncertain and flag a missed repeat from any run.
+Store feedback separately from the original snapshot, with message IDs and
+matcher version.
+
+Earlier runs are not rewritten or retrospectively marked failed. A later
+retry is a new observation about the conversation, not a change to what the
+earlier run executed or delivered. Conversely, `resolved` is not proof that
+an earlier answer was correct.
 
 ## Measuring it
 
-The operator is the ground truth, and repeats are already in their rooms.
+**Detection quality.** Run recording-only for at least a week and until enough
+labelled examples exist to assess each enabled path. Operator labels establish
+intended repetition. Review detected candidates and sampled non-matches;
+misses cannot be measured from positive rows alone. Report precision and
+recall by match kind, language/script, request length, and recency. Tune on one
+set of chains and assess on held-out chains, not adjacent turns from the same
+chain. A week elapsed is not a release gate by itself.
 
-1. **Detection quality, before anything reaches a prompt.**
-   - Recording-only runs for a week, with the operator marking, on the
-     inspector row, whether each detected repeat was one.
-   - Misses come from the other direction: the operator flags a turn that was
-     a repeat and shows no row.
-   - The thresholds in decision 1 are starting points, tuned on those verdicts.
-   - Expected weak spot: `rephrased` with few shared words. That is where an
-     embedding signal would go (see *Rollout*, step 5), and only if the
-     verdicts show misses.
-2. **Reply behaviour, replayed.** Take stored decide calls from real repeat
-   chains and replay them on the same model, with and without the block. Score:
-   - Does the reply acknowledge the repeat?
-   - Does it take a different route when one exists?
-   - Does it name a disagreement?
-   - Does it stay short?
+**Reply quality.** Replay complete turns with fixed tool responses, using the
+same model/configuration with and without the block. A stored final decide
+call can test wording, but cannot show that the assistant chose and executed
+a better verification method. Repeat stochastic cases and score:
 
-   A prompt-only rule can measure zero on the small models, so it is measured
-   before it is trusted.
-3. **The Strawberry case**, scripted:
-   - five attempts, with the earlier replies alternating 2 and 3;
-   - the fifth reply must acknowledge the repeat, say the earlier answers
-     disagreed, and reach 3 by a route that counts (running the code);
-   - fixture text only, no live room.
-4. **Negative cases**, which must produce no block:
-   - the same calculation on different numbers;
-   - "elaborate" after an answer (a follow-up, not a redo);
-   - a live-state question asked again the next day, where earlier replies
-     legitimately differ. This one should get a block that is *not* recent,
-     and a reply that does not apologise.
-5. **Cost.** How often the redo classifier fires, its latency, and
-   `block_chars`. The prefix boundary of every call that shares the block
-   must not move.
+- verified answer correctness and preservation of the current inputs;
+- useful verification, including whether code actually executed successfully;
+- accurate acknowledgement/correction, without invented earlier answers or
+  assumptions about the operator's intent;
+- unnecessary tool calls, duplicate writes, audit failures, and reply length.
+
+**Required fixtures.** Use synthetic rooms, not live private conversations:
+
+| case | expected result |
+|---|---|
+| five exact Strawberry requests, prior replies alternate 2 and 3 | fifth turn executes a count, reaches 3 under case-insensitive counting, and briefly identifies the inconsistency |
+| original → "try again" → "again", or original → "again" → original | same task history; three known attempts; writer and reviewer receive the actual task |
+| original → "use Python" → "again" | retain the method instruction throughout the redo path |
+| identical long redo wording after a different task | resolve the current predecessor; never borrow the older task from text equality |
+| appended "use Python", same task | classifier can resolve a short redo when eligible; otherwise approximate candidate only in the initial release |
+| changed number, sign, decimal, quoted input, unit, object, or negation | no fuzzy-chain merge; classifier rejects changed-task cases |
+| "thanks", "yes", "elaborate", or "more details" | no redo block merely because those words occurred before |
+| another sender/agent, intervening human request, or profile marker | no implicit redo across the boundary |
+| failed/stopped run without a reply; two runs for one message | failure stays visible; one user attempt; no fabricated reply |
+| same live-state question next day | may get an exact block with `recent=false`; changed data alone does not imply error or require an apology |
+| stable question with a previously verified answer | verify as needed; no compulsory method change or repeated preamble |
+| reply outside admitted history, indirect diary reuse, or newly restricted memory | no newly exposed reply text; withheld stays distinct from absent |
+| long/cut request, malicious XML, missing anchor, or classifier timeout | preserve task and bounds; escape content; unknown detection does not break the turn |
+| queued messages A and B before A's worker starts | repeat detection and every prompt still answer A |
+| multilingual short redo and unspaced substantive request | exercise classifier anchoring and document lexical misses |
+| chain beyond 100 attempts, 1,000 messages, 14 days, or text/work limits | bounded work/storage and explicitly incomplete/scoped counts |
+
+**Cost and integration.** Measure query count, scan time, classifier trigger
+rate and p50/p95 latency, block size, prompt tokens, and end-to-end latency.
+Batch message/run/step lookups; do not issue one query per candidate. Verify
+the existing shared prefix, identical per-consumer renderings across steps,
+and all three prompt layouts. Measure no-match turns too. Do not promise
+millisecond latency before including database reads and classifier time.
 
 ## Rollout
 
-1. The matcher and chain builder, with tests on synthetic rooms:
-   - each match kind;
-   - the identical-numbers rule;
-   - the subject floor: an earlier "thanks" matching a later "thanks", and an
-     earlier "yes" inside a longer message, both produce nothing;
-   - same sender only: another member's identical message is not a match;
-   - IDF from the room's own messages;
-   - the 1,000-message scope and the 14-day / 6-hour bounds;
-   - a chain through a recorded redo;
-   - excerpts withheld on a remote-model turn after a diary run, and before a
-     context marker;
-   - the budget counting, not cutting, an attempt that does not fit.
-2. The redo classifier, on its narrow trigger, with its `unknown` fallback.
-3. Recording only: `metadata_["repeat"]` with `injected: false`, and the
-   inspector row labelled "would show — not given to the model". A week of
-   operator verdicts tunes the thresholds.
-4. The block in the four prompts, with the instruction and audit changes.
+1. Add exact request/run linkage, scoped candidate loading, lexical matcher,
+   bounded chain builder, and renderer tests. No prompt injection.
+2. Add the short-redo classifier with deadline, instrumentation, and `unknown`
+   fallback. Test failure paths and ambiguous anchors.
+3. Enable recording and inspector feedback. Review false positives, misses,
+   access boundaries, and latency before adding reply instructions.
+4. Wire all five consumers and run fixtures and complete-turn replay. Enable
+   exact/redo injection when fixtures pass, reviewed matches have acceptable
+   precision, answer correctness does not regress, and latency is acceptable.
+   Record precision and latency targets before evaluating the held-out set.
+5. Consider approximate injection only if measured misses justify it. Evaluate
+   task-identity confirmation first. Embeddings can broaden retrieval but do
+   not distinguish a retry from the same operation on different input. Any
+   stored vectors follow the same scope and eligibility boundaries.
 
-   One setting, `assistant.repeated_request`, gates the whole check, with three
-   values:
-   - `off`: nothing runs, and there is no classifier call;
-   - `record`: the check and the classifier run, and the result is recorded
-     but not injected;
-   - `on`: the result is recorded and injected.
+One setting, `assistant.repeated_request`, is read once per turn:
 
-   It starts at `off`. It moves to `record` for step 3's week; chains only
-   exist from the first recorded run, so recording has to come before
-   injection. It moves to `on` once the replayed calls and the scripted cases
-   pass.
-5. Embedding similarity as a fourth match kind, only if step 3's verdicts show
-   `rephrased` misses that lexical overlap cannot reach. Earlier requests'
-   vectors would be written after each turn, off the request path, so a turn
-   embeds only its own request.
+- `off` (default): no repeat scan, classifier call, or injected block.
+- `record`: detection and would-send renderings are recorded, without injection.
+- `on`: exact/redo results are recorded and injected; approximate candidates
+  remain recording-only until a separately evaluated change.
+
+Turning it off is the rollback. Stored identity and historical records remain;
+neither permits reuse of ineligible context. No earlier run is modified by
+rollout or rollback.
 
 ## What this does not do
 
-- **It does not summarise the room.** A digest of the room's topics, with a
-  status per topic (open, solved), coarser the further back it goes, is the
-  natural next step. Repeat chains are its best source of "open": a topic
-  asked five times is not solved, whatever the summarizer graded. It is a
-  separate proposal, built on what this one records.
-- **It does not treat earlier replies as evidence.** It shows them so that a
-  disagreement is visible, and the rules keep them on the "what was said" side.
-- **It does not refuse or lecture.** A repeat is answered, every time. The
-  acknowledgement is one sentence, and it is skipped when the earlier attempt
-  is old and its reply agrees.
+- **Summarize the room or declare a topic solved.** Chains can inform a future
+  topic digest, but repetition is not a reliable "open" verdict and absence
+  of repetition is not a reliable "solved" verdict.
+- **Make old answers authoritative.** The block supports what was attempted
+  and said. The current answer still needs its own evidence.
+- **Resolve every paraphrase or follow-up.** Ambiguous or out-of-scope cases
+  proceed through the ordinary turn; the inspector makes limitations visible.
+- **Refuse, lecture, or compel an apology.** A repeat is still a request to
+  help. Success is a more reliable answer, not more talk about being asked
+  before.
