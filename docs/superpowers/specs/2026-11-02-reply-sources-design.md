@@ -70,6 +70,11 @@ and the kind is a field of its own, so a prefix would only have to be stripped
 again. Names come from the model; an empty name falls back to the resolved
 record's name, then to the link.
 
+A diary link is kept only as a whole citation (revision and byte range). A
+citation cut before its range occurs verbatim inside the one it was cut from,
+but names a whole file; it is dropped as "part of a diary citation, not a
+whole one", and is never rescued from inside a longer link either.
+
 Limits: at most 20 sources (`MAX_REPLY_SOURCES`), a name cut at 120
 characters, a link longer than 500 characters dropped, duplicate links merged.
 

@@ -20,6 +20,10 @@ that is one of the items this turn's reads showed (below): a fact's uuid
 given a `diary:` prefix it never had is that fact. A link this turn never
 showed is dropped however it is wrapped.
 
+A diary link is kept only as a whole citation, revision and byte range. One
+cut before its range still occurs verbatim inside the citation it was cut
+from, but names a whole file, not the passage the answer rests on.
+
 Every read also reports the items it showed the model (`shown_items` on its
 observation's data: a diary passage, a stored fact, a kanban task, a find
 match). Those the reply did not cite are kept beside its sources as its
@@ -33,6 +37,8 @@ from __future__ import annotations
 import re
 from typing import Any, Callable, Iterable
 from urllib.parse import quote
+
+from diary.citations import parse_citation
 
 # A reply cites the reads it rests on, not every line it saw.
 MAX_REPLY_SOURCES = 20
@@ -54,6 +60,7 @@ DROP_TOO_LONG = f"link longer than {MAX_SOURCE_LINK_CHARS} characters"
 DROP_DUPLICATE = "same link as an earlier source"
 DROP_OVER_LIMIT = f"more than {MAX_REPLY_SOURCES} sources"
 DROP_NOT_A_LIST = "sources is not a list"
+DROP_PART_OF_A_CITATION = "part of a diary citation, not a whole one"
 
 # A diary link (a citation, diary/citations.py) opens on its own page.
 DIARY_LINK_PREFIX = "diary:"
@@ -141,15 +148,20 @@ def check_seen(
     def seen(link: str) -> bool:
         return any(link in text for text in texts)
 
+    def part_of_a_citation(link: str) -> bool:
+        return link.startswith(DIARY_LINK_PREFIX) and parse_citation(link) is None
+
     kept: list[dict[str, str]] = []
     dropped: list[dict[str, str]] = []
     for entry in entries:
-        if seen(entry["link"]):
+        partial = part_of_a_citation(entry["link"])
+        if seen(entry["link"]) and not partial:
             if all(k["link"] != entry["link"] for k in kept):
                 kept.append(entry)
             continue
         rescued = 0
-        inside = [t for t in links_inside(entry["link"]) if seen(t)]
+        inside = [t for t in links_inside(entry["link"])
+                  if seen(t) and not part_of_a_citation(t)]
         inside += [u for u in _UUID.findall(entry["link"]) if u in items]
         for link in inside:
             if len(kept) >= MAX_REPLY_SOURCES:
@@ -157,7 +169,8 @@ def check_seen(
             if link != entry["link"] and all(k["link"] != link for k in kept):
                 kept.append({"name": entry["name"], "link": link})
                 rescued += 1
-        reason = DROP_NOT_SEEN
+        reason = (DROP_PART_OF_A_CITATION if partial and seen(entry["link"])
+                  else DROP_NOT_SEEN)
         if rescued:
             reason += f"; kept the {rescued} link{'s' if rescued > 1 else ''} inside it"
         dropped.append({**entry, "reason": reason})

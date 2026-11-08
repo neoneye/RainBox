@@ -13,6 +13,7 @@ from agents.reply_sources import (
     DROP_NOT_A_LIST,
     DROP_NOT_SEEN,
     DROP_OVER_LIMIT,
+    DROP_PART_OF_A_CITATION,
     MAX_REPLY_SOURCES,
     MAX_SOURCE_NAME_CHARS,
     check_seen,
@@ -231,6 +232,16 @@ def test_a_uuid_inside_a_link_that_no_read_showed_as_an_item_stays_dropped():
     sources, dropped = reply_sources([f"diary:{SHED_UUID}:3-9"], [f"--- a.md · {cite}"],
                                      _no_match, shown=shown)
     assert sources == [] and dropped[0]["reason"] == DROP_NOT_SEEN
+
+
+def test_a_diary_citation_cut_before_its_range_is_dropped():
+    cite = f"diary:{SHED_UUID}:12-40"
+    text = f"--- a.md · 1999-03-12 · {cite}"
+    for cut in (f"diary:{SHED_UUID}", f"diary:{SHED_UUID}:", f"diary:{SHED_UUID}:12"):
+        sources, dropped = reply_sources([cut], [text], _no_match)
+        assert sources == [] and dropped[0]["reason"] == DROP_PART_OF_A_CITATION
+    sources, _ = reply_sources([cite], [text], _no_match)
+    assert [s["link"] for s in sources] == [cite]
 
 
 def test_a_diary_link_opens_on_its_passage_page():
