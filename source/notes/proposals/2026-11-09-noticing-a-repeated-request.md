@@ -802,7 +802,9 @@ never rewrite an earlier run.
 - **Summarize the room or declare a topic solved.** Chains can inform a future
   topic digest, but repetition is not a reliable "open" verdict and absence
   of repetition is not a reliable "solved" verdict. Topic tagging belongs in
-  that separate design.
+  that separate design: [the room digest](2026-11-09-room-digest.md), which
+  adds a `topic` Choice to the request profile and derives topic status
+  from verdicts and recent chains.
 - **Make old answers authoritative.** The block supports what was attempted
   and said. The current answer still needs its own evidence.
 - **Resolve every paraphrase or follow-up.** Ambiguous or out-of-scope cases

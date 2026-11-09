@@ -8,6 +8,8 @@
   proposal reuses.
 - [The conversation working set](2026-10-17-conversation-working-set.md):
   carries earlier evidence; this proposal carries earlier *judgements*.
+- [The room digest](2026-11-09-room-digest.md): derives each topic's status
+  (`contested`, `settled`, `open`, `quiet`) from these verdicts.
 
 ## The problem
 

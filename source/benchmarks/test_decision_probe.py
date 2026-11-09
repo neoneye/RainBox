@@ -33,6 +33,7 @@ def test_requests_per_experiment():
     assert counts == {
         "identity_pair": 14, "identity_fanout": 1, "redo_noul": 14,
         "short_message_choice": 51, "request_classification": 22,
+        "topic_assignment": 14,
         "reply_checklist": 12,
         "verdict_choice": 14, "hedge": 8, "same_answer": 8,
     }

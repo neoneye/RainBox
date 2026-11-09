@@ -1,0 +1,1243 @@
+{
+ "fixture_version": 3,
+ "only": [
+  "topic_assignment"
+ ],
+ "bands": {
+  "yes": 0.8,
+  "no": 0.2,
+  "choice_accept": 0.8
+ },
+ "started_at": "2026-11-09T01:14:54+00:00",
+ "environment": {
+  "server_version": "0.40.15",
+  "models": {
+   "d1:3b": {
+    "digest": "8c2d9ddae4413c38b183644320b6f4bca4c5f629ae9e5104c3b13a150ed85e7e",
+    "size": 3730544597
+   },
+   "d3:4b": {
+    "digest": "510b1771140e588b3516b17984b67bdf2c6c7cfc3b62b6e6e54e37619b675d00",
+    "size": 5647082587
+   }
+  }
+ },
+ "runs": [
+  {
+   "model": "d1:3b",
+   "first_call": {
+    "cold_requested": false,
+    "first_call_ms": 2618
+   },
+   "experiments": {
+    "topic_assignment": {
+     "results": [
+      {
+       "case": "excellence",
+       "context": null,
+       "ms": 184,
+       "answers": {
+        "topic": {
+         "type": "choice",
+         "choice": "letter-count",
+         "probabilities": {
+          "letter-count": 0.9690057028501843,
+          "unit-conversion": 0.004244757261702583,
+          "kanban-status": 0.003143846280252047,
+          "assistant-self": 0.0030667490817038387,
+          "memory-check": 0.0037762870937873036,
+          "weather": 0.0015103224952327354,
+          "none": 0.015252334937137008
+         },
+         "confidence": 0.9638399866585482
+        },
+        "new_topic": {
+         "type": "noul",
+         "noul": 0.1968997859889074
+        }
+       },
+       "scored": {
+        "topic": {
+         "choice": "letter-count",
+         "p": 0.9690057028501843,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "new_topic": {
+         "p": 0.1968997859889074,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "strawberry_python",
+       "context": null,
+       "ms": 172,
+       "answers": {
+        "topic": {
+         "type": "choice",
+         "choice": "letter-count",
+         "probabilities": {
+          "letter-count": 0.9715344971228712,
+          "unit-conversion": 0.00420927842092236,
+          "kanban-status": 0.0028898621909633627,
+          "assistant-self": 0.002380636373270524,
+          "memory-check": 0.002762276609792823,
+          "weather": 0.0013058677062942415,
+          "none": 0.014917581575885273
+         },
+         "confidence": 0.9667902466433498
+        },
+        "new_topic": {
+         "type": "noul",
+         "noul": 0.14778420505747372
+        }
+       },
+       "scored": {
+        "topic": {
+         "choice": "letter-count",
+         "p": 0.9715344971228712,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "new_topic": {
+         "p": 0.14778420505747372,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "inches",
+       "context": null,
+       "ms": 173,
+       "answers": {
+        "topic": {
+         "type": "choice",
+         "choice": "unit-conversion",
+         "probabilities": {
+          "letter-count": 0.0036975642610979154,
+          "unit-conversion": 0.9692540157367002,
+          "kanban-status": 0.003438003155895009,
+          "assistant-self": 0.003949727634502389,
+          "memory-check": 0.0028271020270769233,
+          "weather": 0.002410175566769995,
+          "none": 0.014423411617957396
+         },
+         "confidence": 0.9641296850261503
+        },
+        "new_topic": {
+         "type": "noul",
+         "noul": 0.1562501847127835
+        }
+       },
+       "scored": {
+        "topic": {
+         "choice": "unit-conversion",
+         "p": 0.9692540157367002,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "new_topic": {
+         "p": 0.1562501847127835,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "miles",
+       "context": null,
+       "ms": 171,
+       "answers": {
+        "topic": {
+         "type": "choice",
+         "choice": "unit-conversion",
+         "probabilities": {
+          "letter-count": 0.003712470199398123,
+          "unit-conversion": 0.9693044978221654,
+          "kanban-status": 0.0032229808995564925,
+          "assistant-self": 0.0036525999798250612,
+          "memory-check": 0.0023936523306222132,
+          "weather": 0.00232856128001601,
+          "none": 0.015385237488416515
+         },
+         "confidence": 0.9641885807925263
+        },
+        "new_topic": {
+         "type": "noul",
+         "noul": 0.11762933447529007
+        }
+       },
+       "scored": {
+        "topic": {
+         "choice": "unit-conversion",
+         "p": 0.9693044978221654,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "new_topic": {
+         "p": 0.11762933447529007,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "board",
+       "context": null,
+       "ms": 172,
+       "answers": {
+        "topic": {
+         "type": "choice",
+         "choice": "kanban-status",
+         "probabilities": {
+          "letter-count": 0.006922615708045432,
+          "unit-conversion": 0.004522115954239798,
+          "kanban-status": 0.6381251724304692,
+          "assistant-self": 0.009133043787468707,
+          "memory-check": 0.03501033487606602,
+          "weather": 0.04076978623844294,
+          "none": 0.2655169310052677
+         },
+         "confidence": 0.5778127011688807
+        },
+        "new_topic": {
+         "type": "noul",
+         "noul": 0.5189366320346396
+        }
+       },
+       "scored": {
+        "topic": {
+         "choice": "kanban-status",
+         "p": 0.6381251724304692,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        },
+        "new_topic": {
+         "p": 0.5189366320346396,
+         "top_ok": false,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "move_card",
+       "context": null,
+       "ms": 172,
+       "answers": {
+        "topic": {
+         "type": "choice",
+         "choice": "kanban-status",
+         "probabilities": {
+          "letter-count": 0.0028439731220899697,
+          "unit-conversion": 0.0030292101903728686,
+          "kanban-status": 0.9303577481597425,
+          "assistant-self": 0.0028702230930446643,
+          "memory-check": 0.0020954829390219683,
+          "weather": 0.0019063201983680741,
+          "none": 0.05689704229736026
+         },
+         "confidence": 0.9187507061863662
+        },
+        "new_topic": {
+         "type": "noul",
+         "noul": 0.26610092801466306
+        }
+       },
+       "scored": {
+        "topic": {
+         "choice": "kanban-status",
+         "p": 0.9303577481597425,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "new_topic": {
+         "p": 0.26610092801466306,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "who_are_you",
+       "context": null,
+       "ms": 172,
+       "answers": {
+        "topic": {
+         "type": "choice",
+         "choice": "assistant-self",
+         "probabilities": {
+          "letter-count": 0.003653153858394498,
+          "unit-conversion": 0.003185374296153274,
+          "kanban-status": 0.003350360021821013,
+          "assistant-self": 0.9420813127189539,
+          "memory-check": 0.002835071163686233,
+          "weather": 0.0018833953378653819,
+          "none": 0.04301133260312584
+         },
+         "confidence": 0.9324281981721128
+        },
+        "new_topic": {
+         "type": "noul",
+         "noul": 0.3107041869211875
+        }
+       },
+       "scored": {
+        "topic": {
+         "choice": "assistant-self",
+         "p": 0.9420813127189539,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "new_topic": {
+         "p": 0.3107041869211875,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "models",
+       "context": null,
+       "ms": 177,
+       "answers": {
+        "topic": {
+         "type": "choice",
+         "choice": "assistant-self",
+         "probabilities": {
+          "letter-count": 0.003967969661588579,
+          "unit-conversion": 0.00375837849853854,
+          "kanban-status": 0.0039755451853834955,
+          "assistant-self": 0.9617054932448649,
+          "memory-check": 0.0032766251052250774,
+          "weather": 0.002367345604527915,
+          "none": 0.020948642699871484
+         },
+         "confidence": 0.9553230754523422
+        },
+        "new_topic": {
+         "type": "noul",
+         "noul": 0.24177808963792063
+        }
+       },
+       "scored": {
+        "topic": {
+         "choice": "assistant-self",
+         "p": 0.9617054932448649,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "new_topic": {
+         "p": 0.24177808963792063,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "last_memories",
+       "context": null,
+       "ms": 173,
+       "answers": {
+        "topic": {
+         "type": "choice",
+         "choice": "memory-check",
+         "probabilities": {
+          "letter-count": 0.002569911252256701,
+          "unit-conversion": 0.0022662587887255204,
+          "kanban-status": 0.002045561575796672,
+          "assistant-self": 0.0048572333170058355,
+          "memory-check": 0.9610281617984959,
+          "weather": 0.002293383875896573,
+          "none": 0.024939489391822885
+         },
+         "confidence": 0.9545328554315786
+        },
+        "new_topic": {
+         "type": "noul",
+         "noul": 0.3931688400540072
+        }
+       },
+       "scored": {
+        "topic": {
+         "choice": "memory-check",
+         "p": 0.9610281617984959,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "new_topic": {
+         "p": 0.3931688400540072,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "remember_colour",
+       "context": null,
+       "ms": 173,
+       "answers": {
+        "topic": {
+         "type": "choice",
+         "choice": "memory-check",
+         "probabilities": {
+          "letter-count": 0.002464065024755967,
+          "unit-conversion": 0.0022673807983037814,
+          "kanban-status": 0.0017717655645526464,
+          "assistant-self": 0.003390549389809202,
+          "memory-check": 0.917649374394779,
+          "weather": 0.0017880047720896179,
+          "none": 0.07066886005570976
+         },
+         "confidence": 0.9039242701272421
+        },
+        "new_topic": {
+         "type": "noul",
+         "noul": 0.302321479532256
+        }
+       },
+       "scored": {
+        "topic": {
+         "choice": "memory-check",
+         "p": 0.917649374394779,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "new_topic": {
+         "p": 0.302321479532256,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "rain",
+       "context": null,
+       "ms": 171,
+       "answers": {
+        "topic": {
+         "type": "choice",
+         "choice": "weather",
+         "probabilities": {
+          "letter-count": 0.002499220259379329,
+          "unit-conversion": 0.0024479049980160113,
+          "kanban-status": 0.0022422786682981042,
+          "assistant-self": 0.0023840722507980673,
+          "memory-check": 0.002313359159342292,
+          "weather": 0.9773782634875017,
+          "none": 0.010734901176664475
+         },
+         "confidence": 0.973607974068752
+        },
+        "new_topic": {
+         "type": "noul",
+         "noul": 0.3555388607786849
+        }
+       },
+       "scored": {
+        "topic": {
+         "choice": "weather",
+         "p": 0.9773782634875017,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "new_topic": {
+         "p": 0.3555388607786849,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "haiku",
+       "context": null,
+       "ms": 172,
+       "answers": {
+        "topic": {
+         "type": "choice",
+         "choice": "none",
+         "probabilities": {
+          "letter-count": 0.015077492985313148,
+          "unit-conversion": 0.003349740755576895,
+          "kanban-status": 0.004203299623616271,
+          "assistant-self": 0.005689456396526899,
+          "memory-check": 0.004199837637940834,
+          "weather": 0.018470652896369413,
+          "none": 0.9490095197046565
+         },
+         "confidence": 0.9405111063220991
+        },
+        "new_topic": {
+         "type": "noul",
+         "noul": 0.17371187204817773
+        }
+       },
+       "scored": {
+        "topic": {
+         "choice": "none",
+         "p": 0.9490095197046565,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "new_topic": {
+         "p": 0.17371187204817773,
+         "top_ok": false,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": true
+        }
+       }
+      },
+      {
+       "case": "capital",
+       "context": null,
+       "ms": 173,
+       "answers": {
+        "topic": {
+         "type": "choice",
+         "choice": "none",
+         "probabilities": {
+          "letter-count": 0.0030158810041400566,
+          "unit-conversion": 0.0032776502599015244,
+          "kanban-status": 0.0036000692285834603,
+          "assistant-self": 0.005833555752058422,
+          "memory-check": 0.00775400754422597,
+          "weather": 0.0031967625899333575,
+          "none": 0.9733220736211572
+         },
+         "confidence": 0.9688757525580167
+        },
+        "new_topic": {
+         "type": "noul",
+         "noul": 0.11001166519895042
+        }
+       },
+       "scored": {
+        "topic": {
+         "choice": "none",
+         "p": 0.9733220736211572,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "new_topic": {
+         "p": 0.11001166519895042,
+         "top_ok": false,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": true
+        }
+       }
+      },
+      {
+       "case": "prime",
+       "context": null,
+       "ms": 172,
+       "answers": {
+        "topic": {
+         "type": "choice",
+         "choice": "none",
+         "probabilities": {
+          "letter-count": 0.004148008062267669,
+          "unit-conversion": 0.004021399611240479,
+          "kanban-status": 0.00341663328434082,
+          "assistant-self": 0.008119082309556104,
+          "memory-check": 0.00390530913376276,
+          "weather": 0.0022956683042458406,
+          "none": 0.9740938992945862
+         },
+         "confidence": 0.9697762158436839
+        },
+        "new_topic": {
+         "type": "noul",
+         "noul": 0.135314185563981
+        }
+       },
+       "scored": {
+        "topic": {
+         "choice": "none",
+         "p": 0.9740938992945862,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "new_topic": {
+         "p": 0.135314185563981,
+         "top_ok": false,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": true
+        }
+       }
+      }
+     ],
+     "summary": {
+      "by_question": {
+       "topic": {
+        "scored": 14,
+        "top_ok": 14,
+        "accepted": 13,
+        "accepted_wrong": 0,
+        "abstained": 1
+       },
+       "new_topic": {
+        "scored": 14,
+        "top_ok": 10,
+        "accepted": 7,
+        "accepted_wrong": 3,
+        "abstained": 7
+       }
+      },
+      "requests": 14,
+      "errors": 0,
+      "median_ms": 172
+     }
+    }
+   }
+  },
+  {
+   "model": "d3:4b",
+   "first_call": {
+    "cold_requested": false,
+    "first_call_ms": 1739
+   },
+   "experiments": {
+    "topic_assignment": {
+     "results": [
+      {
+       "case": "excellence",
+       "context": null,
+       "ms": 677,
+       "answers": {
+        "topic": {
+         "type": "choice",
+         "choice": "letter-count",
+         "probabilities": {
+          "letter-count": 0.9995181093023047,
+          "unit-conversion": 2.2695918667181533e-05,
+          "kanban-status": 2.6871533280683543e-05,
+          "assistant-self": 3.507022312990601e-05,
+          "memory-check": 8.938404662685301e-05,
+          "weather": 1.1278117239798303e-05,
+          "none": 0.0002965908587507643
+         },
+         "confidence": 0.9975651168621952
+        },
+        "new_topic": {
+         "type": "noul",
+         "noul": 0.7009431904499436
+        }
+       },
+       "scored": {
+        "topic": {
+         "choice": "letter-count",
+         "p": 0.9995181093023047,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "new_topic": {
+         "p": 0.7009431904499436,
+         "top_ok": false,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "strawberry_python",
+       "context": null,
+       "ms": 701,
+       "answers": {
+        "topic": {
+         "type": "choice",
+         "choice": "letter-count",
+         "probabilities": {
+          "letter-count": 0.9880833297533439,
+          "unit-conversion": 0.00011862800618625075,
+          "kanban-status": 0.0001437081647936545,
+          "assistant-self": 0.00021983490440324717,
+          "memory-check": 0.0002201845654159461,
+          "weather": 9.004728711413149e-05,
+          "none": 0.01112426731874256
+         },
+         "confidence": 0.9646552466330597
+        },
+        "new_topic": {
+         "type": "noul",
+         "noul": 0.5302167818690171
+        }
+       },
+       "scored": {
+        "topic": {
+         "choice": "letter-count",
+         "p": 0.9880833297533439,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "new_topic": {
+         "p": 0.5302167818690171,
+         "top_ok": false,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "inches",
+       "context": null,
+       "ms": 675,
+       "answers": {
+        "topic": {
+         "type": "choice",
+         "choice": "unit-conversion",
+         "probabilities": {
+          "letter-count": 7.926591211396989e-06,
+          "unit-conversion": 0.9998011224664638,
+          "kanban-status": 1.3786007348024683e-05,
+          "assistant-self": 2.3848531446696996e-05,
+          "memory-check": 3.3972813702936444e-05,
+          "weather": 7.589672666072761e-06,
+          "none": 0.00011175391716098376
+         },
+         "confidence": 0.9988920294326814
+        },
+        "new_topic": {
+         "type": "noul",
+         "noul": 0.6329956203668182
+        }
+       },
+       "scored": {
+        "topic": {
+         "choice": "unit-conversion",
+         "p": 0.9998011224664638,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "new_topic": {
+         "p": 0.6329956203668182,
+         "top_ok": false,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "miles",
+       "context": null,
+       "ms": 694,
+       "answers": {
+        "topic": {
+         "type": "choice",
+         "choice": "unit-conversion",
+         "probabilities": {
+          "letter-count": 4.640733793400637e-06,
+          "unit-conversion": 0.9999171925889357,
+          "kanban-status": 8.378252877638976e-06,
+          "assistant-self": 1.0888256129128633e-05,
+          "memory-check": 1.3649660669571611e-05,
+          "weather": 5.4536375728354685e-06,
+          "none": 3.979687002196368e-05
+         },
+         "confidence": 0.999494133699215
+        },
+        "new_topic": {
+         "type": "noul",
+         "noul": 0.5753438426424395
+        }
+       },
+       "scored": {
+        "topic": {
+         "choice": "unit-conversion",
+         "p": 0.9999171925889357,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "new_topic": {
+         "p": 0.5753438426424395,
+         "top_ok": false,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "board",
+       "context": null,
+       "ms": 702,
+       "answers": {
+        "topic": {
+         "type": "choice",
+         "choice": "kanban-status",
+         "probabilities": {
+          "letter-count": 1.4987123337147418e-05,
+          "unit-conversion": 1.68144855567819e-05,
+          "kanban-status": 0.9965946312408959,
+          "assistant-self": 7.773263795088851e-05,
+          "memory-check": 0.001442943908158796,
+          "weather": 0.00015800365672178143,
+          "none": 0.001694886947378641
+         },
+         "confidence": 0.9865762471126607
+        },
+        "new_topic": {
+         "type": "noul",
+         "noul": 0.6956801760693604
+        }
+       },
+       "scored": {
+        "topic": {
+         "choice": "kanban-status",
+         "p": 0.9965946312408959,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "new_topic": {
+         "p": 0.6956801760693604,
+         "top_ok": false,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "move_card",
+       "context": null,
+       "ms": 704,
+       "answers": {
+        "topic": {
+         "type": "choice",
+         "choice": "kanban-status",
+         "probabilities": {
+          "letter-count": 6.624883457988684e-06,
+          "unit-conversion": 7.875711462690165e-06,
+          "kanban-status": 0.9987986870012553,
+          "assistant-self": 1.8915303935765676e-05,
+          "memory-check": 3.627181406326448e-05,
+          "weather": 1.0964745242169693e-05,
+          "none": 0.0011206605405825508
+         },
+         "confidence": 0.9950215945865796
+        },
+        "new_topic": {
+         "type": "noul",
+         "noul": 0.3839293134758604
+        }
+       },
+       "scored": {
+        "topic": {
+         "choice": "kanban-status",
+         "p": 0.9987986870012553,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "new_topic": {
+         "p": 0.3839293134758604,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "who_are_you",
+       "context": null,
+       "ms": 699,
+       "answers": {
+        "topic": {
+         "type": "choice",
+         "choice": "assistant-self",
+         "probabilities": {
+          "letter-count": 5.4699672865798926e-05,
+          "unit-conversion": 7.25801727514287e-05,
+          "kanban-status": 0.0002392955146499695,
+          "assistant-self": 0.987851317879807,
+          "memory-check": 0.0018515897392190027,
+          "weather": 0.00011592473020115304,
+          "none": 0.009814592290505658
+         },
+         "confidence": 0.9622900738575653
+        },
+        "new_topic": {
+         "type": "noul",
+         "noul": 0.6455398737330976
+        }
+       },
+       "scored": {
+        "topic": {
+         "choice": "assistant-self",
+         "p": 0.987851317879807,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "new_topic": {
+         "p": 0.6455398737330976,
+         "top_ok": false,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "models",
+       "context": null,
+       "ms": 672,
+       "answers": {
+        "topic": {
+         "type": "choice",
+         "choice": "assistant-self",
+         "probabilities": {
+          "letter-count": 2.395153658856968e-05,
+          "unit-conversion": 3.5213849290002653e-05,
+          "kanban-status": 8.904088307656955e-05,
+          "assistant-self": 0.9983154529092212,
+          "memory-check": 0.00031976082467120956,
+          "weather": 3.952013154296824e-05,
+          "none": 0.001177059865609502
+         },
+         "confidence": 0.9927835659678944
+        },
+        "new_topic": {
+         "type": "noul",
+         "noul": 0.6960356080602412
+        }
+       },
+       "scored": {
+        "topic": {
+         "choice": "assistant-self",
+         "p": 0.9983154529092212,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "new_topic": {
+         "p": 0.6960356080602412,
+         "top_ok": false,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "last_memories",
+       "context": null,
+       "ms": 684,
+       "answers": {
+        "topic": {
+         "type": "choice",
+         "choice": "memory-check",
+         "probabilities": {
+          "letter-count": 4.485047375177942e-05,
+          "unit-conversion": 4.260445232039442e-05,
+          "kanban-status": 0.0005235025132847069,
+          "assistant-self": 0.0023131344460143896,
+          "memory-check": 0.9943901765471146,
+          "weather": 0.00012132724429138845,
+          "none": 0.0025644043232227933
+         },
+         "confidence": 0.97900263184733
+        },
+        "new_topic": {
+         "type": "noul",
+         "noul": 0.7365527446829536
+        }
+       },
+       "scored": {
+        "topic": {
+         "choice": "memory-check",
+         "p": 0.9943901765471146,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "new_topic": {
+         "p": 0.7365527446829536,
+         "top_ok": false,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "remember_colour",
+       "context": null,
+       "ms": 694,
+       "answers": {
+        "topic": {
+         "type": "choice",
+         "choice": "memory-check",
+         "probabilities": {
+          "letter-count": 3.0289977798408604e-05,
+          "unit-conversion": 2.7884350513511898e-05,
+          "kanban-status": 0.00016934704400869554,
+          "assistant-self": 0.0017467830095540576,
+          "memory-check": 0.9946015067247721,
+          "weather": 0.00010011763815475144,
+          "none": 0.003324071255198416
+         },
+         "confidence": 0.980243132715909
+        },
+        "new_topic": {
+         "type": "noul",
+         "noul": 0.536098505790111
+        }
+       },
+       "scored": {
+        "topic": {
+         "choice": "memory-check",
+         "p": 0.9946015067247721,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "new_topic": {
+         "p": 0.536098505790111,
+         "top_ok": false,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "rain",
+       "context": null,
+       "ms": 680,
+       "answers": {
+        "topic": {
+         "type": "choice",
+         "choice": "weather",
+         "probabilities": {
+          "letter-count": 4.118785296401531e-06,
+          "unit-conversion": 1.4708197445072172e-05,
+          "kanban-status": 2.2912723331609087e-05,
+          "assistant-self": 3.5540569507054195e-05,
+          "memory-check": 8.552197280939476e-05,
+          "weather": 0.9996759458563865,
+          "none": 0.00016125189522387445
+         },
+         "confidence": 0.9982749267032553
+        },
+        "new_topic": {
+         "type": "noul",
+         "noul": 0.5794636220920488
+        }
+       },
+       "scored": {
+        "topic": {
+         "choice": "weather",
+         "p": 0.9996759458563865,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "new_topic": {
+         "p": 0.5794636220920488,
+         "top_ok": false,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "haiku",
+       "context": null,
+       "ms": 682,
+       "answers": {
+        "topic": {
+         "type": "choice",
+         "choice": "none",
+         "probabilities": {
+          "letter-count": 0.0001313718335691478,
+          "unit-conversion": 7.960376279736548e-05,
+          "kanban-status": 0.0002024304135054749,
+          "assistant-self": 0.00043705312534462765,
+          "memory-check": 0.0002656365437716193,
+          "weather": 0.003433804726477506,
+          "none": 0.9954500995945342
+         },
+         "confidence": 0.9829188960462991
+        },
+        "new_topic": {
+         "type": "noul",
+         "noul": 0.658675479184153
+        }
+       },
+       "scored": {
+        "topic": {
+         "choice": "none",
+         "p": 0.9954500995945342,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "new_topic": {
+         "p": 0.658675479184153,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "capital",
+       "context": null,
+       "ms": 680,
+       "answers": {
+        "topic": {
+         "type": "choice",
+         "choice": "none",
+         "probabilities": {
+          "letter-count": 0.00012059076808427188,
+          "unit-conversion": 0.00014103572405405832,
+          "kanban-status": 0.0005904931690424789,
+          "assistant-self": 0.0017941200897107629,
+          "memory-check": 0.03459759685711729,
+          "weather": 0.00039977444625309165,
+          "none": 0.9623563889457382
+         },
+         "confidence": 0.9103182004101152
+        },
+        "new_topic": {
+         "type": "noul",
+         "noul": 0.7132102634620333
+        }
+       },
+       "scored": {
+        "topic": {
+         "choice": "none",
+         "p": 0.9623563889457382,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "new_topic": {
+         "p": 0.7132102634620333,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "prime",
+       "context": null,
+       "ms": 694,
+       "answers": {
+        "topic": {
+         "type": "choice",
+         "choice": "none",
+         "probabilities": {
+          "letter-count": 0.00010002536410018095,
+          "unit-conversion": 0.00020027301907642026,
+          "kanban-status": 0.0004641171798433268,
+          "assistant-self": 0.0007987409470418113,
+          "memory-check": 0.0021420433250760353,
+          "weather": 0.0002598662771731089,
+          "none": 0.9960349338876892
+         },
+         "confidence": 0.9839902820539616
+        },
+        "new_topic": {
+         "type": "noul",
+         "noul": 0.6161173785047934
+        }
+       },
+       "scored": {
+        "topic": {
+         "choice": "none",
+         "p": 0.9960349338876892,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "new_topic": {
+         "p": 0.6161173785047934,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      }
+     ],
+     "summary": {
+      "by_question": {
+       "topic": {
+        "scored": 14,
+        "top_ok": 14,
+        "accepted": 14,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "new_topic": {
+        "scored": 14,
+        "top_ok": 4,
+        "accepted": 0,
+        "accepted_wrong": 0,
+        "abstained": 14
+       }
+      },
+      "requests": 14,
+      "errors": 0,
+      "median_ms": 689
+     }
+    }
+   }
+  }
+ ]
+}

@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "about": "Hand-written synthetic cases for System One decision models, measured by benchmarks/decision_probe.py. Used by notes/proposals/2026-11-09-noticing-a-repeated-request.md and 2026-11-09-later-verdicts-on-earlier-messages.md. Every message is invented.",
   "bands": {"yes": 0.8, "no": 0.2, "choice_accept": 0.8},
   "experiments": [
@@ -140,6 +140,31 @@
         {"id": "convert_5_miles", "state": {"request": "convert 5 miles"}, "expected": {"ambiguous": true, "has_constraints": false}},
         {"id": "next_friday", "state": {"request": "book the table for next Friday"}, "expected": {"work": "act", "ambiguous": true}},
         {"id": "flight", "state": {"request": "how long is the flight"}, "expected": {"ambiguous": true}}
+      ]
+    },
+    {
+      "id": "topic_assignment",
+      "kind": "checklist",
+      "note": "Assign a message to one of a room's existing topics; the none option marks a topic none of them covers. Option descriptions stand in for topic titles written at runtime. new_topic is kept as a negative result: questions are answered in isolation, so a Noul whose state holds only the message never sees the topic list, and it scored near chance.",
+      "questions": {
+        "topic": {"type": "choice", "instructions": "Which listed topic does the message belong to?", "criteria": {"letter-count": "Counting letters or characters in a word or text.", "unit-conversion": "Converting a quantity from one unit to another.", "kanban-status": "What is on the kanban boards, and changes to their cards.", "assistant-self": "Questions about the assistant itself: what it is, how it works, what it is made of.", "memory-check": "Checking what the memory system has stored or remembers.", "weather": "Weather and forecasts.", "none": "None of the listed topics."}},
+        "new_topic": {"type": "noul", "instructions": "Does the message start a topic that none of the listed topics covers?"}
+      },
+      "cases": [
+        {"id": "excellence", "state": {"message": "how many e's are in 'excellence'"}, "expected": {"topic": "letter-count", "new_topic": false}},
+        {"id": "strawberry_python", "state": {"message": "count the R's in Strawberry.. use python"}, "expected": {"topic": "letter-count", "new_topic": false}},
+        {"id": "inches", "state": {"message": "what is 12 inches in cm"}, "expected": {"topic": "unit-conversion", "new_topic": false}},
+        {"id": "miles", "state": {"message": "convert 5 miles to km"}, "expected": {"topic": "unit-conversion", "new_topic": false}},
+        {"id": "board", "state": {"message": "what's on the RainBox board"}, "expected": {"topic": "kanban-status", "new_topic": false}},
+        {"id": "move_card", "state": {"message": "move the 'fix login' card to done"}, "expected": {"topic": "kanban-status", "new_topic": false}},
+        {"id": "who_are_you", "state": {"message": "who are you"}, "expected": {"topic": "assistant-self", "new_topic": false}},
+        {"id": "models", "state": {"message": "what models are you made of"}, "expected": {"topic": "assistant-self", "new_topic": false}},
+        {"id": "last_memories", "state": {"message": "what are the last 3 memories"}, "expected": {"topic": "memory-check", "new_topic": false}},
+        {"id": "remember_colour", "state": {"message": "do you remember my favourite colour"}, "expected": {"topic": "memory-check", "new_topic": false}},
+        {"id": "rain", "state": {"message": "will it rain tomorrow"}, "expected": {"topic": "weather", "new_topic": false}},
+        {"id": "haiku", "state": {"message": "write a haiku about autumn"}, "expected": {"topic": "none", "new_topic": true}},
+        {"id": "capital", "state": {"message": "what is the capital of Peru"}, "expected": {"topic": "none", "new_topic": true}},
+        {"id": "prime", "state": {"message": "is 221 a prime number"}, "expected": {"topic": "none", "new_topic": true}}
       ]
     },
     {
