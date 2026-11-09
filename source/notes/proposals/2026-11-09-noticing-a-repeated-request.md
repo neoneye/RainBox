@@ -86,8 +86,8 @@ repeat check itself never cancels or restarts it.
 Preserve case, punctuation, spacing, and operands: in a character-counting
 task those can be the input. Never compare truncated prompt excerpts. Very
 short messages (initially fewer than 24 non-whitespace Unicode code points)
-go through the short-redo path below, even when identical. Otherwise unrelated
-instances of "again" would become one chain. This cutoff is a tuning choice,
+go through the short-message path below, even when identical. Otherwise
+unrelated instances of "again" would become one chain. This cutoff is a tuning choice,
 not subject detection. Even a long exact match is context to consider, not
 proof that the person wants an acknowledgement.
 
@@ -174,8 +174,19 @@ step 5 promotes it on that data, not on the probe below.
 
 The check never runs for exact matches, and never when the setting is `off`.
 
-**Short redos.** A short follow-up can ask to do the previous task again
-without naming it. Use one bounded classifier call, with no retry-phrase list:
+**Short messages.** A short message is usually a command, not a request
+with a subject: "elaborate", "more", "retry", "try again", "commit", "push".
+Comparing it with the previous request ("is *retry* the same as *count the R's
+in Strawberry*?") asks the wrong question. Most short commands are not
+repeats at all:
+
+- **"elaborate" and "more"** act on the previous *reply*;
+- **"commit" and "push"** are actions of their own;
+- **"thanks"** asks for nothing;
+- **"retry" and "again"** are the ones that ask for the previous task again.
+
+So the short-message path first classifies what the message **does**. Only
+one of the answers leads to a chain. There is no list of command words:
 
 - **Trigger:** no eligible exact match; current text at most 120 Unicode code
   points; the latest earlier human message in the room is from this sender
@@ -183,26 +194,41 @@ without naming it. Use one bounded classifier call, with no retry-phrase list:
   Do not skip a newer unanswered message to find a convenient older anchor.
 - **Input:** current message, immediate predecessor, and its resolved
   request context when the predecessor is itself a redo, including method
-  refinements (decision 3). Classify a redo of "again" against the underlying
-  task. Do not supply old assistant answers.
-- **Question:** does this message repeat or request another attempt at the
-  same task with the same inputs? More detail, a changed operand, a new task,
-  and an acknowledgement are not redos. A method change such as "check it
-  with Python" can be a redo. Unclear references are `unknown`.
-- **Output:** one Noul on the decision model (d3:4b by default, see below).
-  The banded probability becomes `yes` (≥ 0.8), `no` (≤ 0.3), or `unknown`
-  (in between, or any failure). A `yes` links the current message to the
-  resolved predecessor's chain as kind `redo`. Record the probability, not
-  just the band, so the bands can be tuned on the operator's verdicts.
-- **Limits:** one request, a 2-second end-to-end deadline, no fallback
-  cascade. Record model, probability, band, and elapsed time as a code-driven
-  step. If the complete inputs exceed a 2,000-character data budget, skip as
-  `unknown`; do not classify a cut task as if it were whole.
+  refinements (decision 3). The predecessor matters. "recount" alone was
+  ambiguous in the probe (0.40), and after a counting request it was clearly a
+  redo (0.95). Do not supply old assistant answers.
+- **Question:** one Choice with five options, each a description (no example
+  phrases):
 
-Failure must not prevent the ordinary turn from proceeding. Short ordinary
-messages will trigger the call too, so measure its hit rate and latency.
-Longer redos and ambiguous group-room references remain first-release
-limitations.
+  | option | what it means | effect |
+  |---|---|---|
+  | `redo` | another attempt at the previous request, same task and inputs; a method change ("check it with Python") counts | joins the predecessor's chain as kind `redo` |
+  | `expand` | more of, or more detail on, the previous reply | none: not a repeat |
+  | `command` | a standalone action of its own | a repeat only of the same command (below) |
+  | `acknowledge` | thanks, agreement; asks for nothing | none |
+  | `new_request` | something new, or the previous task on a different input | none on this path |
+
+- **Output:** the top option counts only when its probability is ≥ 0.8.
+  Otherwise, or on any failure, the result is `unknown`, which adds nothing.
+  Record all five probabilities, not just the winner, so the band can be tuned
+  on the operator's verdicts.
+- **Repeated commands.** A `command` is its own task, so it can be repeated as
+  itself. "push" sent again right after a "push" is a retry of the push. That
+  holds only when the sender's immediately previous request is the same
+  command (exact text, within 6 hours, same context boundary). Two "commit"s
+  with other work between them are two separate commits, not a chain. This
+  replaces the blanket rule that short messages never match exactly: the
+  rule's worry, unrelated "again"s merging into one chain, cannot arise,
+  because an "again" is classified `redo` and anchors on its predecessor
+  instead.
+- **Limits:** one request on `d1:3b`, a 2-second end-to-end deadline, no
+  fallback cascade. Record model, probabilities, result, and elapsed time as a
+  code-driven step. If the complete inputs exceed a 2,000-character data
+  budget, skip as `unknown`; do not classify a cut task as if it were whole.
+
+Failure must not prevent the ordinary turn from proceeding. Every short
+message triggers the call, so measure its hit rate and latency. Longer redos
+and ambiguous group-room references remain first-release limitations.
 
 **The decision model.** Both checks run on a System One decision model, not
 on the generative models the loop uses.
@@ -215,20 +241,25 @@ on the generative models the loop uses.
   `decision` capability answer it. Two are installed:
   - `d1:3b`: lfm2, 2.7B parameters, Q8;
   - `d3:4b`: qwen3.5, 4.5B parameters, mxfp8.
-- **Request shape.** The state is
-  `{"previous_request": …, "current_message": …}` for a redo, or
-  `{"earlier_message": …, "current_message": …}` for identity. There is one
-  question per check, `{"type": "noul", "instructions": …}`. The instruction
-  states the boundary (a different object, number, unit, direction or
-  constraint is a different task; different wording, language or requested
-  method is not). It contains no example phrases. The fan-out screen puts the
-  earlier message inside each question's structured `instructions` instead,
-  so the state carries only the current message.
+- **Request shape.**
+  - **Short message:** the state is
+    `{"previous_request": …, "short_message": …}`, with one
+    `{"type": "choice", "instructions": …, "criteria": {five options}}`.
+  - **Identity:** the state is `{"earlier_message": …, "current_message": …}`,
+    with one `{"type": "noul", "instructions": …}`. The instruction states the
+    boundary: a different object, number, unit, direction or constraint is a
+    different task, while different wording, language or requested method is
+    not.
+  - **Fan-out screen:** the earlier message goes inside each question's
+    structured `instructions` instead, so the state carries only the current
+    message.
+
+  No instruction or option description contains an example phrase.
 - **Why a decision model and not a plain-text yes/no call.**
   - **Speed.** It answers from one forward pass, with nothing decoded. In
-    the probe a redo Noul took 0.08 s on d1 and 0.3 s on d3. A generative
-    call on the decide model takes seconds and loads the GPU the turn is
-    about to need.
+    the probe a short-message Choice took 0.12 s on d1, and an identity Noul
+    0.09 s on d1 and 0.3 s on d3. A generative call on the decide model takes
+    seconds and loads the GPU the turn is about to need.
   - **Probabilities.** It returns a probability, so the bands are thresholds
     in code, tuned on verdicts, rather than a model's guess at `yes` / `no`
     / `unknown`.
@@ -241,15 +272,39 @@ on the generative models the loop uses.
   - **Remote members are refused**, so `assistant_models_all_local()` stays
     true wherever it was. The inputs are the operator's own messages.
 
-**What the probe showed.** One run, on 14 synthetic identity pairs and 14
-short follow-ups to "count the number of R's in Strawberry". The script is
-kept out of the repo. Accuracy at 0.5:
+**What the probe showed.** One run each, on hand-written cases:
+- 14 identity pairs;
+- 14 short messages asked as a yes/no redo Noul after "count the number of
+  R's in Strawberry";
+- 17 short messages (commands, redos, follow-ups, acknowledgements) asked as
+  the five-option Choice. Each was asked three ways: alone, after the
+  Strawberry request, and after "fix the typo in the README".
+
+The scripts are kept out of the repo. Accuracy (top answer, or yes at 0.5):
 
 | check | d1:3b | d3:4b | both must say yes |
 |---|---|---|---|
 | identity, per pair | 13/14, 0.09 s median | 13/14, 0.32 s median | 13/14, no false yes |
-| redo, per message | 11/14, 0.08 s median | 13/14, 0.32 s median | 13/14, no false yes |
+| redo as a yes/no Noul | 11/14, 0.08 s median | 13/14, 0.32 s median | 13/14, no false yes |
+| short message as a Choice (51 classifications) | 47/51, 0.12 s median | 46/51, 0.43 s median | (d1 alone) |
 | identity fan-out, 14 questions in one request | 0.39 s | 4.6 s | (screen on d1) |
+
+**The Choice beats the yes/no question for short messages.** Asked "is
+*elaborate* a redo?", d1 had no better answer than yes (0.72). Given an
+`expand` option, it put "elaborate" there with 0.92–0.95 in every context.
+
+With the ≥ 0.8 band, d1 gave **no wrong label** in the 51 classifications.
+After a previous request, the ones that missed the band became `unknown`:
+- "more" (0.67 expand, and 0.55 redo after the README fix);
+- "why?";
+- "igen";
+- "and for raspberry?" after the README fix;
+- three commands after the README fix (0.75–0.79).
+
+"commit", "push", "deploy" and "run the tests" were `command` at 0.87–0.94
+in the other two contexts. d3 was slower and less sure of commands (it called
+"commit" after the Strawberry request an acknowledgement, at 0.61), so the
+short-message check runs on d1.
 
 What it shows:
 - **Changed inputs are separated.** sqrt of 1764 against 1746, Tokyo against
@@ -261,12 +316,14 @@ What it shows:
 - **Redos in several forms are caught.** "again", "try again", "noch einmal",
   "check it with python" and "are you sure? recount" all scored ≥ 0.9 on both.
 - **Some single words slip through.** The Danish single word "igen"
-  ("again") was missed by both (0.04 and 0.12). Bare one-word redos in a
-  smaller language are the expected weak spot; the failure is a miss, so no
-  block.
-- **d1 alone over-accepts.** "elaborate" scored 0.72 as a redo, and "and for
-  raspberry?" scored 0.65. d3 put both under 0.3. That is why the redo check
-  defaults to d3, and why identity needs both models.
+  ("again") was missed in every framing. As a Noul it scored 0.04 and 0.12.
+  As a Choice it came out as command or acknowledge, at ≤ 0.68. Bare one-word
+  redos in a smaller language are the expected weak spot; the failure is
+  `unknown`, so no block.
+- **d1 over-accepts on pairs.** Asked as a yes/no identity question, d1 passed
+  "count the R's in raspberry" (0.68), and d3 put it under 0.3. That is why
+  identity needs both models. On short messages the Choice removed d1's
+  over-acceptance, so d1 is enough there.
 - **d3's fan-out scales poorly in this Ollama build.** 14 questions took 4.6 s
   against 0.3 s for one, so d3 only confirms the screen's survivors.
 - **Fan-out probabilities are not per-pair probabilities.** In d1's fan-out,
@@ -570,6 +627,8 @@ a better verification method. Repeat stochastic cases and score:
 | appended "use Python", same task | classifier can resolve a short redo when eligible; otherwise approximate candidate only in the initial release |
 | changed number, sign, decimal, quoted input, unit, object, or negation | no fuzzy-chain merge; classifier rejects changed-task cases |
 | "thanks", "yes", "elaborate", or "more details" | no redo block merely because those words occurred before |
+| "commit" or "push", once and then again right after; and again later with other work between | adjacent repeat is a retry of the command; the later one is a new command |
+| "elaborate" or "more" after any request | classified `expand`; never joins a chain |
 | another sender/agent, intervening human request, or profile marker | no implicit redo across the boundary |
 | failed/stopped run without a reply; two runs for one message | failure stays visible; one user attempt; no fabricated reply |
 | same live-state question next day | may get an exact block with `recent=false`; changed data alone does not imply error or require an apology |
@@ -600,7 +659,7 @@ millisecond latency before including database reads and classifier time.
    bounded chain builder, and renderer tests. No prompt injection.
 2. Add a System One client for Ollama's `/v1/systemone` and the
    `assistant.repeat_check` slot (loopback only, no fallback). Then add the
-   short-redo Noul with deadline, instrumentation, and `unknown` fallback, and
+   short-message Choice with deadline, instrumentation, and `unknown` fallback, and
    the identity screen-and-confirm, recording probabilities only. Test failure
    paths, an unbound slot, and ambiguous anchors.
 3. Enable recording and inspector feedback. Review false positives, misses,
