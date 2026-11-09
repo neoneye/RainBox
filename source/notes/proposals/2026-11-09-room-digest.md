@@ -68,10 +68,11 @@ order, from the latest context boundary forward, and each row stores its
 message UUIDs, so a number is never the only key.
 
 The digest covers two regions:
-- **The window.** The last 30 messages, already in `conversation_history_xml`
-  verbatim. The digest gives them topic tags only.
-- **The off-screen region.** Everything older, back to the latest context
-  boundary. The digest gives it tags, the timeline, and the fading summary.
+- **The window.** The newest 30 to 39 messages, verbatim in
+  `conversation_history_xml`, starting at a chunk edge (decision 5). The
+  digest gives them topic tags only.
+- **The off-screen region.** Everything older. The digest gives it tags, the
+  timeline, and the fading summary.
 
 ### 2. Topics: a small table per room, assigned by a decision model
 
@@ -171,77 +172,46 @@ included, so the current topic's run is visible. Exchanges with no topic show
 **Bound.** At most 40 lines after collapsing. Beyond that, the oldest lines
 are dropped and the fading summary (decision 5) covers that range.
 
-### 5. The fading summary: chunks of ten, cut where the topic changes
+### 5. The fading summary: fixed chunks, counted from the first message
 
 The operator's design:
 
-- **Level 1** is a summary of about 10 messages. It also reads 2 messages
-  before the chunk and 2 after it.
-- **Level 2** is a summary of about 10 level 1 summaries, again with a margin
-  of 2 messages on each side.
-- **Where a chunk ends**, if the topic changes near the 10-message mark, the
-  chunk is cut there, so a summary covers one stretch of conversation rather
-  than half of two.
+- **Messages are counted from 0**, the room's first message, however many
+  are appended later.
+- **Level 1:** every 10 messages are compacted into one summary: messages
+  0–9, then 10–19, and so on. Each summary also reads the 2 messages before
+  its chunk and the 2 after it.
+- **Level 2:** every 10 level 1 summaries are compacted into one, with the
+  same margin of 2 messages on each side.
 
-**Chunk edges are snapped to topic changes, within bounds.** Level 1 chunks
-are built forward through the off-screen region, measured in messages, but
-they never split a request from its reply. Each chunk:
+**Appending never invalidates a summary.** A chunk's range depends only on
+the message count. A new message can complete the newest chunk, and touches
+nothing older. Once written, a summary is final. It is never recomputed,
+re-cut or merged, whatever is appended after it.
 
-- **targets 10 messages**;
-- **ends at the topic change nearest the target**, within 6 to 14 messages. A
-  topic change is an exchange whose topic (decision 2) differs from the
-  previous exchange's.
-- **ends at the exchange boundary nearest 10 messages** when there is no
-  topic change in that range, for example during one long topic.
+**The chunks:**
 
-Topic changes come from records that already exist. Every exchange was
-assigned a topic at the start of its own turn, and follow-ups inherit theirs.
-So finding a boundary costs no model call. An exchange without a topic
-(`?`, below the band) is not a change, because it gives no evidence either
-way.
+| level | covers | written when | reads |
+|---|---|---|---|
+| 1 | messages 10k to 10k+9 | message 10k+11 exists (its after-margin) | the 10 messages, plus 2 before and 2 after as context |
+| 2 | level 1 chunks 10j to 10j+9, which is messages 100j to 100j+99 | its tenth level 1 summary is written | the 10 summaries, plus 2 raw messages before and 2 after |
+| 3 | 10 level 2 chunks, 1,000 messages | the same rule | only in rooms that large |
 
-**Why the boundaries come from topic records, not from a bisect.** A bisect
-over a range of messages asks whether its two ends are on the same topic,
-then halves the range. The probe measured both parts of that
-(`topic_transitions` in the probe fixture), and both fail:
+**Every message counts:** human messages, replies, and progress messages
+the loop posted during a turn. That makes the count a plain position in the
+room, with no judgement about which messages matter.
 
-- **A topic that comes back fools the bisect.** In a 12-message sequence that
-  went letter counting, units, kanban, then letter counting again, d3 rated
-  messages 1 and 8 the same topic at 0.98. That is true. A bisect reads it as
-  "no change in between" and misses four transitions.
-- **Comparing neighbouring messages fails on follow-ups.** Even with every
-  neighbouring pair in one request, both models read follow-ups as new
-  topics: "again" 0.07 on d3, "use python for counting" 0.18, "thanks" 0.00,
-  "elaborate" 0.41. d1 also split real continuations, such as two kanban
-  messages at 0.03. That puts a cut at nearly every message.
-- **It is slow.** The 18-question request took 10.3 s on d3, and 0.8 s on d1.
+**A chunk ends after the last message it covers, not at an index.** Each
+node stores its first and last message UUIDs. The next chunk starts at the
+message after the previous chunk's last one. A message deleted later
+therefore renumbers nothing already written. Its chunk's summary text is
+withheld at render time through the provenance rule (decision 8), and is
+never rewritten.
 
-The topic Choice does not have these problems. It compares each message with
-the room's topic list rather than with another message, and got 14/14 on both
-models (`topic_assignment`). Follow-ups are handled before it, by the
-short-message classification. Boundaries from those records are free,
-handle any number of transitions, and are not fooled by a topic coming back.
-
-**Level 2 groups about 10 level 1 chunks, cut where the conversation
-turns.**
-- **A level 2 chunk** targets 10 level 1 chunks, within 6 to 14.
-- **It ends after a level 1 chunk that hands no topic on**: one whose
-  `continues_into_next` (below) is empty.
-- **Level 3**, about 10 level 2 chunks, exists only for rooms that large.
-
-**Overlap is in the input, not the output.** Each summary call reads a
-margin: the 2 messages before the chunk and the 2 after it. The margin is
-marked as context and is not summarized. At level 2 the margin is also 2 raw
-messages on each side, as the operator specified, not neighbouring summaries.
-Raw messages show how the conversation actually crossed the edge.
-
-Overlap in what is *shown*, where neighbouring chunks share edge messages,
-would show those messages twice and make counts unreliable. A chunk is
-summarized only once its after-margin exists. That is always true in the
-off-screen region, since the window behind it holds 30 more messages.
-
-With the margin, the summarizer knows whether a topic began before the chunk
-or runs on after it, and records that as structure:
+**Margins are context, not content.** The 2 messages on each side are
+marked as context and are not summarized, so no message is summarized
+twice. With them, the summarizer can tell whether a topic began before the
+chunk or runs on after it. It records that as structure:
 
 ```
 {"summary": "...", "topics": ["letter-count", "assistant-self"],
@@ -249,49 +219,80 @@ or runs on after it, and records that as structure:
  "continues_into_next": []}
 ```
 
-**How the flags are used:**
-- **When rendering,** a chunk joins its newer neighbour when one's
-  `continues_into_next` and the other's `continues_from_previous` share a
-  topic, so a thread across an edge reads as one thread.
-- **At level 2,** an empty `continues_into_next` is where the chunk is cut.
-- **The tag table and timeline** never had the edge problem, since a topic
-  there is a span of exchanges, not a chunk.
+When rendering, two neighbouring chunks that share a topic across their edge
+are shown joined, so a thread crossing an edge reads as one thread. The
+chunk's `topics` come from the exchange topic records (decision 2) where
+they exist. The summarizer writes the summary text and the two flags.
 
-**Rendering, newest first.**
-1. **The window** (last 30 messages) is verbatim in history.
-2. **Level 1:** the newest off-screen level 1 chunks, up to 5, which is about
-   50 messages.
-3. **Level 2:** everything older, at level 2, plus level 3 where it exists.
-4. **Gaps:** where a level 2 chunk is not written yet, its level 1 chunks
-   stand in, oldest dropped first under the budget (decision 7).
+**Why the edges are not moved to topic changes.** Cutting where the topic
+changes would make a chunk's range depend on topic records. Those can
+change later: an operator reassigns an exchange, or a topic is named after
+the turn. A written summary would then cover the wrong range, and would have
+to be invalidated. That is exactly what fixed counting avoids. The margin
+and the flags handle a topic that crosses an edge.
 
-**Each summary is written once and never revised.** Fixed chunks earn
-their place in two ways:
-- **Cost.** About one generative call per 10 messages at level 1, plus one
-  per ~100 at level 2: roughly 0.11 calls per message.
-- **Auditability.** A summary is a record that stands.
+**Why there is no bisect for topic transitions.** It was measured
+(`topic_transitions` in the probe fixture), and it fails in two ways:
+- **A topic that comes back looks like no change.** d3 rated messages 1 and
+  8 of a 12-message sequence as the same topic, at 0.98, with four
+  transitions in between.
+- **Follow-ups read as new topics.** "again", "thanks" and "elaborate" were
+  scored as topic changes.
 
-Prefix reuse across turns is not one of the reasons. The 30-message window
-slides every turn, so that reuse is already lost at the first history
-message that changed. Within a turn the rendered block is constant, and the
-turn's own calls share their prefix.
+Fixed counting needs no transitions at all.
 
-**What the coarser steps cost.** Detail falls off in steps of ten, not
-smoothly at φ:
-- **~30 messages** verbatim in the window;
-- **~50 messages** at level 1 (chunks of 10);
-- **everything older** at level 2 (chunks of ~100).
+**Rendering is aligned to chunk edges.** For n messages before the current
+request:
 
-That is coarser than a Fibonacci gradient, and a deliberate trade. Chunks
-follow the conversation's own topic boundaries, and the summarizer runs
-about a quarter as often. That matters on the M1, where each call is a local
-generative model.
+1. **The verbatim window** starts at the largest multiple of 10 that leaves
+   at least 30 messages after it. It holds 30 to 39 messages, not exactly
+   30. A window cut at exactly 30 would split a chunk: half of it would be
+   verbatim and half not, so it would be shown either twice or not at all.
+2. **Level 2** (and level 3) summaries cover every complete group of 100
+   messages before the window.
+3. **Level 1** summaries cover the rest up to the window: 0 to 9 chunks.
+4. **Gaps.** A level 2 chunk not yet written is shown as its level 1
+   chunks.
 
-**Rooms that predate the digest.** Chunks need topic records, and topic
-records begin when recording begins. Earlier exchanges are not assigned
-topics after the fact: records are written when they happen. So the digest
-covers a room from its first recorded exchange onward. A one-off backfill
-would be a separate decision, not a side effect of this one.
+When the tenth level 1 chunk of a group is written, the group is shown as
+one level 2 summary instead. This follows the operator's rule
+(compact when N accumulate), so the level 1 detail before the window ranges
+from 0 to 90 messages.
+
+**What changes from turn to turn.** The window's first message and the list
+of summaries change only when the count crosses a multiple of 10: about once
+per five turns. In between, a new turn only appends to the end of the
+history.
+
+**Prefix reuse becomes possible.** Today's 30-message window loses reuse
+across turns, because its first message changes every turn. An aligned
+window keeps the history's head byte-identical for about five turns.
+
+The backend reuses those bytes only if nothing per-turn renders before them.
+Today the request renders ahead of `conversation_history_xml` in the context
+message, so the gain needs a layout change that puts the summaries and the
+history ahead of the per-turn sections. That change is a separate,
+measured step (the prefill time on turns 2 to 5 after a chunk edge), not
+something this proposal claims.
+
+**Cost.** One generative call per 10 messages at level 1, plus one per 100
+at level 2: about 0.11 calls per message. A level 1 chunk completes about
+once per five turns, so one call per finished turn keeps pace.
+
+**What the steps cost in detail.** Detail falls off in steps, not smoothly
+at φ:
+- 30 to 39 messages verbatim;
+- 0 to 90 messages at level 1;
+- everything older at level 2.
+
+That is coarser than a Fibonacci gradient, and a deliberate trade for
+summaries that are written once and never invalidated.
+
+**Rooms that predate the digest.** Chunks depend only on the message count,
+not on topic records, so an existing room's history can be chunked by the
+same job, run over a backlog. Chunks older than topic recording have empty
+`topics` lists. Whether to run that backlog is a separate decision: a room
+of 2,000 messages is about 220 generative calls.
 
 **What a summary may say.** At most 300 characters per chunk:
 - which topics came up;
@@ -336,8 +337,8 @@ inherited one.
   </topics>
   <timeline>…collapsed lines…</timeline>
   <earlier>
-    <chunk exchanges="1-16" topics="assistant-self,memory-check">…</chunk>
-    <chunk exchanges="17-24" topics="kanban-status">…</chunk>
+    <chunk level="2" messages="0-99" topics="assistant-self,memory-check">…</chunk>
+    <chunk level="1" messages="100-109" topics="kanban-status">…</chunk>
     …
   </earlier>
 </room_digest>
@@ -353,7 +354,9 @@ inherited one.
 
 **Placement.** The block is constant for the turn. It goes in the dynamic
 tail, right after `repeated_request`, so the turn's calls share their prefix
-through it.
+through it. The `earlier` part changes only at a chunk edge, so the layout
+change in decision 5 may move it ahead of the per-turn sections, next to the
+history it precedes.
 
 **Source priority.** Context only, at the rank of `conversation_history_xml`.
 
@@ -506,6 +509,6 @@ The raw run is `benchmarks/fixtures/decision_probe_runs/2026-11-09-topic-transit
 | topic returning (messages 1 and 8) | 0.10, called different | 0.98, called same, which is what misleads a bisect |
 | request time | 0.8 s | 10.3 s |
 
-So boundaries come from the per-exchange topic records, and neither pair
-comparison nor bisection is used.
+So chunk edges are fixed by the message count, and neither pair comparison
+nor bisection is used.
 

@@ -19,7 +19,7 @@ each one buys and costs, and lists what is still the operator's to decide.
 |---|---|
 | [Noticing a repeated request](2026-11-09-noticing-a-repeated-request.md) | exact repeats, redos and repeated commands, with what each earlier attempt tried; the request profile; reply checklists as diagnostics |
 | [Later verdicts on earlier messages](2026-11-09-later-verdicts-on-earlier-messages.md) | "that was wrong" / "my guess was right" as append-only records, shown on the earlier message |
-| [The room digest](2026-11-09-room-digest.md) | topics, derived status, a compact timeline, and chunk summaries of ~10 messages cut at topic changes |
+| [The room digest](2026-11-09-room-digest.md) | topics, derived status, a compact timeline, and chunk summaries of every 10 messages, counted from message 0, never invalidated |
 | [Decision-model foundation](2026-11-09-decision-model-foundation.md) | one System One client, two slots, verified local execution, one record per call, the probe as regression suite |
 | [Detector labels](2026-11-09-detector-labels.md) | one place and one UI for "that detection was wrong" or "it missed this", which every promotion gate reads |
 | [Post-turn housekeeping](2026-11-09-post-turn-housekeeping.md) | one ordered queue after each turn, never during one, with a heat budget |
@@ -146,9 +146,11 @@ operator's labels, skip the call on those turns.
 
 ### Step 6. Room digest, expensive half: chunk summaries (L)
 
-Level 1 chunks of ~10 messages and level 2 chunks of ~10 level 1 chunks,
-edges snapped to topic changes, reading 2 messages of overlap on each side,
-written once by a local generative model in housekeeping. The housekeeping
+Level 1 summaries of every 10 messages counted from message 0, and level 2
+summaries of every 10 level 1 summaries, each reading 2 messages of overlap
+on each side. Each is written once by a local generative model in
+housekeeping, and appending messages never invalidates one. The history
+window starts at a chunk edge, so it holds 30 to 39 messages. The housekeeping
 heat budget comes before this step. The answer screen (a Noul that rejects a
 summary stating answer content) is added to the probe and measured first.
 
@@ -204,13 +206,17 @@ These cost little, collect data, and change nothing.
    version, where the loop could see that an earlier reply missed the point.
    The current documents follow Astra. Reinstating it is a step-5 change in
    the repeat proposal, after labels exist.
-2. **The digest's gradient.** It uses chunks of ten, cut at topic changes,
-   instead of a smooth Fibonacci fade. It is coarser and about four times
-   cheaper. The operator chose the chunks of ten; this records that the
-   Fibonacci shape was given up for it.
-3. **Backfill for old rooms.** Topics and chunks start when recording
-   starts. Labelling old history would be a one-off decision, against the
-   "records are written when things happen" rule.
+2. **The digest's gradient.** It uses fixed chunks of ten, counted from
+   message 0, instead of a smooth Fibonacci fade. It is coarser and about
+   four times cheaper, and no summary is ever invalidated. The operator
+   chose the chunks of ten; this records that the Fibonacci shape was given
+   up for it.
+3. **Backfill for old rooms.** Topics start when recording starts. Chunks
+   depend only on the message count, so old history can be chunked by the
+   same job (about 0.11 calls per message), with empty topic lists. Running
+   it over old history is a one-off budget decision. Assigning topics to old
+   exchanges would go against the "records are written when things happen"
+   rule.
 4. **Cross-room eligibility.** The proposal excludes bridged rooms and rooms
    with another human member. Should direct rooms with agents only count as
    the operator's own?
@@ -235,8 +241,11 @@ These cost little, collect data, and change nothing.
 - **d3 is more careful, d1 is much faster.** d3 also scales badly with many
   questions in one request: 14 took 4.6 s, and 18 took 10.3 s. Use d1 on the
   request path and d3 after the turn.
-- **Prefix reuse across turns is already lost** to the sliding 30-message
-  window. Stable blocks matter within a turn, and for cost and auditability.
+- **A window aligned to chunk edges makes prefix reuse across turns
+  possible.** Today's 30-message window changes its first message every
+  turn. Aligned, the history only appends for about five turns. The reuse
+  also needs the history ahead of the per-turn sections, which is a layout
+  change to measure, not assume.
 - **One process per role means post-turn jobs can overlap the next turn
   today.** That is the reason for the housekeeping gate.
 - **Record before inject, everywhere.** Every detector ships recording-only,
