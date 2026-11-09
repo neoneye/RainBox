@@ -29,7 +29,7 @@ background runner, and live-updating results grid:
   `benchmarks/vision_runner.py`, `benchmarks/vision_worker.py`,
   `db/benchmark_vision.py`, `webapp/benchmark_vision_views.py`.
 
-Two further benchmarks have no page and no runner.
+Three further benchmarks have no page and no runner.
 
 **`benchmarks/roster_completeness.py`** asks whether an incomplete roster's
 caveat actually stops a model inferring absence — a claim about model
@@ -47,6 +47,31 @@ any database but `rainbox_claude`:
 ```
 DATABASE_URL=postgresql+psycopg://localhost/rainbox_claude \
     python -m benchmarks.roster_paraphrase
+```
+
+**`benchmarks/decision_probe.py`** measures System One decision models
+(Ollama's `/v1/systemone`) on the checks proposed in
+`proposals/2026-11-09-noticing-a-repeated-request.md` and
+`proposals/2026-11-09-later-verdicts-on-earlier-messages.md`:
+- task identity;
+- what a short message does;
+- whether a reply answered its request;
+- later verdicts, hedges and same-answer comparisons.
+
+**Inputs and outputs:**
+- **Cases.** Hand-written, with expected labels and exact question text, in
+  `benchmarks/fixtures/decision_probe_cases.json`.
+- **Run document.** Each run writes the server version, model digests, every
+  raw answer with its timing, and per-check counts: top-answer accuracy,
+  answers inside the bands, wrong answers inside the bands, and abstentions.
+- **Recorded runs.** These live in `benchmarks/fixtures/decision_probe_runs/`.
+
+It touches no database, and refuses `:cloud` models and non-loopback servers.
+`--cold` unloads each model first, so the first call is a cold load:
+
+```
+python -m benchmarks.decision_probe d1:3b d3:4b \
+    --out benchmarks/fixtures/decision_probe_runs/<date>.json
 ```
 
 The basic and edit-document harnesses share the same subprocess-runner shape;

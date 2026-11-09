@@ -265,8 +265,12 @@ Detection runs after the turn, so latency is not on the request path. That is
 why the confirmation slot, with **d3:4b** in the probe, fits here: it scored
 better on all three checks below.
 
-**What the probe showed.** One run each, on hand-written cases. The scripts
-are kept out of the repo.
+**What the probe showed.** One run each, on hand-written cases. The cases
+are the `verdict_choice`, `hedge` and `same_answer` experiments in
+`benchmarks/fixtures/decision_probe_cases.json`. The recorded run, with raw
+answers, digests and timings, is
+`benchmarks/fixtures/decision_probe_runs/2026-11-09.json`. Re-run with
+`python -m benchmarks.decision_probe`.
 
 | check | d1:3b | d3:4b |
 |---|---|---|

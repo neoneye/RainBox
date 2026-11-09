@@ -758,12 +758,30 @@ never rewrite an earlier run.
 
 ## Probe evidence and its limits
 
-The following are **reported exploratory results**, retained from the earlier
-draft. The scripts and raw outputs are not in this repository, so these numbers
-are not independently reproducible here. They were not rerun for this revision.
-The reported environment was Ollama 0.40.15 with `d1:3b` (lfm2, 2.7B, Q8) and
-`d3:4b` (qwen3.5, 4.5B, mxfp8). These aliases and timings describe that probe,
-not required deployment models or latency guarantees.
+The following are **exploratory results**, on hand-written cases. They are
+reproducible from the repository:
+- **Cases.** Expected labels and exact question text are in
+  `benchmarks/fixtures/decision_probe_cases.json` (fixture version 1).
+- **Runner.** `python -m benchmarks.decision_probe d1:3b d3:4b`.
+- **Recorded run.** `benchmarks/fixtures/decision_probe_runs/2026-11-09.json`
+  holds every raw answer, model digests, the server version and timings.
+  That run reproduced every top-answer count below.
+
+The environment was Ollama 0.40.15 with `d1:3b` (lfm2, 2.7B, Q8, digest
+`8c2d9ddae441…`) and `d3:4b` (qwen3.5, 4.5B, mxfp8, digest `510b1771140e…`).
+These aliases and timings describe that probe, not required deployment models
+or latency guarantees. The first call of each model, already resident, took
+2.6 s and 1.8 s; a cold load was not measured (`--cold` measures it).
+
+Counted inside the bands (Noul ≥ 0.8 or ≤ 0.2, Choice top ≥ 0.8):
+
+| experiment | d1:3b accepted (wrong) / total | d3:4b accepted (wrong) / total |
+|---|---|---|
+| identity, individual pairs | 13 (0) / 14 | 14 (1) / 14: the method refinement, rejected at 0.17 |
+| redo as yes/no | 10 (1) / 14: "igen" rejected at 0.04 | 11 (1) / 14: "igen" at 0.12 |
+| five-option Choice | 37 (0) / 51 | 29 (0) / 51 |
+| reply checklist, `answers` | 10 (0) / 12 | 6 (0) / 12 |
+| reply checklist, `correct` | 5 (1) / 5: the wrong count accepted | 2 (1) / 5 |
 
 ### Request resolution
 

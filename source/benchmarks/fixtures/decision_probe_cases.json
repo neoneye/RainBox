@@ -1,0 +1,196 @@
+{
+  "version": 1,
+  "about": "Hand-written synthetic cases for System One decision models, measured by benchmarks/decision_probe.py. Used by notes/proposals/2026-11-09-noticing-a-repeated-request.md and 2026-11-09-later-verdicts-on-earlier-messages.md. Every message is invented.",
+  "bands": {"yes": 0.8, "no": 0.2, "choice_accept": 0.8},
+  "experiments": [
+    {
+      "id": "identity_pair",
+      "kind": "noul",
+      "question": "Does the current message ask for the same task, with the same inputs, as the earlier message? A different object, number, unit, direction or constraint makes it a different task. A different wording, language or requested method does not.",
+      "state_keys": ["earlier_message", "current_message"],
+      "cases": [
+        {"id": "strawberry_use_python", "state": {"earlier_message": "count the number of R's in Strawberry", "current_message": "count the number of R's in Strawberry.. use python for counting"}, "expected": true},
+        {"id": "strawberry_rephrased", "state": {"earlier_message": "count the R's in Strawberry", "current_message": "how many r are in strawberry?"}, "expected": true},
+        {"id": "strawberry_danish", "state": {"earlier_message": "count the R's in Strawberry", "current_message": "hvor mange r er der i strawberry"}, "expected": true},
+        {"id": "weather_rephrased", "state": {"earlier_message": "what's the weather in Paris tomorrow", "current_message": "weather forecast for paris tomorrow?"}, "expected": true},
+        {"id": "translate_rephrased", "state": {"earlier_message": "translate 'good morning' into German", "current_message": "how do you say good morning in german"}, "expected": true},
+        {"id": "kanban_tasks_rephrased", "state": {"earlier_message": "list the tasks on the kanban board", "current_message": "show me what's on the kanban board"}, "expected": true},
+        {"id": "strawberry_vs_raspberry", "state": {"earlier_message": "count the R's in strawberry", "current_message": "count the R's in raspberry"}, "expected": false},
+        {"id": "uppercase_only", "state": {"earlier_message": "count the R's in Strawberry", "current_message": "count only the uppercase R's in Strawberry"}, "expected": false},
+        {"id": "sqrt_changed_number", "state": {"earlier_message": "compute sqrt of 1764", "current_message": "compute sqrt of 1746"}, "expected": false},
+        {"id": "conversion_direction", "state": {"earlier_message": "convert 100 feet to meters", "current_message": "convert 100 meters to feet"}, "expected": false},
+        {"id": "boards_vs_tasks", "state": {"earlier_message": "list my kanban boards", "current_message": "list the tasks on the kanban board"}, "expected": false},
+        {"id": "summarize_vs_translate", "state": {"earlier_message": "summarize this article", "current_message": "translate this article"}, "expected": false},
+        {"id": "tokyo_vs_toronto", "state": {"earlier_message": "what time is it in Tokyo", "current_message": "what time is it in Toronto"}, "expected": false},
+        {"id": "prime_changed_number", "state": {"earlier_message": "is 97 a prime number", "current_message": "is 91 a prime number"}, "expected": false}
+      ]
+    },
+    {
+      "id": "identity_fanout",
+      "kind": "noul_fanout",
+      "note": "One request, one Noul per candidate. The earlier message sits inside each question's structured instructions, the shape that was measured; the proposal's production shape keeps it in a data field instead.",
+      "question": "Does the current message ask for the same task, with the same inputs, as the earlier message? A different object, number, unit, direction or constraint makes it a different task. A different wording, language or requested method does not.",
+      "current_message": "how many r are in strawberry?",
+      "candidates": [
+        {"id": "c0", "earlier_message": "count the number of R's in Strawberry", "expected": true},
+        {"id": "c1", "earlier_message": "count the R's in Strawberry", "expected": true},
+        {"id": "c2", "earlier_message": "count the R's in Strawberry", "expected": true},
+        {"id": "c3", "earlier_message": "what's the weather in Paris tomorrow", "expected": false},
+        {"id": "c4", "earlier_message": "translate 'good morning' into German", "expected": false},
+        {"id": "c5", "earlier_message": "list the tasks on the kanban board", "expected": false},
+        {"id": "c6", "earlier_message": "count the R's in strawberry", "expected": true},
+        {"id": "c7", "earlier_message": "count the R's in Strawberry", "expected": true},
+        {"id": "c8", "earlier_message": "compute sqrt of 1764", "expected": false},
+        {"id": "c9", "earlier_message": "convert 100 feet to meters", "expected": false},
+        {"id": "c10", "earlier_message": "list my kanban boards", "expected": false},
+        {"id": "c11", "earlier_message": "summarize this article", "expected": false},
+        {"id": "c12", "earlier_message": "what time is it in Tokyo", "expected": false},
+        {"id": "c13", "earlier_message": "is 97 a prime number", "expected": false}
+      ]
+    },
+    {
+      "id": "redo_noul",
+      "kind": "noul",
+      "note": "The yes/no framing the five-option Choice replaced; kept to show why.",
+      "question": "Does the current message ask for another attempt at the previous request, with the same inputs? Asking for more detail, a new input, or saying thanks is not another attempt. Asking to check it with a different method is.",
+      "state_keys": ["previous_request", "current_message"],
+      "cases": [
+        {"id": "again", "state": {"previous_request": "count the number of R's in Strawberry", "current_message": "again"}, "expected": true},
+        {"id": "try_again", "state": {"previous_request": "count the number of R's in Strawberry", "current_message": "try again"}, "expected": true},
+        {"id": "one_more_time", "state": {"previous_request": "count the number of R's in Strawberry", "current_message": "one more time please"}, "expected": true},
+        {"id": "igen", "state": {"previous_request": "count the number of R's in Strawberry", "current_message": "igen"}, "expected": true},
+        {"id": "noch_einmal", "state": {"previous_request": "count the number of R's in Strawberry", "current_message": "noch einmal"}, "expected": true},
+        {"id": "check_with_python", "state": {"previous_request": "count the number of R's in Strawberry", "current_message": "check it with python"}, "expected": true},
+        {"id": "are_you_sure_recount", "state": {"previous_request": "count the number of R's in Strawberry", "current_message": "are you sure? recount"}, "expected": true},
+        {"id": "elaborate", "state": {"previous_request": "count the number of R's in Strawberry", "current_message": "elaborate"}, "expected": false},
+        {"id": "more_details", "state": {"previous_request": "count the number of R's in Strawberry", "current_message": "more details"}, "expected": false},
+        {"id": "thanks", "state": {"previous_request": "count the number of R's in Strawberry", "current_message": "thanks"}, "expected": false},
+        {"id": "why", "state": {"previous_request": "count the number of R's in Strawberry", "current_message": "why?"}, "expected": false},
+        {"id": "raspberry", "state": {"previous_request": "count the number of R's in Strawberry", "current_message": "and for raspberry?"}, "expected": false},
+        {"id": "ok", "state": {"previous_request": "count the number of R's in Strawberry", "current_message": "ok"}, "expected": false},
+        {"id": "blueberry", "state": {"previous_request": "count the number of R's in Strawberry", "current_message": "now do blueberry"}, "expected": false}
+      ]
+    },
+    {
+      "id": "short_message_choice",
+      "kind": "choice",
+      "question": "What does the short message do, in relation to the previous exchange?",
+      "options": {
+        "redo": "Asks for another attempt at the previous request, the same task again.",
+        "expand": "Asks for more of, or more detail on, the previous reply.",
+        "command": "A standalone command with its own action, not another attempt at the previous request.",
+        "acknowledge": "Thanks, agreement or acknowledgement; asks for nothing.",
+        "new_request": "Asks something new, or the previous task on a different input."
+      },
+      "contexts": [
+        {"id": "alone", "previous_request": null},
+        {"id": "after_strawberry", "previous_request": "count the number of R's in Strawberry"},
+        {"id": "after_readme", "previous_request": "fix the typo in the README"}
+      ],
+      "cases": [
+        {"id": "elaborate", "short_message": "elaborate", "expected": "expand"},
+        {"id": "more", "short_message": "more", "expected": "expand"},
+        {"id": "more_details", "short_message": "more details", "expected": "expand"},
+        {"id": "retry", "short_message": "retry", "expected": "redo"},
+        {"id": "try_again", "short_message": "try again", "expected": "redo"},
+        {"id": "again", "short_message": "again", "expected": "redo"},
+        {"id": "igen", "short_message": "igen", "expected": "redo"},
+        {"id": "noch_einmal", "short_message": "noch einmal", "expected": "redo"},
+        {"id": "recount", "short_message": "recount", "expected": "redo"},
+        {"id": "commit", "short_message": "commit", "expected": "command"},
+        {"id": "push", "short_message": "push", "expected": "command"},
+        {"id": "deploy", "short_message": "deploy", "expected": "command"},
+        {"id": "run_the_tests", "short_message": "run the tests", "expected": "command"},
+        {"id": "thanks", "short_message": "thanks", "expected": "acknowledge"},
+        {"id": "ok", "short_message": "ok", "expected": "acknowledge"},
+        {"id": "raspberry", "short_message": "and for raspberry?", "expected": "new_request"},
+        {"id": "why", "short_message": "why?", "expected": "expand"}
+      ]
+    },
+    {
+      "id": "reply_checklist",
+      "kind": "noul_checklist",
+      "questions": {
+        "answers": "Does the reply answer what the request asks, about the subject the request names?",
+        "constraints": "Does the reply follow every constraint the request states about format, length, method or scope? A request that states no constraint passes.",
+        "correct": "Is the reply's answer factually correct?",
+        "acknowledges": "Does the reply say that this request was asked before?",
+        "unexplained_change": "Does the reply give a different answer from an earlier reply without saying that the earlier answer was wrong?"
+      },
+      "with_earlier_only": ["acknowledges", "unexplained_change"],
+      "cases": [
+        {"id": "strawberry_wrong", "state": {"request": "count the number of R's in Strawberry", "reply": "There are 2 R's in \"Strawberry\"."}, "expected": {"answers": true, "constraints": true, "correct": false}},
+        {"id": "strawberry_right", "state": {"request": "count the number of R's in Strawberry", "reply": "There are 3 R's in \"Strawberry\": one after the t, and two in \"berry\"."}, "expected": {"answers": true, "constraints": true, "correct": true}},
+        {"id": "python_ignored", "state": {"request": "count the number of R's in Strawberry, use python for counting", "reply": "There are 3 R's in Strawberry."}, "expected": {"answers": true, "constraints": false}},
+        {"id": "python_used", "state": {"request": "count the number of R's in Strawberry, use python for counting", "reply": "I ran `'Strawberry'.lower().count('r')`, which returned 3."}, "expected": {"answers": true, "constraints": true, "correct": true}},
+        {"id": "wrong_subject", "state": {"request": "what's the weather in Paris tomorrow", "reply": "Paris is the capital of France, known for the Eiffel Tower."}, "expected": {"answers": false}},
+        {"id": "wrong_direction", "state": {"request": "convert 100 feet to meters", "reply": "100 meters is about 328 feet."}, "expected": {"answers": false}},
+        {"id": "boards_not_tasks", "state": {"request": "list the tasks on the kanban board", "reply": "You have 3 boards: Home, Work and Ideas."}, "expected": {"answers": false}},
+        {"id": "bullets_ignored", "state": {"request": "summarize the plan in 3 bullet points", "reply": "The plan starts with a survey of the current system, then moves to a prototype, which is reviewed before a staged rollout that ends with a retrospective and a decision about the next quarter."}, "expected": {"answers": true, "constraints": false}},
+        {"id": "translate_right", "state": {"request": "translate 'good morning' into German", "reply": "Guten Morgen."}, "expected": {"answers": true, "constraints": true, "correct": true}},
+        {"id": "repeat_unacknowledged", "state": {"request": "count the number of R's in Strawberry", "reply": "There are 3 R's in \"Strawberry\".", "earlier_replies": ["There are 2 R's in \"Strawberry\".", "There are 3 R's in \"Strawberry\".", "There are 2 R's in \"Strawberry\"."]}, "expected": {"answers": true, "acknowledges": false, "unexplained_change": true}},
+        {"id": "repeat_acknowledged", "state": {"request": "count the number of R's in Strawberry", "reply": "You have asked this before, and my earlier answers disagreed: 2 was wrong. Counting each letter of S-t-r-a-w-b-e-r-r-y gives 3 R's.", "earlier_replies": ["There are 2 R's in \"Strawberry\".", "There are 3 R's in \"Strawberry\".", "There are 2 R's in \"Strawberry\"."]}, "expected": {"answers": true, "acknowledges": true, "unexplained_change": false, "correct": true}},
+        {"id": "repeat_as_before", "state": {"request": "count the number of R's in Strawberry", "reply": "As before: 3 R's in \"Strawberry\".", "earlier_replies": ["There are 3 R's in \"Strawberry\".", "There are 3 R's in \"Strawberry\"."]}, "expected": {"answers": true, "acknowledges": true, "unexplained_change": false}}
+      ]
+    },
+    {
+      "id": "verdict_choice",
+      "kind": "choice",
+      "question": "What does the current message say about the earlier message?",
+      "options": {
+        "says_wrong": "Says the earlier message was wrong, or corrects it.",
+        "says_right": "Says the earlier message was right, or confirms it.",
+        "doubts": "Questions or doubts the earlier message without saying it was wrong.",
+        "none": "Says nothing about whether the earlier message was right or wrong."
+      },
+      "cases": [
+        {"id": "assistant_corrected", "state": {"earlier_message": {"author": "assistant", "text": "There are 2 R's in \"Strawberry\"."}, "current_message": "no, that's wrong, there are 3"}, "expected": "says_wrong"},
+        {"id": "assistant_vague_objection", "state": {"earlier_message": {"author": "assistant", "text": "There are 2 R's in \"Strawberry\"."}, "current_message": "hmm, that doesn't look right"}, "expected": "says_wrong"},
+        {"id": "assistant_corrected_danish", "state": {"earlier_message": {"author": "assistant", "text": "There are 2 R's in \"Strawberry\"."}, "current_message": "nej, det er forkert"}, "expected": "says_wrong"},
+        {"id": "assistant_confirmed", "state": {"earlier_message": {"author": "assistant", "text": "There are 2 R's in \"Strawberry\"."}, "current_message": "you were right"}, "expected": "says_right"},
+        {"id": "assistant_correct_exclaim", "state": {"earlier_message": {"author": "assistant", "text": "There are 2 R's in \"Strawberry\"."}, "current_message": "correct!"}, "expected": "says_right"},
+        {"id": "assistant_doubted", "state": {"earlier_message": {"author": "assistant", "text": "There are 2 R's in \"Strawberry\"."}, "current_message": "are you sure?"}, "expected": "doubts"},
+        {"id": "assistant_thanks", "state": {"earlier_message": {"author": "assistant", "text": "There are 2 R's in \"Strawberry\"."}, "current_message": "thanks"}, "expected": "none"},
+        {"id": "assistant_elaborate", "state": {"earlier_message": {"author": "assistant", "text": "There are 2 R's in \"Strawberry\"."}, "current_message": "elaborate"}, "expected": "none"},
+        {"id": "assistant_new_input", "state": {"earlier_message": {"author": "assistant", "text": "There are 2 R's in \"Strawberry\"."}, "current_message": "what about raspberry?"}, "expected": "none"},
+        {"id": "own_statement_corrected", "state": {"earlier_message": {"author": "user", "text": "I released the first version in 1998."}, "current_message": "actually I was wrong earlier, it was 1999, not 1998"}, "expected": "says_wrong"},
+        {"id": "own_statement_off_by_one", "state": {"earlier_message": {"author": "user", "text": "I released the first version in 1998."}, "current_message": "the release year I gave you is off by one"}, "expected": "says_wrong"},
+        {"id": "own_guess_confirmed", "state": {"earlier_message": {"author": "user", "text": "I think the meeting was in June, but I'm not sure."}, "current_message": "I checked my calendar, my guess was right, it was June"}, "expected": "says_right"},
+        {"id": "own_guess_corrected", "state": {"earlier_message": {"author": "user", "text": "I think the meeting was in June, but I'm not sure."}, "current_message": "it was July, not June"}, "expected": "says_wrong"},
+        {"id": "own_guess_unrelated", "state": {"earlier_message": {"author": "user", "text": "I think the meeting was in June, but I'm not sure."}, "current_message": "what's the weather tomorrow?"}, "expected": "none"}
+      ]
+    },
+    {
+      "id": "hedge",
+      "kind": "noul",
+      "question": "Does the writer say they are unsure about something they state?",
+      "state_keys": ["message"],
+      "cases": [
+        {"id": "think_not_sure", "state": {"message": "I think the meeting was in June, but I'm not sure."}, "expected": true},
+        {"id": "maybe", "state": {"message": "maybe it was 1998?"}, "expected": true},
+        {"id": "if_i_remember", "state": {"message": "if I remember correctly, she moved in 1998"}, "expected": true},
+        {"id": "danish_jeg_tror", "state": {"message": "jeg tror det var i juni"}, "expected": true},
+        {"id": "plain_statement", "state": {"message": "The meeting was in June."}, "expected": false},
+        {"id": "request", "state": {"message": "count the R's in Strawberry"}, "expected": false},
+        {"id": "plain_release", "state": {"message": "I released the first version in 1998."}, "expected": false},
+        {"id": "bare_question", "state": {"message": "are you sure?"}, "expected": false}
+      ]
+    },
+    {
+      "id": "same_answer",
+      "kind": "noul",
+      "question": "Do the two replies give the same answer to the request?",
+      "state_keys": ["request", "reply_1", "reply_2"],
+      "cases": [
+        {"id": "two_vs_three", "state": {"request": "count the R's in Strawberry", "reply_1": "There are 2 R's.", "reply_2": "There are 3 R's in Strawberry."}, "expected": false},
+        {"id": "three_reworded", "state": {"request": "count the R's in Strawberry", "reply_1": "There are 3 R's.", "reply_2": "Counting the letters gives three R's."}, "expected": true},
+        {"id": "rounded", "state": {"request": "convert 100 feet to meters", "reply_1": "100 feet is 30.48 meters.", "reply_2": "About 30.5 m."}, "expected": true},
+        {"id": "wrong_conversion", "state": {"request": "convert 100 feet to meters", "reply_1": "100 feet is 30.48 meters.", "reply_2": "100 feet is 328 meters."}, "expected": false},
+        {"id": "paris_reworded", "state": {"request": "what is the capital of France", "reply_1": "Paris.", "reply_2": "The capital of France is Paris."}, "expected": true},
+        {"id": "paris_vs_lyon", "state": {"request": "what is the capital of France", "reply_1": "Paris.", "reply_2": "Lyon is the capital."}, "expected": false},
+        {"id": "prime_disagree", "state": {"request": "is 91 a prime number", "reply_1": "Yes, 91 is prime.", "reply_2": "No: 91 = 7 × 13."}, "expected": false},
+        {"id": "prime_agree", "state": {"request": "is 91 a prime number", "reply_1": "No, it is 7 × 13.", "reply_2": "91 is not prime."}, "expected": true}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,7224 @@
+{
+ "fixture_version": 1,
+ "bands": {
+  "yes": 0.8,
+  "no": 0.2,
+  "choice_accept": 0.8
+ },
+ "started_at": "2026-11-09T00:46:53+00:00",
+ "environment": {
+  "server_version": "0.40.15",
+  "models": {
+   "d1:3b": {
+    "digest": "8c2d9ddae4413c38b183644320b6f4bca4c5f629ae9e5104c3b13a150ed85e7e",
+    "size": 3730544597
+   },
+   "d3:4b": {
+    "digest": "510b1771140e588b3516b17984b67bdf2c6c7cfc3b62b6e6e54e37619b675d00",
+    "size": 5647082587
+   }
+  }
+ },
+ "runs": [
+  {
+   "model": "d1:3b",
+   "first_call": {
+    "cold_requested": false,
+    "first_call_ms": 2648
+   },
+   "experiments": {
+    "identity_pair": {
+     "results": [
+      {
+       "case": "strawberry_use_python",
+       "context": null,
+       "ms": 113,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.9660067140490585
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.9660067140490585,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "strawberry_rephrased",
+       "context": null,
+       "ms": 108,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.9731754679351923
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.9731754679351923,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "strawberry_danish",
+       "context": null,
+       "ms": 99,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.9587202569254096
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.9587202569254096,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "weather_rephrased",
+       "context": null,
+       "ms": 80,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.9687495216926184
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.9687495216926184,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "translate_rephrased",
+       "context": null,
+       "ms": 96,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.9533219150546309
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.9533219150546309,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "kanban_tasks_rephrased",
+       "context": null,
+       "ms": 95,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.9569085719473961
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.9569085719473961,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "strawberry_vs_raspberry",
+       "context": null,
+       "ms": 96,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.677431922600506
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.677431922600506,
+         "top_ok": false,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "uppercase_only",
+       "context": null,
+       "ms": 93,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.14350764758778686
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.14350764758778686,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "sqrt_changed_number",
+       "context": null,
+       "ms": 76,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.0535708645076321
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.0535708645076321,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "conversion_direction",
+       "context": null,
+       "ms": 75,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.1347098727836504
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.1347098727836504,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "boards_vs_tasks",
+       "context": null,
+       "ms": 76,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.1531628449477101
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.1531628449477101,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "summarize_vs_translate",
+       "context": null,
+       "ms": 79,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.03863826994882868
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.03863826994882868,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "tokyo_vs_toronto",
+       "context": null,
+       "ms": 77,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.1325849521622019
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.1325849521622019,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "prime_changed_number",
+       "context": null,
+       "ms": 78,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.10050538302599958
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.10050538302599958,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      }
+     ],
+     "summary": {
+      "by_question": {
+       "q": {
+        "scored": 14,
+        "top_ok": 13,
+        "accepted": 13,
+        "accepted_wrong": 0,
+        "abstained": 1
+       }
+      },
+      "requests": 14,
+      "errors": 0,
+      "median_ms": 86
+     }
+    },
+    "identity_fanout": {
+     "results": [
+      {
+       "case": "fanout",
+       "context": null,
+       "ms": 379,
+       "answers": {
+        "c0": {
+         "type": "noul",
+         "noul": 0.9062593083104605
+        },
+        "c1": {
+         "type": "noul",
+         "noul": 0.912950175213021
+        },
+        "c2": {
+         "type": "noul",
+         "noul": 0.912950175213021
+        },
+        "c3": {
+         "type": "noul",
+         "noul": 0.11651207374243455
+        },
+        "c4": {
+         "type": "noul",
+         "noul": 0.11745048862379398
+        },
+        "c5": {
+         "type": "noul",
+         "noul": 0.059078746880029114
+        },
+        "c6": {
+         "type": "noul",
+         "noul": 0.9241371399182677
+        },
+        "c7": {
+         "type": "noul",
+         "noul": 0.912950175213021
+        },
+        "c8": {
+         "type": "noul",
+         "noul": 0.20448986159309818
+        },
+        "c9": {
+         "type": "noul",
+         "noul": 0.16156838419420577
+        },
+        "c10": {
+         "type": "noul",
+         "noul": 0.10500511741840211
+        },
+        "c11": {
+         "type": "noul",
+         "noul": 0.0689607373870387
+        },
+        "c12": {
+         "type": "noul",
+         "noul": 0.11286108339575032
+        },
+        "c13": {
+         "type": "noul",
+         "noul": 0.2169759838242172
+        }
+       },
+       "scored": {
+        "c0": {
+         "p": 0.9062593083104605,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "c1": {
+         "p": 0.912950175213021,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "c2": {
+         "p": 0.912950175213021,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "c3": {
+         "p": 0.11651207374243455,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "c4": {
+         "p": 0.11745048862379398,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "c5": {
+         "p": 0.059078746880029114,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "c6": {
+         "p": 0.9241371399182677,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "c7": {
+         "p": 0.912950175213021,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "c8": {
+         "p": 0.20448986159309818,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        },
+        "c9": {
+         "p": 0.16156838419420577,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "c10": {
+         "p": 0.10500511741840211,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "c11": {
+         "p": 0.0689607373870387,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "c12": {
+         "p": 0.11286108339575032,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "c13": {
+         "p": 0.2169759838242172,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      }
+     ],
+     "summary": {
+      "by_question": {
+       "c0": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "c1": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "c2": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "c3": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "c4": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "c5": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "c6": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "c7": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "c8": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 0,
+        "accepted_wrong": 0,
+        "abstained": 1
+       },
+       "c9": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "c10": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "c11": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "c12": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "c13": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 0,
+        "accepted_wrong": 0,
+        "abstained": 1
+       }
+      },
+      "requests": 1,
+      "errors": 0,
+      "median_ms": 379
+     }
+    },
+    "redo_noul": {
+     "results": [
+      {
+       "case": "again",
+       "context": null,
+       "ms": 78,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.9695831702841048
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.9695831702841048,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "try_again",
+       "context": null,
+       "ms": 80,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.9795464787402458
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.9795464787402458,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "one_more_time",
+       "context": null,
+       "ms": 78,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.9859348653984695
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.9859348653984695,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "igen",
+       "context": null,
+       "ms": 79,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.036851157819504425
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.036851157819504425,
+         "top_ok": false,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": true
+        }
+       }
+      },
+      {
+       "case": "noch_einmal",
+       "context": null,
+       "ms": 76,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.9824412552569293
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.9824412552569293,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "check_with_python",
+       "context": null,
+       "ms": 75,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.9628721147132178
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.9628721147132178,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "are_you_sure_recount",
+       "context": null,
+       "ms": 76,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.9783728050307351
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.9783728050307351,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "elaborate",
+       "context": null,
+       "ms": 75,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.715499712482611
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.715499712482611,
+         "top_ok": false,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "more_details",
+       "context": null,
+       "ms": 76,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.32277650757379156
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.32277650757379156,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "thanks",
+       "context": null,
+       "ms": 75,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.03291033072695371
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.03291033072695371,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "why",
+       "context": null,
+       "ms": 81,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.06853055273333616
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.06853055273333616,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "raspberry",
+       "context": null,
+       "ms": 75,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.6522807846160302
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.6522807846160302,
+         "top_ok": false,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "ok",
+       "context": null,
+       "ms": 76,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.12457386616265557
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.12457386616265557,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "blueberry",
+       "context": null,
+       "ms": 76,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.34141093212772183
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.34141093212772183,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      }
+     ],
+     "summary": {
+      "by_question": {
+       "q": {
+        "scored": 14,
+        "top_ok": 11,
+        "accepted": 10,
+        "accepted_wrong": 1,
+        "abstained": 4
+       }
+      },
+      "requests": 14,
+      "errors": 0,
+      "median_ms": 76
+     }
+    },
+    "short_message_choice": {
+     "results": [
+      {
+       "case": "elaborate",
+       "context": "alone",
+       "ms": 97,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "expand",
+         "probabilities": {
+          "redo": 0.021413413375512357,
+          "expand": 0.9208960558626184,
+          "command": 0.041695080257047205,
+          "acknowledge": 0.0064322140570869605,
+          "new_request": 0.009563236447735126
+         },
+         "confidence": 0.9011200698282729
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "expand",
+         "p": 0.9208960558626184,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "more",
+       "context": "alone",
+       "ms": 94,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "expand",
+         "probabilities": {
+          "redo": 0.03196945304441859,
+          "expand": 0.9013323547946596,
+          "command": 0.04754217136373841,
+          "acknowledge": 0.006681736239741753,
+          "new_request": 0.012474284557441649
+         },
+         "confidence": 0.8766654434933243
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "expand",
+         "p": 0.9013323547946596,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "more_details",
+       "context": "alone",
+       "ms": 97,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "expand",
+         "probabilities": {
+          "redo": 0.007627188743518255,
+          "expand": 0.9587901539613255,
+          "command": 0.020492319772383277,
+          "acknowledge": 0.006482148766451392,
+          "new_request": 0.00660818875632152
+         },
+         "confidence": 0.9484876924516569
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "expand",
+         "p": 0.9587901539613255,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "retry",
+       "context": "alone",
+       "ms": 95,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "redo",
+         "probabilities": {
+          "redo": 0.9315605080219939,
+          "expand": 0.005752800213753054,
+          "command": 0.049011737732454694,
+          "acknowledge": 0.003870923951210668,
+          "new_request": 0.009804030080587514
+         },
+         "confidence": 0.9144506350274922
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "redo",
+         "p": 0.9315605080219939,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "try_again",
+       "context": "alone",
+       "ms": 96,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "redo",
+         "probabilities": {
+          "redo": 0.9338247394611603,
+          "expand": 0.0069371408779657605,
+          "command": 0.036747098983454914,
+          "acknowledge": 0.004727706295584698,
+          "new_request": 0.017763314381834334
+         },
+         "confidence": 0.9172809243264504
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "redo",
+         "p": 0.9338247394611603,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "again",
+       "context": "alone",
+       "ms": 94,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "redo",
+         "probabilities": {
+          "redo": 0.8427129537712795,
+          "expand": 0.01465420665759685,
+          "command": 0.11190925613694067,
+          "acknowledge": 0.01544139257409694,
+          "new_request": 0.015282190860085925
+         },
+         "confidence": 0.8033911922140993
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "redo",
+         "p": 0.8427129537712795,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "igen",
+       "context": "alone",
+       "ms": 96,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "command",
+         "probabilities": {
+          "redo": 0.04939151812926157,
+          "expand": 0.03254238316790743,
+          "command": 0.6763641454987831,
+          "acknowledge": 0.12046730241012543,
+          "new_request": 0.12123465079392255
+         },
+         "confidence": 0.5954551818734788
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "command",
+         "p": 0.6763641454987831,
+         "top_ok": false,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "noch_einmal",
+       "context": "alone",
+       "ms": 94,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "redo",
+         "probabilities": {
+          "redo": 0.921350355902202,
+          "expand": 0.013455661439809087,
+          "command": 0.047248435140032435,
+          "acknowledge": 0.006501869570088804,
+          "new_request": 0.011443677947867544
+         },
+         "confidence": 0.9016879448777526
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "redo",
+         "p": 0.921350355902202,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "recount",
+       "context": "alone",
+       "ms": 95,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "redo",
+         "probabilities": {
+          "redo": 0.39942458366055505,
+          "expand": 0.34482040079793536,
+          "command": 0.19985166190087894,
+          "acknowledge": 0.004892923313253863,
+          "new_request": 0.05101043032737683
+         },
+         "confidence": 0.2492807295756938
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "redo",
+         "p": 0.39942458366055505,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "commit",
+       "context": "alone",
+       "ms": 96,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "command",
+         "probabilities": {
+          "redo": 0.03402822878268427,
+          "expand": 0.010473852900624735,
+          "command": 0.904296047385961,
+          "acknowledge": 0.021644061108651767,
+          "new_request": 0.029557809822078243
+         },
+         "confidence": 0.8803700592324512
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "command",
+         "p": 0.904296047385961,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "push",
+       "context": "alone",
+       "ms": 100,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "command",
+         "probabilities": {
+          "redo": 0.03989747035486186,
+          "expand": 0.014832355383574785,
+          "command": 0.8953466306780331,
+          "acknowledge": 0.011646146758474434,
+          "new_request": 0.038277396825055904
+         },
+         "confidence": 0.8691832883475414
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "command",
+         "p": 0.8953466306780331,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "deploy",
+       "context": "alone",
+       "ms": 99,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "command",
+         "probabilities": {
+          "redo": 0.01785239537951929,
+          "expand": 0.008046367380345794,
+          "command": 0.9261727803717441,
+          "acknowledge": 0.010518488842516223,
+          "new_request": 0.03740996802587486
+         },
+         "confidence": 0.9077159754646802
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "command",
+         "p": 0.9261727803717441,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "run_the_tests",
+       "context": "alone",
+       "ms": 100,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "command",
+         "probabilities": {
+          "redo": 0.03163125113694599,
+          "expand": 0.006827097033821115,
+          "command": 0.8965145534599924,
+          "acknowledge": 0.00693924568212947,
+          "new_request": 0.05808785268711097
+         },
+         "confidence": 0.8706431918249904
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "command",
+         "p": 0.8965145534599924,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "thanks",
+       "context": "alone",
+       "ms": 99,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "acknowledge",
+         "probabilities": {
+          "redo": 0.005751680177034122,
+          "expand": 0.00548319597481166,
+          "command": 0.04505575640424136,
+          "acknowledge": 0.9365558785562358,
+          "new_request": 0.007153488887677129
+         },
+         "confidence": 0.9206948481952948
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "acknowledge",
+         "p": 0.9365558785562358,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "ok",
+       "context": "alone",
+       "ms": 97,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "acknowledge",
+         "probabilities": {
+          "redo": 0.008938425185171217,
+          "expand": 0.0054369153009050835,
+          "command": 0.06602089444585864,
+          "acknowledge": 0.9121111616730974,
+          "new_request": 0.007492603394967722
+         },
+         "confidence": 0.8901389520913716
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "acknowledge",
+         "p": 0.9121111616730974,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "raspberry",
+       "context": "alone",
+       "ms": 96,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "new_request",
+         "probabilities": {
+          "redo": 0.02509207669342092,
+          "expand": 0.09734674765316492,
+          "command": 0.11539416451670062,
+          "acknowledge": 0.00894867305557706,
+          "new_request": 0.7532183380811365
+         },
+         "confidence": 0.6915229226014205
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "new_request",
+         "p": 0.7532183380811365,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "why",
+       "context": "alone",
+       "ms": 95,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "expand",
+         "probabilities": {
+          "redo": 0.01618735047244183,
+          "expand": 0.5615071177086468,
+          "command": 0.3176769022052172,
+          "acknowledge": 0.007954008212374965,
+          "new_request": 0.09667462140131924
+         },
+         "confidence": 0.45188389713580845
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "expand",
+         "p": 0.5615071177086468,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "elaborate",
+       "context": "after_strawberry",
+       "ms": 116,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "expand",
+         "probabilities": {
+          "redo": 0.010958531159439584,
+          "expand": 0.9545202525695993,
+          "command": 0.020895633967071413,
+          "acknowledge": 0.007085325948584177,
+          "new_request": 0.006540256355305409
+         },
+         "confidence": 0.9431503157119991
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "expand",
+         "p": 0.9545202525695993,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "more",
+       "context": "after_strawberry",
+       "ms": 116,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "expand",
+         "probabilities": {
+          "redo": 0.25925624957225496,
+          "expand": 0.6688165613625523,
+          "command": 0.03330254438175214,
+          "acknowledge": 0.003958304746467271,
+          "new_request": 0.034666339936973316
+         },
+         "confidence": 0.5860207017031903
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "expand",
+         "p": 0.6688165613625523,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "more_details",
+       "context": "after_strawberry",
+       "ms": 112,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "expand",
+         "probabilities": {
+          "redo": 0.012941161508990004,
+          "expand": 0.9483599329962414,
+          "command": 0.02170844280383627,
+          "acknowledge": 0.00648898048984793,
+          "new_request": 0.010501482201084293
+         },
+         "confidence": 0.9354499162453017
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "expand",
+         "p": 0.9483599329962414,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "retry",
+       "context": "after_strawberry",
+       "ms": 112,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "redo",
+         "probabilities": {
+          "redo": 0.9692002602256192,
+          "expand": 0.00533765440063283,
+          "command": 0.012368591287773232,
+          "acknowledge": 0.00448365867574371,
+          "new_request": 0.008609835410231189
+         },
+         "confidence": 0.9615003252820239
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "redo",
+         "p": 0.9692002602256192,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "try_again",
+       "context": "after_strawberry",
+       "ms": 113,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "redo",
+         "probabilities": {
+          "redo": 0.9678643752235501,
+          "expand": 0.00578252979263053,
+          "command": 0.011859663736025962,
+          "acknowledge": 0.00452446352755684,
+          "new_request": 0.00996896772023667
+         },
+         "confidence": 0.9598304690294376
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "redo",
+         "p": 0.9678643752235501,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "again",
+       "context": "after_strawberry",
+       "ms": 113,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "redo",
+         "probabilities": {
+          "redo": 0.9657424998137978,
+          "expand": 0.006284080045130659,
+          "command": 0.012072724858485609,
+          "acknowledge": 0.005029215592420251,
+          "new_request": 0.01087147969016568
+         },
+         "confidence": 0.9571781247672473
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "redo",
+         "p": 0.9657424998137978,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "igen",
+       "context": "after_strawberry",
+       "ms": 115,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "command",
+         "probabilities": {
+          "redo": 0.08447919007455763,
+          "expand": 0.037407060331251046,
+          "command": 0.6481029020563446,
+          "acknowledge": 0.12397721990903202,
+          "new_request": 0.10603362762881481
+         },
+         "confidence": 0.5601286275704307
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "command",
+         "p": 0.6481029020563446,
+         "top_ok": false,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "noch_einmal",
+       "context": "after_strawberry",
+       "ms": 116,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "redo",
+         "probabilities": {
+          "redo": 0.9635631399712158,
+          "expand": 0.006871370106471401,
+          "command": 0.014252617643428842,
+          "acknowledge": 0.004956966507538399,
+          "new_request": 0.010355905771345509
+         },
+         "confidence": 0.9544539249640196
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "redo",
+         "p": 0.9635631399712158,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "recount",
+       "context": "after_strawberry",
+       "ms": 114,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "redo",
+         "probabilities": {
+          "redo": 0.9544369422566016,
+          "expand": 0.007906351734447939,
+          "command": 0.022949352826534295,
+          "acknowledge": 0.0038538434486518995,
+          "new_request": 0.010853509733764382
+         },
+         "confidence": 0.9430461778207518
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "redo",
+         "p": 0.9544369422566016,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "commit",
+       "context": "after_strawberry",
+       "ms": 115,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "command",
+         "probabilities": {
+          "redo": 0.02499090992067945,
+          "expand": 0.011742922684215227,
+          "command": 0.8963131710484624,
+          "acknowledge": 0.02263110434044964,
+          "new_request": 0.04432189200619325
+         },
+         "confidence": 0.8703914638105781
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "command",
+         "p": 0.8963131710484624,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "push",
+       "context": "after_strawberry",
+       "ms": 118,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "command",
+         "probabilities": {
+          "redo": 0.023599017070815215,
+          "expand": 0.016391754741974768,
+          "command": 0.8929781474684906,
+          "acknowledge": 0.011573465023701586,
+          "new_request": 0.05545761569501772
+         },
+         "confidence": 0.8662226843356132
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "command",
+         "p": 0.8929781474684906,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "deploy",
+       "context": "after_strawberry",
+       "ms": 118,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "command",
+         "probabilities": {
+          "redo": 0.010628635956327907,
+          "expand": 0.008990561867314778,
+          "command": 0.9370458369922369,
+          "acknowledge": 0.012253463119626351,
+          "new_request": 0.03108150206449422
+         },
+         "confidence": 0.921307296240296
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "command",
+         "p": 0.9370458369922369,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "run_the_tests",
+       "context": "after_strawberry",
+       "ms": 123,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "command",
+         "probabilities": {
+          "redo": 0.016380578729838325,
+          "expand": 0.008153749842367653,
+          "command": 0.911228918126416,
+          "acknowledge": 0.00810776817540231,
+          "new_request": 0.05612898512597556
+         },
+         "confidence": 0.88903614765802
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "command",
+         "p": 0.911228918126416,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "thanks",
+       "context": "after_strawberry",
+       "ms": 117,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "acknowledge",
+         "probabilities": {
+          "redo": 0.005746292356694453,
+          "expand": 0.00546707356535993,
+          "command": 0.024507870048185856,
+          "acknowledge": 0.9566196162203323,
+          "new_request": 0.007659147809427298
+         },
+         "confidence": 0.9457745202754153
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "acknowledge",
+         "p": 0.9566196162203323,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "ok",
+       "context": "after_strawberry",
+       "ms": 116,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "acknowledge",
+         "probabilities": {
+          "redo": 0.01968630622869947,
+          "expand": 0.006330498000879591,
+          "command": 0.05974286527786075,
+          "acknowledge": 0.9025494630597914,
+          "new_request": 0.011690867432768693
+         },
+         "confidence": 0.8781868288247393
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "acknowledge",
+         "p": 0.9025494630597914,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "raspberry",
+       "context": "after_strawberry",
+       "ms": 117,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "new_request",
+         "probabilities": {
+          "redo": 0.02510642563773576,
+          "expand": 0.03246556701218254,
+          "command": 0.06684921579272303,
+          "acknowledge": 0.004539607413238993,
+          "new_request": 0.8710391841441197
+         },
+         "confidence": 0.8387989801801495
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "new_request",
+         "p": 0.8710391841441197,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "why",
+       "context": "after_strawberry",
+       "ms": 118,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "expand",
+         "probabilities": {
+          "redo": 0.02874265163903945,
+          "expand": 0.44527745253761647,
+          "command": 0.4322903345804621,
+          "acknowledge": 0.013215448425314585,
+          "new_request": 0.0804741128175674
+         },
+         "confidence": 0.3065968156720206
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "expand",
+         "p": 0.44527745253761647,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "elaborate",
+       "context": "after_readme",
+       "ms": 123,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "expand",
+         "probabilities": {
+          "redo": 0.021822779293364417,
+          "expand": 0.92844425201929,
+          "command": 0.03301161567539999,
+          "acknowledge": 0.006485659828826723,
+          "new_request": 0.010235693183118727
+         },
+         "confidence": 0.9105553150241125
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "expand",
+         "p": 0.92844425201929,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "more",
+       "context": "after_readme",
+       "ms": 118,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "redo",
+         "probabilities": {
+          "redo": 0.5452295172937714,
+          "expand": 0.34032238587157104,
+          "command": 0.07773399790312244,
+          "acknowledge": 0.005542578435889105,
+          "new_request": 0.031171520495646008
+         },
+         "confidence": 0.4315368966172143
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "redo",
+         "p": 0.5452295172937714,
+         "top_ok": false,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "more_details",
+       "context": "after_readme",
+       "ms": 119,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "expand",
+         "probabilities": {
+          "redo": 0.02114925318920941,
+          "expand": 0.9333717945118951,
+          "command": 0.02829837206554911,
+          "acknowledge": 0.006427707619363168,
+          "new_request": 0.01075287261398328
+         },
+         "confidence": 0.9167147431398689
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "expand",
+         "p": 0.9333717945118951,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "retry",
+       "context": "after_readme",
+       "ms": 116,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "redo",
+         "probabilities": {
+          "redo": 0.9714576334629317,
+          "expand": 0.005045765992324455,
+          "command": 0.013029823460639913,
+          "acknowledge": 0.004545923309865982,
+          "new_request": 0.005920853774237983
+         },
+         "confidence": 0.9643220418286647
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "redo",
+         "p": 0.9714576334629317,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "try_again",
+       "context": "after_readme",
+       "ms": 116,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "redo",
+         "probabilities": {
+          "redo": 0.9710553594796659,
+          "expand": 0.005476133256913154,
+          "command": 0.011372974975205096,
+          "acknowledge": 0.004673240807648857,
+          "new_request": 0.007422291480566819
+         },
+         "confidence": 0.9638191993495823
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "redo",
+         "p": 0.9710553594796659,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "again",
+       "context": "after_readme",
+       "ms": 121,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "redo",
+         "probabilities": {
+          "redo": 0.9718134633586736,
+          "expand": 0.005767481748111683,
+          "command": 0.01107553431663268,
+          "acknowledge": 0.004785525114514969,
+          "new_request": 0.006557995462067063
+         },
+         "confidence": 0.9647668291983419
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "redo",
+         "p": 0.9718134633586736,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "igen",
+       "context": "after_readme",
+       "ms": 113,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "command",
+         "probabilities": {
+          "redo": 0.1572835523972135,
+          "expand": 0.019812611417407783,
+          "command": 0.6117891181466121,
+          "acknowledge": 0.1249087411592256,
+          "new_request": 0.08620597687954122
+         },
+         "confidence": 0.5147363976832651
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "command",
+         "p": 0.6117891181466121,
+         "top_ok": false,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "noch_einmal",
+       "context": "after_readme",
+       "ms": 116,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "redo",
+         "probabilities": {
+          "redo": 0.9699991764662702,
+          "expand": 0.006002551075563488,
+          "command": 0.013258543521163683,
+          "acknowledge": 0.004785326933585136,
+          "new_request": 0.005954402003417359
+         },
+         "confidence": 0.9624989705828376
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "redo",
+         "p": 0.9699991764662702,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "recount",
+       "context": "after_readme",
+       "ms": 116,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "redo",
+         "probabilities": {
+          "redo": 0.842471933843768,
+          "expand": 0.044230146424029775,
+          "command": 0.07871187297630614,
+          "acknowledge": 0.005433502011593052,
+          "new_request": 0.02915254474430301
+         },
+         "confidence": 0.8030899173047098
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "redo",
+         "p": 0.842471933843768,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "commit",
+       "context": "after_readme",
+       "ms": 116,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "command",
+         "probabilities": {
+          "redo": 0.20247305455719466,
+          "expand": 0.009933544552404987,
+          "command": 0.7474401635908748,
+          "acknowledge": 0.0208903320531929,
+          "new_request": 0.01926290524633255
+         },
+         "confidence": 0.6843002044885934
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "command",
+         "p": 0.7474401635908748,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "push",
+       "context": "after_readme",
+       "ms": 118,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "command",
+         "probabilities": {
+          "redo": 0.09351924836110172,
+          "expand": 0.00890739067879782,
+          "command": 0.8673438528683702,
+          "acknowledge": 0.011523964354035826,
+          "new_request": 0.01870554373769447
+         },
+         "confidence": 0.8341798160854627
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "command",
+         "p": 0.8673438528683702,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "deploy",
+       "context": "after_readme",
+       "ms": 122,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "command",
+         "probabilities": {
+          "redo": 0.1171124776632884,
+          "expand": 0.013162180710064033,
+          "command": 0.763417336189432,
+          "acknowledge": 0.019044278543180332,
+          "new_request": 0.08726372689403525
+         },
+         "confidence": 0.7042716702367898
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "command",
+         "p": 0.763417336189432,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "run_the_tests",
+       "context": "after_readme",
+       "ms": 113,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "command",
+         "probabilities": {
+          "redo": 0.0773903919729403,
+          "expand": 0.011134660157984476,
+          "command": 0.7934985187285225,
+          "acknowledge": 0.009276308831002073,
+          "new_request": 0.10870012030955054
+         },
+         "confidence": 0.741873148410653
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "command",
+         "p": 0.7934985187285225,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "thanks",
+       "context": "after_readme",
+       "ms": 113,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "acknowledge",
+         "probabilities": {
+          "redo": 0.006045286493542959,
+          "expand": 0.0054533524708861815,
+          "command": 0.018523697046078026,
+          "acknowledge": 0.9612470355301923,
+          "new_request": 0.008730628459300479
+         },
+         "confidence": 0.9515587944127404
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "acknowledge",
+         "p": 0.9612470355301923,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "ok",
+       "context": "after_readme",
+       "ms": 115,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "acknowledge",
+         "probabilities": {
+          "redo": 0.015336282600829742,
+          "expand": 0.0051992105810730075,
+          "command": 0.03357732037684017,
+          "acknowledge": 0.9384954614722641,
+          "new_request": 0.0073917249689930175
+         },
+         "confidence": 0.92311932684033
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "acknowledge",
+         "p": 0.9384954614722641,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "raspberry",
+       "context": "after_readme",
+       "ms": 114,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "new_request",
+         "probabilities": {
+          "redo": 0.06862689458769539,
+          "expand": 0.13370981959668019,
+          "command": 0.33872989633639483,
+          "acknowledge": 0.013860072016985981,
+          "new_request": 0.44507331746224355
+         },
+         "confidence": 0.3063416468278044
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "new_request",
+         "p": 0.44507331746224355,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "why",
+       "context": "after_readme",
+       "ms": 115,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "expand",
+         "probabilities": {
+          "redo": 0.05761790502353992,
+          "expand": 0.5636910949924298,
+          "command": 0.30385140785187453,
+          "acknowledge": 0.007507302241226925,
+          "new_request": 0.06733228989092879
+         },
+         "confidence": 0.45461386874053716
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "expand",
+         "p": 0.5636910949924298,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      }
+     ],
+     "summary": {
+      "by_question": {
+       "q": {
+        "scored": 51,
+        "top_ok": 47,
+        "accepted": 37,
+        "accepted_wrong": 0,
+        "abstained": 14
+       }
+      },
+      "requests": 51,
+      "errors": 0,
+      "median_ms": 114
+     }
+    },
+    "reply_checklist": {
+     "results": [
+      {
+       "case": "strawberry_wrong",
+       "context": null,
+       "ms": 155,
+       "answers": {
+        "answers": {
+         "type": "noul",
+         "noul": 0.9388669298633319
+        },
+        "constraints": {
+         "type": "noul",
+         "noul": 0.8143246230208003
+        },
+        "correct": {
+         "type": "noul",
+         "noul": 0.840252064209305
+        }
+       },
+       "scored": {
+        "answers": {
+         "p": 0.9388669298633319,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "constraints": {
+         "p": 0.8143246230208003,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "correct": {
+         "p": 0.840252064209305,
+         "top_ok": false,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": true
+        }
+       }
+      },
+      {
+       "case": "strawberry_right",
+       "context": null,
+       "ms": 154,
+       "answers": {
+        "answers": {
+         "type": "noul",
+         "noul": 0.9479625516680452
+        },
+        "constraints": {
+         "type": "noul",
+         "noul": 0.8153002827721133
+        },
+        "correct": {
+         "type": "noul",
+         "noul": 0.9217274791015667
+        }
+       },
+       "scored": {
+        "answers": {
+         "p": 0.9479625516680452,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "constraints": {
+         "p": 0.8153002827721133,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "correct": {
+         "p": 0.9217274791015667,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "python_ignored",
+       "context": null,
+       "ms": 154,
+       "answers": {
+        "answers": {
+         "type": "noul",
+         "noul": 0.7021803661739141
+        },
+        "constraints": {
+         "type": "noul",
+         "noul": 0.35793126279997245
+        },
+        "correct": {
+         "type": "noul",
+         "noul": 0.7747818084652072
+        }
+       },
+       "scored": {
+        "answers": {
+         "p": 0.7021803661739141,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        },
+        "constraints": {
+         "p": 0.35793126279997245,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "python_used",
+       "context": null,
+       "ms": 152,
+       "answers": {
+        "answers": {
+         "type": "noul",
+         "noul": 0.9096460185194422
+        },
+        "constraints": {
+         "type": "noul",
+         "noul": 0.8249436469937174
+        },
+        "correct": {
+         "type": "noul",
+         "noul": 0.8383357349237323
+        }
+       },
+       "scored": {
+        "answers": {
+         "p": 0.9096460185194422,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "constraints": {
+         "p": 0.8249436469937174,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "correct": {
+         "p": 0.8383357349237323,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "wrong_subject",
+       "context": null,
+       "ms": 150,
+       "answers": {
+        "answers": {
+         "type": "noul",
+         "noul": 0.04429291815240413
+        },
+        "constraints": {
+         "type": "noul",
+         "noul": 0.07810480447602149
+        },
+        "correct": {
+         "type": "noul",
+         "noul": 0.7432182448951402
+        }
+       },
+       "scored": {
+        "answers": {
+         "p": 0.04429291815240413,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "wrong_direction",
+       "context": null,
+       "ms": 148,
+       "answers": {
+        "answers": {
+         "type": "noul",
+         "noul": 0.15178774021217717
+        },
+        "constraints": {
+         "type": "noul",
+         "noul": 0.2675677456328583
+        },
+        "correct": {
+         "type": "noul",
+         "noul": 0.27469211235991764
+        }
+       },
+       "scored": {
+        "answers": {
+         "p": 0.15178774021217717,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "boards_not_tasks",
+       "context": null,
+       "ms": 145,
+       "answers": {
+        "answers": {
+         "type": "noul",
+         "noul": 0.08101392604829522
+        },
+        "constraints": {
+         "type": "noul",
+         "noul": 0.3243666374944926
+        },
+        "correct": {
+         "type": "noul",
+         "noul": 0.65238330537256
+        }
+       },
+       "scored": {
+        "answers": {
+         "p": 0.08101392604829522,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "bullets_ignored",
+       "context": null,
+       "ms": 167,
+       "answers": {
+        "answers": {
+         "type": "noul",
+         "noul": 0.7870630105569512
+        },
+        "constraints": {
+         "type": "noul",
+         "noul": 0.6876635892204314
+        },
+        "correct": {
+         "type": "noul",
+         "noul": 0.7075677223243376
+        }
+       },
+       "scored": {
+        "answers": {
+         "p": 0.7870630105569512,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        },
+        "constraints": {
+         "p": 0.6876635892204314,
+         "top_ok": false,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "translate_right",
+       "context": null,
+       "ms": 131,
+       "answers": {
+        "answers": {
+         "type": "noul",
+         "noul": 0.9736993113061901
+        },
+        "constraints": {
+         "type": "noul",
+         "noul": 0.9182611893034361
+        },
+        "correct": {
+         "type": "noul",
+         "noul": 0.9825294790190768
+        }
+       },
+       "scored": {
+        "answers": {
+         "p": 0.9736993113061901,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "constraints": {
+         "p": 0.9182611893034361,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "correct": {
+         "p": 0.9825294790190768,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "repeat_unacknowledged",
+       "context": null,
+       "ms": 244,
+       "answers": {
+        "answers": {
+         "type": "noul",
+         "noul": 0.902960131174146
+        },
+        "constraints": {
+         "type": "noul",
+         "noul": 0.757326358938089
+        },
+        "correct": {
+         "type": "noul",
+         "noul": 0.8367573551045202
+        },
+        "acknowledges": {
+         "type": "noul",
+         "noul": 0.782262498862287
+        },
+        "unexplained_change": {
+         "type": "noul",
+         "noul": 0.3411888141531762
+        }
+       },
+       "scored": {
+        "answers": {
+         "p": 0.902960131174146,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "acknowledges": {
+         "p": 0.782262498862287,
+         "top_ok": false,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        },
+        "unexplained_change": {
+         "p": 0.3411888141531762,
+         "top_ok": false,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "repeat_acknowledged",
+       "context": null,
+       "ms": 246,
+       "answers": {
+        "answers": {
+         "type": "noul",
+         "noul": 0.9336906052354909
+        },
+        "constraints": {
+         "type": "noul",
+         "noul": 0.6788294935583072
+        },
+        "correct": {
+         "type": "noul",
+         "noul": 0.962231776284847
+        },
+        "acknowledges": {
+         "type": "noul",
+         "noul": 0.9827079610182922
+        },
+        "unexplained_change": {
+         "type": "noul",
+         "noul": 0.32218433366211413
+        }
+       },
+       "scored": {
+        "answers": {
+         "p": 0.9336906052354909,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "correct": {
+         "p": 0.962231776284847,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "acknowledges": {
+         "p": 0.9827079610182922,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "unexplained_change": {
+         "p": 0.32218433366211413,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "repeat_as_before",
+       "context": null,
+       "ms": 225,
+       "answers": {
+        "answers": {
+         "type": "noul",
+         "noul": 0.9487806261831363
+        },
+        "constraints": {
+         "type": "noul",
+         "noul": 0.8647308880199199
+        },
+        "correct": {
+         "type": "noul",
+         "noul": 0.9459608095203059
+        },
+        "acknowledges": {
+         "type": "noul",
+         "noul": 0.5834898538806002
+        },
+        "unexplained_change": {
+         "type": "noul",
+         "noul": 0.024335080491941514
+        }
+       },
+       "scored": {
+        "answers": {
+         "p": 0.9487806261831363,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "acknowledges": {
+         "p": 0.5834898538806002,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        },
+        "unexplained_change": {
+         "p": 0.024335080491941514,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      }
+     ],
+     "summary": {
+      "by_question": {
+       "answers": {
+        "scored": 12,
+        "top_ok": 12,
+        "accepted": 10,
+        "accepted_wrong": 0,
+        "abstained": 2
+       },
+       "constraints": {
+        "scored": 6,
+        "top_ok": 5,
+        "accepted": 4,
+        "accepted_wrong": 0,
+        "abstained": 2
+       },
+       "correct": {
+        "scored": 5,
+        "top_ok": 4,
+        "accepted": 5,
+        "accepted_wrong": 1,
+        "abstained": 0
+       },
+       "acknowledges": {
+        "scored": 3,
+        "top_ok": 2,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 2
+       },
+       "unexplained_change": {
+        "scored": 3,
+        "top_ok": 2,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 2
+       }
+      },
+      "requests": 12,
+      "errors": 0,
+      "median_ms": 154
+     }
+    },
+    "verdict_choice": {
+     "results": [
+      {
+       "case": "assistant_corrected",
+       "context": null,
+       "ms": 113,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "says_wrong",
+         "probabilities": {
+          "says_wrong": 0.96832161931572,
+          "says_right": 0.013129382423479677,
+          "doubts": 0.012560684347457307,
+          "none": 0.0059883139133430005
+         },
+         "confidence": 0.9577621590876267
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "says_wrong",
+         "p": 0.96832161931572,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "assistant_vague_objection",
+       "context": null,
+       "ms": 112,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "says_wrong",
+         "probabilities": {
+          "says_wrong": 0.5366043478293747,
+          "says_right": 0.03026327356872246,
+          "doubts": 0.4068581909598054,
+          "none": 0.02627418764209736
+         },
+         "confidence": 0.3821391304391663
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "says_wrong",
+         "p": 0.5366043478293747,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "assistant_corrected_danish",
+       "context": null,
+       "ms": 113,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "says_wrong",
+         "probabilities": {
+          "says_wrong": 0.681364659234021,
+          "says_right": 0.11007254477725015,
+          "doubts": 0.11091829358768959,
+          "none": 0.09764450240103917
+         },
+         "confidence": 0.5751528789786947
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "says_wrong",
+         "p": 0.681364659234021,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "assistant_confirmed",
+       "context": null,
+       "ms": 115,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "says_right",
+         "probabilities": {
+          "says_wrong": 0.006540691662479513,
+          "says_right": 0.9737993757462553,
+          "doubts": 0.008734618311503165,
+          "none": 0.010925314279762207
+         },
+         "confidence": 0.9650658343283404
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "says_right",
+         "p": 0.9737993757462553,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "assistant_correct_exclaim",
+       "context": null,
+       "ms": 112,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "says_right",
+         "probabilities": {
+          "says_wrong": 0.0072524900795364914,
+          "says_right": 0.9711987647664804,
+          "doubts": 0.008131649980537553,
+          "none": 0.013417095173445786
+         },
+         "confidence": 0.9615983530219738
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "says_right",
+         "p": 0.9711987647664804,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "assistant_doubted",
+       "context": null,
+       "ms": 113,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "doubts",
+         "probabilities": {
+          "says_wrong": 0.025298128538848396,
+          "says_right": 0.050229116612075186,
+          "doubts": 0.9130006447213924,
+          "none": 0.01147211012768403
+         },
+         "confidence": 0.8840008596285233
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "doubts",
+         "p": 0.9130006447213924,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "assistant_thanks",
+       "context": null,
+       "ms": 115,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "none",
+         "probabilities": {
+          "says_wrong": 0.01616924426499308,
+          "says_right": 0.42221973091187853,
+          "doubts": 0.012119331693832544,
+          "none": 0.5494916931292959
+         },
+         "confidence": 0.39932225750572786
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "none",
+         "p": 0.5494916931292959,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "assistant_elaborate",
+       "context": null,
+       "ms": 113,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "none",
+         "probabilities": {
+          "says_wrong": 0.052481234090349715,
+          "says_right": 0.4306069833950038,
+          "doubts": 0.07211017418668421,
+          "none": 0.44480160832796223
+         },
+         "confidence": 0.2597354777706163
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "none",
+         "p": 0.44480160832796223,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "assistant_new_input",
+       "context": null,
+       "ms": 112,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "doubts",
+         "probabilities": {
+          "says_wrong": 0.1942612784785816,
+          "says_right": 0.10575530198536191,
+          "doubts": 0.36113112809011977,
+          "none": 0.3388522914459367
+         },
+         "confidence": 0.14817483745349302
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "doubts",
+         "p": 0.36113112809011977,
+         "top_ok": false,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "own_statement_corrected",
+       "context": null,
+       "ms": 113,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "says_wrong",
+         "probabilities": {
+          "says_wrong": 0.9761720156741635,
+          "says_right": 0.009227423332834078,
+          "doubts": 0.008358867248881852,
+          "none": 0.006241693744120603
+         },
+         "confidence": 0.9682293542322179
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "says_wrong",
+         "p": 0.9761720156741635,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "own_statement_off_by_one",
+       "context": null,
+       "ms": 126,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "says_wrong",
+         "probabilities": {
+          "says_wrong": 0.9429800986209815,
+          "says_right": 0.015179188393712333,
+          "doubts": 0.031050560865131003,
+          "none": 0.0107901521201751
+         },
+         "confidence": 0.9239734648279754
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "says_wrong",
+         "p": 0.9429800986209815,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "own_guess_confirmed",
+       "context": null,
+       "ms": 116,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "says_right",
+         "probabilities": {
+          "says_wrong": 0.010344409931527847,
+          "says_right": 0.9621521116755373,
+          "doubts": 0.009719240149807913,
+          "none": 0.017784238243127182
+         },
+         "confidence": 0.9495361489007164
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "says_right",
+         "p": 0.9621521116755373,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "own_guess_corrected",
+       "context": null,
+       "ms": 114,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "says_wrong",
+         "probabilities": {
+          "says_wrong": 0.9681037408737524,
+          "says_right": 0.011952774782214855,
+          "doubts": 0.010722146147200266,
+          "none": 0.009221338196832417
+         },
+         "confidence": 0.9574716544983365
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "says_wrong",
+         "p": 0.9681037408737524,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "own_guess_unrelated",
+       "context": null,
+       "ms": 115,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "none",
+         "probabilities": {
+          "says_wrong": 0.01509876788430409,
+          "says_right": 0.00797439635616721,
+          "doubts": 0.033868679677770776,
+          "none": 0.9430581560817579
+         },
+         "confidence": 0.9240775414423439
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "none",
+         "p": 0.9430581560817579,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      }
+     ],
+     "summary": {
+      "by_question": {
+       "q": {
+        "scored": 14,
+        "top_ok": 13,
+        "accepted": 9,
+        "accepted_wrong": 0,
+        "abstained": 5
+       }
+      },
+      "requests": 14,
+      "errors": 0,
+      "median_ms": 113
+     }
+    },
+    "hedge": {
+     "results": [
+      {
+       "case": "think_not_sure",
+       "context": null,
+       "ms": 56,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.9617682499244397
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.9617682499244397,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "maybe",
+       "context": null,
+       "ms": 55,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.8988338331845434
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.8988338331845434,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "if_i_remember",
+       "context": null,
+       "ms": 55,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.4899820384856642
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.4899820384856642,
+         "top_ok": false,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "danish_jeg_tror",
+       "context": null,
+       "ms": 58,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.44583864883123886
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.44583864883123886,
+         "top_ok": false,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "plain_statement",
+       "context": null,
+       "ms": 57,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.0383014534510941
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.0383014534510941,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "request",
+       "context": null,
+       "ms": 56,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.033443446189058895
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.033443446189058895,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "plain_release",
+       "context": null,
+       "ms": 58,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.025739266147691373
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.025739266147691373,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "bare_question",
+       "context": null,
+       "ms": 54,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.7985619696833924
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.7985619696833924,
+         "top_ok": false,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      }
+     ],
+     "summary": {
+      "by_question": {
+       "q": {
+        "scored": 8,
+        "top_ok": 5,
+        "accepted": 5,
+        "accepted_wrong": 0,
+        "abstained": 3
+       }
+      },
+      "requests": 8,
+      "errors": 0,
+      "median_ms": 56
+     }
+    },
+    "same_answer": {
+     "results": [
+      {
+       "case": "two_vs_three",
+       "context": null,
+       "ms": 94,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.09262139363692855
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.09262139363692855,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "three_reworded",
+       "context": null,
+       "ms": 77,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.9717796405621223
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.9717796405621223,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "rounded",
+       "context": null,
+       "ms": 74,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.49594268167889144
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.49594268167889144,
+         "top_ok": false,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "wrong_conversion",
+       "context": null,
+       "ms": 74,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.033597803238775176
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.033597803238775176,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "paris_reworded",
+       "context": null,
+       "ms": 74,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.980070396583244
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.980070396583244,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "paris_vs_lyon",
+       "context": null,
+       "ms": 76,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.03324107141754787
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.03324107141754787,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "prime_disagree",
+       "context": null,
+       "ms": 77,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.04534663516264691
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.04534663516264691,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "prime_agree",
+       "context": null,
+       "ms": 75,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.9137550186139813
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.9137550186139813,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      }
+     ],
+     "summary": {
+      "by_question": {
+       "q": {
+        "scored": 8,
+        "top_ok": 7,
+        "accepted": 7,
+        "accepted_wrong": 0,
+        "abstained": 1
+       }
+      },
+      "requests": 8,
+      "errors": 0,
+      "median_ms": 76
+     }
+    }
+   }
+  },
+  {
+   "model": "d3:4b",
+   "first_call": {
+    "cold_requested": false,
+    "first_call_ms": 1836
+   },
+   "experiments": {
+    "identity_pair": {
+     "results": [
+      {
+       "case": "strawberry_use_python",
+       "context": null,
+       "ms": 346,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.17305402299242106
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.17305402299242106,
+         "top_ok": false,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": true
+        }
+       }
+      },
+      {
+       "case": "strawberry_rephrased",
+       "context": null,
+       "ms": 320,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.9680742161141545
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.9680742161141545,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "strawberry_danish",
+       "context": null,
+       "ms": 332,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.9763419613987565
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.9763419613987565,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "weather_rephrased",
+       "context": null,
+       "ms": 334,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.9983688611686306
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.9983688611686306,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "translate_rephrased",
+       "context": null,
+       "ms": 324,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.9940515537513076
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.9940515537513076,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "kanban_tasks_rephrased",
+       "context": null,
+       "ms": 341,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.9466222155134942
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.9466222155134942,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "strawberry_vs_raspberry",
+       "context": null,
+       "ms": 301,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.04573005546181354
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.04573005546181354,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "uppercase_only",
+       "context": null,
+       "ms": 333,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.13470931696833552
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.13470931696833552,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "sqrt_changed_number",
+       "context": null,
+       "ms": 344,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.002728697705553618
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.002728697705553618,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "conversion_direction",
+       "context": null,
+       "ms": 347,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.0029168785933778056
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.0029168785933778056,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "boards_vs_tasks",
+       "context": null,
+       "ms": 300,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.021391635161276474
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.021391635161276474,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "summarize_vs_translate",
+       "context": null,
+       "ms": 322,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.012263400484333872
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.012263400484333872,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "tokyo_vs_toronto",
+       "context": null,
+       "ms": 307,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.05957167239554434
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.05957167239554434,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "prime_changed_number",
+       "context": null,
+       "ms": 304,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.0369757886272275
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.0369757886272275,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      }
+     ],
+     "summary": {
+      "by_question": {
+       "q": {
+        "scored": 14,
+        "top_ok": 13,
+        "accepted": 14,
+        "accepted_wrong": 1,
+        "abstained": 0
+       }
+      },
+      "requests": 14,
+      "errors": 0,
+      "median_ms": 328
+     }
+    },
+    "identity_fanout": {
+     "results": [
+      {
+       "case": "fanout",
+       "context": null,
+       "ms": 4595,
+       "answers": {
+        "c0": {
+         "type": "noul",
+         "noul": 0.9830722524575108
+        },
+        "c1": {
+         "type": "noul",
+         "noul": 0.9821202230743439
+        },
+        "c2": {
+         "type": "noul",
+         "noul": 0.9821202230743439
+        },
+        "c3": {
+         "type": "noul",
+         "noul": 0.0008892653407429169
+        },
+        "c4": {
+         "type": "noul",
+         "noul": 0.000872111553194349
+        },
+        "c5": {
+         "type": "noul",
+         "noul": 0.0007969881332364898
+        },
+        "c6": {
+         "type": "noul",
+         "noul": 0.9820972825323545
+        },
+        "c7": {
+         "type": "noul",
+         "noul": 0.9821202230743439
+        },
+        "c8": {
+         "type": "noul",
+         "noul": 0.0007379899178294729
+        },
+        "c9": {
+         "type": "noul",
+         "noul": 0.0007138997616354238
+        },
+        "c10": {
+         "type": "noul",
+         "noul": 0.0008641683817941051
+        },
+        "c11": {
+         "type": "noul",
+         "noul": 0.0010957280671815598
+        },
+        "c12": {
+         "type": "noul",
+         "noul": 0.0009488147441368416
+        },
+        "c13": {
+         "type": "noul",
+         "noul": 0.0008246180413856437
+        }
+       },
+       "scored": {
+        "c0": {
+         "p": 0.9830722524575108,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "c1": {
+         "p": 0.9821202230743439,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "c2": {
+         "p": 0.9821202230743439,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "c3": {
+         "p": 0.0008892653407429169,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "c4": {
+         "p": 0.000872111553194349,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "c5": {
+         "p": 0.0007969881332364898,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "c6": {
+         "p": 0.9820972825323545,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "c7": {
+         "p": 0.9821202230743439,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "c8": {
+         "p": 0.0007379899178294729,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "c9": {
+         "p": 0.0007138997616354238,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "c10": {
+         "p": 0.0008641683817941051,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "c11": {
+         "p": 0.0010957280671815598,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "c12": {
+         "p": 0.0009488147441368416,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "c13": {
+         "p": 0.0008246180413856437,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      }
+     ],
+     "summary": {
+      "by_question": {
+       "c0": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "c1": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "c2": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "c3": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "c4": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "c5": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "c6": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "c7": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "c8": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "c9": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "c10": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "c11": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "c12": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "c13": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       }
+      },
+      "requests": 1,
+      "errors": 0,
+      "median_ms": 4595
+     }
+    },
+    "redo_noul": {
+     "results": [
+      {
+       "case": "again",
+       "context": null,
+       "ms": 311,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.9604633031445385
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.9604633031445385,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "try_again",
+       "context": null,
+       "ms": 304,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.9570785254268732
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.9570785254268732,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "one_more_time",
+       "context": null,
+       "ms": 302,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.9740451262528438
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.9740451262528438,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "igen",
+       "context": null,
+       "ms": 312,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.12457272213239566
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.12457272213239566,
+         "top_ok": false,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": true
+        }
+       }
+      },
+      {
+       "case": "noch_einmal",
+       "context": null,
+       "ms": 330,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.9439172760164636
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.9439172760164636,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "check_with_python",
+       "context": null,
+       "ms": 305,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.8985310423466728
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.8985310423466728,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "are_you_sure_recount",
+       "context": null,
+       "ms": 328,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.9468119493415722
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.9468119493415722,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "elaborate",
+       "context": null,
+       "ms": 325,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.28386707304848324
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.28386707304848324,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "more_details",
+       "context": null,
+       "ms": 307,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.25744717837724385
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.25744717837724385,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "thanks",
+       "context": null,
+       "ms": 332,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.004112522058534167
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.004112522058534167,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "why",
+       "context": null,
+       "ms": 325,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.15536296640414948
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.15536296640414948,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "raspberry",
+       "context": null,
+       "ms": 303,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.15530340612601579
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.15530340612601579,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "ok",
+       "context": null,
+       "ms": 297,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.1504459461000314
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.1504459461000314,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "blueberry",
+       "context": null,
+       "ms": 308,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.2159406423101031
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.2159406423101031,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      }
+     ],
+     "summary": {
+      "by_question": {
+       "q": {
+        "scored": 14,
+        "top_ok": 13,
+        "accepted": 11,
+        "accepted_wrong": 1,
+        "abstained": 3
+       }
+      },
+      "requests": 14,
+      "errors": 0,
+      "median_ms": 310
+     }
+    },
+    "short_message_choice": {
+     "results": [
+      {
+       "case": "elaborate",
+       "context": "alone",
+       "ms": 375,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "expand",
+         "probabilities": {
+          "redo": 0.007139712503315301,
+          "expand": 0.9499026434168638,
+          "command": 0.03399325642285138,
+          "acknowledge": 0.0022646322717395557,
+          "new_request": 0.006699755385229895
+         },
+         "confidence": 0.8469113690186679
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "expand",
+         "p": 0.9499026434168638,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "more",
+       "context": "alone",
+       "ms": 360,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "expand",
+         "probabilities": {
+          "redo": 0.00912663430787786,
+          "expand": 0.9552170219827839,
+          "command": 0.019099994441172725,
+          "acknowledge": 0.008362747425499513,
+          "new_request": 0.008193601842665914
+         },
+         "confidence": 0.8498853479173091
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "expand",
+         "p": 0.9552170219827839,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "more_details",
+       "context": "alone",
+       "ms": 371,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "expand",
+         "probabilities": {
+          "redo": 0.005350306923030001,
+          "expand": 0.968937454145221,
+          "command": 0.011954742716273614,
+          "acknowledge": 0.004659927537886319,
+          "new_request": 0.009097568677589131
+         },
+         "confidence": 0.888623330478609
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "expand",
+         "p": 0.968937454145221,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "retry",
+       "context": "alone",
+       "ms": 380,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "redo",
+         "probabilities": {
+          "redo": 0.9185021136578732,
+          "expand": 0.0066007923936133054,
+          "command": 0.05921538338061631,
+          "acknowledge": 0.008339235254301358,
+          "new_request": 0.007342475313595698
+         },
+         "confidence": 0.7796753522799663
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "redo",
+         "p": 0.9185021136578732,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "try_again",
+       "context": "alone",
+       "ms": 389,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "redo",
+         "probabilities": {
+          "redo": 0.940906762522479,
+          "expand": 0.006115115707452597,
+          "command": 0.037329565022446574,
+          "acknowledge": 0.005599955352535067,
+          "new_request": 0.0100486013950868
+         },
+         "confidence": 0.8219990323411759
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "redo",
+         "p": 0.940906762522479,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "again",
+       "context": "alone",
+       "ms": 375,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "redo",
+         "probabilities": {
+          "redo": 0.8036067794577967,
+          "expand": 0.07974241383728044,
+          "command": 0.052646936729088746,
+          "acknowledge": 0.049158339228772746,
+          "new_request": 0.014845530747061462
+         },
+         "confidence": 0.538366623755031
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "redo",
+         "p": 0.8036067794577967,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "igen",
+       "context": "alone",
+       "ms": 383,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "acknowledge",
+         "probabilities": {
+          "redo": 0.20305602719082505,
+          "expand": 0.06456588109445645,
+          "command": 0.12390260422942695,
+          "acknowledge": 0.5509400972157924,
+          "new_request": 0.05753539026949915
+         },
+         "confidence": 0.2220277590860673
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "acknowledge",
+         "p": 0.5509400972157924,
+         "top_ok": false,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "noch_einmal",
+       "context": "alone",
+       "ms": 358,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "redo",
+         "probabilities": {
+          "redo": 0.9165177175539969,
+          "expand": 0.03216845548178303,
+          "command": 0.028457113694683178,
+          "acknowledge": 0.014835548336879924,
+          "new_request": 0.008021164932657015
+         },
+         "confidence": 0.7558669620233245
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "redo",
+         "p": 0.9165177175539969,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "recount",
+       "context": "alone",
+       "ms": 376,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "expand",
+         "probabilities": {
+          "redo": 0.3079279521699408,
+          "expand": 0.39359127308689884,
+          "command": 0.2212235088755921,
+          "acknowledge": 0.03374920779536057,
+          "new_request": 0.04350805807220759
+         },
+         "confidence": 0.18344244145725552
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "expand",
+         "p": 0.39359127308689884,
+         "top_ok": false,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "commit",
+       "context": "alone",
+       "ms": 354,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "command",
+         "probabilities": {
+          "redo": 0.019463843393213748,
+          "expand": 0.012362477187548881,
+          "command": 0.5581278566834973,
+          "acknowledge": 0.3945783724984357,
+          "new_request": 0.015467450237304328
+         },
+         "confidence": 0.4483288066588431
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "command",
+         "p": 0.5581278566834973,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "push",
+       "context": "alone",
+       "ms": 368,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "command",
+         "probabilities": {
+          "redo": 0.07616500018167313,
+          "expand": 0.06743419031790142,
+          "command": 0.604217125358762,
+          "acknowledge": 0.16788459315351678,
+          "new_request": 0.0842990909881467
+         },
+         "confidence": 0.2603224404740563
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "command",
+         "p": 0.604217125358762,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "deploy",
+       "context": "alone",
+       "ms": 352,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "command",
+         "probabilities": {
+          "redo": 0.030583331157655793,
+          "expand": 0.01738956641541213,
+          "command": 0.7950181160726921,
+          "acknowledge": 0.08915748293237895,
+          "new_request": 0.06785150342186103
+         },
+         "confidence": 0.5293026337242632
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "command",
+         "p": 0.7950181160726921,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "run_the_tests",
+       "context": "alone",
+       "ms": 393,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "command",
+         "probabilities": {
+          "redo": 0.05056360679230643,
+          "expand": 0.010181267311342333,
+          "command": 0.7857849878369472,
+          "acknowledge": 0.021736229954031478,
+          "new_request": 0.13173390810537253
+         },
+         "confidence": 0.5418980679800569
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "command",
+         "p": 0.7857849878369472,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "thanks",
+       "context": "alone",
+       "ms": 359,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "acknowledge",
+         "probabilities": {
+          "redo": 0.000194537329152186,
+          "expand": 0.0006714623679169317,
+          "command": 0.019778873551654905,
+          "acknowledge": 0.9787079987579378,
+          "new_request": 0.0006471279933381574
+         },
+         "confidence": 0.9316662759318477
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "acknowledge",
+         "p": 0.9787079987579378,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "ok",
+       "context": "alone",
+       "ms": 375,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "acknowledge",
+         "probabilities": {
+          "redo": 0.001370857793274449,
+          "expand": 0.002071147892842341,
+          "command": 0.02654569405058032,
+          "acknowledge": 0.9680936688772012,
+          "new_request": 0.001918631386101833
+         },
+         "confidence": 0.8996155723294905
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "acknowledge",
+         "p": 0.9680936688772012,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "raspberry",
+       "context": "alone",
+       "ms": 367,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "new_request",
+         "probabilities": {
+          "redo": 0.009985162537659041,
+          "expand": 0.1857086006248602,
+          "command": 0.03253189905698789,
+          "acknowledge": 0.004444923368797464,
+          "new_request": 0.7673294144116953
+         },
+         "confidence": 0.566690672871397
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "new_request",
+         "p": 0.7673294144116953,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "why",
+       "context": "alone",
+       "ms": 384,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "expand",
+         "probabilities": {
+          "redo": 0.016844593838565906,
+          "expand": 0.6637215162394527,
+          "command": 0.15764677612380468,
+          "acknowledge": 0.045029488545080876,
+          "new_request": 0.11675762525309603
+         },
+         "confidence": 0.36471866078143045
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "expand",
+         "p": 0.6637215162394527,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "elaborate",
+       "context": "after_strawberry",
+       "ms": 399,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "expand",
+         "probabilities": {
+          "redo": 0.03208252546269215,
+          "expand": 0.9352125002335678,
+          "command": 0.02060148503818478,
+          "acknowledge": 0.002569747887672779,
+          "new_request": 0.009533741377882318
+         },
+         "confidence": 0.8057355425662235
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "expand",
+         "p": 0.9352125002335678,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "more",
+       "context": "after_strawberry",
+       "ms": 439,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "expand",
+         "probabilities": {
+          "redo": 0.094781420847483,
+          "expand": 0.7990744877372152,
+          "command": 0.03146899809308532,
+          "acknowledge": 0.033716710705104604,
+          "new_request": 0.04095838261711196
+         },
+         "confidence": 0.5299223305492518
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "expand",
+         "p": 0.7990744877372152,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "more_details",
+       "context": "after_strawberry",
+       "ms": 410,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "expand",
+         "probabilities": {
+          "redo": 0.039635357860025,
+          "expand": 0.9105853464680154,
+          "command": 0.018942623526484688,
+          "acknowledge": 0.008274330311591596,
+          "new_request": 0.02256234183388343
+         },
+         "confidence": 0.7430244769264333
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "expand",
+         "p": 0.9105853464680154,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "retry",
+       "context": "after_strawberry",
+       "ms": 437,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "redo",
+         "probabilities": {
+          "redo": 0.9578184045803895,
+          "expand": 0.011337541852083704,
+          "command": 0.020565594287656978,
+          "acknowledge": 0.002562285660856591,
+          "new_request": 0.007716173619013484
+         },
+         "confidence": 0.8603422873353066
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "redo",
+         "p": 0.9578184045803895,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "try_again",
+       "context": "after_strawberry",
+       "ms": 412,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "redo",
+         "probabilities": {
+          "redo": 0.9567748314340271,
+          "expand": 0.016301399361033655,
+          "command": 0.015692698407283424,
+          "acknowledge": 0.003159514985868698,
+          "new_request": 0.008071555811787126
+         },
+         "confidence": 0.8560561082957412
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "redo",
+         "p": 0.9567748314340271,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "again",
+       "context": "after_strawberry",
+       "ms": 404,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "redo",
+         "probabilities": {
+          "redo": 0.9323307458734019,
+          "expand": 0.03282965395826236,
+          "command": 0.015502307259387582,
+          "acknowledge": 0.007834280263618196,
+          "new_request": 0.011503012645329925
+         },
+         "confidence": 0.7940686675325943
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "redo",
+         "p": 0.9323307458734019,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "igen",
+       "context": "after_strawberry",
+       "ms": 431,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "acknowledge",
+         "probabilities": {
+          "redo": 0.15061068786881576,
+          "expand": 0.08448534182624497,
+          "command": 0.11322630214309207,
+          "acknowledge": 0.5828904898655338,
+          "new_request": 0.06878717829631326
+         },
+         "confidence": 0.22998884645155404
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "acknowledge",
+         "p": 0.5828904898655338,
+         "top_ok": false,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "noch_einmal",
+       "context": "after_strawberry",
+       "ms": 401,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "redo",
+         "probabilities": {
+          "redo": 0.945608458896083,
+          "expand": 0.021736147284746415,
+          "command": 0.013147391716877984,
+          "acknowledge": 0.01084375959055687,
+          "new_request": 0.008664242511735823
+         },
+         "confidence": 0.8240021889490027
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "redo",
+         "p": 0.945608458896083,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "recount",
+       "context": "after_strawberry",
+       "ms": 422,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "redo",
+         "probabilities": {
+          "redo": 0.9248794968090633,
+          "expand": 0.03794382094827784,
+          "command": 0.02683360206052631,
+          "acknowledge": 0.002982654483975492,
+          "new_request": 0.0073604256981572
+         },
+         "confidence": 0.7844298664473974
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "redo",
+         "p": 0.9248794968090633,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "commit",
+       "context": "after_strawberry",
+       "ms": 435,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "acknowledge",
+         "probabilities": {
+          "redo": 0.07674503679957137,
+          "expand": 0.03496015690564525,
+          "command": 0.25780130607425084,
+          "acknowledge": 0.6075228449000799,
+          "new_request": 0.022970655320452647
+         },
+         "confidence": 0.3456216987709434
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "acknowledge",
+         "p": 0.6075228449000799,
+         "top_ok": false,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "push",
+       "context": "after_strawberry",
+       "ms": 400,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "command",
+         "probabilities": {
+          "redo": 0.2124758211331672,
+          "expand": 0.13292086481143553,
+          "command": 0.33819554553208714,
+          "acknowledge": 0.20185701927681954,
+          "new_request": 0.11455074924649064
+         },
+         "confidence": 0.046123859135167034
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "command",
+         "p": 0.33819554553208714,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "deploy",
+       "context": "after_strawberry",
+       "ms": 415,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "command",
+         "probabilities": {
+          "redo": 0.1291934751241223,
+          "expand": 0.07939584558663959,
+          "command": 0.39824802160852557,
+          "acknowledge": 0.30363582057474653,
+          "new_request": 0.08952683710596605
+         },
+         "confidence": 0.12383091060963125
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "command",
+         "p": 0.39824802160852557,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "run_the_tests",
+       "context": "after_strawberry",
+       "ms": 409,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "command",
+         "probabilities": {
+          "redo": 0.1876930984226744,
+          "expand": 0.030346836422822775,
+          "command": 0.5971135017298594,
+          "acknowledge": 0.06334826468781872,
+          "new_request": 0.12149829873682472
+         },
+         "confidence": 0.2799656137253139
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "command",
+         "p": 0.5971135017298594,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "thanks",
+       "context": "after_strawberry",
+       "ms": 402,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "acknowledge",
+         "probabilities": {
+          "redo": 0.00017969737994281466,
+          "expand": 0.0007922690597340668,
+          "command": 0.01567474068419484,
+          "acknowledge": 0.9821517771321048,
+          "new_request": 0.0012015157440234071
+         },
+         "confidence": 0.9390384587310299
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "acknowledge",
+         "p": 0.9821517771321048,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "ok",
+       "context": "after_strawberry",
+       "ms": 439,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "acknowledge",
+         "probabilities": {
+          "redo": 0.016704272059246093,
+          "expand": 0.011679580730873043,
+          "command": 0.04108582467100312,
+          "acknowledge": 0.9227765030768837,
+          "new_request": 0.007753819461993903
+         },
+         "confidence": 0.7742563539691364
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "acknowledge",
+         "p": 0.9227765030768837,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "raspberry",
+       "context": "after_strawberry",
+       "ms": 419,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "new_request",
+         "probabilities": {
+          "redo": 0.011260258282177686,
+          "expand": 0.03557826918506812,
+          "command": 0.01747385882319921,
+          "acknowledge": 0.0009544402342921193,
+          "new_request": 0.9347331734752629
+         },
+         "confidence": 0.8076018658710635
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "new_request",
+         "p": 0.9347331734752629,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "why",
+       "context": "after_strawberry",
+       "ms": 447,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "expand",
+         "probabilities": {
+          "redo": 0.06367838656557351,
+          "expand": 0.494508362247687,
+          "command": 0.2872149838066591,
+          "acknowledge": 0.03627835298746798,
+          "new_request": 0.11831991439261236
+         },
+         "confidence": 0.22037581451083943
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "expand",
+         "p": 0.494508362247687,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "elaborate",
+       "context": "after_readme",
+       "ms": 436,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "expand",
+         "probabilities": {
+          "redo": 0.0320098578298107,
+          "expand": 0.9281862065016276,
+          "command": 0.02270189514986441,
+          "acknowledge": 0.00393376288439378,
+          "new_request": 0.01316827763430343
+         },
+         "confidence": 0.7862128237858631
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "expand",
+         "p": 0.9281862065016276,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "more",
+       "context": "after_readme",
+       "ms": 395,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "expand",
+         "probabilities": {
+          "redo": 0.04741299400424608,
+          "expand": 0.8766642425078413,
+          "command": 0.022055083585671032,
+          "acknowledge": 0.026744870330305016,
+          "new_request": 0.027122809571936683
+         },
+         "confidence": 0.6652426509413023
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "expand",
+         "p": 0.8766642425078413,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "more_details",
+       "context": "after_readme",
+       "ms": 413,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "expand",
+         "probabilities": {
+          "redo": 0.04444437731223887,
+          "expand": 0.8768551444581034,
+          "command": 0.02348753168780736,
+          "acknowledge": 0.008725723551553492,
+          "new_request": 0.04648722299029695
+         },
+         "confidence": 0.6733394734413434
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "expand",
+         "p": 0.8768551444581034,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "retry",
+       "context": "after_readme",
+       "ms": 401,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "redo",
+         "probabilities": {
+          "redo": 0.9467448861538728,
+          "expand": 0.014202933376062547,
+          "command": 0.025440899691991897,
+          "acknowledge": 0.005248299322006703,
+          "new_request": 0.008362981456066176
+         },
+         "confidence": 0.8302517482222728
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "redo",
+         "p": 0.9467448861538728,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "try_again",
+       "context": "after_readme",
+       "ms": 436,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "redo",
+         "probabilities": {
+          "redo": 0.9490409098054965,
+          "expand": 0.0168297329775819,
+          "command": 0.01586255278138583,
+          "acknowledge": 0.008835772465955852,
+          "new_request": 0.009431031969580077
+         },
+         "confidence": 0.8323141724027252
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "redo",
+         "p": 0.9490409098054965,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "again",
+       "context": "after_readme",
+       "ms": 423,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "redo",
+         "probabilities": {
+          "redo": 0.844170574854654,
+          "expand": 0.07160396740752947,
+          "command": 0.02520845417636657,
+          "acknowledge": 0.04354587800871165,
+          "new_request": 0.015471125552738453
+         },
+         "confidence": 0.6113289177971359
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "redo",
+         "p": 0.844170574854654,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "igen",
+       "context": "after_readme",
+       "ms": 421,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "acknowledge",
+         "probabilities": {
+          "redo": 0.13171560887958703,
+          "expand": 0.06542096164067022,
+          "command": 0.08347948583848361,
+          "acknowledge": 0.6737053904362158,
+          "new_request": 0.045678553205043285
+         },
+         "confidence": 0.34154042398475715
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "acknowledge",
+         "p": 0.6737053904362158,
+         "top_ok": false,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "noch_einmal",
+       "context": "after_readme",
+       "ms": 426,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "redo",
+         "probabilities": {
+          "redo": 0.913421884641728,
+          "expand": 0.035551082135291734,
+          "command": 0.015799350284422586,
+          "acknowledge": 0.025687148629161216,
+          "new_request": 0.009540534309396536
+         },
+         "confidence": 0.7481601621691537
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "redo",
+         "p": 0.913421884641728,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "recount",
+       "context": "after_readme",
+       "ms": 394,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "redo",
+         "probabilities": {
+          "redo": 0.628799997784603,
+          "expand": 0.187381130509292,
+          "command": 0.10587165347756251,
+          "acknowledge": 0.04503339977765962,
+          "new_request": 0.032913818450882884
+         },
+         "confidence": 0.3194906713376302
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "redo",
+         "p": 0.628799997784603,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "commit",
+       "context": "after_readme",
+       "ms": 448,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "command",
+         "probabilities": {
+          "redo": 0.019841280708320478,
+          "expand": 0.008243479300128222,
+          "command": 0.7189820051252491,
+          "acknowledge": 0.22221212798018122,
+          "new_request": 0.030721106886120897
+         },
+         "confidence": 0.5055613261329381
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "command",
+         "p": 0.7189820051252491,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "push",
+       "context": "after_readme",
+       "ms": 442,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "command",
+         "probabilities": {
+          "redo": 0.012863851697532153,
+          "expand": 0.00567127672313712,
+          "command": 0.8377512617303617,
+          "acknowledge": 0.10441818858277542,
+          "new_request": 0.039295421266193495
+         },
+         "confidence": 0.629219797202959
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "command",
+         "p": 0.8377512617303617,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "deploy",
+       "context": "after_readme",
+       "ms": 424,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "command",
+         "probabilities": {
+          "redo": 0.03089796600896953,
+          "expand": 0.011328038902142736,
+          "command": 0.7237096178853292,
+          "acknowledge": 0.03645134392995519,
+          "new_request": 0.1976130332736034
+         },
+         "confidence": 0.48221120956811503
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "command",
+         "p": 0.7237096178853292,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "run_the_tests",
+       "context": "after_readme",
+       "ms": 428,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "command",
+         "probabilities": {
+          "redo": 0.03271014108793875,
+          "expand": 0.019143831370814806,
+          "command": 0.711215547466179,
+          "acknowledge": 0.025764010238822823,
+          "new_request": 0.21116646983624468
+         },
+         "confidence": 0.47023800531108195
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "command",
+         "p": 0.711215547466179,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "thanks",
+       "context": "after_readme",
+       "ms": 397,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "acknowledge",
+         "probabilities": {
+          "redo": 0.0001749829253081624,
+          "expand": 0.0006770375322874193,
+          "command": 0.01359988795004849,
+          "acknowledge": 0.9841974503741747,
+          "new_request": 0.0013506412181812715
+         },
+         "confidence": 0.944388209982638
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "acknowledge",
+         "p": 0.9841974503741747,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "ok",
+       "context": "after_readme",
+       "ms": 395,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "acknowledge",
+         "probabilities": {
+          "redo": 0.0056455244833561935,
+          "expand": 0.005419176141726917,
+          "command": 0.025672538930949448,
+          "acknowledge": 0.9592679259649625,
+          "new_request": 0.003994834479005091
+         },
+         "confidence": 0.8673590231917787
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "acknowledge",
+         "p": 0.9592679259649625,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "raspberry",
+       "context": "after_readme",
+       "ms": 437,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "new_request",
+         "probabilities": {
+          "redo": 0.023247810459891605,
+          "expand": 0.2030462794236348,
+          "command": 0.07840982593756707,
+          "acknowledge": 0.004711917265085403,
+          "new_request": 0.6905841669138211
+         },
+         "confidence": 0.445958101357955
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "new_request",
+         "p": 0.6905841669138211,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "why",
+       "context": "after_readme",
+       "ms": 435,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "expand",
+         "probabilities": {
+          "redo": 0.08209403167617768,
+          "expand": 0.47900578237716884,
+          "command": 0.27161694929961855,
+          "acknowledge": 0.04650103041359812,
+          "new_request": 0.12078220623343695
+         },
+         "confidence": 0.18617946110182904
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "expand",
+         "p": 0.47900578237716884,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      }
+     ],
+     "summary": {
+      "by_question": {
+       "q": {
+        "scored": 51,
+        "top_ok": 46,
+        "accepted": 29,
+        "accepted_wrong": 0,
+        "abstained": 22
+       }
+      },
+      "requests": 51,
+      "errors": 0,
+      "median_ms": 402
+     }
+    },
+    "reply_checklist": {
+     "results": [
+      {
+       "case": "strawberry_wrong",
+       "context": null,
+       "ms": 849,
+       "answers": {
+        "answers": {
+         "type": "noul",
+         "noul": 0.965738174738966
+        },
+        "constraints": {
+         "type": "noul",
+         "noul": 0.9536151715451039
+        },
+        "correct": {
+         "type": "noul",
+         "noul": 0.8190808854274251
+        }
+       },
+       "scored": {
+        "answers": {
+         "p": 0.965738174738966,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "constraints": {
+         "p": 0.9536151715451039,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "correct": {
+         "p": 0.8190808854274251,
+         "top_ok": false,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": true
+        }
+       }
+      },
+      {
+       "case": "strawberry_right",
+       "context": null,
+       "ms": 900,
+       "answers": {
+        "answers": {
+         "type": "noul",
+         "noul": 0.7804815091423966
+        },
+        "constraints": {
+         "type": "noul",
+         "noul": 0.7773341970884798
+        },
+        "correct": {
+         "type": "noul",
+         "noul": 0.43105809941368145
+        }
+       },
+       "scored": {
+        "answers": {
+         "p": 0.7804815091423966,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        },
+        "constraints": {
+         "p": 0.7773341970884798,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        },
+        "correct": {
+         "p": 0.43105809941368145,
+         "top_ok": false,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "python_ignored",
+       "context": null,
+       "ms": 874,
+       "answers": {
+        "answers": {
+         "type": "noul",
+         "noul": 0.7374843539678734
+        },
+        "constraints": {
+         "type": "noul",
+         "noul": 0.34831926603328167
+        },
+        "correct": {
+         "type": "noul",
+         "noul": 0.40958282265266466
+        }
+       },
+       "scored": {
+        "answers": {
+         "p": 0.7374843539678734,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        },
+        "constraints": {
+         "p": 0.34831926603328167,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "python_used",
+       "context": null,
+       "ms": 913,
+       "answers": {
+        "answers": {
+         "type": "noul",
+         "noul": 0.8953305927419247
+        },
+        "constraints": {
+         "type": "noul",
+         "noul": 0.819868548956639
+        },
+        "correct": {
+         "type": "noul",
+         "noul": 0.7487267518502715
+        }
+       },
+       "scored": {
+        "answers": {
+         "p": 0.8953305927419247,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "constraints": {
+         "p": 0.819868548956639,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "correct": {
+         "p": 0.7487267518502715,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "wrong_subject",
+       "context": null,
+       "ms": 895,
+       "answers": {
+        "answers": {
+         "type": "noul",
+         "noul": 0.00585890800559352
+        },
+        "constraints": {
+         "type": "noul",
+         "noul": 0.026775705178182084
+        },
+        "correct": {
+         "type": "noul",
+         "noul": 0.07824748000918308
+        }
+       },
+       "scored": {
+        "answers": {
+         "p": 0.00585890800559352,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "wrong_direction",
+       "context": null,
+       "ms": 887,
+       "answers": {
+        "answers": {
+         "type": "noul",
+         "noul": 0.3875775938040336
+        },
+        "constraints": {
+         "type": "noul",
+         "noul": 0.4027549706793175
+        },
+        "correct": {
+         "type": "noul",
+         "noul": 0.5829163398694293
+        }
+       },
+       "scored": {
+        "answers": {
+         "p": 0.3875775938040336,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "boards_not_tasks",
+       "context": null,
+       "ms": 871,
+       "answers": {
+        "answers": {
+         "type": "noul",
+         "noul": 0.32778848711657477
+        },
+        "constraints": {
+         "type": "noul",
+         "noul": 0.5498672329579469
+        },
+        "correct": {
+         "type": "noul",
+         "noul": 0.5624889041513766
+        }
+       },
+       "scored": {
+        "answers": {
+         "p": 0.32778848711657477,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "bullets_ignored",
+       "context": null,
+       "ms": 983,
+       "answers": {
+        "answers": {
+         "type": "noul",
+         "noul": 0.852868835581526
+        },
+        "constraints": {
+         "type": "noul",
+         "noul": 0.5593544540953278
+        },
+        "correct": {
+         "type": "noul",
+         "noul": 0.7578074989838728
+        }
+       },
+       "scored": {
+        "answers": {
+         "p": 0.852868835581526,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "constraints": {
+         "p": 0.5593544540953278,
+         "top_ok": false,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "translate_right",
+       "context": null,
+       "ms": 795,
+       "answers": {
+        "answers": {
+         "type": "noul",
+         "noul": 0.9971677181613089
+        },
+        "constraints": {
+         "type": "noul",
+         "noul": 0.9930871066722559
+        },
+        "correct": {
+         "type": "noul",
+         "noul": 0.9971943730188959
+        }
+       },
+       "scored": {
+        "answers": {
+         "p": 0.9971677181613089,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "constraints": {
+         "p": 0.9930871066722559,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "correct": {
+         "p": 0.9971943730188959,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "repeat_unacknowledged",
+       "context": null,
+       "ms": 1859,
+       "answers": {
+        "answers": {
+         "type": "noul",
+         "noul": 0.6656636030473954
+        },
+        "constraints": {
+         "type": "noul",
+         "noul": 0.7252392899388246
+        },
+        "correct": {
+         "type": "noul",
+         "noul": 0.2444470124884101
+        },
+        "acknowledges": {
+         "type": "noul",
+         "noul": 0.3522770705506052
+        },
+        "unexplained_change": {
+         "type": "noul",
+         "noul": 0.7620619810759367
+        }
+       },
+       "scored": {
+        "answers": {
+         "p": 0.6656636030473954,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        },
+        "acknowledges": {
+         "p": 0.3522770705506052,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        },
+        "unexplained_change": {
+         "p": 0.7620619810759367,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "repeat_acknowledged",
+       "context": null,
+       "ms": 2071,
+       "answers": {
+        "answers": {
+         "type": "noul",
+         "noul": 0.9235733357839814
+        },
+        "constraints": {
+         "type": "noul",
+         "noul": 0.7158385414936932
+        },
+        "correct": {
+         "type": "noul",
+         "noul": 0.7553473775763768
+        },
+        "acknowledges": {
+         "type": "noul",
+         "noul": 0.9966835480576615
+        },
+        "unexplained_change": {
+         "type": "noul",
+         "noul": 0.6912256875834667
+        }
+       },
+       "scored": {
+        "answers": {
+         "p": 0.9235733357839814,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "correct": {
+         "p": 0.7553473775763768,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        },
+        "acknowledges": {
+         "p": 0.9966835480576615,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "unexplained_change": {
+         "p": 0.6912256875834667,
+         "top_ok": false,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "repeat_as_before",
+       "context": null,
+       "ms": 1713,
+       "answers": {
+        "answers": {
+         "type": "noul",
+         "noul": 0.747241484657708
+        },
+        "constraints": {
+         "type": "noul",
+         "noul": 0.6725799845759423
+        },
+        "correct": {
+         "type": "noul",
+         "noul": 0.20899489330641421
+        },
+        "acknowledges": {
+         "type": "noul",
+         "noul": 0.9509211337263048
+        },
+        "unexplained_change": {
+         "type": "noul",
+         "noul": 0.006275077162292916
+        }
+       },
+       "scored": {
+        "answers": {
+         "p": 0.747241484657708,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        },
+        "acknowledges": {
+         "p": 0.9509211337263048,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "unexplained_change": {
+         "p": 0.006275077162292916,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      }
+     ],
+     "summary": {
+      "by_question": {
+       "answers": {
+        "scored": 12,
+        "top_ok": 12,
+        "accepted": 6,
+        "accepted_wrong": 0,
+        "abstained": 6
+       },
+       "constraints": {
+        "scored": 6,
+        "top_ok": 5,
+        "accepted": 3,
+        "accepted_wrong": 0,
+        "abstained": 3
+       },
+       "correct": {
+        "scored": 5,
+        "top_ok": 3,
+        "accepted": 2,
+        "accepted_wrong": 1,
+        "abstained": 3
+       },
+       "acknowledges": {
+        "scored": 3,
+        "top_ok": 3,
+        "accepted": 2,
+        "accepted_wrong": 0,
+        "abstained": 1
+       },
+       "unexplained_change": {
+        "scored": 3,
+        "top_ok": 2,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 2
+       }
+      },
+      "requests": 12,
+      "errors": 0,
+      "median_ms": 898
+     }
+    },
+    "verdict_choice": {
+     "results": [
+      {
+       "case": "assistant_corrected",
+       "context": null,
+       "ms": 403,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "says_wrong",
+         "probabilities": {
+          "says_wrong": 0.997879081193879,
+          "says_right": 0.0001330950062908927,
+          "doubts": 0.0016063565380602589,
+          "none": 0.00038146726176970706
+         },
+         "confidence": 0.9879937932061408
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "says_wrong",
+         "p": 0.997879081193879,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "assistant_vague_objection",
+       "context": null,
+       "ms": 441,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "says_wrong",
+         "probabilities": {
+          "says_wrong": 0.7722788666250368,
+          "says_right": 0.0022132373726363374,
+          "doubts": 0.2004399166464817,
+          "none": 0.02506797935584522
+         },
+         "confidence": 0.5472431174535971
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "says_wrong",
+         "p": 0.7722788666250368,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "assistant_corrected_danish",
+       "context": null,
+       "ms": 404,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "says_wrong",
+         "probabilities": {
+          "says_wrong": 0.9735973689973738,
+          "says_right": 0.005265729952426035,
+          "doubts": 0.011536839822988157,
+          "none": 0.009600061227211996
+         },
+         "confidence": 0.891971456255622
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "says_wrong",
+         "p": 0.9735973689973738,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "assistant_confirmed",
+       "context": null,
+       "ms": 372,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "says_right",
+         "probabilities": {
+          "says_wrong": 0.007280521959142816,
+          "says_right": 0.9786200356195974,
+          "doubts": 0.0025709221731409996,
+          "none": 0.011528520248118583
+         },
+         "confidence": 0.9107179635214446
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "says_right",
+         "p": 0.9786200356195974,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "assistant_correct_exclaim",
+       "context": null,
+       "ms": 378,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "says_right",
+         "probabilities": {
+          "says_wrong": 0.002221361919285335,
+          "says_right": 0.9842331947845424,
+          "doubts": 0.001131198455128831,
+          "none": 0.012414244841043377
+         },
+         "confidence": 0.934088195257535
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "says_right",
+         "p": 0.9842331947845424,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "assistant_doubted",
+       "context": null,
+       "ms": 392,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "doubts",
+         "probabilities": {
+          "says_wrong": 0.009079230331011125,
+          "says_right": 0.004360876207549596,
+          "doubts": 0.9455187771973679,
+          "none": 0.041041116264071545
+         },
+         "confidence": 0.8193664629392373
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "doubts",
+         "p": 0.9455187771973679,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "assistant_thanks",
+       "context": null,
+       "ms": 384,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "none",
+         "probabilities": {
+          "says_wrong": 0.002343678840667306,
+          "says_right": 0.07382017091106177,
+          "doubts": 0.003161509803149041,
+          "none": 0.9206746404451219
+         },
+         "confidence": 0.7829680355204975
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "none",
+         "p": 0.9206746404451219,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "assistant_elaborate",
+       "context": null,
+       "ms": 356,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "none",
+         "probabilities": {
+          "says_wrong": 0.005382827561405368,
+          "says_right": 0.04214056265188313,
+          "doubts": 0.15552736371761286,
+          "none": 0.7969492460690987
+         },
+         "confidence": 0.5441975894203754
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "none",
+         "p": 0.7969492460690987,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "assistant_new_input",
+       "context": null,
+       "ms": 352,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "none",
+         "probabilities": {
+          "says_wrong": 0.05645820183810097,
+          "says_right": 0.025346028449789577,
+          "doubts": 0.25569157114013297,
+          "none": 0.6625041985719765
+         },
+         "confidence": 0.36744676930340703
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "none",
+         "p": 0.6625041985719765,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "own_statement_corrected",
+       "context": null,
+       "ms": 439,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "says_wrong",
+         "probabilities": {
+          "says_wrong": 0.9981153272696246,
+          "says_right": 0.00017126875303391393,
+          "doubts": 0.0009863377333603116,
+          "none": 0.0007270662439813442
+         },
+         "confidence": 0.9888557052970535
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "says_wrong",
+         "p": 0.9981153272696246,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "own_statement_off_by_one",
+       "context": null,
+       "ms": 437,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "says_wrong",
+         "probabilities": {
+          "says_wrong": 0.9592571424304398,
+          "says_right": 0.006359080357785769,
+          "doubts": 0.023983634804665692,
+          "none": 0.010400142407108686
+         },
+         "confidence": 0.8492244385124611
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "says_wrong",
+         "p": 0.9592571424304398,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "own_guess_confirmed",
+       "context": null,
+       "ms": 421,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "says_right",
+         "probabilities": {
+          "says_wrong": 0.0014172192730697538,
+          "says_right": 0.9943138128966592,
+          "doubts": 0.0008958340019275806,
+          "none": 0.0033731338283434303
+         },
+         "confidence": 0.970820091486234
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "says_right",
+         "p": 0.9943138128966592,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "own_guess_corrected",
+       "context": null,
+       "ms": 405,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "says_wrong",
+         "probabilities": {
+          "says_wrong": 0.9791362219450684,
+          "says_right": 0.00040907146876215014,
+          "doubts": 0.014059104641400623,
+          "none": 0.006395601944768766
+         },
+         "confidence": 0.9162498441882434
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "says_wrong",
+         "p": 0.9791362219450684,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "own_guess_unrelated",
+       "context": null,
+       "ms": 436,
+       "answers": {
+        "q": {
+         "type": "choice",
+         "choice": "none",
+         "probabilities": {
+          "says_wrong": 0.0008174703955085282,
+          "says_right": 0.0003004877316014806,
+          "doubts": 0.011837007629824762,
+          "none": 0.9870450342430651
+         },
+         "confidence": 0.9468839472929851
+        }
+       },
+       "scored": {
+        "q": {
+         "choice": "none",
+         "p": 0.9870450342430651,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      }
+     ],
+     "summary": {
+      "by_question": {
+       "q": {
+        "scored": 14,
+        "top_ok": 14,
+        "accepted": 11,
+        "accepted_wrong": 0,
+        "abstained": 3
+       }
+      },
+      "requests": 14,
+      "errors": 0,
+      "median_ms": 404
+     }
+    },
+    "hedge": {
+     "results": [
+      {
+       "case": "think_not_sure",
+       "context": null,
+       "ms": 267,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.9944240051596733
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.9944240051596733,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "maybe",
+       "context": null,
+       "ms": 247,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.9827679335535041
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.9827679335535041,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "if_i_remember",
+       "context": null,
+       "ms": 260,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.9691571032697355
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.9691571032697355,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "danish_jeg_tror",
+       "context": null,
+       "ms": 272,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.9728823943108694
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.9728823943108694,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "plain_statement",
+       "context": null,
+       "ms": 282,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.02909140351448832
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.02909140351448832,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "request",
+       "context": null,
+       "ms": 260,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.09088706158052891
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.09088706158052891,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "plain_release",
+       "context": null,
+       "ms": 248,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.02077400997208577
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.02077400997208577,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "bare_question",
+       "context": null,
+       "ms": 268,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.8152217153207959
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.8152217153207959,
+         "top_ok": false,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": true
+        }
+       }
+      }
+     ],
+     "summary": {
+      "by_question": {
+       "q": {
+        "scored": 8,
+        "top_ok": 7,
+        "accepted": 8,
+        "accepted_wrong": 1,
+        "abstained": 0
+       }
+      },
+      "requests": 8,
+      "errors": 0,
+      "median_ms": 264
+     }
+    },
+    "same_answer": {
+     "results": [
+      {
+       "case": "two_vs_three",
+       "context": null,
+       "ms": 319,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.18732061684986756
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.18732061684986756,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "three_reworded",
+       "context": null,
+       "ms": 333,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.9477728251203466
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.9477728251203466,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "rounded",
+       "context": null,
+       "ms": 305,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.6433406728076836
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.6433406728076836,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "wrong_conversion",
+       "context": null,
+       "ms": 311,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.013610038452141893
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.013610038452141893,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "paris_reworded",
+       "context": null,
+       "ms": 322,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.9981048846804187
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.9981048846804187,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "paris_vs_lyon",
+       "context": null,
+       "ms": 275,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.0006508366759369281
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.0006508366759369281,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "prime_disagree",
+       "context": null,
+       "ms": 297,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.003272130181737314
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.003272130181737314,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "prime_agree",
+       "context": null,
+       "ms": 315,
+       "answers": {
+        "q": {
+         "type": "noul",
+         "noul": 0.9523928896437123
+        }
+       },
+       "scored": {
+        "q": {
+         "p": 0.9523928896437123,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      }
+     ],
+     "summary": {
+      "by_question": {
+       "q": {
+        "scored": 8,
+        "top_ok": 8,
+        "accepted": 7,
+        "accepted_wrong": 0,
+        "abstained": 1
+       }
+      },
+      "requests": 8,
+      "errors": 0,
+      "median_ms": 313
+     }
+    }
+   }
+  }
+ ]
+}
