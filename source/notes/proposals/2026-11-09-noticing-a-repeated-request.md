@@ -144,6 +144,36 @@ letters" changes the answer. Approximate candidates therefore neither join
 chains nor trigger acknowledgements in the first release. Promoting them
 requires an evaluated task-identity check, not just a lower threshold.
 
+**Task-identity check.** That check is a decision model (see *The decision
+model* below), asked one yes/no question per candidate pair: *does the current
+message ask for the same task, with the same inputs, as the earlier one?* It
+runs in two stages, the docs' "screen with a Noul first" pattern:
+
+1. **Shortlist (code).** Take up to 8 candidates: the highest weighted-overlap
+   scores with no threshold, plus the immediate predecessor when eligible.
+   Pairs the numeric/quoted-input guard rejects never reach the model; that
+   guard is free and exact. Requiring only a shared token, not a 0.6
+   overlap, lets a rephrasing or another language in. "hvor mange r er der i
+   strawberry" shares two tokens with "count the R's in Strawberry".
+2. **Screen (d1:3b, one request).** All shortlisted pairs go in one fan-out
+   request, one Noul each. In the probe, 14 candidates took 0.4 s. The screen
+   is tuned for recall: it passes anything ≥ 0.5.
+3. **Confirm (d3:4b, one request per survivor).** Usually zero to two
+   survivors, at about 0.3 s each. A candidate is `confirmed` only when the
+   confirming Noul is ≥ 0.8.
+
+Both models must say yes. In the probe the two made different mistakes:
+- d1 passed "count the R's in raspberry" (0.68); d3 rejected it (0.05).
+- d3 rejected the method refinement "… use python for counting" (0.17), which
+  d1 got right (0.97). That costs a miss, which is the safe direction.
+
+`confirmed` is a fourth approximate kind. In the first release it is recorded
+with both probabilities, still **recording only**. The recording week then
+measures the identity check itself against the operator's verdicts. Rollout
+step 5 promotes it on that data, not on the probe below.
+
+The check never runs for exact matches, and never when the setting is `off`.
+
 **Short redos.** A short follow-up can ask to do the previous task again
 without naming it. Use one bounded classifier call, with no retry-phrase list:
 
@@ -159,19 +189,92 @@ without naming it. Use one bounded classifier call, with no retry-phrase list:
   same task with the same inputs? More detail, a changed operand, a new task,
   and an acknowledgement are not redos. A method change such as "check it
   with Python" can be a redo. Unclear references are `unknown`.
-- **Output:** `yes`, `no`, or `unknown`, after trimming whitespace and
-  casefolding. Any other output or failure becomes `unknown`. A `yes` links
-  the current message to the resolved predecessor's chain as kind `redo`.
-- **Limits:** one attempt on the first model resolved for the turn's decide
-  slot, a 5-second end-to-end deadline, no fallback cascade. Record model,
-  result, and elapsed time as a code-driven step. If the complete inputs
-  exceed a 2,000-character data budget, skip as `unknown`; do not classify a
-  cut task as if it were whole.
+- **Output:** one Noul on the decision model (d3:4b by default, see below).
+  The banded probability becomes `yes` (≥ 0.8), `no` (≤ 0.3), or `unknown`
+  (in between, or any failure). A `yes` links the current message to the
+  resolved predecessor's chain as kind `redo`. Record the probability, not
+  just the band, so the bands can be tuned on the operator's verdicts.
+- **Limits:** one request, a 2-second end-to-end deadline, no fallback
+  cascade. Record model, probability, band, and elapsed time as a code-driven
+  step. If the complete inputs exceed a 2,000-character data budget, skip as
+  `unknown`; do not classify a cut task as if it were whole.
 
-Failure must not prevent the ordinary turn from proceeding. Sharing a model
-binding does not guarantee zero model-load cost, and short ordinary messages
-will trigger the call too. Measure its hit rate and latency. Longer redos and
-ambiguous group-room references remain first-release limitations.
+Failure must not prevent the ordinary turn from proceeding. Short ordinary
+messages will trigger the call too, so measure its hit rate and latency.
+Longer redos and ambiguous group-room references remain first-release
+limitations.
+
+**The decision model.** Both checks run on a System One decision model, not
+on the generative models the loop uses.
+
+- **What it is.** A System One model reads a state plus typed questions, and
+  returns calibrated probabilities instead of generated text. A Noul is a
+  yes/no question answered with P(yes). A Choice picks one of up to 255 named
+  options. The Jev family is the hosted line of these models. Ollama 0.40.15
+  serves the same format locally at `POST /v1/systemone`, and models with the
+  `decision` capability answer it. Two are installed:
+  - `d1:3b`: lfm2, 2.7B parameters, Q8;
+  - `d3:4b`: qwen3.5, 4.5B parameters, mxfp8.
+- **Request shape.** The state is
+  `{"previous_request": …, "current_message": …}` for a redo, or
+  `{"earlier_message": …, "current_message": …}` for identity. There is one
+  question per check, `{"type": "noul", "instructions": …}`. The instruction
+  states the boundary (a different object, number, unit, direction or
+  constraint is a different task; different wording, language or requested
+  method is not). It contains no example phrases. The fan-out screen puts the
+  earlier message inside each question's structured `instructions` instead,
+  so the state carries only the current message.
+- **Why a decision model and not a plain-text yes/no call.**
+  - **Speed.** It answers from one forward pass, with nothing decoded. In
+    the probe a redo Noul took 0.08 s on d1 and 0.3 s on d3. A generative
+    call on the decide model takes seconds and loads the GPU the turn is
+    about to need.
+  - **Probabilities.** It returns a probability, so the bands are thresholds
+    in code, tuned on verdicts, rather than a model's guess at `yes` / `no`
+    / `unknown`.
+- **Binding.** It gets a new model slot, `assistant.repeat_check`, bound to a
+  model group whose members are System One models on a loopback host. Two
+  rules, unlike other `assistant.*` slots:
+  - **No fallback to `assistant.default`.** A generative group cannot answer
+    a System One request. Unbound means both checks record `unknown` with
+    reason `no_decision_model`, and exact matching still works.
+  - **Remote members are refused**, so `assistant_models_all_local()` stays
+    true wherever it was. The inputs are the operator's own messages.
+
+**What the probe showed.** One run, on 14 synthetic identity pairs and 14
+short follow-ups to "count the number of R's in Strawberry". The script is
+kept out of the repo. Accuracy at 0.5:
+
+| check | d1:3b | d3:4b | both must say yes |
+|---|---|---|---|
+| identity, per pair | 13/14, 0.09 s median | 13/14, 0.32 s median | 13/14, no false yes |
+| redo, per message | 11/14, 0.08 s median | 13/14, 0.32 s median | 13/14, no false yes |
+| identity fan-out, 14 questions in one request | 0.39 s | 4.6 s | (screen on d1) |
+
+What it shows:
+- **Changed inputs are separated.** sqrt of 1764 against 1746, Tokyo against
+  Toronto, feet→m against m→feet: all ≤ 0.2 on both models. This is what
+  embeddings cannot tell apart. They are retrieval, and this is a decision.
+- **Paraphrases and another language are joined.** "how many r are in
+  strawberry?", the same question in Danish, and "weather forecast for paris
+  tomorrow?" all scored ≥ 0.95 on both.
+- **Redos in several forms are caught.** "again", "try again", "noch einmal",
+  "check it with python" and "are you sure? recount" all scored ≥ 0.9 on both.
+- **Some single words slip through.** The Danish single word "igen"
+  ("again") was missed by both (0.04 and 0.12). Bare one-word redos in a
+  smaller language are the expected weak spot; the failure is a miss, so no
+  block.
+- **d1 alone over-accepts.** "elaborate" scored 0.72 as a redo, and "and for
+  raspberry?" scored 0.65. d3 put both under 0.3. That is why the redo check
+  defaults to d3, and why identity needs both models.
+- **d3's fan-out scales poorly in this Ollama build.** 14 questions took 4.6 s
+  against 0.3 s for one, so d3 only confirms the screen's survivors.
+- **Fan-out probabilities are not per-pair probabilities.** In d1's fan-out,
+  every strawberry-shaped candidate scored about 0.91, raspberry included. The
+  screen's output is a shortlist, never a verdict.
+
+28 cases, one run, hand-written: enough to choose the shape, not the
+thresholds. The thresholds come from the recording week.
 
 ### 2. Keep chains bounded, and make their counts honest
 
@@ -475,10 +578,17 @@ a better verification method. Repeat stochastic cases and score:
 | long/cut request, malicious XML, missing anchor, or classifier timeout | preserve task and bounds; escape content; unknown detection does not break the turn |
 | queued messages A and B before A's worker starts | repeat detection and every prompt still answer A |
 | multilingual short redo and unspaced substantive request | exercise classifier anchoring and document lexical misses |
+| identity pairs: changed object, number, unit, direction or constraint; paraphrase; other language; method refinement | screen and confirm recorded per pair; changed-input pairs never `confirmed` |
+| decision slot unbound, model unloaded, or deadline exceeded | `unknown` with a reason; exact matching and the turn unaffected |
 | chain beyond 100 attempts, 1,000 messages, 14 days, or text/work limits | bounded work/storage and explicitly incomplete/scoped counts |
 
 **Cost and integration.** Measure query count, scan time, classifier trigger
 rate and p50/p95 latency, block size, prompt tokens, and end-to-end latency.
+For the decision model, also measure:
+- its cold-load time, since it is another resident model next to the decide
+  model;
+- whether running it shifts the decide call's prefill time;
+- how calibrated its probabilities are against the operator's verdicts.
 Batch message/run/step lookups; do not issue one query per candidate. Verify
 the existing shared prefix, identical per-consumer renderings across steps,
 and all three prompt layouts. Measure no-match turns too. Do not promise
@@ -488,18 +598,23 @@ millisecond latency before including database reads and classifier time.
 
 1. Add exact request/run linkage, scoped candidate loading, lexical matcher,
    bounded chain builder, and renderer tests. No prompt injection.
-2. Add the short-redo classifier with deadline, instrumentation, and `unknown`
-   fallback. Test failure paths and ambiguous anchors.
+2. Add a System One client for Ollama's `/v1/systemone` and the
+   `assistant.repeat_check` slot (loopback only, no fallback). Then add the
+   short-redo Noul with deadline, instrumentation, and `unknown` fallback, and
+   the identity screen-and-confirm, recording probabilities only. Test failure
+   paths, an unbound slot, and ambiguous anchors.
 3. Enable recording and inspector feedback. Review false positives, misses,
    access boundaries, and latency before adding reply instructions.
 4. Wire all five consumers and run fixtures and complete-turn replay. Enable
    exact/redo injection when fixtures pass, reviewed matches have acceptable
    precision, answer correctness does not regress, and latency is acceptable.
    Record precision and latency targets before evaluating the held-out set.
-5. Consider approximate injection only if measured misses justify it. Evaluate
-   task-identity confirmation first. Embeddings can broaden retrieval but do
-   not distinguish a retry from the same operation on different input. Any
-   stored vectors follow the same scope and eligibility boundaries.
+5. Consider approximate injection only if measured misses justify it. The
+   candidate is the `confirmed` kind: its recorded probabilities against the
+   operator's verdicts decide whether, and at which confirm threshold, it may
+   join chains. Embeddings can broaden the shortlist but do not distinguish a
+   retry from the same operation on different input; the identity Noul does.
+   Any stored vectors follow the same scope and eligibility boundaries.
 
 One setting, `assistant.repeated_request`, is read once per turn:
 
@@ -516,7 +631,10 @@ rollout or rollback.
 
 - **Summarize the room or declare a topic solved.** Chains can inform a future
   topic digest, but repetition is not a reliable "open" verdict and absence
-  of repetition is not a reliable "solved" verdict.
+  of repetition is not a reliable "solved" verdict. The same decision model
+  fits that digest's tagging. A Choice over the room's existing topic tags,
+  paired with a Noul for "none of these fit", assigns each exchange a tag
+  without a generative call. That belongs in the digest's own proposal.
 - **Make old answers authoritative.** The block supports what was attempted
   and said. The current answer still needs its own evidence.
 - **Resolve every paraphrase or follow-up.** Ambiguous or out-of-scope cases
