@@ -7,7 +7,10 @@
 [The request as its own turn](2026-10-19-request-as-its-own-turn.md)
 (request placement and follow-up context),
 [Turn latency and prompt redundancy](2026-08-31-turn-latency-and-prompt-redundancy.md)
-(read before placing any new block).
+(read before placing any new block),
+[Later verdicts on earlier messages](2026-11-09-later-verdicts-on-earlier-messages.md)
+(a correction or confirmation of an earlier attempt, carried as its
+`later_verdict`).
 
 ## The problem, as observed
 
@@ -601,7 +604,10 @@ matcher version.
 Earlier runs are not rewritten or retrospectively marked failed. A later
 retry is a new observation about the conversation, not a change to what the
 earlier run executed or delivered. Conversely, `resolved` is not proof that
-an earlier answer was correct.
+an earlier answer was correct. When the operator later says an attempt was
+wrong or right, that is a verdict record of its own, made where it happened
+([Later verdicts on earlier messages](2026-11-09-later-verdicts-on-earlier-messages.md)).
+Listed attempts carry its current verdict as `later_verdict=`.
 
 ### 6. Check whether a reply got the point, over several parameters
 
