@@ -53,7 +53,7 @@ recorded even when no block is injected.
 The first release favors precision: exact repetitions and resolved short
 redos can reach the prompt; approximate matches are recorded for evaluation.
 Neither a text match nor a classifier result proves that an earlier reply was
-wrong. Five decisions shape the design.
+wrong. Six decisions shape the design.
 
 ### 1. Find candidates without confusing similar wording with the same task
 
@@ -170,7 +170,7 @@ Both models must say yes. In the probe the two made different mistakes:
 `confirmed` is a fourth approximate kind. In the first release it is recorded
 with both probabilities, still **recording only**. The recording week then
 measures the identity check itself against the operator's verdicts. Rollout
-step 5 promotes it on that data, not on the probe below.
+step 6 promotes it on that data, not on the probe below.
 
 The check never runs for exact matches, and never when the setting is `off`.
 
@@ -390,6 +390,12 @@ Each listed attempt contains:
 - **Summarizer outcome**, when available, labelled `summarizer_outcome`.
   This is a weak self-assessment, separate from run status. A confidently
   wrong answer can still have outcome `resolved`.
+- **Reply checks**, when that run recorded them (decision 6), as bands:
+  `answered="no"` means the delivered reply missed the point of its request.
+  The bands tell the two common retries apart:
+  - **The earlier reply missed the point.** Answer the question this time.
+  - **The earlier reply answered, and the person asked again anyway.**
+    Suspect the answer itself, and verify it.
 - **Reply excerpt**, where admissible, middle-truncated to 160 characters
   with the cut marked. Use the delivered message, not a proposed reply,
   summary, or reasoning. If several replies were delivered, identify the one
@@ -446,12 +452,14 @@ Example for the fifth request, with two earlier attempts shown:
                   attempts="5" listed="2" omitted="2"
                   recent="true" chain_truncated="false">
   <attempt when="2 h earlier" match="exact" status="finished"
-           route="reply" summarizer_outcome="resolved">
+           route="reply" summarizer_outcome="resolved"
+           answered="yes" constraints="yes">
     <request>count the number of R's in Strawberry</request>
     <reply_excerpt>There are 2 R's in "Strawberry".</reply_excerpt>
   </attempt>
   <attempt when="1 h earlier" match="exact" status="finished"
-           route="reply" summarizer_outcome="resolved">
+           route="reply" summarizer_outcome="resolved"
+           answered="yes" constraints="yes">
     <request>count the number of R's in Strawberry</request>
     <reply_excerpt>There are 3 R's in "Strawberry".</reply_excerpt>
   </attempt>
@@ -595,6 +603,102 @@ retry is a new observation about the conversation, not a change to what the
 earlier run executed or delivered. Conversely, `resolved` is not proof that
 an earlier answer was correct.
 
+### 6. Check whether a reply got the point, over several parameters
+
+A repeat says *that* the person asked again, not *why*. The reply they got is
+half of the why: did it miss the point, ignore a constraint, or answer
+properly and still not convince? The same decision model answers that as a
+checklist: one fan-out request, one Noul per parameter, read in code.
+
+**The checklist.** The state is `{"request": …, "reply": …}`, plus the
+turn's acceptance criteria when that call ran, plus the earlier reply
+excerpts when `repeated_request` is present:
+
+| check | question | when |
+|---|---|---|
+| `answers` | Does the reply answer what the request asks, about the subject the request names? | always |
+| `constraints` | Does the reply follow every constraint the request states about format, length, method or scope? A request that states none passes. | always |
+| `criterion_processing`, `criterion_formatting`, `criterion_assumptions` | Does the reply follow this: *the criterion's text*? | one per non-empty acceptance-criteria field, when that call ran |
+| `acknowledges` | Does the reply say that this request was asked before? | `repeated_request` present and recent |
+
+Code-checked facts sit beside them, with no model call:
+- whether a `python_run` actually executed and returned ok;
+- whether a read ran;
+- the reply's length.
+
+The model is never asked what the code already knows.
+
+**Never asked: "is the answer correct?"** In the probe both models judged
+"There are 2 R's in Strawberry" correct (0.84 and 0.82). A classifier
+reading a reply cannot count letters any better than the model that wrote
+it. Correctness comes from executed computation and fresh reads, which is
+what the repeat rule pushes the loop towards. A question whose honest answer
+needs work is not a checklist item.
+
+**Two places it runs, one checklist:**
+
+1. **After the turn, on the delivered reply.** It runs beside the run
+   summarizer, enqueued at the same terminal states and off the request path.
+   It writes `metadata_["reply_checks"]` once, on that run, as part of the
+   run's own post-turn record, exactly as `summary` is written. It holds the
+   probabilities, the bands, the model, and the checklist version. A later
+   retry never revises it; the retry is recorded on the later run (decision
+   5). This is what fills `answered=` and `constraints=` on listed attempts.
+2. **In the turn, on the proposed reply, before the reply audit.** When the
+   loop chooses `reply`, the checklist runs on the draft. That is d1, about
+   0.16 s for three to five questions, and more with criteria. The result goes
+   on that reply step's row in /assistant, where it happened. In the first
+   release it is **recording only**: the generative reply audit still decides.
+   The checklist runs next to the audit, whose verdicts are stored, so the
+   recording week measures how far they agree:
+   - Does `answers: no` predict an audit rejection?
+   - Does the audit pass drafts the checklist flags?
+   - Does `acknowledges: no` on a recent repeat match what the operator
+     wanted?
+
+   If the measurements show a clear `answers: no` is reliable, a later change
+   can return such a draft to the loop at once, naming the failed check, and
+   save the audit's seconds on that path. The generative audit stays for what
+   a checklist cannot judge: whether claims are supported, and whether facts
+   hold. That change is judged on this data, not made here.
+
+**Bands.** The same rule as the other checks: ≥ 0.8 is `yes`, ≤ 0.2 is
+`no`, and in between is `unclear`. Only `yes` and `no` reach a prompt.
+`unclear` is recorded, never rendered as either.
+
+**What the probe showed.** 12 hand-written (request, reply) pairs, one
+fan-out each, three of them with earlier replies. All pairs are invented:
+- a reply on the wrong subject;
+- the wrong conversion direction;
+- boards listed when tasks were asked;
+- a paragraph when three bullets were asked;
+- an ignored "use python";
+- correct, wrong, and acknowledging Strawberry replies.
+
+| check | d1:3b (0.16 s per reply) | d3:4b (0.9–2.2 s per reply) |
+|---|---|---|
+| `answers` | 12/12; in band 10 right, 0 wrong, 2 unclear | 12/12; in band 6 right, 0 wrong, 6 unclear |
+| `constraints` | 5/6; missed the ignored bullet format (0.69) | 5/6; same miss (0.56) |
+| `acknowledges` | 2/3 | 3/3 |
+| `correct` (not adopted) | 4/5; "2 R's" judged correct | 3/5; same |
+| "different answer, earlier one not called wrong" (not adopted) | 2/3 | 2/3 |
+
+What it shows:
+- **`answers` is the strongest signal.** The three replies that missed the
+  point scored 0.04–0.15 on d1.
+- **`constraints` catches a method the reply ignored, but not a format.**
+  The ignored "use python" scored 0.36 and 0.35. For methods, the code check
+  on the executed route is the reliable half; for formats the check is
+  recorded, not trusted.
+- **`acknowledges` is weaker on d1.** d1 read "There are 3 R's" as an
+  acknowledgement (0.78); d3 got all three. It is recorded on d1 and
+  revisited if the week shows misses.
+- **Comparing against earlier answers was weak.** The "different answer, but
+  the earlier one is not called wrong" check scored 2/3 on both models, so it
+  is not part of the checklist.
+- **The checklist runs on d1.** It costs a sixth of d3's time and gave no
+  wrong in-band answer.
+
 ## Measuring it
 
 **Detection quality.** Run recording-only for at least a week and until enough
@@ -662,13 +766,15 @@ millisecond latency before including database reads and classifier time.
    short-message Choice with deadline, instrumentation, and `unknown` fallback, and
    the identity screen-and-confirm, recording probabilities only. Test failure
    paths, an unbound slot, and ambiguous anchors.
-3. Enable recording and inspector feedback. Review false positives, misses,
+3. Add the reply checklist (decision 6): post-turn on delivered replies, and
+   in-turn on drafts beside the reply audit, recording only.
+4. Enable recording and inspector feedback. Review false positives, misses,
    access boundaries, and latency before adding reply instructions.
-4. Wire all five consumers and run fixtures and complete-turn replay. Enable
+5. Wire all five consumers and run fixtures and complete-turn replay. Enable
    exact/redo injection when fixtures pass, reviewed matches have acceptable
    precision, answer correctness does not regress, and latency is acceptable.
    Record precision and latency targets before evaluating the held-out set.
-5. Consider approximate injection only if measured misses justify it. The
+6. Consider approximate injection only if measured misses justify it. The
    candidate is the `confirmed` kind: its recorded probabilities against the
    operator's verdicts decide whether, and at which confirm threshold, it may
    join chains. Embeddings can broaden the shortlist but do not distinguish a
