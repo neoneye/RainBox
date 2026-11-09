@@ -25,7 +25,7 @@ process. The proposals in this series add more:
 | verdict detection | verdicts, decision 2 | `repeat_confirm` | before the next turn, ideally |
 | hedge flags | verdicts, decision 2 | `repeat_confirm` | before the next turn, ideally |
 | topic naming, after a turn-start `none` | digest, decision 2 | generative, short | before the next turn, ideally |
-| digest chunk node | digest, decision 5 | none | before the window passes the chunk |
+| digest chunk node | digest, decision 5 | none | once the window has passed the chunk |
 | digest `asked` phrase, if enabled | digest, decision 5 | generative | eventually |
 | digest backfill, if the operator runs it | digest, decision 5 | generative | eventually |
 
@@ -100,6 +100,13 @@ keeps polling every 2 seconds while a call runs. On turn activity it closes
 its request to the model server, records `deferred: turn`, and requeues the
 job. That is safe because every job is idempotent. The builder confirms that
 closing the request stops generation on the server, not only in the client.
+
+**Cancellation is capped at two per job.** While the operator chats actively,
+a turn can start before a summary finishes, again and again. Each cancelled
+attempt has already spent its heat, so endless cancelling costs more than
+finishing. After two cancellations, the third attempt runs to completion even
+if a turn starts, and its deadline (decision 4) bounds the overlap. Each
+cancellation is recorded with the model time it wasted.
 
 A decision-model request is allowed to finish. Its 4-second deadline
 (decision 4) bounds the overlap.

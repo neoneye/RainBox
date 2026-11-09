@@ -129,8 +129,9 @@ from records. The history window starts at a stored chunk edge.
 - **Cons:**
   - Status needs step 3 to say anything stronger than `quiet`.
   - Topic naming adds a short generative call when a new topic appears.
-  - Topics only begin when recording begins, so older history gets none,
-    and its chunks show an exchange count only.
+  - Topics only begin when recording begins. Older chunks show their run
+    outcomes and exact repeats from existing records, under `?`, with no
+    topic names.
   - The aligned window changes which messages the history holds, so it needs
     the same `record` phase as the rest.
 
@@ -225,11 +226,11 @@ These cost little, collect data, and change nothing.
    that the Fibonacci shape was given up for it. Level 2 is derived from
    records, never generated from level 1 text, so no text in the digest is a
    summary of a summary.
-3. **Backfill for old rooms.** Topics start when recording starts, so chunks
-   older than that have no records and show an exchange count only. The
-   step 6 job can write generated text for them (about 0.1 calls per
-   message, level 1 only). This is the one place where generated text has no
-   record-derived alternative. Running it is a one-off budget decision. The
+3. **Backfill for old rooms.** Topics start when recording starts. Older
+   chunks still render their run outcomes and exact repeats from existing
+   records, but no topic names. The step 6 job can write `asked` text and
+   display-only topic names for them (about 0.1 calls per message, level 1
+   only). Topic names are the one thing with no record-derived alternative. Running it is a one-off budget decision. The
    machine takes 10 to 15 calls in a row before it needs a 60-second
    cool-down, so a long room's backlog trickles through idle time over days.
    Assigning topics to old exchanges would go against the "records are

@@ -198,7 +198,20 @@ A model can add one thing the records do not hold: a phrase saying what was
 asked, in kind. That phrase is optional (below).
 
 **What is stored.** One node per level 1 chunk. Housekeeping writes it once,
-with no model call, when the chunk's tenth counted message exists.
+with no model call, when the window has moved past the chunk: when at least
+30 counted messages follow its last one. Until then the chunk is inside the
+window, shown verbatim, and needs no node.
+
+**Why the node waits for the window.** Two things change the newest messages
+after they are posted:
+- **A retry rewinds.** `delete_room_messages_from` in `db/chat.py` deletes
+  every message from the retried turn's anchor onward.
+- **A reply streams in place.** Its row is updated until `streaming` is
+  false.
+
+A node written at the chunk's tenth message could have its edge deleted by
+the next retry, or hash a reply that was still streaming. By the time 30
+counted messages follow a chunk, both are settled, so its edges and hash hold.
 
 ```
 room_digest_node  uuid, room_uuid, first_message, last_message,
@@ -206,7 +219,8 @@ room_digest_node  uuid, room_uuid, first_message, last_message,
                   asked, asked_topics, model, created_at
 ```
 
-- `first_message`, `last_message`: the edges, as message UUIDs.
+- `first_message`, `last_message`: the edges, as message UUIDs, with their
+  integer ids in `first_index` and `last_index`.
 - `content_hash`: over the ids and texts of the chunk's counted messages,
   taken when the node is written.
 - `provenance`: the run ids the chunk covers, and whether any of them used
@@ -229,18 +243,34 @@ through one function that both the window and the chunk job call.
 - Per-call filters such as `history_skip` apply after the window is cut, as
   they do today, and never move an edge.
 
-**Edges are stored, not recomputed.** The next chunk starts at the counted
-message after the previous node's `last_message`. A message deleted later
-renumbers nothing already written. One function gives every edge: the newest
-node's `last_message`, then every 10th counted message after it. The window
-start and the chunk job both call it, so a deletion cannot make them
-disagree.
+**Edges are stored, not recomputed.** The next chunk starts at the first
+counted message whose id is greater than the previous node's `last_index`.
+Message ids only grow, so this holds even when that last message has since
+been deleted. A message deleted later renumbers nothing already written. One
+function gives every edge: the newest node's `last_index`, then every 10th
+counted message after it. The window start and the chunk job both call it,
+so a deletion cannot make them disagree.
+
+**A rewind that reaches into a written node** (a retry of a turn more than 30
+messages back) is rare, and handled without re-cutting:
+- the node stands, and now covers fewer than 10 counted messages, or none;
+- its record-derived part renders from the rows that remain;
+- its generated text is withheld, because its hash no longer matches;
+- the messages posted after the rewind fill new chunks after the newest
+  node's `last_index`.
 
 **Edits and deletions.** At render, a node's `content_hash` is recomputed over
 its range. On a mismatch, from an edit or a deletion, the record-derived part
 renders as usual, because it reads the current rows. Any generated text is
 withheld, the same way as under the provenance rule (decision 8). Nothing is
 rewritten.
+
+**Outcomes are kept per topic within a chunk.** A chunk lists each of its
+topics with that topic's own exchange count and outcome: verdicts, repeats,
+failed runs. A chunk-wide outcome would not say which of its three topics had
+the rejected answer. Exchanges with no topic are grouped under `?`. Level 2
+aggregates the same per-topic lines over its 100 messages, which makes it
+the operator's tag table: topic, chunks, outcome.
 
 **Crossing an edge is derived too.** A topic continues across an edge when
 the last exchange before it and the first after it share a topic in
@@ -333,10 +363,24 @@ asked in it: "conversions between metric and imperial units" against
 Level 2 never gets a phrase.
 
 **Rooms that predate the digest.** Chunks older than topic recording have no
-records to derive from, so they render as an exchange count only. This is the
-one place where generated text clearly earns its cost. A backfill job writes
-`asked` and `asked_topics` for each such level 1 chunk, with the same margins,
-input rule and screen. Whether to run it is a separate decision. A room of
+topic records, but they are not without records:
+- **Runs.** Every exchange the assistant answered has an `assistant_run` row
+  with its status and the run summarizer's outcome (`resolved`, `partial`,
+  `failed`). A run is matched to its exchange through its journal payload,
+  the recovery path the repeat proposal names for runs older than
+  `metadata_["request_message"]`.
+- **Exact repeats.** The repeat proposal's exact matcher is a pure function
+  of message text. For an old chunk it runs at render time over the chunk
+  and the chunks before it. Its result is shown, never stored as repeat
+  records.
+
+So an old chunk renders its exchange count, its runs by outcome and its
+exact repeats, all under `?`, with no topics. Topic names are the one thing
+missing, and that is where generated text earns its cost. A backfill job
+writes `asked` and `asked_topics` for each such level 1 chunk, with the same
+margins, input rule and screen. `asked_topics` are names for display only.
+They are not `exchange_topic` records, so no topic is assigned to an old
+exchange after the fact. Whether to run it is a separate decision. A room of
 2,000 messages is about 200 generative calls, since level 2 is never
 generated. At the housekeeping limit of 10 calls per burst with a 60-second
 cool-down, that is 20 bursts, so it can only trickle through idle time, never
@@ -385,10 +429,18 @@ inherited one.
   </topics>
   <timeline>…collapsed lines…</timeline>
   <earlier>
-    <chunk level="2" messages="0-99" exchanges="41"
-           topics="assistant-self,memory-check"/>
-    <chunk level="1" messages="100-109" exchanges="4" topics="kanban-status"
-           outcome="1 marked wrong, 1 repeat"/>
+    <chunk level="2" messages="0-99" exchanges="48" before_topics="true">
+      <topic slug="?" exchanges="48" outcome="33 resolved, 12 partial, 3 failed, 6 exact repeats"/>
+    </chunk>
+    <chunk level="2" messages="100-199" exchanges="50">
+      <topic slug="unit-conversion" chunks="1-2" exchanges="4" outcome="4 resolved"/>
+      <topic slug="kanban-status" chunks="3-7" exchanges="11" outcome="10 resolved, 1 marked wrong"/>
+      …
+    </chunk>
+    <chunk level="1" messages="200-209" exchanges="5">
+      <topic slug="kanban-status" exchanges="3" outcome="2 resolved, 1 partial"/>
+      <topic slug="letter-count" exchanges="2" outcome="1 repeat, 1 failed run"/>
+    </chunk>
     …
   </earlier>
 </room_digest>
@@ -478,9 +530,12 @@ on the request path.
 - **No answer leakage.** Across the scripted rooms, no rendered generated
   text states the content of an answer. The screen's misses are counted
   here.
-- **Edges.** After deletions and edits in a scripted room, the window starts
-  on a stored edge, no message is shown both verbatim and in a chunk, and
-  generated text whose `content_hash` no longer matches is withheld.
+- **Edges.** After deletions, edits and retry rewinds in a scripted room:
+  - the window starts on a stored edge;
+  - no message is shown both verbatim and in a chunk;
+  - generated text whose `content_hash` no longer matches is withheld;
+  - a rewind deeper than 30 messages leaves a short node standing, and new
+    messages chunk after it.
 - **Cost.**
   - The turn-start Choice: its added latency, on top of the request profile
     it shares a call with.
