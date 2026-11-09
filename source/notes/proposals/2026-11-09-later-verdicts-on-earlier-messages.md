@@ -56,6 +56,7 @@ message_verdict
   target_author            'assistant' | 'human'
   target_run_uuid          the run that produced it, for assistant replies
   verdict                  'wrong' | 'right' | 'doubted' | 'unsure_at_time' | 'cleared'
+                           | 'computed_differently' | 'computed_same'
   source                   'operator_mark' | 'operator_message' | 'computation' | 'self'
   evidence_message_uuid    the message that carried the verdict, when there is one
   evidence_run_uuid        the run that detected or computed it
@@ -71,8 +72,11 @@ message is chosen by these rules:
 1. **Operator marks outrank everything.** A mark set by hand wins over any
    detected verdict, whatever its age.
 2. **Then the operator's own words**, detected from a message.
-3. **Then computation.**
-4. **Within one source, the newest row wins.**
+3. **Within one source, the newest row wins.**
+
+Computation is not in this order: it records evidence, not a judgement. The
+newest `computed_*` row is shown *beside* the current judgement, and never
+replaces it.
 
 Every row is kept, so the inspector can show how a message's standing
 changed.
@@ -105,7 +109,7 @@ source `operator_vote`. It is not copied into the new table.
 |---|---|---|
 | `operator_mark` | the operator marks a message on /assistant or in the room | `wrong`, `right`, `cleared` |
 | `operator_message` | a message of theirs says an earlier message was wrong, right, or doubtful | `wrong`, `right`, `doubted` |
-| `computation` | a later run in the same repeat chain answered by executed computation, and its answer differs from, or matches, the earlier reply | `wrong`, `right` |
+| `computation` | a later run in the same repeat chain answered by executed computation, and its answer differs from, or matches, the earlier reply | `computed_differently`, `computed_same` |
 | `self` | a human message states something its writer says they are unsure of | `unsure_at_time` |
 
 **`operator_message`: detection, after the turn.** It runs in the post-turn
@@ -139,8 +143,14 @@ for every turn after it.
   yes`, is compared with each earlier attempt's reply. The question is the
   same-answer Noul: "Do the two replies give the same answer to the
   request?".
-- **What it writes.** ≥ 0.8 writes `right` on the earlier reply; ≤ 0.2 writes
-  `wrong`; anything between writes nothing.
+- **What it writes.** ≥ 0.8 writes `computed_same` on the earlier reply; ≤ 0.2
+  writes `computed_differently`; anything between writes nothing.
+- **Why not `wrong` or `right`.** A successful `python_run` proves that the
+  program ran, not that it computed what was asked. The program or its inputs
+  can be the mistake. So a computation records what it found, a later
+  computed answer that differs or agrees, and never a judgement. Only the
+  operator, by mark or in their own words, makes an earlier message `wrong`
+  or `right`.
 - **Why only computation.** Reads of stored data are excluded on purpose.
   Stored facts and live state change between turns, so a different answer
   from a later read is not evidence that the earlier answer was wrong when it
@@ -178,6 +188,17 @@ it, and a hedged statement says so:
 it is in the window. A verdict whose evidence has scrolled out still shows,
 which is the point.
 
+**Which verdicts a turn sees, and how they are bound:**
+- **Bound to the exact message.** Each rendered verdict carries its record
+  id, source, value and time, on the exact message UUID it judges. It never
+  goes on every reply of a run, or on every attempt in a chain.
+- **Chosen once per turn.** The turn takes the current verdicts once, at the
+  start, from records that exist then. Only verdicts whose evidence message
+  precedes the triggering message and sits inside the same context boundary
+  count. The result is frozen for every step and every consumer of the turn.
+- **Frozen, even if a new verdict lands mid-turn.** A verdict written during
+  the turn waits for the next one.
+
 **In `repeated_request`**, each attempt carries its current verdict as
 `later_verdict=`. An attempt judged `wrong` is the clearest possible signal
 that the loop must not repeat that answer.
@@ -192,7 +213,9 @@ answers:
 > user agreed at that time. It still does not replace a fresh read for data
 > that changes. `doubted` means the user questioned it, and nothing was
 > settled. A statement marked `stated_as` unsure, with no later verdict, is a
-> guess. Do not present it as an established fact.
+> guess. Do not present it as an established fact. `computed_differently`
+> means a later computation gave a different answer. That is a reason to
+> verify, not proof that either answer is right.
 
 **The audit** gets the same verdict attributes in its own history. A reply
 that repeats an answer judged `wrong` is a defect it can name.
@@ -221,13 +244,26 @@ A `right` on a message whose claim came from an `unsure_at_time` statement
 adds a `confirmed_by_user` evidence row. That provenance already exists, and
 the confirmation is exactly what it describes.
 
-### 5. The decision model, as in the repeat proposal
+### 5. The decision model, bound explicitly
 
-Every detector here runs on the `assistant.repeat_check` slot's local
-decision models. The same rules apply: loopback only, no fallback, and
-`unknown` with a reason when unbound. Detection runs after the turn, so latency
-is not on the request path. That is why everything here runs on **d3:4b**,
-which scored better on all three checks below.
+Every detector here runs on **`assistant.repeat_confirm`**, the repeat
+proposal's confirmation slot. That proposal leaves the slot available to
+verdict detectors, and asks this one to name its slot, not assume a group
+member. Its fast slot, `assistant.repeat_check`, is not used here.
+
+The repeat proposal's binding rules apply unchanged:
+- **Loopback provider and verified local execution.** A local Ollama server
+  relays a cloud model when its name carries `:cloud`, so a loopback host
+  alone is not enough. Cloud-backed and unknown-locality models are
+  rejected, and the check is repeated when a queued job executes.
+- **No fallback to `assistant.default`.**
+- **`unknown` with a reason when unbound.**
+- **Model digest, server version and question version recorded on every
+  check.**
+
+Detection runs after the turn, so latency is not on the request path. That is
+why the confirmation slot, with **d3:4b** in the probe, fits here: it scored
+better on all three checks below.
 
 **What the probe showed.** One run each, on hand-written cases. The scripts
 are kept out of the repo.

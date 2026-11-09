@@ -775,8 +775,14 @@ not required deployment models or latency guarantees.
 | identity fan-out, 14 pairs in one request | 0.39 s | 4.6 s | screen on d1 proposed |
 
 The five-option Choice was reported to give no wrong accepted label on d1
-at ≥ 0.8, with several abstentions. The accepted-count denominator was not
-reported, so neither coverage nor a robust precision estimate follows. The
+at ≥ 0.8. Recounted from the raw output, 37 of the 51 classifications cleared
+the band:
+- 13 of 17 with the message alone;
+- 14 after the Strawberry request;
+- 10 after the README fix.
+
+That is 73% coverage and 0 of 37 accepted wrong. It is still one run on
+selected cases, not a precision estimate. The
 51 Choice classifications are separate from the two 14-case experiments;
 "28 cases" is not the total evidence base.
 
