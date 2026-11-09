@@ -214,7 +214,9 @@ These cost little, collect data, and change nothing.
 3. **Backfill for old rooms.** Topics start when recording starts. Chunks
    depend only on the message count, so old history can be chunked by the
    same job (about 0.11 calls per message), with empty topic lists. Running
-   it over old history is a one-off budget decision. Assigning topics to old
+   it over old history is a one-off budget decision. The machine takes 10
+   to 15 calls in a row before it needs a 60-second cool-down, so a long
+   room's backlog trickles through idle time over days. Assigning topics to old
    exchanges would go against the "records are written when things happen"
    rule.
 4. **Cross-room eligibility.** The proposal excludes bridged rooms and rooms

@@ -82,9 +82,12 @@ caps them at two decision calls per turn.
 
 ### 3. A heat and time budget
 
-- **Generative housekeeping is budgeted:** at most 10 minutes of generative
-  model time per rolling hour. Decision-model calls are cheap and are not
-  counted.
+- **Generative calls run in bursts of at most 10, then cool down for 60
+  seconds.** The operator's measure of what this machine takes without
+  overheating is 10 to 15 calls in a row, followed by a 60-second sleep, so
+  the burst uses the low end. On top of that, generative housekeeping uses
+  at most 10 minutes of model time per rolling hour. Decision-model calls
+  are cheap and are not counted.
 - **When the budget is exhausted, generative jobs wait** and decision-model
   jobs continue. Digest chunks are the first to defer, because they are the
   only job nobody is waiting for.

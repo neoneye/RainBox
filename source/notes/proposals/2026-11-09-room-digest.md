@@ -291,8 +291,10 @@ summaries that are written once and never invalidated.
 **Rooms that predate the digest.** Chunks depend only on the message count,
 not on topic records, so an existing room's history can be chunked by the
 same job, run over a backlog. Chunks older than topic recording have empty
-`topics` lists. Whether to run that backlog is a separate decision: a room
-of 2,000 messages is about 220 generative calls.
+`topics` lists. Whether to run that backlog is a separate decision. A room
+of 2,000 messages is about 220 generative calls. At the housekeeping limit
+of 10 calls per burst with a 60-second cool-down, that is 22 bursts, so it
+can only trickle through idle time, never run in one go.
 
 **What a summary may say.** At most 300 characters per chunk:
 - which topics came up;
