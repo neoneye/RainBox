@@ -58,6 +58,13 @@ redos can reach the prompt; approximate matches are recorded for evaluation.
 Neither a text match nor a classifier result proves that an earlier reply was
 wrong. Six decisions shape the design.
 
+The release boundary is explicit: **only exact/redo context affects replies**.
+Task-identity confirmation and reply checklists are experiments: their scores
+appear in the inspector, never in prompts or acceptance decisions. Identity
+experiments run after the turn; draft checklist experiments have a small,
+fixed budget. Neither experiment is a prerequisite for shipping repeat context.
+The mode table under *Rollout* governs every call.
+
 ### 1. Find candidates without confusing similar wording with the same task
 
 **Scope and identity.** Take the room's most recent 1,000 human messages
@@ -147,194 +154,122 @@ letters" changes the answer. Approximate candidates therefore neither join
 chains nor trigger acknowledgements in the first release. Promoting them
 requires an evaluated task-identity check, not just a lower threshold.
 
-**Task-identity check.** That check is a decision model (see *The decision
-model* below), asked one yes/no question per candidate pair: *does the current
-message ask for the same task, with the same inputs, as the earlier one?* It
-runs in two stages, the docs' "screen with a Noul first" pattern:
+**Short-message resolution comes before approximate identity checking.** A
+short message may be a complete question, an action, a follow-up, or an
+acknowledgement. Length does not determine its intent. Use one five-option
+Choice, with the complete current message, the immediate predecessor, and the
+predecessor's resolved request path. Do not supply earlier assistant replies.
 
-1. **Shortlist (code).** Take up to 8 candidates: the highest weighted-overlap
-   scores with no threshold, plus the immediate predecessor when eligible.
-   Pairs the numeric/quoted-input guard rejects never reach the model; that
-   guard is free and exact. Requiring only a shared token, not a 0.6
-   overlap, lets a rephrasing or another language in. "hvor mange r er der i
-   strawberry" shares two tokens with "count the R's in Strawberry".
-2. **Screen (d1:3b, one request).** All shortlisted pairs go in one fan-out
-   request, one Noul each. In the probe, 14 candidates took 0.4 s. The screen
-   is tuned for recall: it passes anything ≥ 0.5.
-3. **Confirm (d3:4b, one request per survivor).** Usually zero to two
-   survivors, at about 0.3 s each. A candidate is `confirmed` only when the
-   confirming Noul is ≥ 0.8.
+The trigger is: no eligible exact match; current text at most 120 Unicode
+code points; the latest earlier human message in the room belongs to this
+sender and has a run by this agent, within 6 hours and the same context
+boundary. Do not skip a newer unanswered message. Known redo or command
+messages must take this path even when their text matches an older message.
 
-Both models must say yes. In the probe the two made different mistakes:
-- d1 passed "count the R's in raspberry" (0.68); d3 rejected it (0.05).
-- d3 rejected the method refinement "… use python for counting" (0.17), which
-  d1 got right (0.97). That costs a miss, which is the safe direction.
+| option | meaning | effect in the first release |
+|---|---|---|
+| `redo` | another attempt at the predecessor's task with the same inputs, including a short complete restatement or a method refinement | join that task's chain after validating its anchor |
+| `expand` | more of, or more detail on, the previous reply | no repeat relation |
+| `command` | an action expressed as its own request | consider only an adjacent exact repetition of that command |
+| `acknowledge` | agreement or acknowledgement that asks for no work | no repeat relation |
+| `new_request` | a different task or the same operation on different inputs | no relation on this path |
 
-`confirmed` is a fourth approximate kind. In the first release it is recorded
-with both probabilities, still **recording only**. The recording week then
-measures the identity check itself against the operator's verdicts. Rollout
-step 6 promotes it on that data, not on the probe below.
+These descriptions become versioned instructions, without example phrases.
+The top option is accepted only at probability ≥ 0.8; otherwise resolution is
+`unknown`. Record all five scores. Short complete requests such as `2+2?`
+and short Chinese questions must be in the evaluation set: they are not
+commands merely because they fit this path.
 
-The check never runs for exact matches, and never when the setting is `off`.
+For `command`, adjacent equal text establishes repeated wording, not an
+identical write target, a failed earlier execution, or permission to replay a
+side effect. Treat it as an `exact` relation with basis `adjacent_command`
+only when the immediate predecessor matches and no intervening human request
+exists. The acting loop must inspect current state and ordinary authorization.
+The same command after other work does not inherit the old command's chain.
+`expand` and `acknowledge` must never acquire chains from text equality.
 
-**Short messages.** A short message is usually a command, not a request
-with a subject: "elaborate", "more", "retry", "try again", "commit", "push".
-Comparing it with the previous request ("is *retry* the same as *count the R's
-in Strawberry*?") asks the wrong question. Most short commands are not
-repeats at all:
+Use the fast decision slot, once, with a 2-second end-to-end deadline and a
+2,000-character budget for complete input data. Missing context, oversized
+input, invalid output, or timeout produces `unknown` with a reason. Do not
+truncate a task to classify it. Only eligible short messages incur this call;
+longer redos and ambiguous group references remain first-release limitations.
 
-- **"elaborate" and "more"** act on the previous *reply*;
-- **"commit" and "push"** are actions of their own;
-- **"thanks"** asks for nothing;
-- **"retry" and "again"** are the ones that ask for the previous task again.
+**Approximate identity is a separate, post-turn experiment.** It asks whether
+two complete requests name the same task and inputs. It does not classify
+bare follow-ups as standalone tasks. Resolve short-message intent first;
+`expand`, `acknowledge`, and unresolved implicit references are excluded.
 
-So the short-message path first classifies what the message **does**. Only
-one of the answers leads to a chain. There is no list of command words:
+1. **Retrieve, in code.** Reserve one of at most 8 slots for the eligible
+   predecessor, then fill the rest by weighted overlap, newest first on ties.
+   Other candidates need at least one shared lexical token, but no 0.6
+   threshold. Deduplicate by message ID. Changed numeric/quoted-input guards
+   still apply. This admits some cross-language rephrasings with shared terms;
+   it cannot retrieve arbitrary translations with no shared vocabulary.
+2. **Screen, on the fast slot.** One request contains a named Noul per pair.
+   Keep each earlier message in a data field, identified by that question's
+   fixed instruction; do not promote message text into instructions. A screen
+   probability ≥ 0.5 makes a pair eligible for confirmation, not a match.
+3. **Confirm, on the confirmation slot.** Check at most two survivors,
+   highest screen score first, then retrieval score and recency. One Noul per
+   request; ≥ 0.8 records `confirmation.status="confirmed"`. Lower valid
+   scores are `not_confirmed`; untested or failed pairs are `unknown`, not
+   negative examples.
 
-- **Trigger:** no eligible exact match; current text at most 120 Unicode code
-  points; the latest earlier human message in the room is from this sender
-  and has a run by this agent, within 6 hours and the same context boundary.
-  Do not skip a newer unanswered message to find a convenient older anchor.
-- **Input:** current message, immediate predecessor, and its resolved
-  request context when the predecessor is itself a redo, including method
-  refinements (decision 3). The predecessor matters. "recount" alone was
-  ambiguous in the probe (0.40), and after a counting request it was clearly a
-  redo (0.95). Do not supply old assistant answers.
-- **Question:** one Choice with five options, each a description (no example
-  phrases):
+Keep retrieval kinds (`same`, `extended`, `rephrased`, or `predecessor`) and
+confirmation status separately. Record both probabilities and both model
+identities. Do not multiply scores or assume independent errors. In this
+release **even confirmed pairs cannot join chains or reach prompts**.
 
-  | option | what it means | effect |
-  |---|---|---|
-  | `redo` | another attempt at the previous request, same task and inputs; a method change ("check it with Python") counts | joins the predecessor's chain as kind `redo` |
-  | `expand` | more of, or more detail on, the previous reply | none: not a repeat |
-  | `command` | a standalone action of its own | a repeat only of the same command (below) |
-  | `acknowledge` | thanks, agreement; asks for nothing | none |
-  | `new_request` | something new, or the previous task on a different input | none on this path |
+Budget one screen call at 2 seconds and two confirmation calls at 1 second
+each, with a 4-second total deadline including loading and queue time. Use
+at most 16,000 characters of complete pair data across the screen; drop whole
+lowest-ranked pairs that do not fit. Each confirmation has a 4,000-character
+data cap. Skips are recorded. One job per captured turn, with no retry or
+fallback cascade; do not fan out confirmation calls against the local GPU.
+The job reads that turn's frozen candidate snapshot, never later room messages,
+and writes diagnostics without modifying its chain or prompt snapshot.
 
-- **Output:** the top option counts only when its probability is ≥ 0.8.
-  Otherwise, or on any failure, the result is `unknown`, which adds nothing.
-  Record all five probabilities, not just the winner, so the band can be tuned
-  on the operator's verdicts.
-- **Repeated commands.** A `command` is its own task, so it can be repeated as
-  itself. "push" sent again right after a "push" is a retry of the push. That
-  holds only when the sender's immediately previous request is the same
-  command (exact text, within 6 hours, same context boundary). Two "commit"s
-  with other work between them are two separate commits, not a chain. This
-  replaces the blanket rule that short messages never match exactly: the
-  rule's worry, unrelated "again"s merging into one chain, cannot arise,
-  because an "again" is classified `redo` and anchors on its predecessor
-  instead.
-- **Limits:** one request on `d1:3b`, a 2-second end-to-end deadline, no
-  fallback cascade. Record model, probabilities, result, and elapsed time as a
-  code-driven step. If the complete inputs exceed a 2,000-character data
-  budget, skip as `unknown`; do not classify a cut task as if it were whole.
+**Decision-model contract.** System One returns typed scores for a shared
+state and named questions. The Ollama request is `{model, state, questions}`;
+questions use `type: "noul"` or `type: "choice"`. Require support for the five
+options above. The endpoint returns scores rather than a prose answer; no
+universal single-pass or zero-decoding guarantee is assumed. See the official
+[endpoint reference](https://docs.ollama.com/api/systemone).
 
-Failure must not prevent the ordinary turn from proceeding. Every short
-message triggers the call, so measure its hit rate and latency. Longer redos
-and ambiguous group-room references remain first-release limitations.
+Read a Noul from `answers[name].noul` and a Choice from
+`answers[name].probabilities[choice]`. Do not threshold `confidence`, which
+measures how strongly a Choice distribution favors an option. Check expected
+question/option keys, finite values in [0, 1], and a normalized Choice
+probability sum within rounding tolerance. Missing, extra, or invalid results
+produce `unknown`. Scores are model estimates; calibration on these tasks
+must be measured. See the [decision guide](https://docs.ollama.com/capabilities/decision).
 
-**The decision model.** Both checks run on a System One decision model, not
-on the generative models the loop uses.
+Two bindings make stage selection explicit:
 
-- **What it is.** A System One model reads a state plus typed questions, and
-  returns calibrated probabilities instead of generated text. A Noul is a
-  yes/no question answered with P(yes). A Choice picks one of up to 255 named
-  options. The Jev family is the hosted line of these models. Ollama 0.40.15
-  serves the same format locally at `POST /v1/systemone`, and models with the
-  `decision` capability answer it. Two are installed:
-  - `d1:3b`: lfm2, 2.7B parameters, Q8;
-  - `d3:4b`: qwen3.5, 4.5B parameters, mxfp8.
-- **Request shape.**
-  - **Short message:** the state is
-    `{"previous_request": …, "short_message": …}`, with one
-    `{"type": "choice", "instructions": …, "criteria": {five options}}`.
-  - **Identity:** the state is `{"earlier_message": …, "current_message": …}`,
-    with one `{"type": "noul", "instructions": …}`. The instruction states the
-    boundary: a different object, number, unit, direction or constraint is a
-    different task, while different wording, language or requested method is
-    not.
-  - **Fan-out screen:** the earlier message goes inside each question's
-    structured `instructions` instead, so the state carries only the current
-    message.
+| proposed slot | role | reported probe model |
+|---|---|---|
+| `assistant.repeat_check` | short-message Choice, identity screen, reply checklist | `d1:3b` |
+| `assistant.repeat_confirm` | identity confirmation; available to separate verdict detectors | `d3:4b` |
 
-  No instruction or option description contains an example phrase.
-- **Why a decision model and not a plain-text yes/no call.**
-  - **Speed.** It answers from one forward pass, with nothing decoded. In
-    the probe a short-message Choice took 0.12 s on d1, and an identity Noul
-    0.09 s on d1 and 0.3 s on d3. A generative call on the decide model takes
-    seconds and loads the GPU the turn is about to need.
-  - **Probabilities.** It returns a probability, so the bands are thresholds
-    in code, tuned on verdicts, rather than a model's guess at `yes` / `no`
-    / `unknown`.
-- **Binding.** It gets a new model slot, `assistant.repeat_check`, bound to a
-  model group whose members are System One models on a loopback host. Two
-  rules, unlike other `assistant.*` slots:
-  - **No fallback to `assistant.default`.** A generative group cannot answer
-    a System One request. Unbound means both checks record `unknown` with
-    reason `no_decision_model`, and exact matching still works.
-  - **Remote members are refused**, so `assistant_models_all_local()` stays
-    true wherever it was. The inputs are the operator's own messages.
+Resolve the first eligible member of each binding once per turn. There is no
+fallback to `assistant.default`, no positional interpretation of two members
+in one group, and no model download on the request path. A missing fast slot
+skips its checks; a missing confirmation slot skips confirmation only. Exact
+matching continues in either case. The separate later-verdict proposal must
+select its intended role explicitly rather than assume a group member.
 
-**What the probe showed.** One run each, on hand-written cases:
-- 14 identity pairs;
-- 14 short messages asked as a yes/no redo Noul after "count the number of
-  R's in Strawberry";
-- 17 short messages (commands, redos, follow-ups, acknowledgements) asked as
-  the five-option Choice. Each was asked three ways: alone, after the
-  Strawberry request, and after "fix the typo in the README".
+Both bindings require a loopback provider **and verified local execution**.
+A local Ollama endpoint can relay a cloud model; a loopback hostname alone is
+insufficient. Reject cloud-backed models and unknown locality, rechecking at
+execution time for queued jobs. Apply the existing source-eligibility rules
+as well. See [Ollama's cloud routing](https://docs.ollama.com/capabilities/decision#use-a-cloud-model).
+Include these slots in the assistant's model-locality accounting; do not
+assume that the existing helper already knows about them.
 
-The scripts are kept out of the repo. Accuracy (top answer, or yes at 0.5):
-
-| check | d1:3b | d3:4b | both must say yes |
-|---|---|---|---|
-| identity, per pair | 13/14, 0.09 s median | 13/14, 0.32 s median | 13/14, no false yes |
-| redo as a yes/no Noul | 11/14, 0.08 s median | 13/14, 0.32 s median | 13/14, no false yes |
-| short message as a Choice (51 classifications) | 47/51, 0.12 s median | 46/51, 0.43 s median | (d1 alone) |
-| identity fan-out, 14 questions in one request | 0.39 s | 4.6 s | (screen on d1) |
-
-**The Choice beats the yes/no question for short messages.** Asked "is
-*elaborate* a redo?", d1 had no better answer than yes (0.72). Given an
-`expand` option, it put "elaborate" there with 0.92–0.95 in every context.
-
-With the ≥ 0.8 band, d1 gave **no wrong label** in the 51 classifications.
-After a previous request, the ones that missed the band became `unknown`:
-- "more" (0.67 expand, and 0.55 redo after the README fix);
-- "why?";
-- "igen";
-- "and for raspberry?" after the README fix;
-- three commands after the README fix (0.75–0.79).
-
-"commit", "push", "deploy" and "run the tests" were `command` at 0.87–0.94
-in the other two contexts. d3 was slower and less sure of commands (it called
-"commit" after the Strawberry request an acknowledgement, at 0.61), so the
-short-message check runs on d1.
-
-What it shows:
-- **Changed inputs are separated.** sqrt of 1764 against 1746, Tokyo against
-  Toronto, feet→m against m→feet: all ≤ 0.2 on both models. This is what
-  embeddings cannot tell apart. They are retrieval, and this is a decision.
-- **Paraphrases and another language are joined.** "how many r are in
-  strawberry?", the same question in Danish, and "weather forecast for paris
-  tomorrow?" all scored ≥ 0.95 on both.
-- **Redos in several forms are caught.** "again", "try again", "noch einmal",
-  "check it with python" and "are you sure? recount" all scored ≥ 0.9 on both.
-- **Some single words slip through.** The Danish single word "igen"
-  ("again") was missed in every framing. As a Noul it scored 0.04 and 0.12.
-  As a Choice it came out as command or acknowledge, at ≤ 0.68. Bare one-word
-  redos in a smaller language are the expected weak spot; the failure is
-  `unknown`, so no block.
-- **d1 over-accepts on pairs.** Asked as a yes/no identity question, d1 passed
-  "count the R's in raspberry" (0.68), and d3 put it under 0.3. That is why
-  identity needs both models. On short messages the Choice removed d1's
-  over-acceptance, so d1 is enough there.
-- **d3's fan-out scales poorly in this Ollama build.** 14 questions took 4.6 s
-  against 0.3 s for one, so d3 only confirms the screen's survivors.
-- **Fan-out probabilities are not per-pair probabilities.** In d1's fan-out,
-  every strawberry-shaped candidate scored about 0.91, raspberry included. The
-  screen's output is a shortlist, never a verdict.
-
-28 cases, one run, hand-written: enough to choose the shape, not the
-thresholds. The thresholds come from the recording week.
+Pin and record model digest, provider/server version, question-set version,
+and thresholds. Probe aliases are examples, not hard-coded model selection.
+The recorded measurements and their limits are collected under *Probe
+evidence* below.
 
 ### 2. Keep chains bounded, and make their counts honest
 
@@ -393,16 +328,14 @@ Each listed attempt contains:
 - **Summarizer outcome**, when available, labelled `summarizer_outcome`.
   This is a weak self-assessment, separate from run status. A confidently
   wrong answer can still have outcome `resolved`.
-- **Reply checks**, when that run recorded them (decision 6), as bands:
-  `answered="no"` means the delivered reply missed the point of its request.
-  The bands tell the two common retries apart:
-  - **The earlier reply missed the point.** Answer the question this time.
-  - **The earlier reply answered, and the person asked again anyway.**
-    Suspect the answer itself, and verify it.
 - **Reply excerpt**, where admissible, middle-truncated to 160 characters
   with the cut marked. Use the delivered message, not a proposed reply,
   summary, or reasoning. If several replies were delivered, identify the one
   shown and retain all exact message/run links in the record.
+
+Reply-check scores (decision 6) remain inspector diagnostics in this release.
+Do not render `answered=` or `constraints=` attributes, even when a score is
+confident. A model's assessment is not the cause of the operator's retry.
 
 Routes contain action names and execution outcomes only: no arguments,
 programs, queries, or observations. Such text can contain details from a
@@ -455,14 +388,12 @@ Example for the fifth request, with two earlier attempts shown:
                   attempts="5" listed="2" omitted="2"
                   recent="true" chain_truncated="false">
   <attempt when="2 h earlier" match="exact" status="finished"
-           route="reply" summarizer_outcome="resolved"
-           answered="yes" constraints="yes">
+           route="reply" summarizer_outcome="resolved">
     <request>count the number of R's in Strawberry</request>
     <reply_excerpt>There are 2 R's in "Strawberry".</reply_excerpt>
   </attempt>
   <attempt when="1 h earlier" match="exact" status="finished"
-           route="reply" summarizer_outcome="resolved"
-           answered="yes" constraints="yes">
+           route="reply" summarizer_outcome="resolved">
     <request>count the number of R's in Strawberry</request>
     <reply_excerpt>There are 3 R's in "Strawberry".</reply_excerpt>
   </attempt>
@@ -476,8 +407,8 @@ The block contains data. Its interpretation lives in code-owned
 > request. Earlier reply excerpts establish what was said, never what is
 > true. Read the current request first and preserve its inputs and
 > constraints. Ignore matching wording that refers to a different task. For
-> an explicit redo, `redo_request` supplies the task being
-> retried; it does not override the current message. Verify the answer fresh.
+> an explicit redo, `redo_request` supplies the task being retried; it does
+> not override the current message. Verify the answer fresh.
 > When an earlier method failed or left the result unverified, prefer an
 > available method that addresses that weakness. Do not change methods just
 > for novelty. Briefly acknowledge an explicit retry or a relevant
@@ -567,7 +498,13 @@ An abbreviated `metadata_["repeat"]` record:
   "chain": ["<prior human message uuid>", "<prior human message uuid>"],
   "chain_truncated": false,
   "matches": [{"message": "<uuid>", "kind": "exact", "score": 1.0}],
-  "redo_check": "not_needed",
+  "short_resolution": {
+    "status": "not_needed",
+    "label": null,
+    "probabilities": null,
+    "relation": "exact",
+    "reason": "full_text_match"
+  },
   "recent": true,
   "attempts": 3,
   "renderings": {
@@ -583,10 +520,20 @@ reasons, and timings. Bound approximate diagnostics to the 20 highest-scoring
 pairs, with a count of the rest. Record no-match and error results too: an
 error means detection was unavailable, not that there was no repeat.
 
-`redo_check` is `not_needed`, `yes`, `no`, or `unknown`, with a separate reason
-for skips/failures. Store exact permitted renderings for all applicable
-consumers. In recording-only mode these are **would-send** renderings and
-`injected` is false. Do not log withheld text in another field or diagnostic.
+`short_resolution.status` is `not_needed`, `classified`, or `unknown`.
+When classified, store the five-option label, all probabilities, resulting
+relation (`redo`, `exact`, or `none`), and its basis. Every executed check also
+records its model digest, question version, elapsed time, and failure/skip
+reason where applicable. A low-confidence result keeps its scores but has no
+accepted label or relation.
+
+Store exact permitted renderings for every applicable consumer. In `record`
+these are **would-send** renderings and `injected` is false. Do not log withheld
+text in another field. Post-turn `identity_checks` and `reply_checks` are
+separate diagnostics: append them idempotently using a key-specific update,
+without replacing concurrent metadata or revising the original repeat result.
+Store inputs or immutable references sufficient to reproduce each check under
+the existing trace-access policy; that record grants no new prompt access.
 
 The recorded block explains a historical run. New live turns recheck
 eligibility rather than reinjecting old serialized blocks. Replaying a
@@ -604,106 +551,99 @@ matcher version.
 Earlier runs are not rewritten or retrospectively marked failed. A later
 retry is a new observation about the conversation, not a change to what the
 earlier run executed or delivered. Conversely, `resolved` is not proof that
-an earlier answer was correct. When the operator later says an attempt was
-wrong or right, that is a verdict record of its own, made where it happened
-([Later verdicts on earlier messages](2026-11-09-later-verdicts-on-earlier-messages.md)).
-Listed attempts carry its current verdict as `later_verdict=`.
+an earlier answer was correct.
 
-### 6. Check whether a reply got the point, over several parameters
+**Optional later-verdict integration.** The separate
+[verdict proposal](2026-11-09-later-verdicts-on-earlier-messages.md) is not a
+prerequisite. Only when it is implemented and `assistant.later_verdicts=on`
+may a listed reply carry a verdict. Bind it to that exact reply UUID, not to
+all replies or runs in an attempt. Include the verdict record ID, source,
+value, and time, not an unqualified `later_verdict="wrong"`.
 
-A repeat says *that* the person asked again, not *why*. The reply they got is
-half of the why: did it miss the point, ignore a constraint, or answer
-properly and still not convince? The same decision model answers that as a
-checklist: one fan-out request, one Noul per parameter, read in code.
+Select eligible verdicts once at the repeat snapshot: their records must
+exist at capture time and their evidence messages must not follow the current
+trigger or cross the context boundary. Apply that feature's access rules,
+then freeze the result for all steps. A missing or disabled dependency produces
+no verdict fields. Keep the same source labels in the audit.
 
-**The checklist.** The state is `{"request": …, "reply": …}`, plus the
-turn's acceptance criteria when that call ran, plus the earlier reply
-excerpts when `repeated_request` is present:
+A verdict reports a judgment, not proof of truth. In particular, successful
+Python execution plus an `answers: yes` score and a changed answer does not
+prove the earlier answer wrong: the program or its inputs could be wrong.
+This proposal must not create a correctness verdict from those signals or
+silently inherit that guarantee from the separate design.
 
-| check | question | when |
+### 6. Measure reply quality without making the checklist an authority
+
+A decision-model checklist can estimate whether a reply addresses the task
+and follows its constraints. It cannot establish why someone asked again,
+and it cannot establish factual correctness. In the first release it is
+**diagnostic in both `record` and `on`**: no scores enter later prompts, reject
+a draft, skip the existing audit, or create a later verdict.
+
+**Inputs.** Check the exact current request, complete resolved redo path when
+needed, proposed/delivered reply, and the frozen acceptance criteria if that
+call ran. Omit earlier reply excerpts: these questions do not need them.
+Supply only a code-owned flag indicating an eligible repeat for the optional
+acknowledgement measurement. Preserve task inputs and method refinements; a
+check against the word "again" alone is invalid.
+
+Missing or truncated required context means `unknown`, not a guessed score.
+The new consumer gets no general history or source access. Its current reply
+and criteria are processed only by a verified local model under the turn's
+access rules; queued checks revalidate eligibility before reading them.
+
+| check | question | interpretation |
 |---|---|---|
-| `answers` | Does the reply answer what the request asks, about the subject the request names? | always |
-| `constraints` | Does the reply follow every constraint the request states about format, length, method or scope? A request that states none passes. | always |
-| `criterion_processing`, `criterion_formatting`, `criterion_assumptions` | Does the reply follow this: *the criterion's text*? | one per non-empty acceptance-criteria field, when that call ran |
-| `acknowledges` | Does the reply say that this request was asked before? | `repeated_request` present and recent |
+| `answers` | Does the reply address the task and subject in the resolved request? | relevance estimate, not correctness |
+| `constraints` | Does the reply follow the explicit format, length, method, and scope constraints? | estimate; distinguish no stated constraint from a verified pass |
+| `criterion_processing`, `criterion_formatting`, `criterion_assumptions` | Does the reply follow this frozen criterion? | one per non-empty field; criteria are themselves model-derived |
+| `acknowledges` | Does the reply mention the retry or earlier attempts? | descriptive only, when repeat context exists; omission is not a defect |
 
-Code-checked facts sit beside them, with no model call:
-- whether a `python_run` actually executed and returned ok;
-- whether a read ran;
-- the reply's length.
+Code records executed actions and outcomes, successful reads, and reply
+length separately. A successful `python_run` proves that execution succeeded,
+not that it computed the intended result. The model is not asked to infer
+execution from a reply saying "I used Python". Correctness evaluation needs
+an independently established expected result or appropriate source evidence.
 
-The model is never asked what the code already knows.
+**Bands.** For each Noul, ≥ 0.8 is `yes`, ≤ 0.2 is `no`, otherwise `unclear`.
+Missing input/output or failed calls are `unknown`; a check that does not apply
+is `not_applicable`. None of these states is silently converted into a pass
+or failure. Retain raw scores and threshold version. The acknowledgement
+measurement never becomes a required opening merely because a repeat is recent.
 
-**Never asked: "is the answer correct?"** In the probe both models judged
-"There are 2 R's in Strawberry" correct (0.84 and 0.82). A classifier
-reading a reply cannot count letters any better than the model that wrote
-it. Correctness comes from executed computation and fresh reads, which is
-what the repeat rule pushes the loop towards. A question whose honest answer
-needs work is not a checklist item.
+**Two uses, one versioned checklist:**
 
-**Two places it runs, one checklist:**
+1. **Draft diagnostics.** Run beside the existing reply audit, without feeding
+   it the scores. At most two distinct drafts per turn, one fast-slot call
+   each. Bind each record to the step/draft hash and resolved input hash.
+   Repeated evaluation of the same input reuses the record. Further drafts
+   get `skipped: draft_limit`; they still receive the ordinary audit.
+2. **Delivered-reply diagnostics.** After the turn, check the exact delivered
+   reply UUID. Reuse a draft result only when its entire input hash matches,
+   including reply bytes, request path, criteria, flags, model, and checklist
+   version. Otherwise enqueue one bounded check. With multiple delivered
+   messages, record separate identities; initially evaluate at most the last
+   two and mark earlier messages skipped. No delivered reply means
+   `not_applicable`, not `answers: no`.
 
-1. **After the turn, on the delivered reply.** It runs beside the run
-   summarizer, enqueued at the same terminal states and off the request path.
-   It writes `metadata_["reply_checks"]` once, on that run, as part of the
-   run's own post-turn record, exactly as `summary` is written. It holds the
-   probabilities, the bands, the model, and the checklist version. A later
-   retry never revises it; the retry is recorded on the later run (decision
-   5). This is what fills `answered=` and `constraints=` on listed attempts.
-2. **In the turn, on the proposed reply, before the reply audit.** When the
-   loop chooses `reply`, the checklist runs on the draft. That is d1, about
-   0.16 s for three to five questions, and more with criteria. The result goes
-   on that reply step's row in /assistant, where it happened. In the first
-   release it is **recording only**: the generative reply audit still decides.
-   The checklist runs next to the audit, whose verdicts are stored, so the
-   recording week measures how far they agree:
-   - Does `answers: no` predict an audit rejection?
-   - Does the audit pass drafts the checklist flags?
-   - Does `acknowledges: no` on a recent repeat match what the operator
-     wanted?
+Each call has at most 6 questions, 8,000 characters of complete input data,
+and a 1-second wall-clock deadline including queue/load time. Oversized input
+is skipped whole, never cut to manufacture a judgment. Two draft checks add
+at most 2 seconds on the request path. Post-turn work is best-effort, at most
+two checks, idempotently keyed by run/reply/input hash/version; missing models
+or failures never retry through another model. These are initial limits to
+measure, not promises that a cold model will finish in time.
 
-   If the measurements show a clear `answers: no` is reliable, a later change
-   can return such a draft to the loop at once, naming the failed check, and
-   save the audit's seconds on that path. The generative audit stays for what
-   a checklist cannot judge: whether claims are supported, and whether facts
-   hold. That change is judged on this data, not made here.
+Persist draft records on their steps and delivered records under
+`metadata_["reply_checks"]`, merging only that key. Snapshot mode and versions
+with the job. Switching the feature `off` cancels pending checks before they
+start; later completion cannot retroactively alter a response or its repeat
+snapshot. Ordinary turn processing never waits for post-turn diagnostics.
 
-**Bands.** The same rule as the other checks: ≥ 0.8 is `yes`, ≤ 0.2 is
-`no`, and in between is `unclear`. Only `yes` and `no` reach a prompt.
-`unclear` is recorded, never rendered as either.
-
-**What the probe showed.** 12 hand-written (request, reply) pairs, one
-fan-out each, three of them with earlier replies. All pairs are invented:
-- a reply on the wrong subject;
-- the wrong conversion direction;
-- boards listed when tasks were asked;
-- a paragraph when three bullets were asked;
-- an ignored "use python";
-- correct, wrong, and acknowledging Strawberry replies.
-
-| check | d1:3b (0.16 s per reply) | d3:4b (0.9–2.2 s per reply) |
-|---|---|---|
-| `answers` | 12/12; in band 10 right, 0 wrong, 2 unclear | 12/12; in band 6 right, 0 wrong, 6 unclear |
-| `constraints` | 5/6; missed the ignored bullet format (0.69) | 5/6; same miss (0.56) |
-| `acknowledges` | 2/3 | 3/3 |
-| `correct` (not adopted) | 4/5; "2 R's" judged correct | 3/5; same |
-| "different answer, earlier one not called wrong" (not adopted) | 2/3 | 2/3 |
-
-What it shows:
-- **`answers` is the strongest signal.** The three replies that missed the
-  point scored 0.04–0.15 on d1.
-- **`constraints` catches a method the reply ignored, but not a format.**
-  The ignored "use python" scored 0.36 and 0.35. For methods, the code check
-  on the executed route is the reliable half; for formats the check is
-  recorded, not trusted.
-- **`acknowledges` is weaker on d1.** d1 read "There are 3 R's" as an
-  acknowledgement (0.78); d3 got all three. It is recorded on d1 and
-  revisited if the week shows misses.
-- **Comparing against earlier answers was weak.** The "different answer, but
-  the earlier one is not called wrong" check scored 2/3 on both models, so it
-  is not part of the checklist.
-- **The checklist runs on d1.** It costs a sixth of d3's time and gave no
-  wrong in-band answer.
+Compare checklist judgments with operator labels, not just agreement with
+the generative audit: both models can make the same mistake. Any future use
+as a rejection gate or prompt hint needs its own held-out evaluation and
+explicit rollout change. Repeat detection can ship while that work continues.
 
 ## Measuring it
 
@@ -765,47 +705,48 @@ millisecond latency before including database reads and classifier time.
 
 ## Rollout
 
-1. Add exact request/run linkage, scoped candidate loading, lexical matcher,
-   bounded chain builder, and renderer tests. No prompt injection.
-2. Add a System One client for Ollama's `/v1/systemone` and the
-   `assistant.repeat_check` slot (loopback only, no fallback). Then add the
-   short-message Choice with deadline, instrumentation, and `unknown` fallback, and
-   the identity screen-and-confirm, recording probabilities only. Test failure
-   paths, an unbound slot, and ambiguous anchors.
-3. Add the reply checklist (decision 6): post-turn on delivered replies, and
-   in-turn on drafts beside the reply audit, recording only.
-4. Enable recording and inspector feedback. Review false positives, misses,
-   access boundaries, and latency before adding reply instructions.
-5. Wire all five consumers and run fixtures and complete-turn replay. Enable
-   exact/redo injection when fixtures pass, reviewed matches have acceptable
-   precision, answer correctness does not regress, and latency is acceptable.
-   Record precision and latency targets before evaluating the held-out set.
-6. Consider approximate injection only if measured misses justify it. The
-   candidate is the `confirmed` kind: its recorded probabilities against the
-   operator's verdicts decide whether, and at which confirm threshold, it may
-   join chains. Embeddings can broaden the shortlist but do not distinguish a
-   retry from the same operation on different input; the identity Noul does.
-   Any stored vectors follow the same scope and eligibility boundaries.
+1. Add exact request/run linkage, scoped candidate loading, bounded chains,
+   complete redo paths, and renderer tests. Verify queued-message identity.
+2. Add the local decision client and explicit fast/confirmation bindings.
+   Implement short-message resolution with failure and locality checks.
+   Approximate identity is an optional post-turn diagnostic, not a dependency.
+3. Enable `record` and inspector feedback. Add optional draft/delivered
+   checklists with their independent input and latency caps. Review false
+   positives, misses, costs, and access boundaries; keep all model-derived
+   diagnostic scores out of prompts.
+4. Wire the five repeat-context consumers and run complete-turn replay. Before
+   examining held-out results, record minimum precision, minimum labelled
+   sample/coverage, and maximum p95 added latency. Enable `on` only when those
+   targets and the required fixtures pass and answer correctness does not
+   regress. A week of recording alone is insufficient.
+5. Separately consider promotion of identity-confirmed candidates or checklist
+   scores. Preserve retrieval provenance and compare against human labels;
+   confidence thresholds are not a substitute for task identity. Promotion
+   must define new chain rules and foreground latency limits before shipping.
 
-One setting, `assistant.repeated_request`, is read once per turn:
+One setting, `assistant.repeated_request`, is captured once per turn:
 
-- `off` (default): no repeat scan, classifier call, or injected block.
-- `record`: detection and would-send renderings are recorded, without injection.
-- `on`: exact/redo results are recorded and injected; approximate candidates
-  remain recording-only until a separately evaluated change.
+| work | `off` | `record` | `on` in the first release |
+|---|---|---|---|
+| exact scan and eligible short-message resolution | no | yes | yes |
+| repeat rendering | none | would-send snapshot | inject eligible exact/redo context, including adjacent-command candidates |
+| approximate identity experiment, after the turn | no | bounded diagnostics if configured | same diagnostics; never injected |
+| draft/delivered reply checklists | no | bounded diagnostics if configured | same diagnostics; never influence acceptance or prompts |
+| later-verdict fields in repeat context | none | would-send only if separate feature is `on` | only if separate feature is `on` and evidence is eligible |
 
-Turning it off is the rollback. Stored identity and historical records remain;
-neither permits reuse of ineligible context. No earlier run is modified by
-rollout or rollback.
+A missing decision binding skips only the work requiring it; it does not
+block the ordinary reply or exact matching. `off` is the rollback and prevents
+pending diagnostic jobs from starting. The independent later-verdict feature
+retains its own switch; turning repeat checking off does not change its policy.
+Stored request identity and historical records remain. Rollout and rollback
+never rewrite an earlier run.
 
 ## What this does not do
 
 - **Summarize the room or declare a topic solved.** Chains can inform a future
   topic digest, but repetition is not a reliable "open" verdict and absence
-  of repetition is not a reliable "solved" verdict. The same decision model
-  fits that digest's tagging. A Choice over the room's existing topic tags,
-  paired with a Noul for "none of these fit", assigns each exchange a tag
-  without a generative call. That belongs in the digest's own proposal.
+  of repetition is not a reliable "solved" verdict. Topic tagging belongs in
+  that separate design.
 - **Make old answers authoritative.** The block supports what was attempted
   and said. The current answer still needs its own evidence.
 - **Resolve every paraphrase or follow-up.** Ambiguous or out-of-scope cases
@@ -813,3 +754,74 @@ rollout or rollback.
 - **Refuse, lecture, or compel an apology.** A repeat is still a request to
   help. Success is a more reliable answer, not more talk about being asked
   before.
+
+
+## Probe evidence and its limits
+
+The following are **reported exploratory results**, retained from the earlier
+draft. The scripts and raw outputs are not in this repository, so these numbers
+are not independently reproducible here. They were not rerun for this revision.
+The reported environment was Ollama 0.40.15 with `d1:3b` (lfm2, 2.7B, Q8) and
+`d3:4b` (qwen3.5, 4.5B, mxfp8). These aliases and timings describe that probe,
+not required deployment models or latency guarantees.
+
+### Request resolution
+
+| experiment | d1:3b | d3:4b | combined result reported |
+|---|---|---|---|
+| identity, 14 individual pairs | 13/14, 0.09 s median | 13/14, 0.32 s median | 13/14, no false yes at 0.5 on both |
+| redo as yes/no, 14 cases | 11/14, 0.08 s median | 13/14, 0.32 s median | 13/14, no false yes at 0.5 on both |
+| five-option Choice, 17 messages in three contexts (51 classifications) | 47/51, 0.12 s median | 46/51, 0.43 s median | d1 alone proposed |
+| identity fan-out, 14 pairs in one request | 0.39 s | 4.6 s | screen on d1 proposed |
+
+The five-option Choice was reported to give no wrong accepted label on d1
+at ≥ 0.8, with several abstentions. The accepted-count denominator was not
+reported, so neither coverage nor a robust precision estimate follows. The
+51 Choice classifications are separate from the two 14-case experiments;
+"28 cases" is not the total evidence base.
+
+Useful observations, without generalizing beyond those cases:
+
+- d1 accepted the raspberry substitution at 0.68; d3 rejected it at 0.05.
+  d3 also missed the "use Python" method refinement at 0.17 while d1 scored
+  it 0.97. Combining them trades some false positives for misses.
+- In d1's fan-out, strawberry-like candidates scored about 0.91, including
+  raspberry. Individual-pair scores do not calibrate the batched screen.
+- The Choice placed "elaborate" in `expand` at 0.92–0.95, where a yes/no redo
+  question had scored it yes at 0.72. Offering a competing interpretation
+  helped in this small sample.
+- Danish "igen" remained below the acceptance band; commands after a README
+  task also sometimes abstained. Short complete requests and more languages
+  need explicit coverage.
+- Tested input changes (numbers, cities, conversion direction) and some
+  paraphrases were separated. This is evidence for testing the pipeline,
+  not a guarantee that a decision model establishes identity or that an
+  embedding cannot help retrieve candidates.
+
+### Reply checklist
+
+Twelve invented request/reply pairs were reported, including three with prior
+replies. Different checks used different subsets:
+
+| check | d1:3b | d3:4b |
+|---|---|---|
+| `answers` | 12/12 by top answer; 10 right, 0 wrong, 2 unclear in band | 12/12 by top answer; 6 right, 0 wrong, 6 unclear in band |
+| `constraints` | 5/6 by top answer | 5/6 by top answer |
+| `acknowledges` | 2/3 | 3/3 |
+| correctness, rejected as a checklist item | 4/5; accepted the wrong count of 2 | 3/5; also accepted that count |
+| changed answer without correcting the old one, not adopted | 2/3 | 2/3 |
+| fan-out time per reply | about 0.16 s | about 0.9–2.2 s |
+
+The ignored-method example scored 0.36/0.35, and ignored bullet formatting
+0.69/0.56. All four are **unclear** under the proposed bands; they are not
+successful high-confidence detections. An unchanged "There are 3 R's" reply
+scored 0.78 for acknowledgement on d1, also an abstention. Both models judged
+the wrong Strawberry count correct (0.84/0.82), which is a direct reason not
+to use this checklist as a correctness oracle.
+
+Before using any threshold for production behavior, retain synthetic cases,
+expected labels, exact question text, raw outputs, model digests, server
+version, candidate order/batch composition, and warm/cold timing in a versioned
+eval fixture. Repeat runs on held-out chains and report accepted precision,
+recall, abstention rate, and sample size separately. The observed absence of
+accepted errors in a tiny selected sample is not a calibrated guarantee.
