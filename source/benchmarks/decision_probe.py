@@ -7,6 +7,9 @@ hand-written cases in benchmarks/fixtures/decision_probe_cases.json:
 - identity_pair / identity_fanout: do two requests name the same task?
 - redo_noul: the yes/no redo framing that short_message_choice replaced;
 - short_message_choice: what a short message does (redo, expand, command, ...);
+- request_classification: what a request needs (compute, a lookup, an
+  action, ...) and whether it needs exact computation, states constraints, or
+  is ambiguous — the check that would run before acceptance criteria;
 - reply_checklist: did a reply answer the request and its constraints;
 - verdict_choice / hedge / same_answer: later verdicts on earlier messages.
 
@@ -85,6 +88,12 @@ def build_requests(exp: dict[str, Any]) -> list[dict[str, Any]]:
                                       for n in names},
                         "expected": {n: v for n, v in c["expected"].items()
                                      if n in names}})
+    elif kind == "checklist":
+        # Typed questions (Choice and Noul mixed) asked together of one state.
+        for c in exp["cases"]:
+            out.append({"case": c["id"], "context": None, "state": c["state"],
+                        "questions": exp["questions"],
+                        "expected": c["expected"]})
     elif kind == "noul_fanout":
         out.append({
             "case": "fanout", "context": None,
@@ -192,7 +201,7 @@ def environment(base_url: str, models: list[str]) -> dict[str, Any]:
 
 
 def run_model(base_url: str, model: str, cases: dict[str, Any],
-              cold: bool) -> dict[str, Any]:
+              cold: bool, only: set[str] | None = None) -> dict[str, Any]:
     check_local(base_url, model)
     first: dict[str, Any] = {"cold_requested": cold}
     if cold:
@@ -206,6 +215,8 @@ def run_model(base_url: str, model: str, cases: dict[str, Any],
 
     experiments = {}
     for exp in cases["experiments"]:
+        if only and exp["id"] not in only:
+            continue
         results = []
         for req in build_requests(exp):
             row: dict[str, Any] = {"case": req["case"], "context": req["context"]}
@@ -240,6 +251,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", type=Path, help="write the JSON run document here")
     ap.add_argument("--cold", action="store_true",
                     help="unload each model first, so first_call_ms is a cold load")
+    ap.add_argument("--only", nargs="+", metavar="EXPERIMENT",
+                    help="run only these experiment ids")
     ap.add_argument("--url", default=os.environ.get("DECISION_PROBE_URL", DEFAULT_URL))
     args = ap.parse_args(argv)
 
@@ -248,13 +261,15 @@ def main(argv: list[str] | None = None) -> int:
         check_local(args.url, m)
     doc = {
         "fixture_version": cases["version"],
+        "only": args.only,
         "bands": cases["bands"],
         "started_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "environment": environment(args.url, args.models),
         "runs": [],
     }
     for m in args.models:
-        run = run_model(args.url, m, cases, args.cold)
+        run = run_model(args.url, m, cases, args.cold,
+                        set(args.only) if args.only else None)
         print_summary(run)
         doc["runs"].append(run)
     if args.out:

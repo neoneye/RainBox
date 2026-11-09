@@ -32,7 +32,8 @@ def test_requests_per_experiment():
     counts = {e["id"]: len(dp.build_requests(e)) for e in CASES["experiments"]}
     assert counts == {
         "identity_pair": 14, "identity_fanout": 1, "redo_noul": 14,
-        "short_message_choice": 51, "reply_checklist": 12,
+        "short_message_choice": 51, "request_classification": 22,
+        "reply_checklist": 12,
         "verdict_choice": 14, "hedge": 8, "same_answer": 8,
     }
 
@@ -54,6 +55,14 @@ def test_checklist_asks_repeat_questions_only_with_earlier_replies():
         reqs["repeat_acknowledged"]["questions"])
     assert set(reqs["wrong_subject"]["expected"]) <= set(
         reqs["wrong_subject"]["questions"])
+
+
+def test_request_classification_mixes_a_choice_and_nouls():
+    req = dp.build_requests(_exp("request_classification"))[0]
+    types = {n: q["type"] for n, q in req["questions"].items()}
+    assert types == {"work": "choice", "needs_computation": "noul",
+                     "has_constraints": "noul", "ambiguous": "noul"}
+    assert set(req["expected"]) <= set(types)
 
 
 def test_fanout_is_one_request_with_a_question_per_candidate():

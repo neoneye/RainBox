@@ -59,8 +59,9 @@ Neither a text match nor a classifier result proves that an earlier reply was
 wrong. Six decisions shape the design.
 
 The release boundary is explicit: **only exact/redo context affects replies**.
-Task-identity confirmation and reply checklists are experiments: their scores
-appear in the inspector, never in prompts or acceptance decisions. Identity
+Task-identity confirmation, the request profile and reply checklists are
+experiments: their scores appear in the inspector, never in prompts or
+acceptance decisions. Identity
 experiments run after the turn; draft checklist experiments have a small,
 fixed budget. Neither experiment is a prerequisite for shipping repeat context.
 The mode table under *Rollout* governs every call.
@@ -193,6 +194,59 @@ Use the fast decision slot, once, with a 2-second end-to-end deadline and a
 input, invalid output, or timeout produces `unknown` with a reason. Do not
 truncate a task to classify it. Only eligible short messages incur this call;
 longer redos and ambiguous group references remain first-release limitations.
+
+**Request profile, before acceptance criteria.** The checks above relate the
+current message to earlier ones. The request profile classifies the current
+request itself, at the start of every turn and before the acceptance-criteria
+call. It is one request on the fast slot. When the short-message path is
+eligible, its five-option Choice is a named question in the same request, so a
+short message still costs one call.
+
+| question | type | asks | measured | later use, if promoted |
+|---|---|---|---|---|
+| `work` | Choice: `compute`, `lookup_stored`, `act`, `knowledge`, `create`, `conversation` | What does answering the request need? | reliable on d3, mostly on d1 | the criteria gate and the compute hint below |
+| `has_constraints` | Noul | Does the request state an explicit constraint on format, length, method or scope? | 9/9 in band on both | the criteria gate; it also tells the reply checklist whether `constraints` applies or there was nothing to follow |
+| `needs_computation` | Noul | Does answering need an exact calculation, count or conversion that should be computed rather than recalled? | 16/17 on both | recorded beside `work`, which also caught a string transformation this question missed |
+
+The option descriptions are versioned instructions without example phrases,
+as for the short-message Choice. **Not adopted: ambiguity.** "Can the request
+reasonably be read in two ways?" missed clearly ambiguous requests on both
+models ("convert 5 miles" scored 0.43–0.46), so it is not asked.
+
+The state is the complete current request. When the short-message path is
+eligible, the predecessor's resolved request goes in too, as for that Choice.
+How `work` labels a bare redo against its predecessor has not been measured;
+the recording period does that.
+
+**In the first release the profile is diagnostic** in `record` and in `on`.
+Its scores go on a code-driven step row at the start of the turn, before the
+acceptance-criteria row. It changes nothing: the criteria call runs as it does
+today, and no hint reaches a prompt. Two uses can be promoted later, each on its
+own evaluation:
+
+1. **The criteria gate.** Skip the acceptance-criteria call when `work` is
+   `conversation` or `knowledge` and `has_constraints` is `no`, both inside
+   the band. This is where the time is:
+   - the call ran in every assistant run in the last week (66 of 66);
+   - its median is 8.7 s, with p90 11.3 s, over 175 calls in 14 days;
+   - the median turn is 43.6 s.
+
+   Two numbers decide it: how many recorded turns qualify, and whether
+   replaying those turns without criteria changes the reply in a way the
+   operator would mark. Both come from stored runs.
+2. **The compute hint.** When `work` is `compute` inside the band, a
+   code-owned line tells the loop that the request needs an exact
+   computation. That would address the Strawberry failure on the first ask,
+   not only on a repeat. The evidence is thin exactly there, though. The
+   Strawberry request scored `compute` at 0.81 on d1 and 0.73 on d3, which is
+   on the edge of the band and below it. The hint cannot be the only lever,
+   and repeat context remains the backstop when a first ask goes wrong.
+
+**Budget.** It shares the short-message deadline: 2 seconds end to end, one
+call, no fallback. In the probe, the four questions took 0.26 s median on d1
+and 1.2 s on d3, which is why the profile uses the fast slot even though d3
+classified `work` better. When it fails or times out, the result is `unknown`
+and the turn proceeds unchanged.
 
 **Approximate identity is a separate, post-turn experiment.** It asks whether
 two complete requests name the same task and inputs. It does not classify
@@ -710,8 +764,9 @@ millisecond latency before including database reads and classifier time.
 2. Add the local decision client and explicit fast/confirmation bindings.
    Implement short-message resolution with failure and locality checks.
    Approximate identity is an optional post-turn diagnostic, not a dependency.
-3. Enable `record` and inspector feedback. Add optional draft/delivered
-   checklists with their independent input and latency caps. Review false
+3. Enable `record` and inspector feedback. Add the request profile and the
+   optional draft/delivered checklists, with their independent input and
+   latency caps. Review false
    positives, misses, costs, and access boundaries; keep all model-derived
    diagnostic scores out of prompts.
 4. Wire the five repeat-context consumers and run complete-turn replay. Before
@@ -731,6 +786,7 @@ One setting, `assistant.repeated_request`, is captured once per turn:
 | exact scan and eligible short-message resolution | no | yes | yes |
 | repeat rendering | none | would-send snapshot | inject eligible exact/redo context, including adjacent-command candidates |
 | approximate identity experiment, after the turn | no | bounded diagnostics if configured | same diagnostics; never injected |
+| request profile, before acceptance criteria | no | diagnostics, in the short-message call when eligible | same diagnostics; never skips criteria or adds a hint |
 | draft/delivered reply checklists | no | bounded diagnostics if configured | same diagnostics; never influence acceptance or prompts |
 | later-verdict fields in repeat context | none | would-send only if separate feature is `on` | only if separate feature is `on` and evidence is eligible |
 
@@ -761,11 +817,15 @@ never rewrite an earlier run.
 The following are **exploratory results**, on hand-written cases. They are
 reproducible from the repository:
 - **Cases.** Expected labels and exact question text are in
-  `benchmarks/fixtures/decision_probe_cases.json` (fixture version 1).
+  `benchmarks/fixtures/decision_probe_cases.json` (fixture version 2).
 - **Runner.** `python -m benchmarks.decision_probe d1:3b d3:4b`.
-- **Recorded run.** `benchmarks/fixtures/decision_probe_runs/2026-11-09.json`
-  holds every raw answer, model digests, the server version and timings.
-  That run reproduced every top-answer count below.
+- **Recorded runs.** Each holds every raw answer, model digests, the server
+  version and timings.
+  - `benchmarks/fixtures/decision_probe_runs/2026-11-09.json` covers every
+    experiment except the request profile. It reproduced every top-answer
+    count below.
+  - `2026-11-09-request-classification.json`, in the same directory, covers
+    the request profile (`--only request_classification`).
 
 The environment was Ollama 0.40.15 with `d1:3b` (lfm2, 2.7B, Q8, digest
 `8c2d9ddae441…`) and `d3:4b` (qwen3.5, 4.5B, mxfp8, digest `510b1771140e…`).
@@ -780,6 +840,9 @@ Counted inside the bands (Noul ≥ 0.8 or ≤ 0.2, Choice top ≥ 0.8):
 | identity, individual pairs | 13 (0) / 14 | 14 (1) / 14: the method refinement, rejected at 0.17 |
 | redo as yes/no | 10 (1) / 14: "igen" rejected at 0.04 | 11 (1) / 14: "igen" at 0.12 |
 | five-option Choice | 37 (0) / 51 | 29 (0) / 51 |
+| request profile, `work` | 16 (1) / 20: "three primes above 100, as a table" called `knowledge` at 0.82 | 17 (0) / 20 |
+| request profile, `has_constraints` | 9 (0) / 9 | 9 (0) / 9 |
+| request profile, `needs_computation` | 15 (1) / 17: "reverse the string" called no at 0.08 | 15 (0) / 17 |
 | reply checklist, `answers` | 10 (0) / 12 | 6 (0) / 12 |
 | reply checklist, `correct` | 5 (1) / 5: the wrong count accepted | 2 (1) / 5 |
 

@@ -1,0 +1,2389 @@
+{
+ "fixture_version": 2,
+ "only": [
+  "request_classification"
+ ],
+ "bands": {
+  "yes": 0.8,
+  "no": 0.2,
+  "choice_accept": 0.8
+ },
+ "started_at": "2026-11-09T01:01:13+00:00",
+ "environment": {
+  "server_version": "0.40.15",
+  "models": {
+   "d1:3b": {
+    "digest": "8c2d9ddae4413c38b183644320b6f4bca4c5f629ae9e5104c3b13a150ed85e7e",
+    "size": 3730544597
+   },
+   "d3:4b": {
+    "digest": "510b1771140e588b3516b17984b67bdf2c6c7cfc3b62b6e6e54e37619b675d00",
+    "size": 5647082587
+   }
+  }
+ },
+ "runs": [
+  {
+   "model": "d1:3b",
+   "first_call": {
+    "cold_requested": false,
+    "first_call_ms": 2610
+   },
+   "experiments": {
+    "request_classification": {
+     "results": [
+      {
+       "case": "strawberry",
+       "context": null,
+       "ms": 245,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "compute",
+         "probabilities": {
+          "compute": 0.8118505387764454,
+          "lookup_stored": 0.007059704227296986,
+          "act": 0.007146798878568239,
+          "knowledge": 0.16672164265790212,
+          "create": 0.0034117864063790823,
+          "conversation": 0.003809529053408282
+         },
+         "confidence": 0.7742206465317345
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.8041912577564002
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.04922818340716983
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.20221355094225046
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "compute",
+         "p": 0.8118505387764454,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "needs_computation": {
+         "p": 0.8041912577564002,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "has_constraints": {
+         "p": 0.04922818340716983,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "percent",
+       "context": null,
+       "ms": 244,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "compute",
+         "probabilities": {
+          "compute": 0.9489088529123014,
+          "lookup_stored": 0.005924153909665474,
+          "act": 0.006324128236140393,
+          "knowledge": 0.0318186594041219,
+          "create": 0.003427695668228238,
+          "conversation": 0.0035965098695424818
+         },
+         "confidence": 0.9386906234947617
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.9371229615108361
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.032944889753980085
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.15920362073068503
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "compute",
+         "p": 0.9489088529123014,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "needs_computation": {
+         "p": 0.9371229615108361,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "has_constraints": {
+         "p": 0.032944889753980085,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "ambiguous": {
+         "p": 0.15920362073068503,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "feet",
+       "context": null,
+       "ms": 245,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "compute",
+         "probabilities": {
+          "compute": 0.8708307910586349,
+          "lookup_stored": 0.006367695681176171,
+          "act": 0.010064618211149477,
+          "knowledge": 0.10562038958241178,
+          "create": 0.0037678483731920028,
+          "conversation": 0.003348657093435645
+         },
+         "confidence": 0.844996949270362
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.9130412323414764
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.03679027820665769
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.12000951243563224
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "compute",
+         "p": 0.8708307910586349,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "needs_computation": {
+         "p": 0.9130412323414764,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "ambiguous": {
+         "p": 0.12000951243563224,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "reverse",
+       "context": null,
+       "ms": 254,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "compute",
+         "probabilities": {
+          "compute": 0.7398494467765611,
+          "lookup_stored": 0.007365132223252816,
+          "act": 0.07748820737113983,
+          "knowledge": 0.15536034921297814,
+          "create": 0.016157654569420647,
+          "conversation": 0.0037792098466475003
+         },
+         "confidence": 0.6878193361318733
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.08062837408810465
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.04285484613000723
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.14050753599189758
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "compute",
+         "p": 0.7398494467765611,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        },
+        "needs_computation": {
+         "p": 0.08062837408810465,
+         "top_ok": false,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": true
+        },
+        "ambiguous": {
+         "p": 0.14050753599189758,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "primes_table",
+       "context": null,
+       "ms": 246,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "knowledge",
+         "probabilities": {
+          "compute": 0.12316088843809787,
+          "lookup_stored": 0.0058821133164395365,
+          "act": 0.02904642018092392,
+          "knowledge": 0.8229301025070362,
+          "create": 0.013701388246810857,
+          "conversation": 0.005279087310691774
+         },
+         "confidence": 0.7875161230084435
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.27789533633591246
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.9611863518066487
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.14816993196802425
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "knowledge",
+         "p": 0.8229301025070362,
+         "top_ok": false,
+         "accepted": true,
+         "accepted_wrong": true
+        },
+        "has_constraints": {
+         "p": 0.9611863518066487,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "last_tuesday",
+       "context": null,
+       "ms": 247,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "lookup_stored",
+         "probabilities": {
+          "compute": 0.005448309933847989,
+          "lookup_stored": 0.9703802842828775,
+          "act": 0.004958146044449541,
+          "knowledge": 0.010591691372725694,
+          "create": 0.002554577439323524,
+          "conversation": 0.006066990926775932
+         },
+         "confidence": 0.964456341139453
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.28229162923499157
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.02621300751398816
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.5016508042433975
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "lookup_stored",
+         "p": 0.9703802842828775,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "needs_computation": {
+         "p": 0.28229162923499157,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        },
+        "has_constraints": {
+         "p": 0.02621300751398816,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "kanban",
+       "context": null,
+       "ms": 244,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "lookup_stored",
+         "probabilities": {
+          "compute": 0.003929555622026692,
+          "lookup_stored": 0.9694268854588967,
+          "act": 0.005743828174798424,
+          "knowledge": 0.009746049583105019,
+          "create": 0.003247250535028135,
+          "conversation": 0.007906430626145164
+         },
+         "confidence": 0.963312262550676
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.03822207284700908
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.0267010778126349
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.379152519992942
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "lookup_stored",
+         "p": 0.9694268854588967,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "needs_computation": {
+         "p": 0.03822207284700908,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "dentist",
+       "context": null,
+       "ms": 256,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "lookup_stored",
+         "probabilities": {
+          "compute": 0.009507668176692595,
+          "lookup_stored": 0.9595836698490735,
+          "act": 0.004568891015429472,
+          "knowledge": 0.01664178859556586,
+          "create": 0.0029309525880570945,
+          "conversation": 0.006767029775181515
+         },
+         "confidence": 0.9515004038188882
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.2486432070765601
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.024147759798869194
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.34295351959475506
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "lookup_stored",
+         "p": 0.9595836698490735,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "needs_computation": {
+         "p": 0.2486432070765601,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "move_task",
+       "context": null,
+       "ms": 270,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "act",
+         "probabilities": {
+          "compute": 0.0029765002950527535,
+          "lookup_stored": 0.09844527467562332,
+          "act": 0.8869721342884489,
+          "knowledge": 0.006046098009389458,
+          "create": 0.002766566760213582,
+          "conversation": 0.0027934259712718386
+         },
+         "confidence": 0.8643665611461386
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.015649362803986065
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.025856565874755308
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.14603609873516502
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "act",
+         "p": 0.8869721342884489,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "needs_computation": {
+         "p": 0.015649362803986065,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "commit_push",
+       "context": null,
+       "ms": 262,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "act",
+         "probabilities": {
+          "compute": 0.004383804567223977,
+          "lookup_stored": 0.007427038597598658,
+          "act": 0.9722492692930297,
+          "knowledge": 0.008015776114887248,
+          "create": 0.003631848577278065,
+          "conversation": 0.004292262849982459
+         },
+         "confidence": 0.9666991231516356
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.019038392407848756
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.03539366501493584
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.41234203102645617
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "act",
+         "p": 0.9722492692930297,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "needs_computation": {
+         "p": 0.019038392407848756,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "new_board",
+       "context": null,
+       "ms": 260,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "act",
+         "probabilities": {
+          "compute": 0.0035502842787265153,
+          "lookup_stored": 0.008485621974390234,
+          "act": 0.962231330250974,
+          "knowledge": 0.016277274787535958,
+          "create": 0.0052934255228440225,
+          "conversation": 0.00416206318552927
+         },
+         "confidence": 0.9546775963011688
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.016417748550723994
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.028811499847160447
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.12365221712574105
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "act",
+         "p": 0.962231330250974,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "needs_computation": {
+         "p": 0.016417748550723994,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "capital",
+       "context": null,
+       "ms": 261,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "knowledge",
+         "probabilities": {
+          "compute": 0.004717055688979702,
+          "lookup_stored": 0.004466759714069863,
+          "act": 0.004704274703850949,
+          "knowledge": 0.9770845012169932,
+          "create": 0.0036280333442913816,
+          "conversation": 0.0053993753318149346
+         },
+         "confidence": 0.9725014014603919
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.016659008342790826
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.024380498296151635
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.08925904379072006
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "knowledge",
+         "p": 0.9770845012169932,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "needs_computation": {
+         "p": 0.016659008342790826,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "has_constraints": {
+         "p": 0.024380498296151635,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "ambiguous": {
+         "p": 0.08925904379072006,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "hash_map",
+       "context": null,
+       "ms": 267,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "knowledge",
+         "probabilities": {
+          "compute": 0.007571967272289348,
+          "lookup_stored": 0.00649036104909236,
+          "act": 0.0070820818892114714,
+          "knowledge": 0.9424625512037035,
+          "create": 0.02699091973417861,
+          "conversation": 0.00940211885152501
+         },
+         "confidence": 0.9309550614444442
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.019560370467760775
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.023310958490808654
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.12452416115932693
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "knowledge",
+         "p": 0.9424625512037035,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "needs_computation": {
+         "p": 0.019560370467760775,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "author",
+       "context": null,
+       "ms": 259,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "knowledge",
+         "probabilities": {
+          "compute": 0.004277698845144885,
+          "lookup_stored": 0.004774516911116042,
+          "act": 0.0048638871782052655,
+          "knowledge": 0.971049315889415,
+          "create": 0.004507232100943839,
+          "conversation": 0.010527349075174724
+         },
+         "confidence": 0.965259179067298
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.016173368488660664
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.024483742394982955
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.13360056225424605
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "knowledge",
+         "p": 0.971049315889415,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "needs_computation": {
+         "p": 0.016173368488660664,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "ambiguous": {
+         "p": 0.13360056225424605,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "haiku",
+       "context": null,
+       "ms": 269,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "create",
+         "probabilities": {
+          "compute": 0.007506298089202706,
+          "lookup_stored": 0.0042011774643140294,
+          "act": 0.031700646865832786,
+          "knowledge": 0.13020973004173023,
+          "create": 0.8215268211391759,
+          "conversation": 0.004855326399744426
+         },
+         "confidence": 0.785832185367011
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.04692330678083014
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.9727901563183139
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.3952116780123753
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "create",
+         "p": 0.8215268211391759,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "needs_computation": {
+         "p": 0.04692330678083014,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "has_constraints": {
+         "p": 0.9727901563183139,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "decline_email",
+       "context": null,
+       "ms": 263,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "create",
+         "probabilities": {
+          "compute": 0.005070810588986172,
+          "lookup_stored": 0.006091585957788295,
+          "act": 0.012106030325896808,
+          "knowledge": 0.04645573311810822,
+          "create": 0.9230279052632857,
+          "conversation": 0.007247934745934818
+         },
+         "confidence": 0.9076334863159429
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.01876273434070758
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.9802389074755893
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.2217164631790872
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "create",
+         "p": 0.9230279052632857,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "has_constraints": {
+         "p": 0.9802389074755893,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "how_are_you",
+       "context": null,
+       "ms": 264,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "conversation",
+         "probabilities": {
+          "compute": 0.0030858082341503916,
+          "lookup_stored": 0.0116765346558449,
+          "act": 0.005132530740254131,
+          "knowledge": 0.34840401185083764,
+          "create": 0.013605541464585206,
+          "conversation": 0.6180955730543277
+         },
+         "confidence": 0.5417146876651933
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.014690244940018199
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.029310928303350865
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.2763227010157275
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "conversation",
+         "p": 0.6180955730543277,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        },
+        "needs_computation": {
+         "p": 0.014690244940018199,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "has_constraints": {
+         "p": 0.029310928303350865,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "ambiguous": {
+         "p": 0.2763227010157275,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "curious",
+       "context": null,
+       "ms": 270,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "conversation",
+         "probabilities": {
+          "compute": 0.003449357488746257,
+          "lookup_stored": 0.014466216881707898,
+          "act": 0.005007980172367966,
+          "knowledge": 0.10334877114086198,
+          "create": 0.005472715513197508,
+          "conversation": 0.8682549588031184
+         },
+         "confidence": 0.8419059505637421
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.018224546126772104
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.029554315807114838
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.7432189729099271
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "conversation",
+         "p": 0.8682549588031184,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "needs_computation": {
+         "p": 0.018224546126772104,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "who_are_you",
+       "context": null,
+       "ms": 260,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "knowledge",
+         "probabilities": {
+          "compute": 0.0031251236175445954,
+          "lookup_stored": 0.00729161296272015,
+          "act": 0.003838359319081119,
+          "knowledge": 0.7210740288409498,
+          "create": 0.002770422895289257,
+          "conversation": 0.26190045236441506
+         },
+         "confidence": 0.6652888346091398
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.02171628361308185
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.030030754955293646
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.38594450706799555
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "knowledge",
+         "p": 0.7210740288409498,
+         "top_ok": false,
+         "accepted": false,
+         "accepted_wrong": false
+        },
+        "needs_computation": {
+         "p": 0.02171628361308185,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "convert_5_miles",
+       "context": null,
+       "ms": 265,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "compute",
+         "probabilities": {
+          "compute": 0.8365417956372762,
+          "lookup_stored": 0.007062812533966476,
+          "act": 0.018617333836381568,
+          "knowledge": 0.12925480848098378,
+          "create": 0.00461152918181228,
+          "conversation": 0.0039117203295797156
+         },
+         "confidence": 0.8038501547647314
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.6960430734584041
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.034005564162356554
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.46019934085093483
+        }
+       },
+       "scored": {
+        "has_constraints": {
+         "p": 0.034005564162356554,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "ambiguous": {
+         "p": 0.46019934085093483,
+         "top_ok": false,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "next_friday",
+       "context": null,
+       "ms": 261,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "act",
+         "probabilities": {
+          "compute": 0.07953596056531792,
+          "lookup_stored": 0.15449682177465543,
+          "act": 0.5210758461254299,
+          "knowledge": 0.20039512767399734,
+          "create": 0.03549477572849268,
+          "conversation": 0.009001468132106552
+         },
+         "confidence": 0.4252910153505159
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.5336148746459296
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.030582530314723445
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.5144660620161554
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "act",
+         "p": 0.5210758461254299,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        },
+        "ambiguous": {
+         "p": 0.5144660620161554,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "flight",
+       "context": null,
+       "ms": 257,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "knowledge",
+         "probabilities": {
+          "compute": 0.08486194127791635,
+          "lookup_stored": 0.06659797580541285,
+          "act": 0.009383193782448276,
+          "knowledge": 0.8092491905126624,
+          "create": 0.0063310591804948005,
+          "conversation": 0.02357663944106539
+         },
+         "confidence": 0.7710990286151949
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.27305691409567456
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.03076656143928871
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.6369650796382545
+        }
+       },
+       "scored": {
+        "ambiguous": {
+         "p": 0.6369650796382545,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      }
+     ],
+     "summary": {
+      "by_question": {
+       "work": {
+        "scored": 20,
+        "top_ok": 18,
+        "accepted": 16,
+        "accepted_wrong": 1,
+        "abstained": 4
+       },
+       "needs_computation": {
+        "scored": 17,
+        "top_ok": 16,
+        "accepted": 15,
+        "accepted_wrong": 1,
+        "abstained": 2
+       },
+       "has_constraints": {
+        "scored": 9,
+        "top_ok": 9,
+        "accepted": 9,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "ambiguous": {
+        "scored": 9,
+        "top_ok": 8,
+        "accepted": 5,
+        "accepted_wrong": 0,
+        "abstained": 4
+       }
+      },
+      "requests": 22,
+      "errors": 0,
+      "median_ms": 260
+     }
+    }
+   }
+  },
+  {
+   "model": "d3:4b",
+   "first_call": {
+    "cold_requested": false,
+    "first_call_ms": 1935
+   },
+   "experiments": {
+    "request_classification": {
+     "results": [
+      {
+       "case": "strawberry",
+       "context": null,
+       "ms": 1211,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "compute",
+         "probabilities": {
+          "compute": 0.7317255389290563,
+          "lookup_stored": 0.0009393637131081623,
+          "act": 0.0006112212337486343,
+          "knowledge": 0.2649386286685922,
+          "create": 0.0003730525794490637,
+          "conversation": 0.0014121948760456027
+         },
+         "confidence": 0.6630439877233669
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.6618515918394433
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.10842685728460434
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.15240169392629596
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "compute",
+         "p": 0.7317255389290563,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        },
+        "needs_computation": {
+         "p": 0.6618515918394433,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        },
+        "has_constraints": {
+         "p": 0.10842685728460434,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "percent",
+       "context": null,
+       "ms": 1198,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "compute",
+         "probabilities": {
+          "compute": 0.9987938318333915,
+          "lookup_stored": 0.00010169159871626703,
+          "act": 6.67060220948165e-05,
+          "knowledge": 0.0009252298092008613,
+          "create": 5.5285916010481405e-05,
+          "conversation": 5.7254820586010774e-05
+         },
+         "confidence": 0.9942257106284415
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.9902716896288416
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.006749891777904981
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.04720006630094814
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "compute",
+         "p": 0.9987938318333915,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "needs_computation": {
+         "p": 0.9902716896288416,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "has_constraints": {
+         "p": 0.006749891777904981,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "ambiguous": {
+         "p": 0.04720006630094814,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "feet",
+       "context": null,
+       "ms": 1232,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "compute",
+         "probabilities": {
+          "compute": 0.9849346315427937,
+          "lookup_stored": 0.00019877144712905526,
+          "act": 0.00014242050986311357,
+          "knowledge": 0.01452848539630953,
+          "create": 7.670231420059357e-05,
+          "conversation": 0.00011898878970386643
+         },
+         "confidence": 0.9546879424477972
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.9567335547430965
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.02086020443423453
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.03371156777373034
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "compute",
+         "p": 0.9849346315427937,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "needs_computation": {
+         "p": 0.9567335547430965,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "ambiguous": {
+         "p": 0.03371156777373034,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "reverse",
+       "context": null,
+       "ms": 1244,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "compute",
+         "probabilities": {
+          "compute": 0.9686927586458807,
+          "lookup_stored": 0.00025279523635101395,
+          "act": 0.006771309328883786,
+          "knowledge": 0.02137406242188661,
+          "create": 0.002270212293795657,
+          "conversation": 0.0006388620732023578
+         },
+         "confidence": 0.9065473297888126
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.3868229360580029
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.08980079916086721
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.06112847239725413
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "compute",
+         "p": 0.9686927586458807,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "needs_computation": {
+         "p": 0.3868229360580029,
+         "top_ok": false,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        },
+        "ambiguous": {
+         "p": 0.06112847239725413,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "primes_table",
+       "context": null,
+       "ms": 1220,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "compute",
+         "probabilities": {
+          "compute": 0.5630208957325746,
+          "lookup_stored": 0.0019097850863887935,
+          "act": 0.005252207321096451,
+          "knowledge": 0.41188896060265584,
+          "create": 0.01591007337309742,
+          "conversation": 0.002018077884186839
+         },
+         "confidence": 0.5497738266153729
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.41217080348915613
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.9748816200640342
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.09217425101009231
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "compute",
+         "p": 0.5630208957325746,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        },
+        "has_constraints": {
+         "p": 0.9748816200640342,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "last_tuesday",
+       "context": null,
+       "ms": 1224,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "lookup_stored",
+         "probabilities": {
+          "compute": 0.0002405501730428557,
+          "lookup_stored": 0.9880081517811343,
+          "act": 0.0002976940597935893,
+          "knowledge": 0.009396877532349208,
+          "create": 0.00017590225744227946,
+          "conversation": 0.0018808241962380268
+         },
+         "confidence": 0.9589649920597251
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.014737667569181287
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.005737662541094698
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.10482036385574704
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "lookup_stored",
+         "p": 0.9880081517811343,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "needs_computation": {
+         "p": 0.014737667569181287,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "has_constraints": {
+         "p": 0.005737662541094698,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "kanban",
+       "context": null,
+       "ms": 1268,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "lookup_stored",
+         "probabilities": {
+          "compute": 0.0003206200949066284,
+          "lookup_stored": 0.9964416244515162,
+          "act": 0.0014413608879524432,
+          "knowledge": 0.0011634343347141393,
+          "create": 0.00011039546539619957,
+          "conversation": 0.0005225647655144451
+         },
+         "confidence": 0.9841627771876681
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.1121590802971509
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.011903350852199514
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.12422265692490456
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "lookup_stored",
+         "p": 0.9964416244515162,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "needs_computation": {
+         "p": 0.1121590802971509,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "dentist",
+       "context": null,
+       "ms": 1206,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "lookup_stored",
+         "probabilities": {
+          "compute": 0.001235134129112273,
+          "lookup_stored": 0.9930258276375844,
+          "act": 0.0008918053739405384,
+          "knowledge": 0.004170295664974473,
+          "create": 0.00013744996410933066,
+          "conversation": 0.0005394872302789138
+         },
+         "confidence": 0.9723079273532758
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.14702456999569638
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.006574717968055811
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.09790272734586457
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "lookup_stored",
+         "p": 0.9930258276375844,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "needs_computation": {
+         "p": 0.14702456999569638,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "move_task",
+       "context": null,
+       "ms": 1256,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "act",
+         "probabilities": {
+          "compute": 0.00020188519254404913,
+          "lookup_stored": 0.06648004801326006,
+          "act": 0.9326770720010611,
+          "knowledge": 0.00027772269956119244,
+          "create": 0.00012929637573716086,
+          "conversation": 0.00023397571783647742
+         },
+         "confidence": 0.8591734224795449
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.00527954561151823
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.032581627622437485
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.053182720006468495
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "act",
+         "p": 0.9326770720010611,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "needs_computation": {
+         "p": 0.00527954561151823,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "commit_push",
+       "context": null,
+       "ms": 1182,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "act",
+         "probabilities": {
+          "compute": 0.00018610052513993143,
+          "lookup_stored": 0.0035782792663897073,
+          "act": 0.9948437599998157,
+          "knowledge": 0.0009081426452222328,
+          "create": 0.0001245609141615124,
+          "conversation": 0.00035915664927076537
+         },
+         "confidence": 0.9792233610278002
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.016341844977615826
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.018947645625490703
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.10050727979437173
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "act",
+         "p": 0.9948437599998157,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "needs_computation": {
+         "p": 0.016341844977615826,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "new_board",
+       "context": null,
+       "ms": 1215,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "act",
+         "probabilities": {
+          "compute": 0.00033209213397615686,
+          "lookup_stored": 0.03738603086883418,
+          "act": 0.9158582995449418,
+          "knowledge": 0.000640645590720411,
+          "create": 0.04527438977281014,
+          "conversation": 0.0005085420887172515
+         },
+         "confidence": 0.8020280417111735
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.006183875596869307
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.04051830178680013
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.25199124743154067
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "act",
+         "p": 0.9158582995449418,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "needs_computation": {
+         "p": 0.006183875596869307,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "capital",
+       "context": null,
+       "ms": 1225,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "knowledge",
+         "probabilities": {
+          "compute": 0.0001613418245842989,
+          "lookup_stored": 0.0016282550782809344,
+          "act": 0.00015997041783014405,
+          "knowledge": 0.9957497311540162,
+          "create": 7.893455036644243e-05,
+          "conversation": 0.002221766974921934
+         },
+         "confidence": 0.9822400561658107
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.0033962878344632364
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.00275187955275672
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.024425748765019344
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "knowledge",
+         "p": 0.9957497311540162,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "needs_computation": {
+         "p": 0.0033962878344632364,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "has_constraints": {
+         "p": 0.00275187955275672,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "ambiguous": {
+         "p": 0.024425748765019344,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "hash_map",
+       "context": null,
+       "ms": 1235,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "knowledge",
+         "probabilities": {
+          "compute": 0.00028106924442278784,
+          "lookup_stored": 0.0003941000045778325,
+          "act": 0.00023162244362404338,
+          "knowledge": 0.9807475176779197,
+          "create": 0.011129764424977425,
+          "conversation": 0.007215926204478435
+         },
+         "confidence": 0.9374689761776607
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.017163415787090575
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.004554377455137128
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.050044595697271106
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "knowledge",
+         "p": 0.9807475176779197,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "needs_computation": {
+         "p": 0.017163415787090575,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "author",
+       "context": null,
+       "ms": 1203,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "knowledge",
+         "probabilities": {
+          "compute": 7.731480459657094e-05,
+          "lookup_stored": 0.0013893790085072848,
+          "act": 0.0001242239747285472,
+          "knowledge": 0.9972810047444906,
+          "create": 0.00011102366198596265,
+          "conversation": 0.0010170538056910288
+         },
+         "confidence": 0.9878753919562072
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.0025336407025353842
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.0034541142857681417
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.030037672820837063
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "knowledge",
+         "p": 0.9972810047444906,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "needs_computation": {
+         "p": 0.0025336407025353842,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "ambiguous": {
+         "p": 0.030037672820837063,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "haiku",
+       "context": null,
+       "ms": 1259,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "create",
+         "probabilities": {
+          "compute": 0.00014218900132598888,
+          "lookup_stored": 6.620356241043424e-05,
+          "act": 0.00506667410635216,
+          "knowledge": 0.003802733655163076,
+          "create": 0.9903742103259446,
+          "conversation": 0.0005479893488035631
+         },
+         "confidence": 0.9645278154504733
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.043306887569444216
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.9838818502438783
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.0875915785315814
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "create",
+         "p": 0.9903742103259446,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "needs_computation": {
+         "p": 0.043306887569444216,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "has_constraints": {
+         "p": 0.9838818502438783,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "decline_email",
+       "context": null,
+       "ms": 1213,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "create",
+         "probabilities": {
+          "compute": 9.775295320089843e-05,
+          "lookup_stored": 8.953623325949538e-05,
+          "act": 0.010344185966864951,
+          "knowledge": 0.002090636387906724,
+          "create": 0.9871414374929901,
+          "conversation": 0.0002364509657779809
+         },
+         "confidence": 0.9572077154358978
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.07240539678014801
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.9796145415012636
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.07382677665161483
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "create",
+         "p": 0.9871414374929901,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "has_constraints": {
+         "p": 0.9796145415012636,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "how_are_you",
+       "context": null,
+       "ms": 1200,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "conversation",
+         "probabilities": {
+          "compute": 0.00010534452455516653,
+          "lookup_stored": 0.0032118846433229014,
+          "act": 0.00019529121460425873,
+          "knowledge": 0.03059893965122867,
+          "create": 0.000332913869135697,
+          "conversation": 0.9655556260971532
+         },
+         "confidence": 0.908316923559105
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.007334875079567317
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.0010121838689337937
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.13544814220162238
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "conversation",
+         "p": 0.9655556260971532,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "needs_computation": {
+         "p": 0.007334875079567317,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "has_constraints": {
+         "p": 0.0010121838689337937,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "ambiguous": {
+         "p": 0.13544814220162238,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "curious",
+       "context": null,
+       "ms": 1229,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "conversation",
+         "probabilities": {
+          "compute": 0.0004883587953380883,
+          "lookup_stored": 0.014447896808166603,
+          "act": 0.0009622001484614402,
+          "knowledge": 0.12897696997150446,
+          "create": 0.0022968981827649866,
+          "conversation": 0.8528276760937644
+         },
+         "confidence": 0.7290311086641561
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.01678257838807926
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.0029609587509178137
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.3700381872488547
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "conversation",
+         "p": 0.8528276760937644,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "needs_computation": {
+         "p": 0.01678257838807926,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "who_are_you",
+       "context": null,
+       "ms": 1230,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "conversation",
+         "probabilities": {
+          "compute": 0.0002107722327594567,
+          "lookup_stored": 0.011999549185243343,
+          "act": 0.0003706544809567882,
+          "knowledge": 0.07770663430172589,
+          "create": 0.00039374132631805534,
+          "conversation": 0.9093186484729965
+         },
+         "confidence": 0.8069844199628414
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.02036967636727856
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.0025543069665726835
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.17599746238057284
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "conversation",
+         "p": 0.9093186484729965,
+         "top_ok": true,
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "needs_computation": {
+         "p": 0.02036967636727856,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "convert_5_miles",
+       "context": null,
+       "ms": 1222,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "compute",
+         "probabilities": {
+          "compute": 0.9737276507811226,
+          "lookup_stored": 0.0003491701186182906,
+          "act": 0.0003160987859539577,
+          "knowledge": 0.025117375373896734,
+          "create": 0.000146289633961596,
+          "conversation": 0.00034341530644691934
+         },
+         "confidence": 0.9286626058494005
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.916385440299546
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.029178075871042854
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.4277575778661638
+        }
+       },
+       "scored": {
+        "has_constraints": {
+         "p": 0.029178075871042854,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "ambiguous": {
+         "p": 0.4277575778661638,
+         "top_ok": false,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "next_friday",
+       "context": null,
+       "ms": 1266,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "act",
+         "probabilities": {
+          "compute": 0.0017920083981874464,
+          "lookup_stored": 0.19195124739665498,
+          "act": 0.7911992425705463,
+          "knowledge": 0.011293452319869378,
+          "create": 0.0015762832663590183,
+          "conversation": 0.0021877660483829494
+         },
+         "confidence": 0.6720204897456733
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.08517852658919976
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.15885491716113084
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.22865803204225818
+        }
+       },
+       "scored": {
+        "work": {
+         "choice": "act",
+         "p": 0.7911992425705463,
+         "top_ok": true,
+         "accepted": false,
+         "accepted_wrong": false
+        },
+        "ambiguous": {
+         "p": 0.22865803204225818,
+         "top_ok": false,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      },
+      {
+       "case": "flight",
+       "context": null,
+       "ms": 1228,
+       "answers": {
+        "work": {
+         "type": "choice",
+         "choice": "knowledge",
+         "probabilities": {
+          "compute": 0.2027514181108638,
+          "lookup_stored": 0.31152819577271806,
+          "act": 0.002591721809324626,
+          "knowledge": 0.4491215522551735,
+          "create": 0.0012127454937337107,
+          "conversation": 0.032794366558186364
+         },
+         "confidence": 0.34029778914130904
+        },
+        "needs_computation": {
+         "type": "noul",
+         "noul": 0.3962734900169397
+        },
+        "has_constraints": {
+         "type": "noul",
+         "noul": 0.05118754436173265
+        },
+        "ambiguous": {
+         "type": "noul",
+         "noul": 0.3050000537544733
+        }
+       },
+       "scored": {
+        "ambiguous": {
+         "p": 0.3050000537544733,
+         "top_ok": false,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        }
+       }
+      }
+     ],
+     "summary": {
+      "by_question": {
+       "work": {
+        "scored": 20,
+        "top_ok": 20,
+        "accepted": 17,
+        "accepted_wrong": 0,
+        "abstained": 3
+       },
+       "needs_computation": {
+        "scored": 17,
+        "top_ok": 16,
+        "accepted": 15,
+        "accepted_wrong": 0,
+        "abstained": 2
+       },
+       "has_constraints": {
+        "scored": 9,
+        "top_ok": 9,
+        "accepted": 9,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "ambiguous": {
+        "scored": 9,
+        "top_ok": 6,
+        "accepted": 6,
+        "accepted_wrong": 0,
+        "abstained": 3
+       }
+      },
+      "requests": 22,
+      "errors": 0,
+      "median_ms": 1224
+     }
+    }
+   }
+  }
+ ]
+}

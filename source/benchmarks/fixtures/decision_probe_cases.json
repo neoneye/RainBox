@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "about": "Hand-written synthetic cases for System One decision models, measured by benchmarks/decision_probe.py. Used by notes/proposals/2026-11-09-noticing-a-repeated-request.md and 2026-11-09-later-verdicts-on-earlier-messages.md. Every message is invented.",
   "bands": {"yes": 0.8, "no": 0.2, "choice_accept": 0.8},
   "experiments": [
@@ -105,6 +105,41 @@
         {"id": "ok", "short_message": "ok", "expected": "acknowledge"},
         {"id": "raspberry", "short_message": "and for raspberry?", "expected": "new_request"},
         {"id": "why", "short_message": "why?", "expected": "expand"}
+      ]
+    },
+    {
+      "id": "request_classification",
+      "kind": "checklist",
+      "note": "One request per message, four questions in it: what the work is, and three yes/no flags. Expected labels are given only where the answer is clear.",
+      "questions": {
+        "work": {"type": "choice", "instructions": "What does answering the request need?", "criteria": {"compute": "Needs an exact calculation, count, conversion or transformation of given text or numbers.", "lookup_stored": "Needs facts stored about the user or their own data: their history, notes, plans, boards or records.", "act": "Asks for a change to be made: create, move, edit, delete, send, commit or run something.", "knowledge": "Answerable from general knowledge, without the user's data and without computing.", "create": "Asks for new text to be written: a draft, a poem, a message, a plan.", "conversation": "Small talk, a question about the assistant itself, or an opinion, needing no data and no work."}},
+        "needs_computation": {"type": "noul", "instructions": "Does answering need an exact calculation, count or conversion that should be computed rather than recalled?"},
+        "has_constraints": {"type": "noul", "instructions": "Does the request state an explicit constraint on format, length, method or scope?"},
+        "ambiguous": {"type": "noul", "instructions": "Can the request reasonably be read in two ways that would give different answers?"}
+      },
+      "cases": [
+        {"id": "strawberry", "state": {"request": "count the number of R's in Strawberry"}, "expected": {"work": "compute", "needs_computation": true, "has_constraints": false}},
+        {"id": "percent", "state": {"request": "what is 17% of 2,340"}, "expected": {"work": "compute", "needs_computation": true, "has_constraints": false, "ambiguous": false}},
+        {"id": "feet", "state": {"request": "convert 33 feet to meters"}, "expected": {"work": "compute", "needs_computation": true, "ambiguous": false}},
+        {"id": "reverse", "state": {"request": "reverse the string 'rainbox'"}, "expected": {"work": "compute", "needs_computation": true, "ambiguous": false}},
+        {"id": "primes_table", "state": {"request": "list three prime numbers above 100, as a markdown table"}, "expected": {"work": "compute", "has_constraints": true}},
+        {"id": "last_tuesday", "state": {"request": "what did I do last Tuesday"}, "expected": {"work": "lookup_stored", "needs_computation": false, "has_constraints": false}},
+        {"id": "kanban", "state": {"request": "what's on my kanban board"}, "expected": {"work": "lookup_stored", "needs_computation": false}},
+        {"id": "dentist", "state": {"request": "when is my next dentist appointment"}, "expected": {"work": "lookup_stored", "needs_computation": false}},
+        {"id": "move_task", "state": {"request": "move the 'buy milk' task to done"}, "expected": {"work": "act", "needs_computation": false}},
+        {"id": "commit_push", "state": {"request": "commit and push the changes"}, "expected": {"work": "act", "needs_computation": false}},
+        {"id": "new_board", "state": {"request": "create a new board called Garden"}, "expected": {"work": "act", "needs_computation": false}},
+        {"id": "capital", "state": {"request": "what is the capital of Australia"}, "expected": {"work": "knowledge", "needs_computation": false, "has_constraints": false, "ambiguous": false}},
+        {"id": "hash_map", "state": {"request": "explain how a hash map works"}, "expected": {"work": "knowledge", "needs_computation": false}},
+        {"id": "author", "state": {"request": "who wrote Pride and Prejudice"}, "expected": {"work": "knowledge", "needs_computation": false, "ambiguous": false}},
+        {"id": "haiku", "state": {"request": "write a haiku about rain, under 20 words"}, "expected": {"work": "create", "needs_computation": false, "has_constraints": true}},
+        {"id": "decline_email", "state": {"request": "draft a polite email declining the meeting, max 3 sentences"}, "expected": {"work": "create", "has_constraints": true}},
+        {"id": "how_are_you", "state": {"request": "how are you today"}, "expected": {"work": "conversation", "needs_computation": false, "has_constraints": false, "ambiguous": false}},
+        {"id": "curious", "state": {"request": "what are you curious about"}, "expected": {"work": "conversation", "needs_computation": false}},
+        {"id": "who_are_you", "state": {"request": "who are you"}, "expected": {"work": "conversation", "needs_computation": false}},
+        {"id": "convert_5_miles", "state": {"request": "convert 5 miles"}, "expected": {"ambiguous": true, "has_constraints": false}},
+        {"id": "next_friday", "state": {"request": "book the table for next Friday"}, "expected": {"work": "act", "ambiguous": true}},
+        {"id": "flight", "state": {"request": "how long is the flight"}, "expected": {"ambiguous": true}}
       ]
     },
     {

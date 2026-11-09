@@ -55,6 +55,7 @@ DATABASE_URL=postgresql+psycopg://localhost/rainbox_claude \
 `proposals/2026-11-09-later-verdicts-on-earlier-messages.md`:
 - task identity;
 - what a short message does;
+- what a request needs, before acceptance criteria runs;
 - whether a reply answered its request;
 - later verdicts, hedges and same-answer comparisons.
 
