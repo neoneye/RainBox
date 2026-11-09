@@ -18,6 +18,10 @@ def test_fixture_ids_are_unique_and_labels_valid():
     for exp in CASES["experiments"]:
         assert exp["id"] not in seen
         seen.add(exp["id"])
+        if exp["kind"] == "sequence_pairs":
+            n = len(exp["messages"])
+            assert all(1 <= p["a"] < p["b"] <= n for p in exp["pairs"]), exp["id"]
+            continue
         items = exp.get("cases") or exp.get("candidates")
         ids = [c["id"] for c in items]
         assert len(ids) == len(set(ids)), exp["id"]
@@ -33,7 +37,7 @@ def test_requests_per_experiment():
     assert counts == {
         "identity_pair": 14, "identity_fanout": 1, "redo_noul": 14,
         "short_message_choice": 51, "request_classification": 22,
-        "topic_assignment": 14,
+        "topic_assignment": 14, "topic_transitions": 1,
         "reply_checklist": 12,
         "verdict_choice": 14, "hedge": 8, "same_answer": 8,
     }
@@ -64,6 +68,14 @@ def test_request_classification_mixes_a_choice_and_nouls():
     assert types == {"work": "choice", "needs_computation": "noul",
                      "has_constraints": "noul", "ambiguous": "noul"}
     assert set(req["expected"]) <= set(types)
+
+
+def test_sequence_pairs_keep_message_text_in_the_state():
+    (req,) = dp.build_requests(_exp("topic_transitions"))
+    assert len(req["state"]["messages"]) == 12
+    assert len(req["questions"]) == 18
+    for q in req["questions"].values():
+        assert "'" not in q["instructions"]  # numbers only, no quoted text
 
 
 def test_fanout_is_one_request_with_a_question_per_candidate():

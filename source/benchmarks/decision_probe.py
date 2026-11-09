@@ -10,6 +10,8 @@ hand-written cases in benchmarks/fixtures/decision_probe_cases.json:
 - request_classification: what a request needs (compute, a lookup, an
   action, ...) and whether it needs exact computation, states constraints, or
   is ambiguous — the check that would run before acceptance criteria;
+- topic_assignment / topic_transitions: which room topic a message belongs
+  to, and where a sequence of messages changes topic;
 - reply_checklist: did a reply answer the request and its constraints;
 - verdict_choice / hedge / same_answer: later verdicts on earlier messages.
 
@@ -94,6 +96,18 @@ def build_requests(exp: dict[str, Any]) -> list[dict[str, Any]]:
             out.append({"case": c["id"], "context": None, "state": c["state"],
                         "questions": exp["questions"],
                         "expected": c["expected"]})
+    elif kind == "sequence_pairs":
+        # The whole numbered sequence is the state; each question names its
+        # pair by number only, so no message text sits in an instruction.
+        out.append({
+            "case": "sequence", "context": None,
+            "state": {"messages": exp["messages"]},
+            "questions": {f"p{p['a']}_{p['b']}": {
+                "type": "noul",
+                "instructions": exp["question"].format(a=p["a"], b=p["b"])}
+                for p in exp["pairs"]},
+            "expected": {f"p{p['a']}_{p['b']}": p["expected"] for p in exp["pairs"]},
+        })
     elif kind == "noul_fanout":
         out.append({
             "case": "fanout", "context": None,

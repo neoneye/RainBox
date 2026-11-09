@@ -56,7 +56,7 @@ DATABASE_URL=postgresql+psycopg://localhost/rainbox_claude \
 - task identity;
 - what a short message does;
 - what a request needs, before acceptance criteria runs;
-- which of a room's topics a message belongs to;
+- which of a room's topics a message belongs to, and where a sequence changes topic;
 - whether a reply answered its request;
 - later verdicts, hedges and same-answer comparisons.
 

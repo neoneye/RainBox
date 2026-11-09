@@ -1,0 +1,733 @@
+{
+ "fixture_version": 4,
+ "only": [
+  "topic_transitions"
+ ],
+ "bands": {
+  "yes": 0.8,
+  "no": 0.2,
+  "choice_accept": 0.8
+ },
+ "started_at": "2026-11-09T01:20:30+00:00",
+ "environment": {
+  "server_version": "0.40.15",
+  "models": {
+   "d1:3b": {
+    "digest": "8c2d9ddae4413c38b183644320b6f4bca4c5f629ae9e5104c3b13a150ed85e7e",
+    "size": 3730544597
+   },
+   "d3:4b": {
+    "digest": "510b1771140e588b3516b17984b67bdf2c6c7cfc3b62b6e6e54e37619b675d00",
+    "size": 5647082587
+   }
+  }
+ },
+ "runs": [
+  {
+   "model": "d1:3b",
+   "first_call": {
+    "cold_requested": false,
+    "first_call_ms": 1357
+   },
+   "experiments": {
+    "topic_transitions": {
+     "results": [
+      {
+       "case": "sequence",
+       "context": null,
+       "ms": 790,
+       "answers": {
+        "p1_2": {
+         "type": "noul",
+         "noul": 0.8113454683408121
+        },
+        "p2_3": {
+         "type": "noul",
+         "noul": 0.32914403155369487
+        },
+        "p3_4": {
+         "type": "noul",
+         "noul": 0.027432053701115077
+        },
+        "p4_5": {
+         "type": "noul",
+         "noul": 0.195577279244148
+        },
+        "p5_6": {
+         "type": "noul",
+         "noul": 0.04377625206150842
+        },
+        "p6_7": {
+         "type": "noul",
+         "noul": 0.030358495584461805
+        },
+        "p7_8": {
+         "type": "noul",
+         "noul": 0.022509284092086107
+        },
+        "p8_9": {
+         "type": "noul",
+         "noul": 0.12107490567080814
+        },
+        "p9_10": {
+         "type": "noul",
+         "noul": 0.21088911825080614
+        },
+        "p10_11": {
+         "type": "noul",
+         "noul": 0.315095135395297
+        },
+        "p11_12": {
+         "type": "noul",
+         "noul": 0.021690891457934677
+        },
+        "p1_12": {
+         "type": "noul",
+         "noul": 0.025167608393690737
+        },
+        "p1_6": {
+         "type": "noul",
+         "noul": 0.022607527058330953
+        },
+        "p1_3": {
+         "type": "noul",
+         "noul": 0.48529572228171625
+        },
+        "p1_4": {
+         "type": "noul",
+         "noul": 0.021870553647591582
+        },
+        "p1_8": {
+         "type": "noul",
+         "noul": 0.09587096081013449
+        },
+        "p4_8": {
+         "type": "noul",
+         "noul": 0.02760944160493345
+        },
+        "p6_12": {
+         "type": "noul",
+         "noul": 0.036347108609316905
+        }
+       },
+       "scored": {
+        "p1_2": {
+         "p": 0.8113454683408121,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "p2_3": {
+         "p": 0.32914403155369487,
+         "top_ok": false,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        },
+        "p3_4": {
+         "p": 0.027432053701115077,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "p4_5": {
+         "p": 0.195577279244148,
+         "top_ok": false,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": true
+        },
+        "p5_6": {
+         "p": 0.04377625206150842,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "p6_7": {
+         "p": 0.030358495584461805,
+         "top_ok": false,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": true
+        },
+        "p7_8": {
+         "p": 0.022509284092086107,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "p8_9": {
+         "p": 0.12107490567080814,
+         "top_ok": false,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": true
+        },
+        "p9_10": {
+         "p": 0.21088911825080614,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        },
+        "p10_11": {
+         "p": 0.315095135395297,
+         "top_ok": false,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        },
+        "p11_12": {
+         "p": 0.021690891457934677,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "p1_12": {
+         "p": 0.025167608393690737,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "p1_6": {
+         "p": 0.022607527058330953,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "p1_3": {
+         "p": 0.48529572228171625,
+         "top_ok": false,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        },
+        "p1_4": {
+         "p": 0.021870553647591582,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "p1_8": {
+         "p": 0.09587096081013449,
+         "top_ok": false,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": true
+        },
+        "p4_8": {
+         "p": 0.02760944160493345,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "p6_12": {
+         "p": 0.036347108609316905,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      }
+     ],
+     "summary": {
+      "by_question": {
+       "p1_2": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "p2_3": {
+        "scored": 1,
+        "top_ok": 0,
+        "accepted": 0,
+        "accepted_wrong": 0,
+        "abstained": 1
+       },
+       "p3_4": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "p4_5": {
+        "scored": 1,
+        "top_ok": 0,
+        "accepted": 1,
+        "accepted_wrong": 1,
+        "abstained": 0
+       },
+       "p5_6": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "p6_7": {
+        "scored": 1,
+        "top_ok": 0,
+        "accepted": 1,
+        "accepted_wrong": 1,
+        "abstained": 0
+       },
+       "p7_8": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "p8_9": {
+        "scored": 1,
+        "top_ok": 0,
+        "accepted": 1,
+        "accepted_wrong": 1,
+        "abstained": 0
+       },
+       "p9_10": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 0,
+        "accepted_wrong": 0,
+        "abstained": 1
+       },
+       "p10_11": {
+        "scored": 1,
+        "top_ok": 0,
+        "accepted": 0,
+        "accepted_wrong": 0,
+        "abstained": 1
+       },
+       "p11_12": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "p1_12": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "p1_6": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "p1_3": {
+        "scored": 1,
+        "top_ok": 0,
+        "accepted": 0,
+        "accepted_wrong": 0,
+        "abstained": 1
+       },
+       "p1_4": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "p1_8": {
+        "scored": 1,
+        "top_ok": 0,
+        "accepted": 1,
+        "accepted_wrong": 1,
+        "abstained": 0
+       },
+       "p4_8": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "p6_12": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       }
+      },
+      "requests": 1,
+      "errors": 0,
+      "median_ms": 790
+     }
+    }
+   }
+  },
+  {
+   "model": "d3:4b",
+   "first_call": {
+    "cold_requested": false,
+    "first_call_ms": 1331
+   },
+   "experiments": {
+    "topic_transitions": {
+     "results": [
+      {
+       "case": "sequence",
+       "context": null,
+       "ms": 10299,
+       "answers": {
+        "p1_2": {
+         "type": "noul",
+         "noul": 0.06947845859932412
+        },
+        "p2_3": {
+         "type": "noul",
+         "noul": 0.17820340153662206
+        },
+        "p3_4": {
+         "type": "noul",
+         "noul": 0.01933714502572572
+        },
+        "p4_5": {
+         "type": "noul",
+         "noul": 0.9628718760594519
+        },
+        "p5_6": {
+         "type": "noul",
+         "noul": 0.012767659554336022
+        },
+        "p6_7": {
+         "type": "noul",
+         "noul": 0.919585708654721
+        },
+        "p7_8": {
+         "type": "noul",
+         "noul": 0.03267798670674208
+        },
+        "p8_9": {
+         "type": "noul",
+         "noul": 0.003224679921656446
+        },
+        "p9_10": {
+         "type": "noul",
+         "noul": 0.023501484575075584
+        },
+        "p10_11": {
+         "type": "noul",
+         "noul": 0.4077616968024348
+        },
+        "p11_12": {
+         "type": "noul",
+         "noul": 0.013207326088569692
+        },
+        "p1_12": {
+         "type": "noul",
+         "noul": 0.0019470091098217498
+        },
+        "p1_6": {
+         "type": "noul",
+         "noul": 0.019749051570584257
+        },
+        "p1_3": {
+         "type": "noul",
+         "noul": 0.785530225100995
+        },
+        "p1_4": {
+         "type": "noul",
+         "noul": 0.01417156675729765
+        },
+        "p1_8": {
+         "type": "noul",
+         "noul": 0.9791876985857894
+        },
+        "p4_8": {
+         "type": "noul",
+         "noul": 0.11090439056431838
+        },
+        "p6_12": {
+         "type": "noul",
+         "noul": 0.0019778004657134913
+        }
+       },
+       "scored": {
+        "p1_2": {
+         "p": 0.06947845859932412,
+         "top_ok": false,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": true
+        },
+        "p2_3": {
+         "p": 0.17820340153662206,
+         "top_ok": false,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": true
+        },
+        "p3_4": {
+         "p": 0.01933714502572572,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "p4_5": {
+         "p": 0.9628718760594519,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "p5_6": {
+         "p": 0.012767659554336022,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "p6_7": {
+         "p": 0.919585708654721,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "p7_8": {
+         "p": 0.03267798670674208,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "p8_9": {
+         "p": 0.003224679921656446,
+         "top_ok": false,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": true
+        },
+        "p9_10": {
+         "p": 0.023501484575075584,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "p10_11": {
+         "p": 0.4077616968024348,
+         "top_ok": false,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        },
+        "p11_12": {
+         "p": 0.013207326088569692,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "p1_12": {
+         "p": 0.0019470091098217498,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "p1_6": {
+         "p": 0.019749051570584257,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "p1_3": {
+         "p": 0.785530225100995,
+         "top_ok": true,
+         "band": "unclear",
+         "accepted": false,
+         "accepted_wrong": false
+        },
+        "p1_4": {
+         "p": 0.01417156675729765,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "p1_8": {
+         "p": 0.9791876985857894,
+         "top_ok": true,
+         "band": "yes",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "p4_8": {
+         "p": 0.11090439056431838,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        },
+        "p6_12": {
+         "p": 0.0019778004657134913,
+         "top_ok": true,
+         "band": "no",
+         "accepted": true,
+         "accepted_wrong": false
+        }
+       }
+      }
+     ],
+     "summary": {
+      "by_question": {
+       "p1_2": {
+        "scored": 1,
+        "top_ok": 0,
+        "accepted": 1,
+        "accepted_wrong": 1,
+        "abstained": 0
+       },
+       "p2_3": {
+        "scored": 1,
+        "top_ok": 0,
+        "accepted": 1,
+        "accepted_wrong": 1,
+        "abstained": 0
+       },
+       "p3_4": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "p4_5": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "p5_6": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "p6_7": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "p7_8": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "p8_9": {
+        "scored": 1,
+        "top_ok": 0,
+        "accepted": 1,
+        "accepted_wrong": 1,
+        "abstained": 0
+       },
+       "p9_10": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "p10_11": {
+        "scored": 1,
+        "top_ok": 0,
+        "accepted": 0,
+        "accepted_wrong": 0,
+        "abstained": 1
+       },
+       "p11_12": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "p1_12": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "p1_6": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "p1_3": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 0,
+        "accepted_wrong": 0,
+        "abstained": 1
+       },
+       "p1_4": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "p1_8": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "p4_8": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       },
+       "p6_12": {
+        "scored": 1,
+        "top_ok": 1,
+        "accepted": 1,
+        "accepted_wrong": 0,
+        "abstained": 0
+       }
+      },
+      "requests": 1,
+      "errors": 0,
+      "median_ms": 10299
+     }
+    }
+   }
+  }
+ ]
+}

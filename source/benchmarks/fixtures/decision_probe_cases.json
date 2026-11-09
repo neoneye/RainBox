@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "about": "Hand-written synthetic cases for System One decision models, measured by benchmarks/decision_probe.py. Used by notes/proposals/2026-11-09-noticing-a-repeated-request.md and 2026-11-09-later-verdicts-on-earlier-messages.md. Every message is invented.",
   "bands": {"yes": 0.8, "no": 0.2, "choice_accept": 0.8},
   "experiments": [
@@ -165,6 +165,46 @@
         {"id": "haiku", "state": {"message": "write a haiku about autumn"}, "expected": {"topic": "none", "new_topic": true}},
         {"id": "capital", "state": {"message": "what is the capital of Peru"}, "expected": {"topic": "none", "new_topic": true}},
         {"id": "prime", "state": {"message": "is 221 a prime number"}, "expected": {"topic": "none", "new_topic": true}}
+      ]
+    },
+    {
+      "id": "topic_transitions",
+      "kind": "sequence_pairs",
+      "note": "One request over a numbered sequence of messages in the state; one Noul per pair, naming the pair by number only. Adjacent pairs locate every topic transition at once. The non-adjacent pairs are what a bisect would ask; 1 vs 8 is the same topic returning after other topics, where a bisect concludes there is no transition in between.",
+      "question": "Are message {a} and message {b} about the same topic?",
+      "messages": [
+        {"n": 1, "text": "count the R's in Strawberry"},
+        {"n": 2, "text": "again"},
+        {"n": 3, "text": "use python for counting"},
+        {"n": 4, "text": "what is 12 inches in cm"},
+        {"n": 5, "text": "and 5 miles in km?"},
+        {"n": 6, "text": "what's on the kanban board"},
+        {"n": 7, "text": "move the 'fix login' card to done"},
+        {"n": 8, "text": "how many e's are in 'excellence'"},
+        {"n": 9, "text": "thanks"},
+        {"n": 10, "text": "who are you"},
+        {"n": 11, "text": "elaborate"},
+        {"n": 12, "text": "will it rain tomorrow"}
+      ],
+      "pairs": [
+        {"a": 1, "b": 2, "expected": true},
+        {"a": 2, "b": 3, "expected": true},
+        {"a": 3, "b": 4, "expected": false},
+        {"a": 4, "b": 5, "expected": true},
+        {"a": 5, "b": 6, "expected": false},
+        {"a": 6, "b": 7, "expected": true},
+        {"a": 7, "b": 8, "expected": false},
+        {"a": 8, "b": 9, "expected": true},
+        {"a": 9, "b": 10, "expected": false},
+        {"a": 10, "b": 11, "expected": true},
+        {"a": 11, "b": 12, "expected": false},
+        {"a": 1, "b": 12, "expected": false},
+        {"a": 1, "b": 6, "expected": false},
+        {"a": 1, "b": 3, "expected": true},
+        {"a": 1, "b": 4, "expected": false},
+        {"a": 1, "b": 8, "expected": true},
+        {"a": 4, "b": 8, "expected": false},
+        {"a": 6, "b": 12, "expected": false}
       ]
     },
     {
