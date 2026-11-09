@@ -19,7 +19,7 @@ each one buys and costs, and lists what is still the operator's to decide.
 |---|---|
 | [Noticing a repeated request](2026-11-09-noticing-a-repeated-request.md) | exact repeats, redos and repeated commands, with what each earlier attempt tried; the request profile; reply checklists as diagnostics |
 | [Later verdicts on earlier messages](2026-11-09-later-verdicts-on-earlier-messages.md) | "that was wrong" / "my guess was right" as append-only records, shown on the earlier message |
-| [The room digest](2026-11-09-room-digest.md) | topics, derived status, a compact timeline, and chunk summaries of every 10 messages, counted from message 0, never invalidated |
+| [The room digest](2026-11-09-room-digest.md) | topics, derived status, a compact timeline, and chunks of every 10 messages, counted from message 0, built from records and never invalidated; a generated phrase per chunk only if it earns its place |
 | [Decision-model foundation](2026-11-09-decision-model-foundation.md) | one System One client, two slots, verified local execution, one record per call, the probe as regression suite |
 | [Detector labels](2026-11-09-detector-labels.md) | one place and one UI for "that detection was wrong" or "it missed this", which every promotion gate reads |
 | [Post-turn housekeeping](2026-11-09-post-turn-housekeeping.md) | one ordered queue after each turn, never during one, with a heat budget |
@@ -112,21 +112,27 @@ labelled. Then hedge flags.
     prefill per verdict.
   - The detector's 14/14 on d3 is on 14 invented cases.
 
-### Step 4. Room digest, cheap half: current topic, topics, timeline (M)
+### Step 4. Room digest from records: current topic, topics, timeline, chunks (M)
 
 The topic Choice joins the turn-start call, follow-ups inherit, new topics
 are named after the turn, status is derived from step 3's verdicts, and the
-collapsed timeline renders. No summaries yet.
+collapsed timeline renders. Chunk nodes are written in housekeeping with no
+model call, and each chunk renders its topics, exchange count and outcomes
+from records. The history window starts at a stored chunk edge.
 
 - **Pros:**
   - It delivers "where were we" (the current topic and its status) and the
     operator's tag table and linear lens.
+  - It delivers the fading summary's shape as well, with no generative load.
   - Topic assignment was 14/14 on both models.
   - It costs one more question in a call that already happens.
 - **Cons:**
   - Status needs step 3 to say anything stronger than `quiet`.
   - Topic naming adds a short generative call when a new topic appears.
-  - Topics only begin when recording begins, so older history gets none.
+  - Topics only begin when recording begins, so older history gets none,
+    and its chunks show an exchange count only.
+  - The aligned window changes which messages the history holds, so it needs
+    the same `record` phase as the rest.
 
 ### Step 5. The acceptance-criteria gate (S to build, M to evaluate)
 
@@ -144,36 +150,43 @@ operator's labels, skip the call on those turns.
   - The 2026-09-16 cost proposal may reduce the call's cost by other means
     first. Read it before choosing.
 
-### Step 6. Room digest, expensive half: chunk summaries (L)
+### Step 6. Room digest, generated text: the `asked` phrase, only if it earns its place (M)
 
-Level 1 summaries of every 10 messages counted from message 0, and level 2
-summaries of every 10 level 1 summaries, each reading 2 messages of overlap
-on each side. Each is written once by a local generative model in
-housekeeping, and appending messages never invalidates one. The history
-window starts at a chunk edge, so it holds 30 to 39 messages. The housekeeping
-heat budget comes before this step. The answer screen (a Noul that rejects a
-summary stating answer content) is added to the probe and measured first.
+One phrase per level 1 chunk, of at most 120 characters, saying what was
+asked in kind, written once by a local generative model in housekeeping.
+Level 2 is never generated. The answer screen (a Noul that rejects text
+stating answer content) is added to the probe and measured first. Then the
+orientation replay runs three ways: no digest, step 4's record-derived
+chunks, and chunks with the phrase. The phrase ships only if the third beats
+the second. The housekeeping heat budget comes before this step.
 
 - **Pros:**
-  - It is the fading summary, so the loop gets a sense of the whole room.
-  - About 0.11 generative calls per message, off the request path.
+  - It says what kind of thing was asked in a thread, which a topic title
+    does not.
+  - One generative call per 10 messages, off the request path.
+  - The same job, run over a backlog, gives rooms that predate topic
+    recording their only chunk content (operator decision 3, below).
 - **Cons:**
   - It is the only step that adds sustained generative load, on a laptop with
     a heat history.
   - The model-written text needs the strictest access rule: verified-local
     models only.
   - The answer screen is not yet measured.
+  - It may measure as no better than step 4, and then it is not built.
 
 ### Step 7. Cross-room continuity (M)
 
 Opt-in sharing between the operator's own unbridged rooms. Topic links
-recording first, then the `elsewhere` section.
+recording first, then the `elsewhere` section. It carries topics and
+statuses only, never generated chunk text.
 
 - **Pros:**
   - It answers the amnesia the first room complained about: a new room
     learns that a topic was contested yesterday elsewhere.
+  - With no generated text crossing rooms, nothing model-written reaches a
+    room that did not produce it.
 - **Cons:**
-  - It depends on steps 4 and 6 being trustworthy.
+  - It depends on step 4 being trustworthy.
   - Its audience rule must be right the first time.
   - Value is limited until several rooms opt in.
 
@@ -207,23 +220,33 @@ These cost little, collect data, and change nothing.
    The current documents follow Astra. Reinstating it is a step-5 change in
    the repeat proposal, after labels exist.
 2. **The digest's gradient.** It uses fixed chunks of ten, counted from
-   message 0, instead of a smooth Fibonacci fade. It is coarser and about
-   four times cheaper, and no summary is ever invalidated. The operator
-   chose the chunks of ten; this records that the Fibonacci shape was given
-   up for it.
-3. **Backfill for old rooms.** Topics start when recording starts. Chunks
-   depend only on the message count, so old history can be chunked by the
-   same job (about 0.11 calls per message), with empty topic lists. Running
-   it over old history is a one-off budget decision. The machine takes 10
-   to 15 calls in a row before it needs a 60-second cool-down, so a long
-   room's backlog trickles through idle time over days. Assigning topics to old
-   exchanges would go against the "records are written when things happen"
-   rule.
+   message 0, instead of a smooth Fibonacci fade. It is coarser, and no chunk
+   is ever invalidated. The operator chose the chunks of ten; this records
+   that the Fibonacci shape was given up for it. Level 2 is derived from
+   records, never generated from level 1 text, so no text in the digest is a
+   summary of a summary.
+3. **Backfill for old rooms.** Topics start when recording starts, so chunks
+   older than that have no records and show an exchange count only. The
+   step 6 job can write generated text for them (about 0.1 calls per
+   message, level 1 only). This is the one place where generated text has no
+   record-derived alternative. Running it is a one-off budget decision. The
+   machine takes 10 to 15 calls in a row before it needs a 60-second
+   cool-down, so a long room's backlog trickles through idle time over days.
+   Assigning topics to old exchanges would go against the "records are
+   written when things happen" rule.
 4. **Cross-room eligibility.** The proposal excludes bridged rooms and rooms
    with another human member. Should direct rooms with agents only count as
    the operator's own?
 5. **Step 5 versus the earlier criteria proposal.** Gate the call per turn,
    or reduce it for every turn first?
+6. **Where standing instructions live.** A rule the operator states in a room
+   ("answer in Danish", "don't use tool X") needs its exact wording to stay
+   enforceable. Once it leaves the 30-to-39-message window, nothing in this
+   series keeps it: the digest keeps no wording by design, and the working
+   set carries evidence, not instructions. The options are memory, the
+   working set extended to instructions, or an operator-pinned room-rules
+   block kept verbatim and never compacted. Summarizing such a rule is not
+   an option: a rule rewritten in fewer words is a different rule.
 
 ## What the probes taught, for whoever builds this
 
@@ -247,7 +270,12 @@ These cost little, collect data, and change nothing.
   possible.** Today's 30-message window changes its first message every
   turn. Aligned, the history only appends for about five turns. The reuse
   also needs the history ahead of the per-turn sections, which is a layout
-  change to measure, not assume.
+  change to measure, not assume. Step 3's verdict attributes also change
+  bytes inside that history, once per verdict, so the two are measured
+  together.
+- **Chunks and the window must count the same messages.** One function gives
+  both their edges. `kind="progress"` rows are reaped when the reply posts,
+  so they never count.
 - **One process per role means post-turn jobs can overlap the next turn
   today.** That is the reason for the housekeeping gate.
 - **Record before inject, everywhere.** Every detector ships recording-only,

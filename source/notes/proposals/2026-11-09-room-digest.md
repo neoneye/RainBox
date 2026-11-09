@@ -47,10 +47,10 @@ and a small model believes it. The digest says *what was discussed and how it
 went*. To use the content, the loop reads it again.
 
 **It is built from records, not reconstructed.** Topic assignments, verdicts,
-repeat chains and chunk summaries are rows written once, when they happen.
-Nothing is backfilled, and an old row is never rewritten. Status is
-*derived* at read time from those rows, so it can change without anything
-being edited.
+repeat chains and chunk edges are rows written once, when they happen. No
+record is backfilled, and an old row is never rewritten. Status and each
+chunk's contents are *derived* at read time from those rows, so they can
+change without anything being edited.
 
 **Silence is not success.** A topic nobody came back to is `quiet`, not
 `solved`. Only the operator settles a topic, by mark or in their own words.
@@ -178,58 +178,81 @@ The operator's design:
 
 - **Messages are counted from 0**, the room's first message, however many
   are appended later.
-- **Level 1:** every 10 messages are compacted into one summary: messages
-  0–9, then 10–19, and so on. Each summary also reads the 2 messages before
-  its chunk and the 2 after it.
-- **Level 2:** every 10 level 1 summaries are compacted into one, with the
-  same margin of 2 messages on each side.
+- **Level 1:** every 10 messages form one chunk: messages 0–9, then 10–19,
+  and so on.
+- **Level 2:** every 10 level 1 chunks form one, which is 100 messages.
 
-**Appending never invalidates a summary.** A chunk's range depends only on
-the message count. A new message can complete the newest chunk, and touches
-nothing older. Once written, a summary is final. It is never recomputed,
-re-cut or merged, whatever is appended after it.
+**A chunk is built from records, not written by a model.** Its topics, its
+exchange count, its verdicts, its repeat chains and its failed runs already
+exist as rows (decisions 2 and 3, the repeat proposal and the verdicts
+proposal). A chunk renders them for its range at read time, the same way
+topic status is derived. So:
+- a chunk costs no model call;
+- an operator's reassignment or merge shows in every chunk it touches, and
+  nothing is rewritten;
+- a level 2 chunk is the same rendering over 100 messages. It is never
+  generated from level 1 text, so no text in the digest is a summary of a
+  summary.
 
-**The chunks:**
+A model can add one thing the records do not hold: a phrase saying what was
+asked, in kind. That phrase is optional (below).
 
-| level | covers | written when | reads |
-|---|---|---|---|
-| 1 | messages 10k to 10k+9 | message 10k+11 exists (its after-margin) | the 10 messages, plus 2 before and 2 after as context |
-| 2 | level 1 chunks 10j to 10j+9, which is messages 100j to 100j+99 | its tenth level 1 summary is written | the 10 summaries, plus 2 raw messages before and 2 after |
-| 3 | 10 level 2 chunks, 1,000 messages | the same rule | only in rooms that large |
-
-**Every message counts:** human messages, replies, and progress messages
-the loop posted during a turn. That makes the count a plain position in the
-room, with no judgement about which messages matter.
-
-**A chunk ends after the last message it covers, not at an index.** Each
-node stores its first and last message UUIDs. The next chunk starts at the
-message after the previous chunk's last one. A message deleted later
-therefore renumbers nothing already written. Its chunk's summary text is
-withheld at render time through the provenance rule (decision 8), and is
-never rewritten.
-
-**Margins are context, not content.** The 2 messages on each side are
-marked as context and are not summarized, so no message is summarized
-twice. With them, the summarizer can tell whether a topic began before the
-chunk or runs on after it. It records that as structure:
+**What is stored.** One node per level 1 chunk. Housekeeping writes it once,
+with no model call, when the chunk's tenth counted message exists.
 
 ```
-{"summary": "...", "topics": ["letter-count", "assistant-self"],
- "continues_from_previous": ["letter-count"],
- "continues_into_next": []}
+room_digest_node  uuid, room_uuid, first_message, last_message,
+                  first_index, last_index, content_hash, provenance,
+                  asked, asked_topics, model, created_at
 ```
 
-When rendering, two neighbouring chunks that share a topic across their edge
-are shown joined, so a thread crossing an edge reads as one thread. The
-chunk's `topics` come from the exchange topic records (decision 2) where
-they exist. The summarizer writes the summary text and the two flags.
+- `first_message`, `last_message`: the edges, as message UUIDs.
+- `content_hash`: over the ids and texts of the chunk's counted messages,
+  taken when the node is written.
+- `provenance`: the run ids the chunk covers, and whether any of them used
+  `diary_query`, a memory read, or `room_digest`.
+- `asked`, `asked_topics`, `model`: empty unless generated text was written
+  (the `asked` phrase, or a backfill).
+
+Level 2 has no node. It is derived from its ten level 1 nodes and the records
+under them.
+
+**Appending never invalidates a chunk.** A chunk's range depends only on the
+counted messages. A new message can complete the newest chunk, and touches
+nothing older. A node, once written, is never recomputed, re-cut or merged.
+
+**Which messages count.** Exactly the set the history window draws from,
+through one function that both the window and the chunk job call.
+- `kind="progress"` rows never count. They are reaped when the sender posts
+  its real reply (`post_chat_message` in `db/chat.py`), so a count that
+  included them would shrink after every turn.
+- Per-call filters such as `history_skip` apply after the window is cut, as
+  they do today, and never move an edge.
+
+**Edges are stored, not recomputed.** The next chunk starts at the counted
+message after the previous node's `last_message`. A message deleted later
+renumbers nothing already written. One function gives every edge: the newest
+node's `last_message`, then every 10th counted message after it. The window
+start and the chunk job both call it, so a deletion cannot make them
+disagree.
+
+**Edits and deletions.** At render, a node's `content_hash` is recomputed over
+its range. On a mismatch, from an edit or a deletion, the record-derived part
+renders as usual, because it reads the current rows. Any generated text is
+withheld, the same way as under the provenance rule (decision 8). Nothing is
+rewritten.
+
+**Crossing an edge is derived too.** A topic continues across an edge when
+the last exchange before it and the first after it share a topic in
+`exchange_topic`. When rendering, two neighbouring chunks that share a topic
+across their edge are shown joined, so a thread crossing an edge reads as one
+thread.
 
 **Why the edges are not moved to topic changes.** Cutting where the topic
 changes would make a chunk's range depend on topic records. Those can
 change later: an operator reassigns an exchange, or a topic is named after
-the turn. A written summary would then cover the wrong range, and would have
-to be invalidated. That is exactly what fixed counting avoids. The margin
-and the flags handle a topic that crosses an edge.
+the turn. A stored node would then cover the wrong range. That is exactly
+what fixed counting avoids.
 
 **Why there is no bisect for topic transitions.** It was measured
 (`topic_transitions` in the probe fixture), and it fails in two ways:
@@ -241,28 +264,28 @@ and the flags handle a topic that crosses an edge.
 
 Fixed counting needs no transitions at all.
 
-**Rendering is aligned to chunk edges.** For n messages before the current
-request:
+**Rendering is aligned to chunk edges.** For the counted messages before the
+current request:
 
-1. **The verbatim window** starts at the largest multiple of 10 that leaves
-   at least 30 messages after it. It holds 30 to 39 messages, not exactly
-   30. A window cut at exactly 30 would split a chunk: half of it would be
-   verbatim and half not, so it would be shown either twice or not at all.
-2. **Level 2** (and level 3) summaries cover every complete group of 100
+1. **The verbatim window** starts at the newest edge that leaves at least 30
+   counted messages after it. It holds 30 to 39 messages, not exactly 30. A
+   window cut at exactly 30 would split a chunk: half of it would be verbatim
+   and half not, so it would be shown either twice or not at all.
+2. **Level 2** (and level 3) chunks cover every complete group of 100
    messages before the window.
-3. **Level 1** summaries cover the rest up to the window: 0 to 9 chunks.
-4. **Gaps.** A level 2 chunk not yet written is shown as its level 1
-   chunks.
+3. **Level 1** chunks cover the rest up to the window: 0 to 9 chunks.
+4. **A chunk whose node is not written yet** renders from records alone. It
+   has no generated text to withhold.
 
-When the tenth level 1 chunk of a group is written, the group is shown as
-one level 2 summary instead. This follows the operator's rule
-(compact when N accumulate), so the level 1 detail before the window ranges
-from 0 to 90 messages.
+When a group's hundredth message is counted, the group is shown as one
+level 2 chunk instead. This follows the operator's rule (compact when N
+accumulate), so the level 1 detail before the window ranges from 0 to 90
+messages.
 
 **What changes from turn to turn.** The window's first message and the list
-of summaries change only when the count crosses a multiple of 10: about once
-per five turns. In between, a new turn only appends to the end of the
-history.
+of chunks change only when the count crosses an edge. At about two counted
+messages per exchange, that is about once per five turns. In between, a new
+turn only appends to the end of the history.
 
 **Prefix reuse becomes possible.** Today's 30-message window loses reuse
 across turns, because its first message changes every turn. An aligned
@@ -270,14 +293,19 @@ window keeps the history's head byte-identical for about five turns.
 
 The backend reuses those bytes only if nothing per-turn renders before them.
 Today the request renders ahead of `conversation_history_xml` in the context
-message, so the gain needs a layout change that puts the summaries and the
-history ahead of the per-turn sections. That change is a separate,
-measured step (the prefill time on turns 2 to 5 after a chunk edge), not
-something this proposal claims.
+message, so the gain needs a layout change that puts the chunks and the
+history ahead of the per-turn sections. Two other things change bytes in that
+head, each costing one partial prefill:
+- a `later_verdict` attribute added to a message in the history;
+- a verdict that changes a chunk's derived outcome.
 
-**Cost.** One generative call per 10 messages at level 1, plus one per 100
-at level 2: about 0.11 calls per message. A level 1 chunk completes about
-once per five turns, so one call per finished turn keeps pace.
+The layout change is a separate, measured step (the prefill time on turns 2
+to 5 after an edge, with verdicts counted), not something this proposal
+claims.
+
+**Cost.** Record-derived chunks need no model call, and a node is one row per
+10 counted messages. The optional `asked` phrase is one generative call per
+10 counted messages.
 
 **What the steps cost in detail.** Detail falls off in steps, not smoothly
 at φ:
@@ -285,33 +313,51 @@ at φ:
 - 0 to 90 messages at level 1;
 - everything older at level 2.
 
-That is coarser than a Fibonacci gradient, and a deliberate trade for
-summaries that are written once and never invalidated.
+That is coarser than a Fibonacci gradient, and a deliberate trade for chunks
+that are written once and never invalidated.
 
-**Rooms that predate the digest.** Chunks depend only on the message count,
-not on topic records, so an existing room's history can be chunked by the
-same job, run over a backlog. Chunks older than topic recording have empty
-`topics` lists. Whether to run that backlog is a separate decision. A room
-of 2,000 messages is about 220 generative calls. At the housekeeping limit
-of 10 calls per burst with a 60-second cool-down, that is 22 bursts, so it
-can only trickle through idle time, never run in one go.
+**The `asked` phrase: optional, and only if it earns its place.** A topic
+title says what a thread was about. It does not say what kind of thing was
+asked in it: "conversions between metric and imperial units" against
+`unit-conversion`. Whether that difference helps the loop orient is measured
+(Measuring it), and the phrase ships only if it does. When it is enabled:
+- one local generative call per level 1 chunk, in housekeeping, of at most
+  120 characters, given the topic titles of its range;
+- it reads the chunk's messages plus the 2 counted messages on each side,
+  marked as context and not summarized;
+- replies whose run used `room_digest` are left out of its input, so the
+  digest never summarizes its own output;
+- its result is dropped if the chunk's `content_hash` changed while the call
+  ran.
 
-**What a summary may say.** At most 300 characters per chunk:
+Level 2 never gets a phrase.
+
+**Rooms that predate the digest.** Chunks older than topic recording have no
+records to derive from, so they render as an exchange count only. This is the
+one place where generated text clearly earns its cost. A backfill job writes
+`asked` and `asked_topics` for each such level 1 chunk, with the same margins,
+input rule and screen. Whether to run it is a separate decision. A room of
+2,000 messages is about 200 generative calls, since level 2 is never
+generated. At the housekeeping limit of 10 calls per burst with a 60-second
+cool-down, that is 20 bursts, so it can only trickle through idle time, never
+run in one go.
+
+**What generated text may say.** The `asked` phrase and backfill text alike:
 - which topics came up;
-- what was asked, in kind ("conversions between metric and imperial units");
-- how it went, from records only: repeats, verdicts, failed runs.
+- what was asked, in kind ("conversions between metric and imperial units").
 
 **What it may not say:** the content of an answer, a value, a name read from
-a source, or a quoted reply. The summarizer is instructed so, and its output
-is screened with a decision-model Noul: "Does the summary state the content
-of an answer, a value or a name from a reply?" A summary that fails the screen
-is not stored. The chunk renders as its topic list only, and the failure is
-recorded. That screen has not been measured. It is added to the probe fixture
-before the chunk step ships.
+a source, or a quoted reply. How a topic went comes from records only, never
+from generated text. The generator is instructed so, and its output is
+screened with a decision-model Noul: "Does the text state the content of an
+answer, a value or a name from a reply?" Text that fails the screen is not
+stored. The chunk renders from records, and the failure is recorded. That
+screen has not been measured. It is added to the probe fixture before any
+generated text ships.
 
 **Who writes it.** A local generative model, on a slot verified local by the
 repeat proposal's rules: loopback and verified local execution. It runs in
-post-turn housekeeping (decision 8), never on the request path.
+post-turn housekeeping, never on the request path.
 
 ### 6. The current topic
 
@@ -339,8 +385,10 @@ inherited one.
   </topics>
   <timeline>…collapsed lines…</timeline>
   <earlier>
-    <chunk level="2" messages="0-99" topics="assistant-self,memory-check">…</chunk>
-    <chunk level="1" messages="100-109" topics="kanban-status">…</chunk>
+    <chunk level="2" messages="0-99" exchanges="41"
+           topics="assistant-self,memory-check"/>
+    <chunk level="1" messages="100-109" exchanges="4" topics="kanban-status"
+           outcome="1 marked wrong, 1 repeat"/>
     …
   </earlier>
 </room_digest>
@@ -352,13 +400,17 @@ inherited one.
 |---|---|
 | topics | 12 most recently used |
 | timeline | 40 lines |
-| summaries | whatever remains; the oldest chunks drop first, counted in an `omitted` attribute |
+| chunks | whatever remains; the oldest chunks drop first, counted in an `omitted` attribute |
+
+With the `asked` phrase enabled (decision 5), a level 1 chunk also carries
+`asked="…"`, for verified-local consumers only (decision 8).
 
 **Placement.** The block is constant for the turn. It goes in the dynamic
 tail, right after `repeated_request`, so the turn's calls share their prefix
-through it. The `earlier` part changes only at a chunk edge, so the layout
-change in decision 5 may move it ahead of the per-turn sections, next to the
-history it precedes.
+through it. The `earlier` part changes at a chunk edge, and when a verdict
+changes a chunk's derived outcome. Both are rare, so the layout change in
+decision 5 may move it ahead of the per-turn sections, next to the history it
+precedes.
 
 **Source priority.** Context only, at the rank of `conversation_history_xml`.
 
@@ -379,44 +431,29 @@ is true.
 > simply not raised again. To say what the conversation has covered, use the
 > digest.
 
-### 8. Access, and housekeeping order
+### 8. Access, and where the work runs
 
-**Summary text follows the strictest rule in force.** A chunk summary is
-model-written from replies, and replies can restate diary text or facts later
-made secret. So:
+**Generated text follows the strictest rule in force.** An `asked` phrase or
+backfill text is model-written from replies, and replies can restate diary
+text or facts later made secret. So:
 
-- **Summary text goes only to verified-local models.** A consumer whose
-  model is not verified local gets the digest without summary text: current
-  topic, topics, statuses, timeline, and each chunk's topic list.
-- **Provenance is kept per chunk.** Each `room_digest_node` stores the run ids
-  it covers and whether any used `diary_query` or a memory read. A later
-  policy change can then withhold exactly the affected chunks without
-  rewriting any.
+- **Generated text goes only to verified-local models.** A consumer whose
+  model is not verified local gets the digest without it: current topic,
+  topics, statuses, timeline, and each chunk's record-derived part.
+- **Provenance is kept per node** (decision 5). A later policy change can
+  then withhold exactly the affected chunks' text without rewriting any.
 - **Before the latest context boundary, the timeline stops.** Topics continue
   across the boundary. A profile switch is not an audience boundary, but facts
-  may have been invalidated. Chunks before the boundary are shown as topic
-  lists only, marked `before_context_change`.
+  may have been invalidated. Chunks before the boundary render without
+  generated text, marked `before_context_change`.
 
-```
-room_digest_node  uuid, room_uuid, level, first_message, last_message,
-                  first_index, last_index, summary, topics, continues_from,
-                  continues_into, provenance, model, digest, created_at
-```
+The record-derived part carries topic titles, counts and outcomes, never
+message text, so every consumer gets it.
 
-**Housekeeping order.** After each finished turn, the room's post-turn jobs
-run in this order. Each is bounded, and each is skipped rather than retried
-through another model when it fails:
-
-1. **The run summarizer**, as today.
-2. **The decision-model detectors**, all fast: verdicts, hedges, reply checks.
-3. **Topic work.** A new topic is named here, after a turn-start `none`. This
-   is one short generative call, only when needed.
-4. **Chunk summaries.** At most one generative chunk call per finished turn.
-   A level 1 chunk completes about once per five turns, so one call keeps
-   pace. Any backlog renders as level 1 chunks until it catches up.
-
-A job not yet started when the room receives a new message waits until that
-turn ends. Housekeeping never competes with the request path for the GPU.
+**Where the work runs.** Node writes, topic naming, `asked` phrases and
+backfill are jobs in [post-turn housekeeping](2026-11-09-post-turn-housekeeping.md),
+which owns their order, priority, budget and failure rules. None of them runs
+on the request path.
 
 ## Measuring it
 
@@ -425,10 +462,12 @@ turn ends. Housekeeping never competes with the request path for the GPU.
   have been an existing one, and how often an existing topic absorbs a new
   subject.
 - **The answer screen.** It is added to `benchmarks/decision_probe` as an
-  experiment: summaries that state an answer, a value or a name, and
-  summaries that do not. It ships only with measured precision.
+  experiment: texts that state an answer, a value or a name, and texts that
+  do not. No generated text ships before it has measured precision.
 - **Orientation, in scripted rooms** of 80–200 invented exchanges with known
-  topics. At turn N, replayed with and without the digest:
+  topics. At turn N, replayed three ways: without the digest, with
+  record-derived chunks, and with the `asked` phrase added. The phrase ships
+  only if the third beats the second. The questions:
   - "What is the current topic?"
   - "What did we talk about before the kanban questions?"
   - "Is the letter-counting question settled?"
@@ -436,8 +475,12 @@ turn ends. Housekeeping never competes with the request path for the GPU.
 
   Scored on correctness, on whether a `quiet` topic is ever called solved,
   and on whether a rejected answer is repeated.
-- **No answer leakage.** Across the scripted rooms, no rendered summary
-  states the content of an answer. The screen's misses are counted here.
+- **No answer leakage.** Across the scripted rooms, no rendered generated
+  text states the content of an answer. The screen's misses are counted
+  here.
+- **Edges.** After deletions and edits in a scripted room, the window starts
+  on a stored edge, no message is shown both verbatim and in a chunk, and
+  generated text whose `content_hash` no longer matches is withheld.
 - **Cost.**
   - The turn-start Choice: its added latency, on top of the request profile
     it shares a call with.
@@ -456,13 +499,17 @@ turn ends. Housekeeping never competes with the request path for the GPU.
    /assistant, and nothing reaches a prompt.
 2. Derived status and the timeline, shown on /assistant, with the operator
    controls.
-3. Chunk summaries in housekeeping, after the answer screen has been
-   measured.
+3. Chunk nodes in housekeeping and record-derived chunks on /assistant. No
+   model call.
 4. The `room_digest` block in the decide and audit prompts, behind
    `assistant.room_digest` (`off` / `record` / `on`):
    - `record` stores the would-send block on the run, as the repeat proposal
      does.
-   - The current topic and the timeline can go `on` before the summaries do.
+   - The current topic and the timeline can go `on` before the chunks do.
+5. The `asked` phrase, after the answer screen has been measured, and only if
+   the orientation replay shows a gain.
+6. Backfill of generated text for rooms that predate the digest, by the
+   operator's decision, room by room.
 
 ## What this does not do
 
@@ -474,6 +521,14 @@ turn ends. Housekeeping never competes with the request path for the GPU.
   digest orients; it does not inform.
 - **Promote anything to memory.** A topic is not a fact about the operator.
 - **Say a topic is solved because it went quiet.**
+- **Carry standing instructions.** A rule the operator stated before the
+  window ("answer in Danish", "don't use tool X") needs its exact wording to
+  stay enforceable, and the digest keeps no wording. Such a rule is out of the
+  loop's view once it leaves the window, unless something else holds it.
+  Where it lives is an open decision in the
+  [roadmap](2026-11-09-conversation-awareness-roadmap.md).
+- **Summarize a summary.** Level 2 is derived from records, and generated
+  text is never an input to generated text.
 
 ## Probe evidence
 
