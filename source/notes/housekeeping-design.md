@@ -104,29 +104,49 @@ first in the schema, so the chunk's phrase is written with them in view.
 The model supplies what it is good at: the result, and the human's reaction.
 Asked for the calibration too, it called an answer that was repeated
 unchanged while the human kept asking "calibrated", with the evidence in its
-own prompt. The rule reads the part's reactions, how many times the request
-was made, and the records. The first line that applies decides:
+own prompt. The rule reads the part's reactions, the text of its requests,
+and the records. The first line that applies decides:
 
 | when | calibration | basis shown |
 |---|---|---|
 | a reply was voted down | overconfident | a reply was voted down |
 | the human corrected a reply | overconfident | the human corrected a reply |
 | asked again, and the first run did not resolve it but the last did | underconfident | it delivered only after being asked again |
-| asked again, and a run resolved it or a reply missed its criteria | overconfident | it answered, and the human kept asking |
+| asked again, and a run resolved it | overconfident | it answered, and the human kept asking |
 | asked again, and nothing was delivered | unclear | asked again, and nothing was delivered |
 | a reply was voted up | calibrated | a reply was voted up |
 | no reaction in the chunk | unclear | the chunk shows no reaction |
 | the human went on, and the last run resolved it (or no run is recorded) | calibrated | the human went on without contesting it |
 | the human went on, and the last run did not resolve it | unclear | the human went on, and the last run was … |
 
-"Asked again" means the model read that reaction, or code joined the same
-request more than once. A part never delivered is `unclear`: that is a
-failure, and not a matter of confidence.
+**"Asked again" is read from the text, not taken from the model**
+(`room_chunks.count_repeats`). The model calls a new question on the same
+subject asking again, and a stricter wording of the prompt did not change
+that. So a part counts as asked again when either holds:
+- **A request in it repeats an earlier one in it.** The same words; the
+  earlier request with up to 8 words added; or the two at least 92% alike
+  letter for letter with the spaces taken out, which a slip of the keys
+  leaves them. Two requests with different numbers in them are never a
+  repeat, so the same question about another value is not one.
+- **It has a bare follow-up and the model read it as asking again.** A
+  follow-up of at most 3 words carries no request of its own. Whether it is
+  a retry or a thanks is the one thing taken from the model.
+
+Several different questions joined into one part are not asking again.
+
+A part never delivered is `unclear`: that is a failure, and not a matter of
+confidence.
+
+**Where the rule is still wrong.** It tells underconfident from overconfident
+by how the first and the last run ended, and that comes from the run
+summary. A reply that said "nothing found" is often recorded as resolved, so
+a request answered only on the retry can come out overconfident.
 
 **A result is stored beside what is known about it.** Each part also gets
-`signals`, counted by code from the records of its replies: runs by outcome,
-the first and the last run's outcome, replies that did not meet their
-criteria, revisions, votes up and down. The page shows the calibration in
+`signals`, counted by code: repeated and bare requests, read from their
+text, and from the records of its replies the runs by outcome, the first and
+the last run's outcome, replies that did not meet their criteria, revisions,
+votes up and down. The page shows the calibration in
 colour with its basis, the reactions the model read, and these counts in
 grey. A result is an old answer, and it is never shown without them.
 
@@ -154,8 +174,9 @@ topic is a later step, and not this call's job.
 **What it does well and badly**, on gemma4:e4b-mlx, 4 to 8 seconds a chunk:
 - **Parts, results and topics are good.** Ranges are right and the topics
   name the subject.
-- **The reaction is read well enough to rule on**, but it is the rule's one
-  soft input: a reaction read wrong gives a wrong calibration.
+- **The reaction is read unevenly.** `corrected` and `moved_on` are usually
+  right; `asked_again` is not, which is why the rule reads repeats from the
+  text.
 - **A correction in a later chunk is not seen.** The part it corrects stays
   as it was written, because a chunk is summarized once and alone.
 - **The chunk's own phrase is weak** when its parts are unrelated.
