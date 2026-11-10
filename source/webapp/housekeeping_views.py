@@ -69,6 +69,24 @@ def _chunk_link(job) -> dict | None:
     }
 
 
+def _signal_texts(signals: dict | None) -> list[str]:
+    """A part's records as short labels: runs by outcome, replies that did
+    not meet their criteria, revisions, votes. Only what is non-zero."""
+    if not signals:
+        return []
+    out = [f"{n} {outcome}" for outcome, n in (signals.get("runs") or {}).items()]
+    if signals.get("criteria_not_met"):
+        out.append(f"criteria not met \u00d7{signals['criteria_not_met']}")
+    if signals.get("revisions"):
+        out.append(f"{signals['revisions']} revision"
+                   f"{'' if signals['revisions'] == 1 else 's'}")
+    if signals.get("up"):
+        out.append(f"\u25b2 {signals['up']}")
+    if signals.get("down"):
+        out.append(f"\u25bc {signals['down']}")
+    return out
+
+
 def _elapsed(since: datetime | None) -> str:
     if since is None:
         return ""
@@ -144,7 +162,13 @@ _STYLE = """
     white-space:pre-wrap;overflow-wrap:anywhere;max-height:420px;overflow:auto;color:#1a1a2e}
   .hk-err{color:#b91c1c;font-size:0.84rem;margin:8px 0 0}
   table.hk-parts{border-collapse:collapse}
-  .hk-parts td{padding:3px 16px 3px 0;vertical-align:top;font-size:0.86rem}
+  .hk-parts td{padding:5px 16px 5px 0;vertical-align:top;font-size:0.86rem}
+  .hk-result{color:#374151;margin-top:2px}
+  .hk-signals{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:4px}
+  .hk-signals .hk-chip{font-weight:500;padding:2px 9px}
+  .hk-pill.hk-cal-calibrated{color:#166534;background:#dcfce7}
+  .hk-pill.hk-cal-overconfident{color:#b91c1c;background:#fee2e2}
+  .hk-pill.hk-cal-underconfident{color:#92400e;background:#fef3c7}
   .hk-btn{padding:7px 14px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;
     font:inherit;font-size:0.86rem;cursor:pointer;color:#374151}
   .hk-btn:hover{border-color:#9aa3af;color:#1a1a2e}
@@ -398,7 +422,8 @@ def run_housekeeping_lines(run_uuid: UUID) -> list[dict]:
 
 def _helpers() -> dict:
     return {"when": _when, "seconds": _seconds, "label": _job_label,
-            "outcome": _outcome, "elapsed": _elapsed, "chunk_link": _chunk_link}
+            "outcome": _outcome, "elapsed": _elapsed, "chunk_link": _chunk_link,
+            "signal_texts": _signal_texts}
 
 
 def _room_arg() -> UUID | None:
@@ -533,7 +558,16 @@ _ROOM_FRAGMENT = """
         {% for part in c.row.parts %}
           <tr>
             <td class="hk-mono">{% if part.first_message is not none %}m{{ part.first_message }}{% if part.last_message != part.first_message %}&ndash;m{{ part.last_message }}{% endif %}{% endif %}</td>
-            <td>{{ part.summary }}{% if part.requests and part.requests > 1 %} <span class="hk-mono">&times;{{ part.requests }}</span>{% endif %}</td>
+            <td>{{ part.summary }}{% if part.requests and part.requests > 1 %} <span class="hk-mono">&times;{{ part.requests }}</span>{% endif %}
+              {% if part.result %}<div class="hk-result">&rarr; {{ part.result }}</div>{% endif %}
+              {% if part.calibration %}
+              <div class="hk-signals">
+                <span class="hk-pill hk-cal-{{ part.calibration }}" title="The model's judgement, from the human's reaction and the signals">{{ part.calibration }}</span>
+                {% if part.human_reaction %}<span class="hk-mono" title="What the model read as the human's reaction">{{ part.human_reaction|replace('_', ' ') }}</span>{% endif %}
+                {% for text in signal_texts(part.signals) %}<span class="hk-chip" title="From the records">{{ text }}</span>{% endfor %}
+              </div>
+              {% endif %}
+            </td>
             <td>{% for t in part.topics %}<span class="hk-chip">{{ t }}</span> {% endfor %}</td>
           </tr>
         {% endfor %}
@@ -565,10 +599,11 @@ _ROOM_PAGE = """
   <p style="margin:0 0 12px"><a class="hk-back" href="/assistant/housekeeping">&larr; Housekeeping</a></p>
   <h1 class="hk-head">{{ room_name }}</h1>
   <p class="hk-lede">This room's messages in chunks, each summarized once by a
-    local model: the chunk split into parts, each with a phrase and topic names,
-    under one broader phrase and broader topics. The model reads your messages
-    only, never the assistant's replies. The summaries are shown here and reach
-    no prompt. <a class="hk-back" href="/chat?id={{ room_uuid }}">Open the room</a></p>
+    local model: the chunk split into parts, each with what was wanted, what
+    came of it and how well calibrated the assistant was, under one broader
+    phrase. The grey labels beside a part are records (how its runs ended,
+    acceptance criteria, your votes); the coloured one is the model's
+    judgement. The summaries are shown here and reach no prompt. <a class="hk-back" href="/chat?id={{ room_uuid }}">Open the room</a></p>
   <div class="hk-filters">
     <div class="hk-field">
       <label>Series</label>

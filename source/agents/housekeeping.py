@@ -383,6 +383,9 @@ class HousekeepingAgent(Agent):
         if not inside:
             return "skipped: the chunk's messages are gone"
         first, last = inside[0], inside[-1]
+        # Signals for the chunk and its context only: the rest is not shown.
+        shown = messages[max(0, first - overlap):last + 1 + overlap]
+        db.attach_reply_signals(job.room_uuid, shown)
         chunk = messages[first:last + 1]
         prompt = room_chunks.build_prompt(
             messages[max(0, first - overlap):first], chunk,
@@ -424,7 +427,7 @@ class HousekeepingAgent(Agent):
                 prompt["system"], prompt["user"], room_chunks.ChunkSummary,
                 observer=Observer())
         summary, topics, parts, problems = room_chunks.settle(
-            reply, first, last)  # type: ignore[arg-type]
+            reply, first, last, chunk)  # type: ignore[arg-type]
         _provider, model_name, _args = db.resolved_model_kwargs(model_uuid)
         db.store_room_chunk(
             room_uuid=job.room_uuid, chunk_size=size, overlap=overlap, seq=seq,

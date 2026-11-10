@@ -315,7 +315,9 @@ def _reply(first: int, n: int = 10, topic: str = "weather"):
 
     return ChunkSummary(
         parts=[ChunkPart(first_message=first, last_message=first + n - 1,
-                         summary="questions about the weather", topics=[topic])],
+                         summary="questions about the weather",
+                         result="a forecast was given", human_reaction="moved_on",
+                         calibration="calibrated", topics=[topic])],
         summary="weather questions", topics=["Weather Talk"])
 
 
@@ -346,7 +348,7 @@ def _fake_chunk_model(monkeypatch, reply=None):
     return prompts
 
 
-V = 2   # agents.room_chunks.PROMPT_VERSION
+V = 3   # agents.room_chunks.PROMPT_VERSION
 
 
 def test_chunks_are_cut_in_order_and_wait_for_their_context(app_ctx):
@@ -389,14 +391,17 @@ def test_a_run_end_queues_two_chunks_and_each_is_summarized_once(app_ctx, monkey
         assert chunks[0].problems == [] and chunks[0].job_uuid is not None
         assert chunks[1].parts == [{
             "first_message": 10, "last_message": 19, "requests": 1,
-            "summary": "questions about the weather", "topics": ["weather"]}]
+            "summary": "questions about the weather", "topics": ["weather"],
+            "result": "a forecast was given", "human_reaction": "moved_on",
+            "calibration": "calibrated",
+            "signals": {"replies": 5, "runs": {}, "criteria_not_met": 0,
+                        "revisions": 0, "up": 0, "down": 0}}]
         # The first chunk has no context before it; the second has two each side.
         assert "not part of it:\n(none)" in prompts[0]
         assert "[m8 human] message number 8" in prompts[1]
         assert "[m21 assistant]" in prompts[1] and "[m22" not in prompts[1]
-        # The model reads the human's messages only: no reply text reaches it.
-        assert "[m11 assistant] (reply left out)" in prompts[1]
-        assert "message number 11" not in prompts[1]
+        # The model reads both sides.
+        assert "[m11 assistant] message number 11" in prompts[1]
         # The series continues after the stored chunks, and nothing is redone.
         assert [d["seq"] for d in db.due_room_chunks(room.uuid, 10, 2, V, 10)] == [2, 3]
         assert agent.handle(uuid4(), {"room_uuid": str(room.uuid), "room_chunks": True})[
@@ -433,7 +438,9 @@ def test_what_is_off_in_a_reply_is_stored_with_the_chunk(app_ctx, monkeypatch):
 
     room = _room_with_messages(app_ctx, 12)
     _fake_chunk_model(monkeypatch, lambda first: ChunkSummary(
-        parts=[ChunkPart(first_message=40, last_message=44, summary="x" * 130, topics=[])],
+        parts=[ChunkPart(first_message=40, last_message=44, summary="x" * 130,
+                         result="", human_reaction="not_shown",
+                         calibration="unclear", topics=[])],
         summary="", topics=["a", "b", "c", "d"]))
     agent = _agent(monkeypatch)
     agent.handle(uuid4(), {"room_uuid": str(room.uuid), "room_chunks": True})
@@ -441,8 +448,8 @@ def test_what_is_off_in_a_reply_is_stored_with_the_chunk(app_ctx, monkeypatch):
     try:
         assert chunk.problems == [
             "part 1: messages 40-44 are not inside the chunk",
-            "part 1: summary is 130 characters", "part 1: no topics",
-            "chunk: empty summary", "chunk: 4 topics, kept 3"]
+            "part 1: 130 characters", "part 1 result: empty", "part 1: no topics",
+            "chunk: empty", "chunk: 4 topics, kept 3"]
         assert chunk.parts[0]["first_message"] is None and chunk.topics == ["a", "b", "c"]
     finally:
         db.session.query(db.RoomChunk).filter_by(room_uuid=room.uuid).delete()
@@ -486,26 +493,99 @@ def test_the_worker_rests_after_a_burst_of_calls(app_ctx, monkeypatch):
         db.session.commit()
 
 
+def _part(first, last, summary, *topics, result="done", reaction="moved_on",
+          calibration="calibrated"):
+    from agents import room_chunks as rc
+
+    return rc.ChunkPart(first_message=first, last_message=last, summary=summary,
+                        result=result, human_reaction=reaction,
+                        calibration=calibration, topics=list(topics))
+
+
 def test_settle_joins_repeats_and_makes_parts_cover_the_chunk():
     from agents import room_chunks as rc
 
-    def part(first, last, summary, *topics):
-        return rc.ChunkPart(first_message=first, last_message=last,
-                            summary=summary, topics=list(topics))
-
     reply = rc.ChunkSummary(
-        parts=[part(20, 20, "compute a square root", "sqrt", "number"),
-               part(22, 22, "compute another square root", "sqrt"),
-               part(24, 24, "compute a third", "sqrt", "maths"),
-               part(26, 26, "which boards exist", "Kanban Boards")],
+        parts=[_part(20, 20, "compute a square root", "sqrt", "number",
+                     result="step limit reached", reaction="asked_again",
+                     calibration="unclear"),
+               _part(22, 22, "compute another square root", "sqrt"),
+               _part(24, 24, "compute a third", "sqrt", "maths", result="a value was given"),
+               _part(26, 26, "which boards exist", "Kanban Boards")],
         summary="square roots and boards", topics=["maths", "kanban"])
     summary, topics, parts, problems = rc.settle(reply, 20, 29)
     assert (summary, topics, problems) == ("square roots and boards", ["maths", "kanban"], [])
-    assert parts == [
-        {"first_message": 20, "last_message": 25, "requests": 3,
-         "summary": "compute a square root", "topics": ["sqrt", "number"]},
-        {"first_message": 26, "last_message": 29, "requests": 1,
-         "summary": "which boards exist", "topics": ["kanban-boards"]}]
+    first, second = parts
+    # The joined part keeps the first phrase and ends where the subject ended up.
+    assert (first["first_message"], first["last_message"], first["requests"]) == (20, 25, 3)
+    assert first["summary"] == "compute a square root"
+    assert (first["result"], first["human_reaction"], first["calibration"]) == (
+        "a value was given", "moved_on", "calibrated")
+    assert first["topics"] == ["sqrt", "number"]
+    assert (second["first_message"], second["last_message"], second["topics"]) == (
+        26, 29, ["kanban-boards"])
+
+
+def test_a_parts_signals_are_counted_from_the_records_of_its_replies():
+    from agents import room_chunks as rc
+
+    chunk = [
+        {"id": 1, "sender": "human", "text": "count the letters"},
+        {"id": 2, "sender": "agent", "text": "two", "signals": {
+            "run": "resolved", "criteria": "not met", "revisions": 3, "vote": "downvote"}},
+        {"id": 3, "sender": "human", "text": "that is wrong"},
+        {"id": 4, "sender": "agent", "text": "three", "signals": {
+            "run": "resolved", "criteria": "met", "revisions": 1, "vote": "upvote"}},
+        {"id": 5, "sender": "human", "text": "which boards exist"},
+        {"id": 6, "sender": "agent", "text": "two boards", "signals": {"run": "partial"}},
+    ]
+    reply = rc.ChunkSummary(
+        parts=[_part(40, 43, "count letters", "letters", reaction="corrected",
+                     calibration="overconfident"),
+               _part(44, 45, "list boards", "boards")],
+        summary="letters and boards", topics=["misc"])
+    _s, _t, parts, _p = rc.settle(reply, 40, 45, chunk)
+    assert parts[0]["signals"] == {
+        "replies": 2, "runs": {"resolved": 2}, "criteria_not_met": 1,
+        "revisions": 4, "up": 1, "down": 1}
+    assert parts[1]["signals"]["runs"] == {"partial": 1}
+
+    prompt = rc.build_prompt([], chunk, [], 40)["user"]
+    assert ("[m41 assistant] two\n    signals for m41: run resolved; "
+            "criteria not met; voted down by the human") in prompt
+    assert "signals for m43: run resolved; criteria met after 1 revision; voted up" in prompt
+
+
+def test_reply_signals_come_from_the_run_the_audit_and_the_vote(app_ctx):
+    room = _room_with_messages(app_ctx, 4)
+    human = db.get_human_user()
+    run = db.start_assistant_run(journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=ASSISTANT_UUID)
+    app_ctx["runs"].append(run.uuid)
+    db.finish_run(run, "finished")
+    db.set_run_summary(run, {"trigger": "t", "obstacles": [], "outcome": "partial"})
+    for i, verdict in enumerate(("revise", "revise", "send")):
+        db.append_assistant_step(
+            run_uuid=run.uuid, step_index=i, phase="observed", action="reply_audit",
+            reason="r", observation_preview='{"verdict": "%s"}' % verdict)
+    reply = db.post_chat_message(room.uuid, ASSISTANT_UUID, "an answer",
+                                 meta={"assistant_run_uuid": str(run.uuid)})
+    plain = db.post_chat_message(room.uuid, ASSISTANT_UUID, "no run behind this")
+    made = [db.create_feedback_event(
+                room_uuid=room.uuid, message_uuid=reply.uuid, agent_uuid=ASSISTANT_UUID,
+                rating=rating, comment=comment, created_by_uuid=human.uuid)
+            for rating, comment in (("upvote", None), ("downvote", "wrong count"))]
+    try:
+        messages = db.attach_reply_signals(room.uuid, db.counted_room_messages(room.uuid))
+        by_id = {m["id"]: m["signals"] for m in messages}
+        assert by_id[reply.id] == {
+            "run": "partial", "criteria": "met", "revisions": 2,
+            "vote": "downvote", "vote_comment": "wrong count"}     # the latest vote
+        assert by_id[plain.id] is None
+        assert all(m["signals"] is None for m in messages if m["sender"] == "human")
+    finally:
+        db.session.query(db.FeedbackEvent).filter(
+            db.FeedbackEvent.uuid.in_([f.uuid for f in made])).delete()
+        db.session.commit()
 
 
 def test_a_subject_without_a_version_is_from_the_first_prompt():

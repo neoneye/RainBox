@@ -1182,9 +1182,11 @@ class RoomChunk(db.Model):
     # What the model wrote about the whole chunk: a phrase and broader topics.
     summary: Mapped[str | None] = mapped_column(Text)
     topics: Mapped[list] = mapped_column(JSONB, default=list)
-    # The chunk's parts, in order: `{first_message, last_message, summary,
-    # topics, requests}` each, with message numbers counted from the room's
-    # first message. NULL for a chunk written before parts existed.
+    # The chunk's parts, in order, with message numbers counted from the
+    # room's first message: `{first_message, last_message, summary, topics,
+    # requests}`, and from prompt 3 also `result`, `human_reaction`,
+    # `calibration` and `signals` (what the records say about the part's
+    # replies). NULL for a chunk written before parts existed.
     parts: Mapped[list | None] = mapped_column(JSONB)
     # Where its reply strayed from the asked-for format.
     problems: Mapped[list] = mapped_column(JSONB, default=list)

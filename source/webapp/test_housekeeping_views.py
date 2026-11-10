@@ -181,16 +181,24 @@ def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
         message_count=10, content_hash=content_hash(messages[:10]),
         summary="questions about numbers", topics=["numbers"], problems=[],
         parts=[{"first_message": 0, "last_message": 5, "requests": 3,
-                "summary": "which number comes next", "topics": ["sequences"]},
+                "summary": "which number comes next", "topics": ["sequences"],
+                "result": "the wrong number was given twice",
+                "human_reaction": "asked_again", "calibration": "overconfident",
+                "signals": {"replies": 3, "runs": {"resolved": 2, "failed": 1},
+                            "criteria_not_met": 1, "revisions": 4, "up": 0, "down": 1}},
                {"first_message": 6, "last_message": 9, "requests": 1,
                 "summary": "how numbers are written", "topics": ["notation"]}],
-        model="model-a", prompt_version=2)
+        model="model-a", prompt_version=3)
     try:
         body = c.get(f"/assistant/housekeeping/room/{room.uuid}").get_data(as_text=True)
         assert "Messages 0&ndash;9" in body and "questions about numbers" in body
         assert '<span class="hk-chip">numbers</span>' in body
         assert "m0&ndash;m5" in body and "which number comes next" in body
         assert "&times;3" in body and '<span class="hk-chip">notation</span>' in body
+        assert "&rarr; the wrong number was given twice" in body
+        assert 'hk-cal-overconfident' in body and "asked again" in body
+        for label in ("2 resolved", "1 failed", "criteria not met ×1", "4 revisions", "▼ 1"):
+            assert label in body, label
         assert "[m3 agent] message number 3" in body
         assert "messages changed since" not in body
         # 34 messages: chunks 1 and 2 are due (the third needs messages 30-31 after it).

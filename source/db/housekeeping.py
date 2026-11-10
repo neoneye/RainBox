@@ -34,6 +34,7 @@ __all__ = [
     "JOB_CALLERS",
     "ROOM_CHUNK_JOB",
     "RUN_SUMMARY_JOB",
+    "attach_reply_signals",
     "chunk_subject",
     "counted_room_messages",
     "due_room_chunks",
@@ -507,8 +508,9 @@ def counted_room_messages(room_uuid: UUID, *, after_id: int = 0,
     """The messages chunks count, in order: real messages that have finished
     streaming. Progress rows are reaped when the reply posts, and thinking
     rows are not part of the conversation, so neither counts. Each is
-    `{id, uuid, sender, text, created_at}`, with `sender` the user type
-    (`human` or `agent`)."""
+    `{id, uuid, sender, text, created_at, run_uuid}`, with `sender` the user
+    type (`human` or `agent`) and `run_uuid` the assistant run a reply came
+    from, when it came from one."""
     q = (db.session.query(ChatMessage, ChatUser.user_type)
          .join(ChatUser, ChatUser.uuid == ChatMessage.sender_uuid)
          .filter(ChatMessage.room_uuid == room_uuid,
@@ -520,8 +522,66 @@ def counted_room_messages(room_uuid: UUID, *, after_id: int = 0,
     if last_id is not None:
         q = q.filter(ChatMessage.id <= last_id)
     return [{"id": m.id, "uuid": m.uuid, "sender": user_type, "text": m.text,
-             "created_at": m.created_at}
+             "created_at": m.created_at,
+             "run_uuid": (m.meta or {}).get("assistant_run_uuid")}
             for m, user_type in q.order_by(ChatMessage.id.asc()).all()]
+
+
+def attach_reply_signals(room_uuid: UUID,
+                         messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Add `signals` to each assistant message: what the records say about
+    that reply. Returns the same list.
+
+    - `run`: how the reply's run ended. The run summary's outcome
+      (`resolved`, `partial`, `failed`) when there is one, else the run's
+      status.
+    - `criteria`: `met` when the reply audit's last verdict was to send the
+      reply, `not met` when it was still asking for a revision. `revisions`
+      counts the times it sent the reply back. Absent when no audit ran.
+    - `vote`: the human's latest vote on the message, `upvote` or
+      `downvote`, with `vote_comment` when they wrote one.
+
+    A message with no run and no vote gets `None`."""
+    import json as _json
+
+    from db.models import AssistantStep, FeedbackEvent
+
+    run_uuids = {UUID(m["run_uuid"]) for m in messages if m.get("run_uuid")}
+    runs = {}
+    audits: dict[UUID, list[str]] = {}
+    if run_uuids:
+        runs = {r.uuid: r for r in db.session.query(AssistantRun)
+                .filter(AssistantRun.uuid.in_(run_uuids)).all()}
+        for run_uuid, preview in (
+                db.session.query(AssistantStep.run_uuid, AssistantStep.observation_preview)
+                .filter(AssistantStep.run_uuid.in_(run_uuids),
+                        AssistantStep.action == "reply_audit")
+                .order_by(AssistantStep.id.asc()).all()):
+            try:
+                verdict = (_json.loads(preview or "{}") or {}).get("verdict")
+            except ValueError:
+                verdict = None
+            if verdict:
+                audits.setdefault(run_uuid, []).append(verdict)
+    votes = {v.message_uuid: v for v in db.session.query(FeedbackEvent)
+             .filter(FeedbackEvent.room_uuid == room_uuid)
+             .order_by(FeedbackEvent.id.asc()).all()}   # the latest vote wins
+    for m in messages:
+        signals: dict[str, Any] = {}
+        run = runs.get(UUID(m["run_uuid"])) if m.get("run_uuid") else None
+        if run is not None:
+            signals["run"] = (run.summary or {}).get("outcome") or run.status
+            verdicts = audits.get(run.uuid)
+            if verdicts:
+                signals["criteria"] = "met" if verdicts[-1] == "send" else "not met"
+                signals["revisions"] = sum(1 for v in verdicts if v == "revise")
+        vote = votes.get(m["uuid"])
+        if vote is not None and m["sender"] != "human":
+            signals["vote"] = vote.rating
+            if vote.comment:
+                signals["vote_comment"] = vote.comment
+        m["signals"] = signals or None
+    return messages
 
 
 def chunk_subject(size: int, overlap: int, version: int, seq: int,
