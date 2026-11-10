@@ -8,8 +8,9 @@ The two summaries are different things:
 - **The run summary** describes one assistant run: what triggered it, the
   obstacles in its steps, and its outcome.
 - **The room chunk summary** describes a stretch of a room's messages: its
-  parts, each with a phrase and topic names, under one broader phrase and
-  broader topics. It is the compaction of a long room.
+  parts, each with what was wanted, what came of it and how well calibrated
+  the assistant was, under one broader phrase and broader topics. It is the
+  compaction of a long room.
 
 The plan for those later jobs, and for a heat budget and a catch-up lock, is
 in `proposals/2026-11-09-post-turn-housekeeping.md`. This page describes what
@@ -64,12 +65,20 @@ sizes or two prompts are compared.
 - When the operator presses **Summarize the rest** on a room's page, every
   due chunk of the current series, up to 200.
 
-**The model reads the human's messages only.** In the prompt every message
-keeps its number and its place, but an assistant message is replaced by a
-placeholder. So no summary can repeat an answer, by construction and not by
-instruction. An old answer in a summary would reach a later turn posing as a
-fact. It also makes the prompt short: a chunk takes 2 to 3 seconds on
-gemma4:e4b-mlx.
+**The model reads both sides, with the records under each reply.** Every
+message keeps its number. A request is shown up to 1,500 characters and a
+reply up to 600, cut in the middle. Under an assistant reply stands a line of
+signals, when the records have any (`db.attach_reply_signals`):
+
+| signal | from |
+|---|---|
+| `run resolved` / `partial` / `failed` | the run summary's outcome for the reply's run, else the run's status |
+| `criteria met` / `criteria not met`, and how many revisions | the reply audit's verdicts for that run: met when the last one was to send the reply |
+| `voted up` / `voted down`, with the comment | the human's latest vote on the message |
+
+The signals are records, and the prompt says so. They are what lets a small
+model say something about reliability without judging an answer from its own
+knowledge.
 
 **The call.** One structured call per chunk on the `assistant.room_summarizer`
 slot, which falls back to `assistant.default`. The prompt holds the chunk and
@@ -78,22 +87,46 @@ in two levels:
 
 | level | fields |
 |---|---|
-| each part | `first_message`, `last_message`, `summary`, `topics` (one or two) |
+| each part | `first_message`, `last_message`, `summary`, `result`, `human_reaction`, `calibration`, `topics` (one or two) |
 | the chunk | `summary`, `topics` (one to three, broader) |
 
 A part is a run of consecutive messages about one subject. The parts come
 first in the schema, so the chunk's phrase is written with them in view.
+
+- **`summary`** is what was wanted.
+- **`result`** is what came of it: the one main thing found or concluded, or
+  that nothing was.
+- **`human_reaction`** is a choice: `moved_on`, `asked_again`, `corrected`,
+  `pushed_for_more`, `thanked`, `not_shown`. It is something the model can
+  read off the messages.
+- **`calibration`** is a choice that follows from the reaction and the
+  signals:
+  - `overconfident`: something was stated as settled that did not hold. The
+    human corrects it, votes it down, or keeps asking after an answer.
+  - `underconfident`: it said it could not answer or found nothing, and
+    delivered once the human asked again.
+  - `calibrated`: its replies held up, including an honest "not known" that
+    stayed true.
+  - `unclear`: the part does not show it.
+
+**A result is stored beside what is known about it.** Each part also gets
+`signals`, counted by code from the records of its replies: runs by outcome,
+replies that did not meet their criteria, revisions, votes up and down. The
+page shows the model's `calibration` in colour and these counts in grey, so
+the judgement and the facts are told apart. A result is an old answer, and
+it is never shown without them.
 
 **What code settles after the reply** (`room_chunks.settle`):
 - Topic names are normalized to lowercase words joined by hyphens.
 - A part whose message numbers lie outside the chunk keeps its text and loses
   its numbers.
 - Neighbouring parts with the same first topic are joined into one, which
-  records how many it stands for in `requests`. A small model splits a
-  request repeated with another value into a part per repeat.
+  records how many it stands for in `requests`. The joined part keeps the
+  first phrase, and the result, reaction and calibration of the last: where
+  the subject ended up.
 - Each part is extended to the message before the next part, and the last to
-  the chunk's end, so the parts cover the chunk. The model tends to end a
-  part on the request and leave the reply outside every part.
+  the chunk's end, so the parts cover the chunk.
+- Each part's `signals` are counted.
 - Anything else off (too many topics, an over-long or empty phrase, no parts)
   is listed in `problems` and shown with the chunk.
 
@@ -104,11 +137,16 @@ placeholder word as a topic. So topic names are not shared between chunks:
 the same subject can get two names in two chunks. Recognizing them as one
 topic is a later step, and not this call's job.
 
-**What it does well and badly**, on gemma4:e4b-mlx:
-- **Parts** are good. They are close to the request's own words, their
-  ranges are right, and their topics name the subject.
-- **The chunk's own phrase is weak** when its parts are unrelated. It falls
-  back on vague words where the parts beneath it use names.
+**What it does well and badly**, on gemma4:e4b-mlx, 4 to 8 seconds a chunk:
+- **Parts, results and topics are good.** Ranges are right and the topics
+  name the subject.
+- **Calibration catches the clear cases**: an answer repeated unchanged while
+  the human keeps asking, a "nothing found" that became an answer on retry, a
+  reply voted down with a comment. It misses what needs two chunks to see: a
+  correction that arrives in a later chunk leaves the earlier part
+  `calibrated`.
+- **The chunk's own phrase is weak** when its parts are unrelated.
+- **Phrases still begin with who spoke**, though the prompt asks otherwise.
 
 **Local models only.** The call reads the room's own messages, so members of
 the group that are not on a loopback endpoint, or are `:cloud` names, are left
@@ -227,7 +265,7 @@ The inbox item is a hint. The rows say what is due.
 | `first_message_id`, `last_message_id`, `message_count` | its edges and size |
 | `content_hash` | over its messages' ids and texts when it was written |
 | `summary`, `topics` | the chunk's phrase and broader topics |
-| `parts` | its parts: `{first_message, last_message, summary, topics, requests}`; NULL for a chunk of the first prompt |
+| `parts` | its parts: `{first_message, last_message, summary, topics, requests}`, and from prompt 3 `result`, `human_reaction`, `calibration`, `signals`; NULL for a chunk of the first prompt |
 | `problems` | what was off in the reply |
 | `model`, `job_uuid` | what wrote it |
 
@@ -254,8 +292,11 @@ the `chunks` link beside a room's name in the log.
 - How many messages the room has, how many are summarized, and how many
   chunks are queued or due.
 - One card per chunk: its messages' numbers and dates, its phrase and
-  topics, its parts with their message ranges, the model, a link to the
-  job's prompt and reply, and the messages themselves, folded.
+  topics, the model, a link to the job's prompt and reply, and the messages
+  themselves, folded.
+- Under it, each part: its message range, what was wanted, what came of it,
+  the model's calibration in colour with the reaction it read, and the
+  records in grey.
 - A chip per series the room has chunks in, earlier prompts included.
 - **Summarize the rest**, with the number of model calls it will make.
 

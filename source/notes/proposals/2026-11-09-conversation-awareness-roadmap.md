@@ -326,6 +326,17 @@ These cost little, collect data, and change nothing.
     its questions added to the probe first, and its marks would be records
     per message, shown before anything is dropped.
 
+11. **Results and calibration in the digest.** The operator wants the
+    compaction to carry what the assistant found, whether the reply met its
+    acceptance criteria, how it was voted, and how well calibrated the
+    assistant was: a human who keeps probing one thing is a sign of a wrong
+    or overconfident answer. The chunk summary experiment does this now, for
+    display. The room digest proposal says the opposite ("topics and
+    outcomes, never answers"), because a shortened old answer reaches a
+    small model as a fact. Before any of it reaches a prompt, one of the two
+    has to give: either results stay out of the prompt and only calibration
+    and the records go in, or results go in marked with their records.
+
 ## What the probes taught, for whoever builds this
 
 - **Questions in one System One request are answered in isolation.** A
