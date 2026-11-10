@@ -29,7 +29,7 @@ background runner, and live-updating results grid:
   `benchmarks/vision_runner.py`, `benchmarks/vision_worker.py`,
   `db/benchmark_vision.py`, `webapp/benchmark_vision_views.py`.
 
-Three further benchmarks have no page and no runner.
+Four further benchmarks have no page and no runner.
 
 **`benchmarks/roster_completeness.py`** asks whether an incomplete roster's
 caveat actually stops a model inferring absence — a claim about model
@@ -74,6 +74,34 @@ It touches no database, and refuses `:cloud` models and non-loopback servers.
 ```
 python -m benchmarks.decision_probe d1:3b d3:4b \
     --out benchmarks/fixtures/decision_probe_runs/<date>.json
+```
+
+**`benchmarks/digest_compaction.py`** compacts one real room into the chunks of
+`proposals/2026-11-09-room-digest.md` (decision 5), for a room that predates
+topic recording:
+- **Level 1**, every 10 counted messages from message 0, in two parts:
+  - **records**, with no model call: exchanges, runs by the run summarizer's
+    outcome, and exact repeats;
+  - **`asked` and topic names**, from one local generative call per chunk,
+    which reads 2 counted messages of context on each side.
+- **Level 2**, every 10 level 1 chunks, summed. It is never generated.
+- **The `<earlier>` block**, as the loop would see it, with the window
+  starting at a chunk edge.
+
+**Safeguards:**
+- **Bursts.** Generative calls run 10 at a time with a 60-second cool-down.
+  The operator's machine overheats on longer runs.
+- **Read-only database.** The connection is read-only, and `--database-url`
+  has no default, so the source is always named.
+- **Output outside the repo.** The output holds the room's own messages, so
+  `--out` is refused inside the repository.
+- **Local models only.** `:cloud` models and non-loopback servers are refused.
+
+`--dry-run` builds every prompt and the records part, and calls no model:
+
+```
+python -m benchmarks.digest_compaction <room-uuid> \
+    --database-url postgresql://localhost/<database> --out <dir> [--dry-run]
 ```
 
 The basic and edit-document harnesses share the same subprocess-runner shape;
