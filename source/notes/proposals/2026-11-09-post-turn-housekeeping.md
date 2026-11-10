@@ -135,11 +135,11 @@ the model time it wasted.
 tier 2 jobs, since it is older. It never runs through a turn to make up for
 lost attempts.
 
-**A job killed twice waits for a longer gap.** A 120-second summary does not
-fit a 30-second gap, and trying it after every reply would spend its heat
-each time and finish nothing. After its second kill, a job waits until no
-human message has arrived for 5 minutes. Jobs behind it in the queue are not
-held up: the worker goes on to the next one.
+**No back-off and no cap on kills.** The work arrives slower than the gaps
+clear it. A chunk's `asked` phrase is due once per 10 messages, and a
+summary once per turn, while every reply is followed by a gap. A job killed
+in one gap finishes in a later one, so the queue does not grow. The
+measurement below says if that ever stops being true.
 
 **What this costs the next turn.** The model server keeps one cached prompt
 per model. A generative housekeeping call on the assistant's model replaces
@@ -228,7 +228,8 @@ this hour, thermal state) gets one line on the /assistant index page.
 - **Cancellations.** How often a generative call is cancelled for a turn,
   and how much model time that wastes, per job type. A job type that is
   killed more often than it finishes is too long for the gap, and its
-  deadline or its prompt is what to change.
+  deadline or its prompt is what to change. The queue's depth over a day
+  shows whether work arrives faster than it is cleared.
 - **The first call after housekeeping.** The decide call's cached share and
   prefill time on a turn that follows generative housekeeping, against a
   turn that follows another turn. This is measured together with the room
