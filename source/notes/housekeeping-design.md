@@ -7,8 +7,9 @@ built so that later jobs (detectors) join the same queue.
 The two summaries are different things:
 - **The run summary** describes one assistant run: what triggered it, the
   obstacles in its steps, and its outcome.
-- **The room chunk summary** describes a stretch of a room's messages: what
-  was asked, in kind, and topic names. It is the compaction of a long room.
+- **The room chunk summary** describes a stretch of a room's messages: its
+  parts, each with a phrase and topic names, under one broader phrase and
+  broader topics. It is the compaction of a long room.
 
 The plan for those later jobs, and for a heat budget and a catch-up lock, is
 in `proposals/2026-11-09-post-turn-housekeeping.md`. This page describes what
@@ -51,10 +52,11 @@ messages follow it, because the model reads that many messages on each side
 as context. The next chunk starts after the newest stored chunk's last
 message id, so appending to a room never changes a chunk already cut.
 
-**A series per pair of settings.** A chunk belongs to the series of its
-`(chunk_size, overlap)`. Changing either setting starts a new series from the
-room's first message, beside the old one. Both stay readable on the room's
-page, which is how two sizes are compared.
+**A series per settings and prompt.** A chunk belongs to the series of its
+`(chunk_size, overlap, prompt_version)`. Changing a setting, or a change to
+the prompt in code, starts a new series from the room's first message, beside
+the old one. Every series stays readable on the room's page, which is how two
+sizes or two prompts are compared.
 
 **When jobs are queued.**
 - When a run ends, the next 2 due chunks of its room, if
@@ -62,30 +64,59 @@ page, which is how two sizes are compared.
 - When the operator presses **Summarize the rest** on a room's page, every
   due chunk of the current series, up to 200.
 
-**The call.** One plain-text call per chunk on the `assistant.room_summarizer`
-slot, which falls back to `assistant.default`. The prompt holds the chunk, the
-context on each side marked as not to be described, and the topic names
-earlier chunks of the series used. The reply is two labelled lines:
+**The model reads the human's messages only.** In the prompt every message
+keeps its number and its place, but an assistant message is replaced by a
+placeholder. So no summary can repeat an answer, by construction and not by
+instruction. An old answer in a summary would reach a later turn posing as a
+fact. It also makes the prompt short: a chunk takes 2 to 3 seconds on
+gemma4:e4b-mlx.
 
-```
-asked: conversions between units, and tasks on a board
-topics: unit-conversion, kanban
-```
+**The call.** One structured call per chunk on the `assistant.room_summarizer`
+slot, which falls back to `assistant.default`. The prompt holds the chunk and
+the context on each side, marked as not part of it. The reply is a breakdown
+in two levels:
 
-- `asked` says what kind of thing was asked, in at most 120 characters. The
-  prompt forbids stating an answer, a value or a name from a reply.
-- `topics` are one to four names, reused from earlier chunks when the subject
-  is the same.
-- A reply with no `asked:` line is sent back to the model once with the
-  reason. Anything else off-format is stored in `problems` and shown.
+| level | fields |
+|---|---|
+| each part | `first_message`, `last_message`, `summary`, `topics` (one or two) |
+| the chunk | `summary`, `topics` (one to three, broader) |
+
+A part is a run of consecutive messages about one subject. The parts come
+first in the schema, so the chunk's phrase is written with them in view.
+
+**What code settles after the reply** (`room_chunks.settle`):
+- Topic names are normalized to lowercase words joined by hyphens.
+- A part whose message numbers lie outside the chunk keeps its text and loses
+  its numbers.
+- Neighbouring parts with the same first topic are joined into one, which
+  records how many it stands for in `requests`. A small model splits a
+  request repeated with another value into a part per repeat.
+- Each part is extended to the message before the next part, and the last to
+  the chunk's end, so the parts cover the chunk. The model tends to end a
+  part on the request and leave the reply outside every part.
+- Anything else off (too many topics, an over-long or empty phrase, no parts)
+  is listed in `problems` and shown with the chunk.
+
+**The prompt has no sample answers and no list of earlier topic names.** A
+small model copies both. With a list of earlier names to reuse, it chose
+from the list whether or not a name fitted, and returned the list's
+placeholder word as a topic. So topic names are not shared between chunks:
+the same subject can get two names in two chunks. Recognizing them as one
+topic is a later step, and not this call's job.
+
+**What it does well and badly**, on gemma4:e4b-mlx:
+- **Parts** are good. They are close to the request's own words, their
+  ranges are right, and their topics name the subject.
+- **The chunk's own phrase is weak** when its parts are unrelated. It falls
+  back on vague words where the parts beneath it use names.
 
 **Local models only.** The call reads the room's own messages, so members of
 the group that are not on a loopback endpoint, or are `:cloud` names, are left
 out. With none left the job fails and says so.
 
 **What is stored.** One `room_chunk` row per chunk, written once: its series
-and `seq`, its edges as message ids, a `content_hash` of its messages, `asked`,
-`topics`, `problems`, the model and the prompt version. The page recomputes
+and `seq`, its edges as message ids, a `content_hash` of its messages,
+`summary`, `topics`, `parts`, `problems`, the model and the prompt version. The page recomputes
 the hash and marks a chunk whose messages have changed since.
 
 **Where it goes.** The summaries are shown on the room's page. They reach no
@@ -192,11 +223,13 @@ The inbox item is a hint. The rows say what is due.
 
 | column | meaning |
 |---|---|
-| `room_uuid`, `chunk_size`, `overlap`, `seq` | the room, the series, and the chunk's place in it |
+| `room_uuid`, `chunk_size`, `overlap`, `prompt_version`, `seq` | the room, the series, and the chunk's place in it |
 | `first_message_id`, `last_message_id`, `message_count` | its edges and size |
 | `content_hash` | over its messages' ids and texts when it was written |
-| `asked`, `topics`, `problems` | what the model wrote, and where its reply strayed from the format |
-| `model`, `prompt_version`, `job_uuid` | what wrote it |
+| `summary`, `topics` | the chunk's phrase and broader topics |
+| `parts` | its parts: `{first_message, last_message, summary, topics, requests}`; NULL for a chunk of the first prompt |
+| `problems` | what was off in the reply |
+| `model`, `job_uuid` | what wrote it |
 
 The prompt and the reply are never copied. A job's page reads them from the
 attempt's `llm_call` row.
@@ -220,10 +253,10 @@ attempt's `llm_call` row.
 the `chunks` link beside a room's name in the log.
 - How many messages the room has, how many are summarized, and how many
   chunks are queued or due.
-- One card per chunk: its messages' numbers and dates, `asked`, the topics,
-  the model, a link to the job's prompt and reply, and the messages
-  themselves, folded.
-- A chip per series the room has chunks in.
+- One card per chunk: its messages' numbers and dates, its phrase and
+  topics, its parts with their message ranges, the model, a link to the
+  job's prompt and reply, and the messages themselves, folded.
+- A chip per series the room has chunks in, earlier prompts included.
 - **Summarize the rest**, with the number of model calls it will make.
 
 **A run's page** has an **After the turn** group below its timeline, one line
