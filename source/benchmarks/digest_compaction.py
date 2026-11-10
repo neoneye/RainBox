@@ -5,15 +5,17 @@ on a real room that predates topic recording, which is the backfill case:
 
 - **Level 1:** every 10 counted messages, counted from the room's first one.
   Each chunk renders two parts:
-  - `records`, from rows that already exist, with no model call: exchanges,
-    runs by the run summarizer's outcome, and exact repeats;
+  - `records`, from rows that already exist, with no model call: its threads
+    (an opening request and the follow-ups after it), each with a request
+    excerpt, its runs by the run summarizer's outcome and its exact repeats;
   - `asked` and `topics`, written by one local generative call per chunk,
     which reads the chunk plus 2 counted messages of context on each side.
 - **Level 2:** every 10 level 1 chunks, derived by summing their records and
   listing their topic names. Never generated.
-- **What the loop would see:** the `<earlier>` block for the room as it is
-  now, with the window starting at the newest chunk edge that leaves at least
-  30 counted messages after it.
+- **What the loop would see:** the `<room_earlier>` block for the room as it
+  is now. The window starts at the newest chunk edge that leaves at least 30
+  counted messages after it, and a hundred is shown as one level 2 chunk one
+  hundred late.
 
 It cannot be a unit test: the text depends on the model. It is run
 deliberately, against a local Ollama server, and reads the database only:
@@ -23,7 +25,8 @@ deliberately, against a local Ollama server, and reads the database only:
     python -m benchmarks.digest_compaction <room-uuid> \\
         --database-url postgresql://localhost/<database> --out <dir>
 
-`--dry-run` builds every prompt and the records part and calls no model.
+`--dry-run` builds every prompt and the records part and calls no model. That
+is the whole no-model compaction, so a dry run is enough to judge it.
 Without it, generative calls run in bursts (10 by default) with a cool-down
 (60 s by default) between bursts, because the operator's machine overheats
 on longer runs.
@@ -64,6 +67,13 @@ EXACT_MIN_CODEPOINTS = 24
 # The repeat proposal's `extended` candidate: an earlier request's tokens are
 # a prefix of the current one's, with 1 to 8 tokens added. Recording only.
 EXTENDED_MAX_ADDED = 8
+# A request excerpt: the opening request's first code points, cut back to the
+# last whitespace when one falls in the final EXCERPT_BACKTRACK.
+EXCERPT_MAX_CODEPOINTS = 80
+EXCERPT_BACKTRACK = 20
+# A hundred is shown as one level 2 chunk once the window starts this many
+# level 2 groups past it.
+LEVEL2_SIZE = CHUNK_SIZE * CHUNK_SIZE
 ASKED_MAX_CHARS = 120
 TOPIC_MAX_CHARS = 24
 MAX_TOPICS = 4
@@ -92,6 +102,18 @@ class Run:
 
 
 @dataclass
+class Thread:
+    """The part of one thread that lies inside one chunk."""
+    first: int  # index into the counted messages, inclusive
+    last: int
+    exchanges: int
+    runs: dict[str, int]
+    exact_repeats: int
+    excerpt: str  # of the thread's opening request, wherever it lies
+    continues: bool  # the thread began in an earlier chunk
+
+
+@dataclass
 class Chunk:
     level: int
     first: int  # index into the counted messages, inclusive
@@ -100,10 +122,13 @@ class Chunk:
     last_id: int
     started: str
     ended: str
+    date_from: str
+    date_to: str
     exchanges: int
     runs: dict[str, int]
     exact_repeats: list[list[int]]
     extended_repeats: list[list[int]]
+    threads: list[Thread] = field(default_factory=list)
     asked: str | None = None
     topics: list[str] = field(default_factory=list)
     prompt: dict[str, str] | None = None
@@ -188,6 +213,67 @@ def repeats(msgs: list[Message]) -> tuple[list[list[int]], list[list[int]]]:
     return exact, extended
 
 
+def excerpt(text: str) -> str:
+    """A request's opening words: whitespace collapsed, at most
+    EXCERPT_MAX_CODEPOINTS, cut back to a word edge when one is near, and
+    marked when cut."""
+    text = " ".join(text.split())
+    if len(text) <= EXCERPT_MAX_CODEPOINTS:
+        return text
+    cut = text[:EXCERPT_MAX_CODEPOINTS]
+    space = cut.rfind(" ")
+    if space >= EXCERPT_MAX_CODEPOINTS - EXCERPT_BACKTRACK:
+        cut = cut[:space]
+    return cut.rstrip() + "…"
+
+
+def thread_openers(msgs: list[Message], exact: list[list[int]],
+                   extended: list[list[int]]) -> list[int | None]:
+    """For each counted message, the index of the request that opened its
+    thread, with no model and no topic records. A request is a follow-up when
+    it is shorter than EXACT_MIN_CODEPOINTS, or an exact or extended repeat
+    of a request already in the thread; any other request opens a new thread.
+    Replies belong to the thread of the request before them. The answer for a
+    message depends only on the messages up to it, so appending changes
+    nothing earlier. None before the room's first request."""
+    repeat_of = {later: earlier for later, earlier in exact + extended}
+    out: list[int | None] = []
+    opener: int | None = None
+    for i, m in enumerate(msgs):
+        if m.sender == "human":
+            follow_up = opener is not None and (
+                _codepoints(m.text) < EXACT_MIN_CODEPOINTS
+                or repeat_of.get(i, -1) >= opener)
+            if not follow_up:
+                opener = i
+        out.append(opener)
+    return out
+
+
+def build_threads(msgs: list[Message], first: int, last: int,
+                  openers: list[int | None], runs: dict[str, Run],
+                  exact: list[list[int]]) -> list[Thread]:
+    """The threads of one chunk, in order. A thread that began in an earlier
+    chunk keeps the excerpt of its opening request there."""
+    out: list[Thread] = []
+    start = first
+    for i in range(first, last + 2):
+        if i <= last and openers[i] == openers[start]:
+            continue
+        part = msgs[start:i]
+        opener = openers[start]
+        out.append(Thread(
+            first=start, last=i - 1,
+            exchanges=sum(1 for m in part if m.sender == "human"),
+            runs=run_counts(part, runs),
+            exact_repeats=sum(1 for p in exact if start <= p[0] < i),
+            excerpt=excerpt(msgs[opener].text) if opener is not None else "",
+            continues=opener is not None and opener < first,
+        ))
+        start = i
+    return out
+
+
 def run_counts(chunk_msgs: list[Message], runs: dict[str, Run]) -> dict[str, int]:
     """Runs whose reply is in the chunk, by the run summarizer's outcome. A
     run with no outcome is counted by its status."""
@@ -219,6 +305,7 @@ def _when(dt: datetime) -> str:
 
 def build_level1(msgs: list[Message], runs: dict[str, Run]) -> list[Chunk]:
     exact, extended = repeats(msgs)
+    openers = thread_openers(msgs, exact, extended)
     out = []
     for first, last in chunk_ranges(len(msgs)):
         part = msgs[first:last + 1]
@@ -226,10 +313,13 @@ def build_level1(msgs: list[Message], runs: dict[str, Run]) -> list[Chunk]:
             level=1, first=first, last=last,
             first_id=part[0].id, last_id=part[-1].id,
             started=_when(part[0].created_at), ended=_when(part[-1].created_at),
+            date_from=part[0].created_at.date().isoformat(),
+            date_to=part[-1].created_at.date().isoformat(),
             exchanges=sum(1 for m in part if m.sender == "human"),
             runs=run_counts(part, runs),
             exact_repeats=[p for p in exact if first <= p[0] <= last],
             extended_repeats=[p for p in extended if first <= p[0] <= last],
+            threads=build_threads(msgs, first, last, openers, runs, exact),
         ))
     return out
 
@@ -249,6 +339,7 @@ def build_level2(level1: list[Chunk], size: int = CHUNK_SIZE) -> list[Chunk]:
             level=2, first=group[0].first, last=group[-1].last,
             first_id=group[0].first_id, last_id=group[-1].last_id,
             started=group[0].started, ended=group[-1].ended,
+            date_from=group[0].date_from, date_to=group[-1].date_to,
             exchanges=sum(c.exchanges for c in group), runs=dict(runs),
             exact_repeats=[p for c in group for p in c.exact_repeats],
             extended_repeats=[p for c in group for p in c.extended_repeats],
@@ -432,27 +523,52 @@ def _xml_attr(s: str) -> str:
 
 
 def render_chunk_xml(c: Chunk) -> str:
+    """A level 1 chunk lists its threads, each with its range and its opening
+    words. A level 2 chunk is one line: without topic records every thread
+    of its hundred falls under `?`."""
     attrs = (f'level="{c.level}" messages="{c.first}-{c.last}" '
+             f'from="{c.date_from}" to="{c.date_to}" '
              f'exchanges="{c.exchanges}" before_topics="true"')
     if c.level == 1 and c.asked:
         attrs += f' asked="{_xml_attr(c.asked)}"'
     if c.topics:
         attrs += f' topics="{_xml_attr(",".join(c.topics))}"'
-    outcome = outcome_text(c.runs, len(c.exact_repeats))
-    return (f"  <chunk {attrs}>\n"
-            f'    <topic slug="?" exchanges="{c.exchanges}" outcome="{_xml_attr(outcome)}"/>\n'
-            f"  </chunk>")
+    if c.level == 1 and c.threads:
+        lines = []
+        for t in c.threads:
+            line = (f'    <topic slug="?" messages="{t.first}-{t.last}" '
+                    f'exchanges="{t.exchanges}" '
+                    f'outcome="{_xml_attr(outcome_text(t.runs, t.exact_repeats))}"')
+            if t.excerpt:
+                line += f' opened_with="{_xml_attr(t.excerpt)}"'
+            if t.continues:
+                line += ' continues="true"'
+            lines.append(line + "/>")
+        body = "\n".join(lines)
+    else:
+        outcome = outcome_text(c.runs, len(c.exact_repeats))
+        body = f'    <topic slug="?" exchanges="{c.exchanges}" outcome="{_xml_attr(outcome)}"/>'
+    return f"  <chunk {attrs}>\n{body}\n  </chunk>"
+
+
+def level1_start(w: int, group: int = LEVEL2_SIZE) -> int:
+    """Where level 1 begins for a window starting at w: the hundred the
+    window starts in and the whole hundred before it stay at level 1, so a
+    hundred is compacted one hundred late."""
+    return max(0, (w // group - 1) * group)
 
 
 def earlier_block(n: int, level1: list[Chunk], level2: list[Chunk]) -> tuple[int, str]:
-    """What the loop would see before the verbatim window: level 2 for every
-    complete group of 100 before it, level 1 for the rest."""
+    """What the loop would see before the verbatim window: level 1 for the
+    100 to 190 messages behind it, level 2 for every hundred before that.
+    (A room past 2,000 messages would show level 3 before those; this script
+    stops at level 2.)"""
     w = window_start(n)
-    shown: list[Chunk] = [c for c in level2 if c.last < w]
-    covered = shown[-1].last if shown else -1
-    shown += [c for c in level1 if covered < c.first and c.last < w]
+    h1 = level1_start(w)
+    shown: list[Chunk] = [c for c in level2 if c.last < h1]
+    shown += [c for c in level1 if h1 <= c.first and c.last < w]
     body = "\n".join(render_chunk_xml(c) for c in shown)
-    return w, f"<earlier>\n{body}\n</earlier>" if body else "<earlier/>"
+    return w, f"<room_earlier>\n{body}\n</room_earlier>" if body else "<room_earlier/>"
 
 
 def render_report(room: str, n: int, env: dict[str, Any], level1: list[Chunk],
@@ -473,6 +589,11 @@ def render_report(room: str, n: int, env: dict[str, Any], level1: list[Chunk],
         if c.exact_repeats:
             pairs = ", ".join(f"m{a}←m{b}" for a, b in c.exact_repeats)
             out.append(f"- exact repeats: {pairs}")
+        for t in c.threads if c.level == 1 else []:
+            out.append(f"- thread m{t.first}-{t.last}"
+                       f"{' (continues)' if t.continues else ''}: "
+                       f"{t.exchanges} exchanges, {outcome_text(t.runs, t.exact_repeats)}"
+                       f" · opened with: {t.excerpt or '(no request)'}")
         if c.level == 1:
             out.append(f"- asked: {c.asked if c.asked is not None else '(not generated)'}")
         out.append(f"- topics: {', '.join(c.topics) or '(none)'}")
@@ -485,7 +606,8 @@ def render_report(room: str, n: int, env: dict[str, Any], level1: list[Chunk],
         out.append("")
     w, block = earlier_block(n, level1, level2)
     out += [f"## What the loop would see now",
-            f"Window: m{w}-m{n - 1} verbatim ({n - w} messages). Before it:", "",
+            f"Window: m{w}-m{n - 1} verbatim ({n - w} messages). Before it, "
+            f"{len(block)} characters:", "",
             "```xml", block, "```", ""]
     return "\n".join(out)
 

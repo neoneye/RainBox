@@ -80,13 +80,43 @@ python -m benchmarks.decision_probe d1:3b d3:4b \
 `proposals/2026-11-09-room-digest.md` (decision 5), for a room that predates
 topic recording:
 - **Level 1**, every 10 counted messages from message 0, in two parts:
-  - **records**, with no model call: exchanges, runs by the run summarizer's
-    outcome, and exact repeats;
+  - **records**, with no model call:
+    - its threads, each an opening request and the follow-ups after it, with
+      the request's first 80 code points as an excerpt;
+    - per thread, its runs by the run summarizer's outcome and its exact
+      repeats;
+    - its dates;
   - **`asked` and topic names**, from one local generative call per chunk,
     which reads 2 counted messages of context on each side.
 - **Level 2**, every 10 level 1 chunks, summed. It is never generated.
-- **The `<earlier>` block**, as the loop would see it, with the window
-  starting at a chunk edge.
+- **The `<room_earlier>` block**, as the loop would see it, with its size in
+  characters. The window starts at a chunk edge. Level 1 covers the hundred
+  the window starts in and the hundred before it, and level 2 everything
+  older. The script stops at level 2, which covers rooms up to 2,000
+  messages.
+
+**Two questions, two kinds of run:**
+
+| question | run | cost |
+|---|---|---|
+| Is the no-model compaction enough to find a conversation again? | `--dry-run` | no model call; seconds |
+| Does the generated `asked` phrase add to the excerpts? | a full run | one generative call per 10 messages, in bursts |
+
+A dry run is the whole no-model compaction, so it is the one to run first,
+and the full run is only worth its heat if the dry run leaves something
+wanting.
+
+**Reading a run.** `report.md` lists every chunk with its threads, and ends
+with the block. The operator is the judge, against what they remember of
+the room:
+- **Threads.** A subject split over two lines is a small cost. Two subjects
+  under one line is the failure, because the second cannot be found.
+- **Excerpts.** Does each say what kind of thing was asked? Note the ones
+  that open a thread with words that only made sense at the time.
+- **`asked`**, on a full run. Does it say something the chunk's excerpts do
+  not? Does it state an answer, a value or a name from a reply? One that
+  does is a failure of the answer screen's job, and is counted.
+- **Size.** The block's characters against the proposal's limit of 5,000.
 
 **Safeguards:**
 - **Bursts.** Generative calls run 10 at a time with a 60-second cool-down.
@@ -103,6 +133,11 @@ topic recording:
 python -m benchmarks.digest_compaction <room-uuid> \
     --database-url postgresql://localhost/<database> --out <dir> [--dry-run]
 ```
+
+**What it does not cover.** It renders one room at one moment. It does not
+replay a turn, so it cannot say whether the block helps the loop orient or
+whether `room_history` gets used. That is the proposal's orientation
+replay, which needs scripted rooms and does not exist yet.
 
 The basic and edit-document harnesses share the same subprocess-runner shape;
 this doc covers that shape, and in particular how each row runs in a
