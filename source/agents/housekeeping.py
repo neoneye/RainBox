@@ -34,6 +34,35 @@ PREEMPT_SIGNAL = signal.SIGUSR1
 #: Failures a job is retried after. A killed attempt is not a failure.
 MAX_RETRIES = 1
 
+#: Chunk jobs queued for a room when one of its runs ends. A turn adds about
+#: two messages, so two chunks per turn keeps up with a room and works
+#: through an older room's backlog a little at a time.
+CHUNK_JOBS_PER_RUN = 2
+#: Chunk jobs queued when the operator asks for the rest of a room.
+CHUNK_JOBS_PER_REQUEST = 200
+
+#: Model calls in a row before the worker rests, and for how long. The
+#: operator's machine takes 10 to 15 calls in a row before it needs a minute
+#: to cool, so the burst uses the low end.
+BURST_CALLS = 10
+COOLDOWN_SECONDS = 60.0
+
+
+def _is_local_model(model_uuid: UUID) -> bool:
+    """Whether a model answers on this machine: a loopback endpoint, and not
+    a `:cloud` name, which a local server relays to a remote one."""
+    from agents.model_groups import model_base_url
+    from diary.embeddings import is_loopback_url
+
+    url = model_base_url(model_uuid)
+    if url is None or not is_loopback_url(url):
+        return False
+    try:
+        _provider, name, _args = db.resolved_model_kwargs(model_uuid)
+    except Exception:
+        return False
+    return not (name.endswith(":cloud") or "-cloud" in name)
+
 
 class Preempted(BaseException):
     """A turn started while a housekeeping call was running.
@@ -158,6 +187,13 @@ class HousekeepingAgent(Agent):
     POLL_SECONDS: float = 2.0
     #: How often a running call's reply is written to its attempt row.
     PROGRESS_SECONDS: float = 2.0
+    BURST_CALLS: int = BURST_CALLS
+    COOLDOWN_SECONDS: float = COOLDOWN_SECONDS
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        # Model calls since the worker last rested.
+        self._burst = 0
 
     def handle(self, journal_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
         # One worker, so anything marked running was left by a dead one.
@@ -168,25 +204,37 @@ class HousekeepingAgent(Agent):
         return {"ok": True, "jobs": self._drain()}
 
     def _expand(self, payload: dict[str, Any]) -> None:
-        """One run's jobs. Today that is its summary."""
-        raw = payload.get("run_uuid")
-        if not raw:
-            return
+        """An item's jobs: the run's summary, and the next chunks of its room.
+        An item with `room_chunks` and no run asks for the rest of a room."""
+        room_uuid: UUID | None = None
         try:
-            run_uuid = UUID(str(raw))
+            if payload.get("room_uuid"):
+                room_uuid = UUID(str(payload["room_uuid"]))
+            run_uuid = UUID(str(payload["run_uuid"])) if payload.get("run_uuid") else None
         except ValueError:
-            logger.warning("housekeeping: malformed run uuid %r", raw)
+            logger.warning("housekeeping: malformed uuid in %r", payload)
             return
-        room = payload.get("room_uuid")
-        job, created = db.ensure_housekeeping_job(
-            db.RUN_SUMMARY_JOB, run_uuid=run_uuid,
-            room_uuid=UUID(str(room)) if room else None)
-        if payload.get("force") and not created and job.state == "final":
-            db.requeue_housekeeping_job(job)
+        if run_uuid is not None:
+            job, created = db.ensure_housekeeping_job(
+                db.RUN_SUMMARY_JOB, run_uuid=run_uuid, room_uuid=room_uuid)
+            if payload.get("force") and not created and job.state == "final":
+                db.requeue_housekeeping_job(job)
+        if room_uuid is None or payload.get("force"):
+            return
+        if payload.get("room_chunks"):
+            limit = CHUNK_JOBS_PER_REQUEST
+        elif run_uuid is not None and db.get_setting("housekeeping.room_summaries"):
+            limit = CHUNK_JOBS_PER_RUN
+        else:
+            return
+        db.ensure_room_chunk_jobs(
+            room_uuid, int(db.get_setting("housekeeping.room_chunk_size")),
+            int(db.get_setting("housekeeping.room_chunk_overlap")), limit)
 
     def _drain(self) -> dict[str, int]:
         counts: Counter[str] = Counter()
         while db.next_housekeeping_job() is not None:
+            self._cool_down_if_due()
             self._wait_until_idle()
             # Chosen after the wait: a more urgent job may have arrived.
             job = db.next_housekeeping_job()
@@ -194,6 +242,22 @@ class HousekeepingAgent(Agent):
                 break
             counts[self._run_job(job)] += 1
         return dict(counts)
+
+    def _cool_down_if_due(self) -> None:
+        """After BURST_CALLS model calls in a row, rest before the next. A
+        turn may run meanwhile: the rest is for the machine, and a turn's own
+        calls are the operator's to spend."""
+        if self._burst < self.BURST_CALLS:
+            return
+        logger.info("housekeeping: cooling down %.0f s after %d calls",
+                    self.COOLDOWN_SECONDS, self._burst)
+        job = db.next_housekeeping_job()
+        if job is not None:
+            db.settle_housekeeping_job(job, "deferred", deferred_reason="cooldown")
+        deadline = time.monotonic() + self.COOLDOWN_SECONDS
+        while time.monotonic() < deadline:
+            time.sleep(min(self.POLL_SECONDS, max(0.0, deadline - time.monotonic())))
+        self._burst = 0
 
     def _wait_until_idle(self) -> None:
         while db.turn_activity():
@@ -218,6 +282,9 @@ class HousekeepingAgent(Agent):
         runner = self._RUNNERS.get(job.job_type)
         attempt = db.start_housekeeping_attempt(job)
         outcome: str | None = None
+        # Counted before it runs: a killed or failed call heated the machine
+        # as much as a finished one.
+        self._burst += 1
         try:
             if runner is None:
                 raise LookupError(f"no runner for job type {job.job_type!r}")
@@ -285,6 +352,88 @@ class HousekeepingAgent(Agent):
             raise RuntimeError(result.get("error") or "summarizer returned no result")
         return "done"
 
+    def _summarize_chunk(self, job: Any, attempt: Any, watch: TurnWatch) -> str:
+        """One chunk of a room's messages, summarized by one plain-text call
+        on the `assistant.room_summarizer` slot. The chunk is the one the
+        job's subject names; its row is written once, when the call returns."""
+        from agents import room_chunks
+        from agents.config import ASSISTANT_ROOM_SUMMARIZER_UUID
+        from agents.model_groups import resolve_assistant_model_uuids, text_llm_call
+
+        spec = db.parse_chunk_subject(job.subject)
+        if spec is None or job.room_uuid is None:
+            raise ValueError(f"malformed chunk subject {job.subject!r}")
+        size, overlap, seq = spec["size"], spec["overlap"], spec["seq"]
+        if any(c.seq == seq for c in db.list_room_chunks(job.room_uuid, size, overlap)):
+            return "skipped: already summarized"
+        earlier = db.list_room_chunks(job.room_uuid, size, overlap)
+        if seq != len(earlier):
+            # Its predecessor failed, so the series cannot continue past it.
+            return "skipped: an earlier chunk of the series is missing"
+
+        messages = db.counted_room_messages(job.room_uuid)
+        ids = [m["id"] for m in messages]
+        inside = [i for i, mid in enumerate(ids)
+                  if spec["first_id"] <= mid <= spec["last_id"]]
+        if not inside:
+            return "skipped: the chunk's messages are gone"
+        first, last = inside[0], inside[-1]
+        chunk = messages[first:last + 1]
+        known: list[str] = []
+        for c in reversed(earlier):
+            known += [t for t in c.topics if t not in known]
+        prompt = room_chunks.build_prompt(
+            messages[max(0, first - overlap):first], chunk,
+            messages[last + 1:last + 1 + overlap], first,
+            known[:room_chunks.KNOWN_TOPICS_LIMIT])
+
+        models, _label = resolve_assistant_model_uuids(ASSISTANT_ROOM_SUMMARIZER_UUID)
+        models = [m for m in models or [] if _is_local_model(m)]
+        if not models:
+            raise RuntimeError(
+                "no local model is bound to assistant.room_summarizer or "
+                "assistant.default; a room's messages go to local models only")
+        attempt_uuid = attempt.uuid
+        worker = self
+
+        class Observer:
+            last_write = 0.0
+
+            def started(self, model_uuid: UUID, model_name: str,
+                        timeout_seconds: float) -> None:
+                with watch.shielded():
+                    db.checkpoint_housekeeping_attempt(attempt_uuid, model=model_name)
+
+            def progress(self, model_uuid: UUID, model_name: str,
+                         reasoning: str | None, response_text: str | None) -> None:
+                now = time.monotonic()
+                if now - self.last_write < worker.PROGRESS_SECONDS:
+                    return
+                self.last_write = now
+                with watch.shielded():
+                    db.checkpoint_housekeeping_attempt(
+                        attempt_uuid, response_preview=response_text or reasoning or "")
+
+            def failed(self, *args: Any, **kwargs: Any) -> None:
+                pass
+
+        with watch.interruptible():
+            (asked, topics, problems), _text, model_uuid = text_llm_call(
+                db.JOB_CALLERS[db.ROOM_CHUNK_JOB], models,
+                prompt["system"], prompt["user"], room_chunks.require_asked,
+                observer=Observer())
+        _provider, model_name, _args = db.resolved_model_kwargs(model_uuid)
+        db.store_room_chunk(
+            room_uuid=job.room_uuid, chunk_size=size, overlap=overlap, seq=seq,
+            first_message_id=chunk[0]["id"], last_message_id=chunk[-1]["id"],
+            message_count=len(chunk),
+            content_hash=room_chunks.content_hash(chunk),
+            asked=asked, topics=topics[:room_chunks.MAX_TOPICS], problems=problems,
+            model=model_name, prompt_version=room_chunks.PROMPT_VERSION,
+            job_uuid=job.uuid)
+        return "done"
+
     _RUNNERS: dict[str, Callable[..., str]] = {
         db.RUN_SUMMARY_JOB: _summarize_run,
+        db.ROOM_CHUNK_JOB: _summarize_chunk,
     }

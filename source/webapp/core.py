@@ -28,6 +28,7 @@ from db import (
     AssistantWriteIntent,
     HousekeepingAttempt,
     HousekeepingJob,
+    RoomChunk,
     SecondOpinionAssessment,
     SecondOpinionReview,
     assistant_step_path,
@@ -181,11 +182,11 @@ NAV_TEMPLATE = """
         <a href="{{ url_for('memory_developer_page') }}" class="{{ 'pp-active' if request.endpoint == 'memory_developer_page' }}">Developer</a>
       </div>
     </details>
-    <details class="pp-dd {{ 'pp-active' if request.endpoint in ('assistant_page', 'assistant_overview_page', 'housekeeping_page', 'housekeeping_job_page', 'second_opinion_page', 'persona_page') }}">
+    <details class="pp-dd {{ 'pp-active' if request.endpoint in ('assistant_page', 'assistant_overview_page', 'housekeeping_page', 'housekeeping_job_page', 'housekeeping_room_page', 'second_opinion_page', 'persona_page') }}">
       <summary>Assistant &#9662;</summary>
       <div class="pp-dd-menu">
         <a href="{{ url_for('assistant_overview_page') }}" class="{{ 'pp-active' if request.endpoint in ('assistant_page', 'assistant_overview_page') }}">Runs</a>
-        <a href="{{ url_for('housekeeping_page') }}" class="{{ 'pp-active' if request.endpoint in ('housekeeping_page', 'housekeeping_job_page') }}">Housekeeping</a>
+        <a href="{{ url_for('housekeeping_page') }}" class="{{ 'pp-active' if request.endpoint in ('housekeeping_page', 'housekeeping_job_page', 'housekeeping_room_page') }}">Housekeeping</a>
         <a href="{{ url_for('second_opinion_page') }}" class="{{ 'pp-active' if request.endpoint == 'second_opinion_page' }}">Second opinion</a>
         <a href="{{ url_for('persona_page') }}" class="{{ 'pp-active' if request.endpoint == 'persona_page' }}">Persona</a>
       </div>
@@ -872,6 +873,18 @@ class HousekeepingAttemptView(ModelView):
 admin.add_view(HousekeepingJobView(HousekeepingJob, db, category="Assistant"))
 admin.add_view(HousekeepingAttemptView(
     HousekeepingAttempt, db, category="Assistant"))
+
+
+class RoomChunkView(ModelView):
+    # Written once by the housekeeping role; read-only here.
+    column_default_sort = ("created_at", True)
+    can_create = False
+    can_edit = False
+    column_type_formatters = CRON_TYPE_FORMATTERS
+    column_formatters = {"uuid": _fmt_short_uuid}
+
+
+admin.add_view(RoomChunkView(RoomChunk, db, category="Assistant"))
 
 
 class EvalRunView(ModelView):

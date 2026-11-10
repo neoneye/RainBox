@@ -45,10 +45,27 @@ def _outcome(job) -> tuple[str, str]:
         return text, kind
     if job.state == "deferred":
         reason = job.deferred_reason or "waiting"
-        text = "a new message stopped it; waiting to run again" \
-            if reason == "turn" else f"deferred: {reason}"
+        text = {
+            "turn": "a new message stopped it; waiting to run again",
+            "cooldown": "resting the machine before the next call",
+        }.get(reason, f"deferred: {reason}")
         return text, "deferred"
     return job.state, job.state
+
+
+def _chunk_link(job) -> dict | None:
+    """For a chunk job: which chunk it is, and the room page that shows it."""
+    if job.job_type != db.ROOM_CHUNK_JOB or job.room_uuid is None:
+        return None
+    spec = db.parse_chunk_subject(job.subject)
+    if spec is None:
+        return None
+    first = spec["seq"] * spec["size"]
+    return {
+        "text": f"messages {first}\u2013{first + spec['size'] - 1}",
+        "href": (f"/assistant/housekeeping/room/{job.room_uuid}"
+                 f"?size={spec['size']}&overlap={spec['overlap']}#chunk-{spec['seq']}"),
+    }
 
 
 def _elapsed(since: datetime | None) -> str:
@@ -207,9 +224,12 @@ _LOG_FRAGMENT = _NOW_FRAGMENT + """
       <td class="hk-mono">{{ when(r.job.created_at) }}{% if r.job.finished_at %}<br>{{ when(r.job.finished_at) }}{% endif %}</td>
       <td><a href="/assistant/housekeeping/{{ r.job.uuid }}">{{ label(r.job.job_type) }}</a></td>
       <td>
-        {% if r.job.room_uuid %}<a href="/chat?id={{ r.job.room_uuid }}">{{ rooms.get(r.job.room_uuid, 'room') }}</a>{% endif %}
+        {% if r.job.room_uuid %}<a href="/chat?id={{ r.job.room_uuid }}">{{ rooms.get(r.job.room_uuid, 'room') }}</a>
+          (<a href="/assistant/housekeeping/room/{{ r.job.room_uuid }}">chunks</a>){% endif %}
         {% if r.job.run_uuid %}{% if r.job.room_uuid %} &middot; {% endif %}<a href="/assistant?id={{ r.job.run_uuid }}">run</a>{% endif %}
-        {% if r.job.subject %} &middot; {{ r.job.subject }}{% endif %}
+        {% set chunk = chunk_link(r.job) %}
+        {% if chunk %} &middot; <a href="{{ chunk.href }}">{{ chunk.text }}</a>
+        {% elif r.job.subject %} &middot; {{ r.job.subject }}{% endif %}
       </td>
       <td>{{ r.model or '' }}</td>
       <td class="hk-num">{{ seconds(r.model_ms) }}{% if r.attempts > 1 %} &middot; {{ r.attempts }} attempts{% endif %}</td>
@@ -284,7 +304,9 @@ _JOB_FRAGMENT = """
         {% if job.room_uuid %}<a href="/chat?id={{ job.room_uuid }}">{{ rooms.get(job.room_uuid, 'room') }}</a>{% endif %}
         {% if job.run_uuid %}{% if job.room_uuid %} &middot; {% endif %}<a href="/assistant?id={{ job.run_uuid }}">run {{ job.run_uuid }}</a>{% endif %}
         {% if request_message %} &middot; <a href="/chat?id={{ job.room_uuid }}&msg={{ request_message }}">the request</a>{% endif %}
-        {% if job.subject %} &middot; {{ job.subject }}{% endif %}
+        {% set chunk = chunk_link(job) %}
+        {% if chunk %} &middot; <a href="{{ chunk.href }}">{{ chunk.text }}</a>
+        {% elif job.subject %} &middot; {{ job.subject }}{% endif %}
       </dd>
       <dt>Created</dt><dd class="hk-mono">{{ when(job.created_at) }}</dd>
       {% if job.finished_at %}<dt>Finished</dt><dd class="hk-mono">{{ when(job.finished_at) }}</dd>{% endif %}
@@ -373,7 +395,7 @@ def run_housekeeping_lines(run_uuid: UUID) -> list[dict]:
 
 def _helpers() -> dict:
     return {"when": _when, "seconds": _seconds, "label": _job_label,
-            "outcome": _outcome, "elapsed": _elapsed}
+            "outcome": _outcome, "elapsed": _elapsed, "chunk_link": _chunk_link}
 
 
 def _room_arg() -> UUID | None:
@@ -434,6 +456,8 @@ def _wrote(job) -> str:
         return ""
     if job.job_type == db.RUN_SUMMARY_JOB:
         return "the summary on its run"
+    if job.job_type == db.ROOM_CHUNK_JOB:
+        return "the chunk's summary, on the room's page"
     return ""
 
 
@@ -467,6 +491,149 @@ def housekeeping_job_requeue(job_uuid: UUID) -> Response:
         # Wakes the worker; the job itself is already waiting in its table.
         db.enqueue(HOUSEKEEPING_UUID, {"sweep": True})
     return redirect(f"/assistant/housekeeping/{job_uuid}")
+
+
+_ROOM_FRAGMENT = """
+<div class="hk-now">
+  <span><span class="k">Messages</span><span class="v">{{ counted }}</span></span>
+  <span><span class="k">Summarized</span><span class="v">{{ chunks|length }} chunk{{ '' if chunks|length == 1 else 's' }} of {{ size }}, {{ covered }} messages</span></span>
+  <span><span class="k">Queued</span><span class="v">{{ queued }}</span></span>
+  <span><span class="k">Not yet queued</span><span class="v">{{ due }} chunk{{ '' if due == 1 else 's' }}</span></span>
+  {% if is_current and due %}
+  <form method="post" action="/assistant/housekeeping/room/{{ room_uuid }}/summarize" style="margin-left:auto">
+    <button class="hk-btn" type="submit" title="One model call per chunk, ten in a row and then a minute's rest. A new message stops the call in progress.">Summarize the rest: {{ due }} model call{{ '' if due == 1 else 's' }}</button>
+  </form>
+  {% endif %}
+</div>
+{% if not is_current %}
+<p class="hk-lede">This series was cut with other settings than the current ones
+  ({{ cur_size }} per chunk, {{ cur_overlap }} of context), so no new chunks are added to it.</p>
+{% endif %}
+{% for c in chunks %}
+<div class="hk-card" id="chunk-{{ c.row.seq }}">
+  <div class="hd">
+    <h3>Messages {{ c.first_index }}&ndash;{{ c.last_index }}</h3>
+    <span class="hk-mono">{{ c.dates }}</span>
+    {% if c.stale %}<span class="hk-pill deferred" title="A message in this chunk was edited or deleted after the summary was written">messages changed since</span>{% endif %}
+    <span style="margin-left:auto">{{ c.row.model or '' }}</span>
+    {% if c.row.job_uuid %}<a class="hk-back" href="/assistant/housekeeping/{{ c.row.job_uuid }}">prompt and reply</a>{% endif %}
+  </div>
+  <div class="bd">
+    <dl class="hk-kv">
+      <dt>Asked</dt><dd>{{ c.row.asked or '' }}</dd>
+      <dt>Topics</dt><dd>{% for t in c.row.topics %}<span class="hk-chip">{{ t }}</span> {% endfor %}</dd>
+      {% if c.row.problems %}<dt>Format</dt><dd class="hk-err" style="margin:0">{{ c.row.problems|join('; ') }}</dd>{% endif %}
+    </dl>
+    <details class="hk-text" id="chunk-{{ c.row.seq }}-messages">
+      <summary>the {{ c.messages|length }} messages</summary>
+      <pre class="hk-pre">{% for m in c.messages %}[m{{ c.first_index + loop.index0 }} {{ m.sender }}] {{ m.text }}
+{% endfor %}</pre>
+    </details>
+  </div>
+</div>
+{% else %}
+<div class="hk-empty"><div class="t">No chunk of this room is summarized yet</div>
+  <div class="s">A chunk is summarized after a turn in the room, two at a time, or all at once with the button above.</div></div>
+{% endfor %}
+"""
+
+_ROOM_PAGE = """
+<!doctype html>
+<title>Room chunks &mdash; rainbox</title>
+""" + _STYLE + """
+{% include "_nav.html" %}
+<style>.pp-nav{margin-bottom:0}</style>
+<div class="hk-wrap">
+  <p style="margin:0 0 12px"><a class="hk-back" href="/assistant/housekeeping">&larr; Housekeeping</a></p>
+  <h1 class="hk-head">{{ room_name }}</h1>
+  <p class="hk-lede">This room's messages in chunks, each summarized once by a
+    local model: what was asked, in kind, and topic names. The summaries are
+    shown here and reach no prompt. <a class="hk-back" href="/chat?id={{ room_uuid }}">Open the room</a></p>
+  <div class="hk-filters">
+    <div class="hk-field">
+      <label>Series</label>
+      <div class="hk-chips">
+        {% for s_size, s_overlap, n in series %}
+        <a class="hk-chip {{ 'sel' if s_size == size and s_overlap == overlap }}"
+           href="/assistant/housekeeping/room/{{ room_uuid }}?size={{ s_size }}&overlap={{ s_overlap }}">{{ s_size }} per chunk, {{ s_overlap }} of context{% if n %} &middot; {{ n }}{% endif %}</a>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  <div id="hk-live" data-revision="{{ revision }}">""" + _ROOM_FRAGMENT + """</div>
+</div>
+""" + _LIVE_SCRIPT
+
+
+def _int_arg(name: str, default: int) -> int:
+    try:
+        return int(request.args.get(name, default))
+    except ValueError:
+        return default
+
+
+@app.route("/assistant/housekeeping/room/<uuid:room_uuid>")
+def housekeeping_room_page(room_uuid: UUID) -> str:
+    from agents.room_chunks import content_hash
+
+    names = db.housekeeping_room_names([room_uuid])
+    if room_uuid not in names:
+        abort(404, "room not found")
+    cur_size = int(db.get_setting("housekeeping.room_chunk_size"))
+    cur_overlap = int(db.get_setting("housekeeping.room_chunk_overlap"))
+    size = _int_arg("size", cur_size)
+    overlap = _int_arg("overlap", cur_overlap)
+    is_current = (size, overlap) == (cur_size, cur_overlap)
+
+    messages = db.counted_room_messages(room_uuid)
+    index_of = {m["id"]: i for i, m in enumerate(messages)}
+    chunks = []
+    for row in db.list_room_chunks(room_uuid, size, overlap):
+        inside = [m for m in messages
+                  if row.first_message_id <= m["id"] <= row.last_message_id]
+        first_index = index_of.get(inside[0]["id"], row.seq * size) if inside \
+            else row.seq * size
+        dates = ""
+        if inside:
+            a, b = inside[0]["created_at"], inside[-1]["created_at"]
+            dates = a.strftime("%Y-%m-%d") if a.date() == b.date() \
+                else f"{a.strftime('%Y-%m-%d')} to {b.strftime('%Y-%m-%d')}"
+        chunks.append({
+            "row": row, "messages": inside, "dates": dates,
+            "first_index": first_index,
+            "last_index": first_index + max(len(inside), 1) - 1,
+            "stale": content_hash(inside) != row.content_hash,
+        })
+    series = db.list_room_chunk_series(room_uuid)
+    if not any((s, o) == (cur_size, cur_overlap) for s, o, _n in series):
+        series.append((cur_size, cur_overlap, 0))
+    queued = sum(
+        1 for r in db.list_housekeeping_jobs(
+            job_type=db.ROOM_CHUNK_JOB, room_uuid=room_uuid, limit=500)[0]
+        if r["job"].state != "final"
+        and r["job"].subject.startswith(f"{size}/{overlap}/"))
+    due = len(db.due_room_chunks(room_uuid, size, overlap, 500)) if is_current else 0
+    ctx = dict(
+        room_uuid=room_uuid, room_name=names[room_uuid], chunks=chunks,
+        counted=len(messages), covered=sum(c["row"].message_count for c in chunks),
+        size=size, overlap=overlap, cur_size=cur_size, cur_overlap=cur_overlap,
+        is_current=is_current, series=series, queued=queued,
+        due=max(0, due - queued), revision=db.housekeeping_revision(),
+        **_helpers())
+    template = _ROOM_FRAGMENT if request.args.get("fragment") else _ROOM_PAGE
+    return render_template_string(template, **ctx)
+
+
+@app.route("/assistant/housekeeping/room/<uuid:room_uuid>/summarize", methods=["POST"])
+def housekeeping_room_summarize(room_uuid: UUID) -> Response:
+    """Queue a summary for every chunk of the room that is due. The worker
+    takes them ten calls at a time, and a new message stops the one running."""
+    if room_uuid not in db.housekeeping_room_names([room_uuid]):
+        abort(404, "room not found")
+    from agents.config import HOUSEKEEPING_UUID
+
+    db.enqueue(HOUSEKEEPING_UUID, {"room_uuid": str(room_uuid), "room_chunks": True})
+    return redirect(f"/assistant/housekeeping/room/{room_uuid}")
 
 
 @app.route("/assistant/housekeeping/api/revision")

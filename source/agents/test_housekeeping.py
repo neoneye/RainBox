@@ -296,3 +296,174 @@ def test_progress_and_model_are_written_to_the_running_attempt(app_ctx, monkeypa
     (attempt,) = db.list_housekeeping_attempts(job.uuid)
     assert attempt.model == "model-a"
     assert attempt.response_preview == '{"trigger": "a'
+
+
+# --- room chunks -------------------------------------------------------------
+
+def _room_with_messages(made: dict, n: int):
+    human = db.get_human_user()
+    room = db.create_chatroom(f"hkc-{uuid4().hex[:8]}", human.uuid, [ASSISTANT_UUID])
+    made["rooms"].append(room.uuid)
+    for i in range(n):
+        sender = human.uuid if i % 2 == 0 else ASSISTANT_UUID
+        db.post_chat_message(room.uuid, sender, f"message number {i} about the weather")
+    return room
+
+
+def _fake_chunk_model(monkeypatch, reply="asked: questions about the weather\ntopics: weather"):
+    from agents import model_groups
+
+    prompts: list[str] = []
+
+    def fake(agent_name, models, system_prompt, user_prompt, parse, *, observer=None, **_kw):
+        prompts.append(user_prompt)
+        text = reply(len(prompts)) if callable(reply) else reply
+        if observer is not None:
+            observer.started(models[0], "model-a", 60.0)
+            observer.progress(models[0], "model-a", None, text[:10])
+        return parse(text), text, models[0]
+
+    member = uuid4()
+    monkeypatch.setattr(model_groups, "text_llm_call", fake)
+    monkeypatch.setattr(model_groups, "resolve_assistant_model_uuids",
+                        lambda _slot: ([member], "assistant.room_summarizer"))
+    monkeypatch.setattr(hk, "_is_local_model", lambda _m: True)
+    monkeypatch.setattr(db, "resolved_model_kwargs", lambda _m: ("ollama", "model-a", {}))
+    return prompts
+
+
+def test_chunks_are_cut_in_order_and_wait_for_their_context(app_ctx):
+    room = _room_with_messages(app_ctx, 23)
+    # 23 messages, 10 per chunk, 2 of context: the second chunk ends at
+    # message 19 and needs 20 and 21 after it; a third would need 30 to 31.
+    due = db.due_room_chunks(room.uuid, 10, 2, limit=10)
+    assert [d["seq"] for d in due] == [0, 1]
+    ids = [m["id"] for m in db.counted_room_messages(room.uuid)]
+    assert (due[0]["first_id"], due[0]["last_id"]) == (ids[0], ids[9])
+    assert (due[1]["first_id"], due[1]["last_id"]) == (ids[10], ids[19])
+    assert len(db.due_room_chunks(room.uuid, 10, 2, limit=1)) == 1
+    # Other settings are another series, cut from the first message again.
+    assert [d["seq"] for d in db.due_room_chunks(room.uuid, 5, 0, limit=10)] == [0, 1, 2, 3]
+    assert len(db.due_room_chunks(room.uuid, 10, 4, limit=10)) == 1
+
+
+def test_progress_and_thinking_rows_are_not_counted(app_ctx):
+    room = _room_with_messages(app_ctx, 4)
+    db.post_chat_message(room.uuid, ASSISTANT_UUID, "", kind="progress")
+    db.post_chat_message(room.uuid, ASSISTANT_UUID, "hmm", kind="thinking")
+    assert len(db.counted_room_messages(room.uuid)) == 4
+
+
+def test_a_run_end_queues_two_chunks_and_each_is_summarized_once(app_ctx, monkeypatch):
+    room = _room_with_messages(app_ctx, 45)
+    prompts = _fake_chunk_model(monkeypatch)
+    agent = _agent(monkeypatch)
+    agent.handle(uuid4(), {"room_uuid": str(room.uuid), "room_chunks": False,
+                           "run_uuid": None})
+    assert prompts == []                                # no run, no request: nothing
+    monkeypatch.setattr(hk, "CHUNK_JOBS_PER_REQUEST", 2)
+    result = agent.handle(uuid4(), {"room_uuid": str(room.uuid), "room_chunks": True})
+    assert result["jobs"] == {"done": 2}
+    chunks = db.list_room_chunks(room.uuid, 10, 2)
+    try:
+        assert [(c.seq, c.message_count, c.asked) for c in chunks] == [
+            (0, 10, "questions about the weather"), (1, 10, "questions about the weather")]
+        assert chunks[0].topics == ["weather"] and chunks[0].model == "model-a"
+        assert chunks[0].problems == [] and chunks[0].job_uuid is not None
+        # The first chunk has no context before it; the second has two each side.
+        assert "not to be described:\n(none)" in prompts[0]
+        assert "[m8 human]" in prompts[1] and "[m21 assistant]" in prompts[1]
+        assert "[m22" not in prompts[1]
+        assert "Known topic names: weather" in prompts[1]
+        # The series continues after the stored chunks, and nothing is redone.
+        assert [d["seq"] for d in db.due_room_chunks(room.uuid, 10, 2, 10)] == [2, 3]
+        assert agent.handle(uuid4(), {"room_uuid": str(room.uuid), "room_chunks": True})[
+            "jobs"] == {"done": 2}
+        assert len(prompts) == 4
+    finally:
+        db.session.query(db.RoomChunk).filter_by(room_uuid=room.uuid).delete()
+        db.session.commit()
+
+
+def test_the_setting_switches_room_summaries_off_for_run_ends(app_ctx, monkeypatch):
+    room = _room_with_messages(app_ctx, 30)
+    run = _run(app_ctx)
+    _fake_summary(monkeypatch)
+    prompts = _fake_chunk_model(monkeypatch)
+    agent = _agent(monkeypatch)
+    settings = {"housekeeping.room_summaries": False,
+                "housekeeping.room_chunk_size": 10, "housekeeping.room_chunk_overlap": 2}
+    monkeypatch.setattr(db, "get_setting", lambda key: settings[key])
+    payload = {"run_uuid": str(run.uuid), "room_uuid": str(room.uuid)}
+    assert agent.handle(uuid4(), payload)["jobs"] == {"done": 1}      # the run summary
+    assert prompts == []
+    settings["housekeeping.room_summaries"] = True
+    try:
+        assert agent.handle(uuid4(), payload)["jobs"] == {"done": 2}  # two chunks per run end
+        assert len(db.list_room_chunks(room.uuid, 10, 2)) == 2
+    finally:
+        db.session.query(db.RoomChunk).filter_by(room_uuid=room.uuid).delete()
+        db.session.commit()
+
+
+def test_a_reply_that_strays_from_the_format_is_stored_with_what_was_wrong(app_ctx, monkeypatch):
+    room = _room_with_messages(app_ctx, 12)
+    _fake_chunk_model(monkeypatch, "**asked:** things\ntopics: The Weather, rain")
+    agent = _agent(monkeypatch)
+    agent.handle(uuid4(), {"room_uuid": str(room.uuid), "room_chunks": True})
+    (chunk,) = db.list_room_chunks(room.uuid, 10, 2)
+    try:
+        assert chunk.asked == "things" and chunk.topics == ["the-weather", "rain"]
+        assert chunk.problems == ["topic 'The Weather' normalized to 'the-weather'"]
+    finally:
+        db.session.query(db.RoomChunk).filter_by(room_uuid=room.uuid).delete()
+        db.session.commit()
+
+
+def test_room_messages_go_to_local_models_only(app_ctx, monkeypatch):
+    room = _room_with_messages(app_ctx, 12)
+    prompts = _fake_chunk_model(monkeypatch)
+    monkeypatch.setattr(hk, "_is_local_model", lambda _m: False)
+    agent = _agent(monkeypatch)
+    assert agent.handle(uuid4(), {"room_uuid": str(room.uuid), "room_chunks": True})[
+        "jobs"] == {"failed": 2}
+    assert prompts == [] and db.list_room_chunks(room.uuid, 10, 2) == []
+    (job,) = [r["job"] for r in db.list_housekeeping_jobs(room_uuid=room.uuid)[0]]
+    assert "local model" in job.outcome
+
+
+def test_the_worker_rests_after_a_burst_of_calls(app_ctx, monkeypatch):
+    room = _room_with_messages(app_ctx, 45)
+    _fake_chunk_model(monkeypatch)
+    agent = _agent(monkeypatch)
+    agent.BURST_CALLS = 2
+    agent.COOLDOWN_SECONDS = 0.05
+    rests: list[int] = []
+    cool = agent._cool_down_if_due
+
+    def counting():
+        before = agent._burst
+        cool()
+        if before and agent._burst == 0:
+            rests.append(before)
+
+    monkeypatch.setattr(agent, "_cool_down_if_due", counting)
+    try:
+        assert agent.handle(uuid4(), {"room_uuid": str(room.uuid), "room_chunks": True})[
+            "jobs"] == {"done": 4}
+        assert rests == [2]                             # 2 calls, a rest, 2 more
+    finally:
+        db.session.query(db.RoomChunk).filter_by(room_uuid=room.uuid).delete()
+        db.session.commit()
+
+
+def test_parse_reply_reads_the_two_lines():
+    from agents import room_chunks as rc
+
+    assert rc.parse_reply("asked: unit conversions\ntopics: units, weather") == (
+        "unit conversions", ["units", "weather"], [])
+    asked, topics, problems = rc.parse_reply("asked: " + "x" * 130)
+    assert topics == [] and "no topics: line" in problems
+    assert any("characters" in p for p in problems)
+    with pytest.raises(ValueError):
+        rc.require_asked("I could not find anything.")

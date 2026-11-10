@@ -1152,6 +1152,49 @@ class HousekeepingAttempt(db.Model):
     response_preview: Mapped[str | None] = mapped_column(Text)
 
 
+class RoomChunk(db.Model):
+    """A stretch of one room's messages, summarized once by a local model.
+
+    A room's counted messages are cut into chunks of `chunk_size`, in order
+    from its first message. `seq` is the chunk's place in that series. A
+    series belongs to one `(chunk_size, overlap)` pair, so changing either
+    setting starts a new series beside the old one and both can be read.
+
+    The row is written when the summary is, and never rewritten.
+    `content_hash` is over the chunk's messages as they were then, so a page
+    can say when they have changed since.
+    """
+
+    __tablename__ = "room_chunk"
+    uuid: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    room_uuid: Mapped[UUID] = mapped_column(index=True)
+    chunk_size: Mapped[int] = mapped_column()
+    # Counted messages of context the model read on each side of the chunk.
+    overlap: Mapped[int] = mapped_column()
+    seq: Mapped[int] = mapped_column()
+    # The edges, as chat_message ids. Ids only grow, so the next chunk starts
+    # after `last_message_id` even when that message has since been deleted.
+    first_message_id: Mapped[int] = mapped_column(BigInteger)
+    last_message_id: Mapped[int] = mapped_column(BigInteger)
+    message_count: Mapped[int] = mapped_column()
+    content_hash: Mapped[str] = mapped_column(Text)
+    # What the model wrote: what was asked, in kind, and topic names.
+    asked: Mapped[str | None] = mapped_column(Text)
+    topics: Mapped[list] = mapped_column(JSONB, default=list)
+    # Where its reply strayed from the asked-for format.
+    problems: Mapped[list] = mapped_column(JSONB, default=list)
+    model: Mapped[str | None] = mapped_column(Text)
+    prompt_version: Mapped[int] = mapped_column(default=1)
+    job_uuid: Mapped[UUID | None] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    __table_args__ = (
+        UniqueConstraint("room_uuid", "chunk_size", "overlap", "seq",
+                         name="room_chunk_key"),
+    )
+
+
 class AssistantStep(db.Model):
     """One logical step in an assistant run, as **a single mutable row**. A normal
     action step is inserted at `phase="running"` (so a crash mid-action leaves a

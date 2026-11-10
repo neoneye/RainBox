@@ -161,3 +161,52 @@ def test_the_run_page_lists_its_jobs_after_the_turn_and_moves_them_forward(clien
     assert job.bumped_at is not None        # opening the page asked for it first
     other = _run(made)
     assert "After the turn" not in c.get(f"/assistant?id={other.uuid}").get_data(as_text=True)
+
+
+def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
+    from agents.config import ASSISTANT_UUID, HOUSEKEEPING_UUID
+    from agents.room_chunks import content_hash
+
+    c, made = client
+    human = db.get_human_user()
+    room = db.create_chatroom(f"hkr-{uuid4().hex[:8]}", human.uuid, [ASSISTANT_UUID])
+    made["rooms"].append(room.uuid)
+    for i in range(34):
+        db.post_chat_message(room.uuid, human.uuid if i % 2 == 0 else ASSISTANT_UUID,
+                             f"message number {i}")
+    messages = db.counted_room_messages(room.uuid)
+    chunk = db.store_room_chunk(
+        room_uuid=room.uuid, chunk_size=10, overlap=2, seq=0,
+        first_message_id=messages[0]["id"], last_message_id=messages[9]["id"],
+        message_count=10, content_hash=content_hash(messages[:10]),
+        asked="questions about numbers", topics=["numbers"], problems=[],
+        model="model-a", prompt_version=1)
+    try:
+        body = c.get(f"/assistant/housekeeping/room/{room.uuid}").get_data(as_text=True)
+        assert "Messages 0&ndash;9" in body and "questions about numbers" in body
+        assert '<span class="hk-chip">numbers</span>' in body
+        assert "[m3 agent] message number 3" in body
+        assert "messages changed since" not in body
+        # 34 messages: chunks 1 and 2 are due (the third needs messages 30-31 after it).
+        assert "Summarize the rest: 2 model calls" in body
+
+        # An edit after the summary is shown, and the summary is left alone.
+        db.session.query(db.ChatMessage).filter_by(id=messages[2]["id"]).update(
+            {"text": "edited"})
+        db.session.commit()
+        assert "messages changed since" in c.get(
+            f"/assistant/housekeeping/room/{room.uuid}").get_data(as_text=True)
+
+        # Another series has no chunks, and gets no button: it is not current.
+        other = c.get(f"/assistant/housekeeping/room/{room.uuid}?size=5&overlap=0").get_data(as_text=True)
+        assert "No chunk of this room is summarized yet" in other
+        assert "Summarize the rest" not in other
+
+        assert c.post(f"/assistant/housekeeping/room/{room.uuid}/summarize").status_code == 302
+        item = db.session.query(Inbox).filter(Inbox.agent_uuid == HOUSEKEEPING_UUID).one()
+        assert '"room_chunks": true' in item.payload
+        assert c.get(f"/assistant/housekeeping/room/{uuid4()}").status_code == 404
+    finally:
+        db.session.query(Inbox).filter(Inbox.agent_uuid == HOUSEKEEPING_UUID).delete()
+        db.session.query(db.RoomChunk).filter_by(uuid=chunk.uuid).delete()
+        db.session.commit()

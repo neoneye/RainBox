@@ -16,11 +16,14 @@ from sqlalchemy.orm import Session
 
 from db.models import (
     AssistantRun,
+    ChatMessage,
+    ChatUser,
     HousekeepingAttempt,
     HousekeepingJob,
     Inbox,
     Journal,
     LlmCall,
+    RoomChunk,
     db,
 )
 
@@ -28,7 +31,17 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "HOUSEKEEPING_JOB_TYPES",
+    "JOB_CALLERS",
+    "ROOM_CHUNK_JOB",
     "RUN_SUMMARY_JOB",
+    "chunk_subject",
+    "counted_room_messages",
+    "due_room_chunks",
+    "ensure_room_chunk_jobs",
+    "list_room_chunk_series",
+    "list_room_chunks",
+    "parse_chunk_subject",
+    "store_room_chunk",
     "bump_run_housekeeping",
     "checkpoint_housekeeping_attempt",
     "ensure_housekeeping_job",
@@ -53,11 +66,20 @@ __all__ = [
 ]
 
 RUN_SUMMARY_JOB = "run_summary"
+ROOM_CHUNK_JOB = "room_chunk_summary"
 
 #: job type -> (tier, label). Tier 1 is read by the next turn; tier 2 is
 #: generative work that is read eventually. The label is what the page prints.
 HOUSEKEEPING_JOB_TYPES: dict[str, tuple[int, str]] = {
     RUN_SUMMARY_JOB: (2, "run summary"),
+    ROOM_CHUNK_JOB: (2, "room chunk summary"),
+}
+
+#: The /activity caller tag of each job type's model call. It is how an
+#: attempt finds the stored call it made.
+JOB_CALLERS: dict[str, str] = {
+    RUN_SUMMARY_JOB: "assistant.run_summarizer",
+    ROOM_CHUNK_JOB: "assistant.room_summarizer",
 }
 
 #: How far back a `running` run or a `processing` journal row still counts as
@@ -276,19 +298,21 @@ def checkpoint_housekeeping_attempt(
 def housekeeping_attempt_call(
     job: HousekeepingJob, attempt: HousekeepingAttempt,
 ) -> LlmCall | None:
-    """The stored model call an attempt made: the one this job's run recorded
-    while the attempt ran. None for an attempt that made no call."""
+    """The stored model call an attempt made: the one its job type's caller
+    recorded while the attempt ran. None for an attempt that made no call."""
     if attempt.llm_call_uuid is not None:
         return db.session.get(LlmCall, attempt.llm_call_uuid)
-    if job.run_uuid is None:
+    caller = JOB_CALLERS.get(job.job_type)
+    if caller is None:
         return None
-    from db.assistant_log import SUMMARIZER_CALLER
-
+    # One worker runs one job at a time, so a call by this job type's caller
+    # inside the attempt's own seconds is the attempt's call.
     slack = timedelta(seconds=2)
     q = (db.session.query(LlmCall)
-         .filter(LlmCall.caller == SUMMARIZER_CALLER,
-                 LlmCall.run_uuid == job.run_uuid,
+         .filter(LlmCall.caller == caller,
                  LlmCall.started_at >= attempt.started_at - slack))
+    if job.run_uuid is not None:
+        q = q.filter(LlmCall.run_uuid == job.run_uuid)
     if attempt.ended_at is not None:
         q = q.filter(LlmCall.started_at <= attempt.ended_at + slack)
     return q.order_by(LlmCall.started_at.desc()).first()
@@ -453,8 +477,9 @@ def housekeeping_revision() -> str:
         sa.func.sum(sa.func.length(
             sa.func.coalesce(HousekeepingAttempt.response_preview, ""))),
     ).select_from(HousekeepingAttempt).one()
+    chunks = db.session.query(sa.func.count()).select_from(RoomChunk).scalar()
     return "|".join(str(v) for v in (
-        *jobs, sorted(states), *attempts, int(turn_activity())))
+        *jobs, sorted(states), *attempts, chunks, int(turn_activity())))
 
 
 def run_housekeeping_flags(run_uuids: list[UUID]) -> dict[UUID, str]:
@@ -472,3 +497,106 @@ def run_housekeeping_flags(run_uuids: list[UUID]) -> dict[UUID, str]:
         elif state != "final" and out.get(run_uuid) != "failed":
             out[run_uuid] = "waiting"
     return out
+
+
+# --- room chunks -------------------------------------------------------------
+
+def counted_room_messages(room_uuid: UUID, *, after_id: int = 0,
+                          first_id: int | None = None,
+                          last_id: int | None = None) -> list[dict[str, Any]]:
+    """The messages chunks count, in order: real messages that have finished
+    streaming. Progress rows are reaped when the reply posts, and thinking
+    rows are not part of the conversation, so neither counts. Each is
+    `{id, uuid, sender, text, created_at}`, with `sender` the user type
+    (`human` or `agent`)."""
+    q = (db.session.query(ChatMessage, ChatUser.user_type)
+         .join(ChatUser, ChatUser.uuid == ChatMessage.sender_uuid)
+         .filter(ChatMessage.room_uuid == room_uuid,
+                 ChatMessage.kind == "message",
+                 ChatMessage.streaming.is_(False),
+                 ChatMessage.id > after_id))
+    if first_id is not None:
+        q = q.filter(ChatMessage.id >= first_id)
+    if last_id is not None:
+        q = q.filter(ChatMessage.id <= last_id)
+    return [{"id": m.id, "uuid": m.uuid, "sender": user_type, "text": m.text,
+             "created_at": m.created_at}
+            for m, user_type in q.order_by(ChatMessage.id.asc()).all()]
+
+
+def chunk_subject(size: int, overlap: int, seq: int,
+                  first_id: int, last_id: int) -> str:
+    """A chunk job's subject: its series, its place in it, and its edges."""
+    return f"{size}/{overlap}/{seq}:{first_id}-{last_id}"
+
+
+def parse_chunk_subject(subject: str) -> dict[str, int] | None:
+    try:
+        series, edges = subject.split(":")
+        size, overlap, seq = (int(v) for v in series.split("/"))
+        first_id, last_id = (int(v) for v in edges.split("-"))
+    except ValueError:
+        return None
+    return {"size": size, "overlap": overlap, "seq": seq,
+            "first_id": first_id, "last_id": last_id}
+
+
+def due_room_chunks(room_uuid: UUID, size: int, overlap: int,
+                    limit: int) -> list[dict[str, int]]:
+    """The next chunks of a room's series that can be summarized now, oldest
+    first, at most `limit`: `{seq, first_id, last_id}` each.
+
+    The series continues after the newest stored chunk's last message. A
+    chunk is due once `overlap` counted messages follow it, because the model
+    reads those as context. Appending to the room never changes a chunk that
+    was already cut."""
+    newest = (db.session.query(RoomChunk)
+              .filter_by(room_uuid=room_uuid, chunk_size=size, overlap=overlap)
+              .order_by(RoomChunk.seq.desc()).first())
+    seq = newest.seq + 1 if newest else 0
+    after = newest.last_message_id if newest else 0
+    ids = [m["id"] for m in counted_room_messages(room_uuid, after_id=after)]
+    out = []
+    start = 0
+    while len(out) < limit and start + size + overlap <= len(ids):
+        out.append({"seq": seq, "first_id": ids[start],
+                    "last_id": ids[start + size - 1]})
+        seq += 1
+        start += size
+    return out
+
+
+def ensure_room_chunk_jobs(room_uuid: UUID, size: int, overlap: int,
+                           limit: int) -> int:
+    """Queue a summary job for each due chunk, at most `limit`. A chunk that
+    already has a job is not queued again. Returns how many were created."""
+    created = 0
+    for due in due_room_chunks(room_uuid, size, overlap, limit):
+        _job, new = ensure_housekeeping_job(
+            ROOM_CHUNK_JOB, room_uuid=room_uuid,
+            subject=chunk_subject(size, overlap, **due))
+        created += int(new)
+    return created
+
+
+def store_room_chunk(**values: Any) -> RoomChunk:
+    chunk = RoomChunk(**values)
+    db.session.add(chunk)
+    db.session.commit()
+    return chunk
+
+
+def list_room_chunks(room_uuid: UUID, size: int, overlap: int) -> list[RoomChunk]:
+    return (db.session.query(RoomChunk)
+            .filter_by(room_uuid=room_uuid, chunk_size=size, overlap=overlap)
+            .order_by(RoomChunk.seq.asc()).all())
+
+
+def list_room_chunk_series(room_uuid: UUID) -> list[tuple[int, int, int]]:
+    """The series a room has chunks in: `(chunk_size, overlap, chunks)`."""
+    rows = (db.session.query(RoomChunk.chunk_size, RoomChunk.overlap,
+                             sa.func.count())
+            .filter(RoomChunk.room_uuid == room_uuid)
+            .group_by(RoomChunk.chunk_size, RoomChunk.overlap)
+            .order_by(RoomChunk.chunk_size, RoomChunk.overlap).all())
+    return [(r[0], r[1], r[2]) for r in rows]

@@ -19,6 +19,7 @@ from agents.config import (
     ASSISTANT_DEFAULT_UUID,
     ASSISTANT_MEMORY_FILTER_UUID,
     ASSISTANT_PYTHON_PROGRAM_UUID,
+    ASSISTANT_ROOM_SUMMARIZER_UUID,
     ASSISTANT_REPLY_AUDIT_UUID,
     ASSISTANT_REQUEST_SUMMARY_UUID,
     ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID,
@@ -40,6 +41,7 @@ STEP_SLOTS = [
     ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID,
     ASSISTANT_RUN_SUMMARIZER_UUID,
     ASSISTANT_PYTHON_PROGRAM_UUID,
+    ASSISTANT_ROOM_SUMMARIZER_UUID,
 ]
 
 
@@ -73,6 +75,7 @@ def test_the_slot_roster_is_exactly_the_assistants_calls():
         "assistant.response_language_classifier",
         "assistant.run_summarizer",
         "assistant.python_program",
+        "assistant.room_summarizer",
     }
 
 
@@ -89,7 +92,7 @@ def test_slot_names_are_the_activity_caller_tags():
 
 
 #: The slots whose call answers in plain text (model_groups.text_llm_call).
-PLAIN_TEXT_SLOTS = {"assistant.python_program"}
+PLAIN_TEXT_SLOTS = {"assistant.python_program", "assistant.room_summarizer"}
 
 
 def test_every_structured_slot_requires_structured_output():
