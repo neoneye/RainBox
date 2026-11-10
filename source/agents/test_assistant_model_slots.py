@@ -92,7 +92,7 @@ def test_slot_names_are_the_activity_caller_tags():
 
 
 #: The slots whose call answers in plain text (model_groups.text_llm_call).
-PLAIN_TEXT_SLOTS = {"assistant.python_program", "assistant.room_summarizer"}
+PLAIN_TEXT_SLOTS = {"assistant.python_program"}
 
 
 def test_every_structured_slot_requires_structured_output():

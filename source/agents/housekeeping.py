@@ -227,9 +227,12 @@ class HousekeepingAgent(Agent):
             limit = CHUNK_JOBS_PER_RUN
         else:
             return
+        from agents.room_chunks import PROMPT_VERSION
+
         db.ensure_room_chunk_jobs(
             room_uuid, int(db.get_setting("housekeeping.room_chunk_size")),
-            int(db.get_setting("housekeeping.room_chunk_overlap")), limit)
+            int(db.get_setting("housekeeping.room_chunk_overlap")),
+            PROMPT_VERSION, limit)
 
     def _drain(self) -> dict[str, int]:
         counts: Counter[str] = Counter()
@@ -353,39 +356,37 @@ class HousekeepingAgent(Agent):
         return "done"
 
     def _summarize_chunk(self, job: Any, attempt: Any, watch: TurnWatch) -> str:
-        """One chunk of a room's messages, summarized by one plain-text call
+        """One chunk of a room's messages, summarized by one structured call
         on the `assistant.room_summarizer` slot. The chunk is the one the
         job's subject names; its row is written once, when the call returns."""
         from agents import room_chunks
         from agents.config import ASSISTANT_ROOM_SUMMARIZER_UUID
-        from agents.model_groups import resolve_assistant_model_uuids, text_llm_call
+        from agents.model_groups import resolve_assistant_model_uuids, structured_llm_call
 
         spec = db.parse_chunk_subject(job.subject)
         if spec is None or job.room_uuid is None:
             raise ValueError(f"malformed chunk subject {job.subject!r}")
         size, overlap, seq = spec["size"], spec["overlap"], spec["seq"]
-        if any(c.seq == seq for c in db.list_room_chunks(job.room_uuid, size, overlap)):
+        if spec["version"] != room_chunks.PROMPT_VERSION:
+            return "skipped: queued for an earlier prompt"
+        earlier = db.list_room_chunks(
+            job.room_uuid, size, overlap, room_chunks.PROMPT_VERSION)
+        if any(c.seq == seq for c in earlier):
             return "skipped: already summarized"
-        earlier = db.list_room_chunks(job.room_uuid, size, overlap)
         if seq != len(earlier):
             # Its predecessor failed, so the series cannot continue past it.
             return "skipped: an earlier chunk of the series is missing"
 
         messages = db.counted_room_messages(job.room_uuid)
-        ids = [m["id"] for m in messages]
-        inside = [i for i, mid in enumerate(ids)
-                  if spec["first_id"] <= mid <= spec["last_id"]]
+        inside = [i for i, m in enumerate(messages)
+                  if spec["first_id"] <= m["id"] <= spec["last_id"]]
         if not inside:
             return "skipped: the chunk's messages are gone"
         first, last = inside[0], inside[-1]
         chunk = messages[first:last + 1]
-        known: list[str] = []
-        for c in reversed(earlier):
-            known += [t for t in c.topics if t not in known]
         prompt = room_chunks.build_prompt(
             messages[max(0, first - overlap):first], chunk,
-            messages[last + 1:last + 1 + overlap], first,
-            known[:room_chunks.KNOWN_TOPICS_LIMIT])
+            messages[last + 1:last + 1 + overlap], first)
 
         models, _label = resolve_assistant_model_uuids(ASSISTANT_ROOM_SUMMARIZER_UUID)
         models = [m for m in models or [] if _is_local_model(m)]
@@ -418,17 +419,19 @@ class HousekeepingAgent(Agent):
                 pass
 
         with watch.interruptible():
-            (asked, topics, problems), _text, model_uuid = text_llm_call(
+            reply, model_uuid = structured_llm_call(
                 db.JOB_CALLERS[db.ROOM_CHUNK_JOB], models,
-                prompt["system"], prompt["user"], room_chunks.require_asked,
+                prompt["system"], prompt["user"], room_chunks.ChunkSummary,
                 observer=Observer())
+        summary, topics, parts, problems = room_chunks.settle(
+            reply, first, last)  # type: ignore[arg-type]
         _provider, model_name, _args = db.resolved_model_kwargs(model_uuid)
         db.store_room_chunk(
             room_uuid=job.room_uuid, chunk_size=size, overlap=overlap, seq=seq,
             first_message_id=chunk[0]["id"], last_message_id=chunk[-1]["id"],
             message_count=len(chunk),
             content_hash=room_chunks.content_hash(chunk),
-            asked=asked, topics=topics[:room_chunks.MAX_TOPICS], problems=problems,
+            summary=summary, topics=topics, parts=parts, problems=problems,
             model=model_name, prompt_version=room_chunks.PROMPT_VERSION,
             job_uuid=job.uuid)
         return "done"

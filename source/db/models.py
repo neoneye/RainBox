@@ -1157,8 +1157,9 @@ class RoomChunk(db.Model):
 
     A room's counted messages are cut into chunks of `chunk_size`, in order
     from its first message. `seq` is the chunk's place in that series. A
-    series belongs to one `(chunk_size, overlap)` pair, so changing either
-    setting starts a new series beside the old one and both can be read.
+    series belongs to one `(chunk_size, overlap, prompt_version)`, so a
+    changed setting or a changed prompt starts a new series beside the old
+    one and both can be read.
 
     The row is written when the summary is, and never rewritten.
     `content_hash` is over the chunk's messages as they were then, so a page
@@ -1178,9 +1179,13 @@ class RoomChunk(db.Model):
     last_message_id: Mapped[int] = mapped_column(BigInteger)
     message_count: Mapped[int] = mapped_column()
     content_hash: Mapped[str] = mapped_column(Text)
-    # What the model wrote: what was asked, in kind, and topic names.
-    asked: Mapped[str | None] = mapped_column(Text)
+    # What the model wrote about the whole chunk: a phrase and broader topics.
+    summary: Mapped[str | None] = mapped_column(Text)
     topics: Mapped[list] = mapped_column(JSONB, default=list)
+    # The chunk's parts, in order: `{first_message, last_message, summary,
+    # topics, requests}` each, with message numbers counted from the room's
+    # first message. NULL for a chunk written before parts existed.
+    parts: Mapped[list | None] = mapped_column(JSONB)
     # Where its reply strayed from the asked-for format.
     problems: Mapped[list] = mapped_column(JSONB, default=list)
     model: Mapped[str | None] = mapped_column(Text)
@@ -1190,8 +1195,8 @@ class RoomChunk(db.Model):
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
     __table_args__ = (
-        UniqueConstraint("room_uuid", "chunk_size", "overlap", "seq",
-                         name="room_chunk_key"),
+        UniqueConstraint("room_uuid", "chunk_size", "overlap",
+                         "prompt_version", "seq", name="room_chunk_series_key"),
     )
 
 

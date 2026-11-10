@@ -179,12 +179,18 @@ def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
         room_uuid=room.uuid, chunk_size=10, overlap=2, seq=0,
         first_message_id=messages[0]["id"], last_message_id=messages[9]["id"],
         message_count=10, content_hash=content_hash(messages[:10]),
-        asked="questions about numbers", topics=["numbers"], problems=[],
-        model="model-a", prompt_version=1)
+        summary="questions about numbers", topics=["numbers"], problems=[],
+        parts=[{"first_message": 0, "last_message": 5, "requests": 3,
+                "summary": "which number comes next", "topics": ["sequences"]},
+               {"first_message": 6, "last_message": 9, "requests": 1,
+                "summary": "how numbers are written", "topics": ["notation"]}],
+        model="model-a", prompt_version=2)
     try:
         body = c.get(f"/assistant/housekeeping/room/{room.uuid}").get_data(as_text=True)
         assert "Messages 0&ndash;9" in body and "questions about numbers" in body
         assert '<span class="hk-chip">numbers</span>' in body
+        assert "m0&ndash;m5" in body and "which number comes next" in body
+        assert "&times;3" in body and '<span class="hk-chip">notation</span>' in body
         assert "[m3 agent] message number 3" in body
         assert "messages changed since" not in body
         # 34 messages: chunks 1 and 2 are due (the third needs messages 30-31 after it).

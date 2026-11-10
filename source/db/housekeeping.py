@@ -524,24 +524,30 @@ def counted_room_messages(room_uuid: UUID, *, after_id: int = 0,
             for m, user_type in q.order_by(ChatMessage.id.asc()).all()]
 
 
-def chunk_subject(size: int, overlap: int, seq: int,
+def chunk_subject(size: int, overlap: int, version: int, seq: int,
                   first_id: int, last_id: int) -> str:
     """A chunk job's subject: its series, its place in it, and its edges."""
-    return f"{size}/{overlap}/{seq}:{first_id}-{last_id}"
+    return f"{size}/{overlap}/v{version}/{seq}:{first_id}-{last_id}"
 
 
 def parse_chunk_subject(subject: str) -> dict[str, int] | None:
+    """The fields of a chunk job's subject. A subject with no version is from
+    the first prompt."""
     try:
         series, edges = subject.split(":")
-        size, overlap, seq = (int(v) for v in series.split("/"))
+        fields = series.split("/")
+        version = 1
+        if len(fields) == 4:
+            version = int(fields.pop(2).removeprefix("v"))
+        size, overlap, seq = (int(v) for v in fields)
         first_id, last_id = (int(v) for v in edges.split("-"))
     except ValueError:
         return None
-    return {"size": size, "overlap": overlap, "seq": seq,
+    return {"size": size, "overlap": overlap, "version": version, "seq": seq,
             "first_id": first_id, "last_id": last_id}
 
 
-def due_room_chunks(room_uuid: UUID, size: int, overlap: int,
+def due_room_chunks(room_uuid: UUID, size: int, overlap: int, version: int,
                     limit: int) -> list[dict[str, int]]:
     """The next chunks of a room's series that can be summarized now, oldest
     first, at most `limit`: `{seq, first_id, last_id}` each.
@@ -551,7 +557,8 @@ def due_room_chunks(room_uuid: UUID, size: int, overlap: int,
     reads those as context. Appending to the room never changes a chunk that
     was already cut."""
     newest = (db.session.query(RoomChunk)
-              .filter_by(room_uuid=room_uuid, chunk_size=size, overlap=overlap)
+              .filter_by(room_uuid=room_uuid, chunk_size=size, overlap=overlap,
+                         prompt_version=version)
               .order_by(RoomChunk.seq.desc()).first())
     seq = newest.seq + 1 if newest else 0
     after = newest.last_message_id if newest else 0
@@ -567,14 +574,14 @@ def due_room_chunks(room_uuid: UUID, size: int, overlap: int,
 
 
 def ensure_room_chunk_jobs(room_uuid: UUID, size: int, overlap: int,
-                           limit: int) -> int:
+                           version: int, limit: int) -> int:
     """Queue a summary job for each due chunk, at most `limit`. A chunk that
     already has a job is not queued again. Returns how many were created."""
     created = 0
-    for due in due_room_chunks(room_uuid, size, overlap, limit):
+    for due in due_room_chunks(room_uuid, size, overlap, version, limit):
         _job, new = ensure_housekeeping_job(
             ROOM_CHUNK_JOB, room_uuid=room_uuid,
-            subject=chunk_subject(size, overlap, **due))
+            subject=chunk_subject(size, overlap, version, **due))
         created += int(new)
     return created
 
@@ -586,17 +593,22 @@ def store_room_chunk(**values: Any) -> RoomChunk:
     return chunk
 
 
-def list_room_chunks(room_uuid: UUID, size: int, overlap: int) -> list[RoomChunk]:
+def list_room_chunks(room_uuid: UUID, size: int, overlap: int,
+                     version: int) -> list[RoomChunk]:
     return (db.session.query(RoomChunk)
-            .filter_by(room_uuid=room_uuid, chunk_size=size, overlap=overlap)
+            .filter_by(room_uuid=room_uuid, chunk_size=size, overlap=overlap,
+                       prompt_version=version)
             .order_by(RoomChunk.seq.asc()).all())
 
 
-def list_room_chunk_series(room_uuid: UUID) -> list[tuple[int, int, int]]:
-    """The series a room has chunks in: `(chunk_size, overlap, chunks)`."""
+def list_room_chunk_series(room_uuid: UUID) -> list[tuple[int, int, int, int]]:
+    """The series a room has chunks in:
+    `(chunk_size, overlap, prompt_version, chunks)`."""
     rows = (db.session.query(RoomChunk.chunk_size, RoomChunk.overlap,
-                             sa.func.count())
+                             RoomChunk.prompt_version, sa.func.count())
             .filter(RoomChunk.room_uuid == room_uuid)
-            .group_by(RoomChunk.chunk_size, RoomChunk.overlap)
-            .order_by(RoomChunk.chunk_size, RoomChunk.overlap).all())
-    return [(r[0], r[1], r[2]) for r in rows]
+            .group_by(RoomChunk.chunk_size, RoomChunk.overlap,
+                      RoomChunk.prompt_version)
+            .order_by(RoomChunk.chunk_size, RoomChunk.overlap,
+                      RoomChunk.prompt_version).all())
+    return [(r[0], r[1], r[2], r[3]) for r in rows]

@@ -247,8 +247,8 @@ agent_config: dict[str, AgentConfigEntry] = {
     },
     "assistant.room_summarizer": {
         "uuid": ASSISTANT_ROOM_SUMMARIZER_UUID,
-        "requires_structured_output": False,
-        "description": "binding-only: the model that SUMMARIZES a chunk of a room's messages for the housekeeping role, after a turn. Plain text, two labelled lines. Must be a local model: it reads the room's own messages. Unbound, it falls back to assistant.default.",
+        "requires_structured_output": True,
+        "description": "binding-only: the model that SUMMARIZES a chunk of a room's messages for the housekeeping role, after a turn, as one structured call. Must be a local model: it reads the room's own messages. Unbound, it falls back to assistant.default.",
     },
     "assistant.response_language_classifier": {
         "uuid": ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID,

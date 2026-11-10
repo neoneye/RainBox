@@ -64,7 +64,8 @@ def _chunk_link(job) -> dict | None:
     return {
         "text": f"messages {first}\u2013{first + spec['size'] - 1}",
         "href": (f"/assistant/housekeeping/room/{job.room_uuid}"
-                 f"?size={spec['size']}&overlap={spec['overlap']}#chunk-{spec['seq']}"),
+                 f"?size={spec['size']}&overlap={spec['overlap']}"
+                 f"&prompt={spec['version']}#chunk-{spec['seq']}"),
     }
 
 
@@ -142,6 +143,8 @@ _STYLE = """
     border-radius:6px;font-family:ui-monospace,Menlo,monospace;font-size:0.78rem;
     white-space:pre-wrap;overflow-wrap:anywhere;max-height:420px;overflow:auto;color:#1a1a2e}
   .hk-err{color:#b91c1c;font-size:0.84rem;margin:8px 0 0}
+  table.hk-parts{border-collapse:collapse}
+  .hk-parts td{padding:3px 16px 3px 0;vertical-align:top;font-size:0.86rem}
   .hk-btn{padding:7px 14px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;
     font:inherit;font-size:0.86rem;cursor:pointer;color:#374151}
   .hk-btn:hover{border-color:#9aa3af;color:#1a1a2e}
@@ -506,8 +509,9 @@ _ROOM_FRAGMENT = """
   {% endif %}
 </div>
 {% if not is_current %}
-<p class="hk-lede">This series was cut with other settings than the current ones
-  ({{ cur_size }} per chunk, {{ cur_overlap }} of context), so no new chunks are added to it.</p>
+<p class="hk-lede">This series was written with other settings or an earlier prompt
+  than the current ones ({{ cur_size }} per chunk, {{ cur_overlap }} of context,
+  prompt {{ cur_version }}), so no new chunks are added to it.</p>
 {% endif %}
 {% for c in chunks %}
 <div class="hk-card" id="chunk-{{ c.row.seq }}">
@@ -520,8 +524,22 @@ _ROOM_FRAGMENT = """
   </div>
   <div class="bd">
     <dl class="hk-kv">
-      <dt>Asked</dt><dd>{{ c.row.asked or '' }}</dd>
+      <dt>Summary</dt><dd>{{ c.row.summary or '' }}</dd>
       <dt>Topics</dt><dd>{% for t in c.row.topics %}<span class="hk-chip">{{ t }}</span> {% endfor %}</dd>
+      {% if c.row.parts %}
+      <dt>Parts</dt>
+      <dd>
+        <table class="hk-parts">
+        {% for part in c.row.parts %}
+          <tr>
+            <td class="hk-mono">{% if part.first_message is not none %}m{{ part.first_message }}{% if part.last_message != part.first_message %}&ndash;m{{ part.last_message }}{% endif %}{% endif %}</td>
+            <td>{{ part.summary }}{% if part.requests and part.requests > 1 %} <span class="hk-mono">&times;{{ part.requests }}</span>{% endif %}</td>
+            <td>{% for t in part.topics %}<span class="hk-chip">{{ t }}</span> {% endfor %}</td>
+          </tr>
+        {% endfor %}
+        </table>
+      </dd>
+      {% endif %}
       {% if c.row.problems %}<dt>Format</dt><dd class="hk-err" style="margin:0">{{ c.row.problems|join('; ') }}</dd>{% endif %}
     </dl>
     <details class="hk-text" id="chunk-{{ c.row.seq }}-messages">
@@ -547,15 +565,17 @@ _ROOM_PAGE = """
   <p style="margin:0 0 12px"><a class="hk-back" href="/assistant/housekeeping">&larr; Housekeeping</a></p>
   <h1 class="hk-head">{{ room_name }}</h1>
   <p class="hk-lede">This room's messages in chunks, each summarized once by a
-    local model: what was asked, in kind, and topic names. The summaries are
-    shown here and reach no prompt. <a class="hk-back" href="/chat?id={{ room_uuid }}">Open the room</a></p>
+    local model: the chunk split into parts, each with a phrase and topic names,
+    under one broader phrase and broader topics. The model reads your messages
+    only, never the assistant's replies. The summaries are shown here and reach
+    no prompt. <a class="hk-back" href="/chat?id={{ room_uuid }}">Open the room</a></p>
   <div class="hk-filters">
     <div class="hk-field">
       <label>Series</label>
       <div class="hk-chips">
-        {% for s_size, s_overlap, n in series %}
-        <a class="hk-chip {{ 'sel' if s_size == size and s_overlap == overlap }}"
-           href="/assistant/housekeeping/room/{{ room_uuid }}?size={{ s_size }}&overlap={{ s_overlap }}">{{ s_size }} per chunk, {{ s_overlap }} of context{% if n %} &middot; {{ n }}{% endif %}</a>
+        {% for s_size, s_overlap, s_version, n in series %}
+        <a class="hk-chip {{ 'sel' if (s_size, s_overlap, s_version) == (size, overlap, version) }}"
+           href="/assistant/housekeeping/room/{{ room_uuid }}?size={{ s_size }}&overlap={{ s_overlap }}&prompt={{ s_version }}">{{ s_size }} per chunk, {{ s_overlap }} of context, prompt {{ s_version }}{% if n %} &middot; {{ n }}{% endif %}</a>
         {% endfor %}
       </div>
     </div>
@@ -574,7 +594,7 @@ def _int_arg(name: str, default: int) -> int:
 
 @app.route("/assistant/housekeeping/room/<uuid:room_uuid>")
 def housekeeping_room_page(room_uuid: UUID) -> str:
-    from agents.room_chunks import content_hash
+    from agents.room_chunks import PROMPT_VERSION, content_hash
 
     names = db.housekeeping_room_names([room_uuid])
     if room_uuid not in names:
@@ -583,12 +603,13 @@ def housekeeping_room_page(room_uuid: UUID) -> str:
     cur_overlap = int(db.get_setting("housekeeping.room_chunk_overlap"))
     size = _int_arg("size", cur_size)
     overlap = _int_arg("overlap", cur_overlap)
-    is_current = (size, overlap) == (cur_size, cur_overlap)
+    version = _int_arg("prompt", PROMPT_VERSION)
+    is_current = (size, overlap, version) == (cur_size, cur_overlap, PROMPT_VERSION)
 
     messages = db.counted_room_messages(room_uuid)
     index_of = {m["id"]: i for i, m in enumerate(messages)}
     chunks = []
-    for row in db.list_room_chunks(room_uuid, size, overlap):
+    for row in db.list_room_chunks(room_uuid, size, overlap, version):
         inside = [m for m in messages
                   if row.first_message_id <= m["id"] <= row.last_message_id]
         first_index = index_of.get(inside[0]["id"], row.seq * size) if inside \
@@ -605,18 +626,21 @@ def housekeeping_room_page(room_uuid: UUID) -> str:
             "stale": content_hash(inside) != row.content_hash,
         })
     series = db.list_room_chunk_series(room_uuid)
-    if not any((s, o) == (cur_size, cur_overlap) for s, o, _n in series):
-        series.append((cur_size, cur_overlap, 0))
+    if not any((s, o, v) == (cur_size, cur_overlap, PROMPT_VERSION)
+               for s, o, v, _n in series):
+        series.append((cur_size, cur_overlap, PROMPT_VERSION, 0))
     queued = sum(
         1 for r in db.list_housekeeping_jobs(
             job_type=db.ROOM_CHUNK_JOB, room_uuid=room_uuid, limit=500)[0]
         if r["job"].state != "final"
-        and r["job"].subject.startswith(f"{size}/{overlap}/"))
-    due = len(db.due_room_chunks(room_uuid, size, overlap, 500)) if is_current else 0
+        and r["job"].subject.startswith(f"{size}/{overlap}/v{version}/"))
+    due = len(db.due_room_chunks(room_uuid, size, overlap, version, 500)) \
+        if is_current else 0
     ctx = dict(
         room_uuid=room_uuid, room_name=names[room_uuid], chunks=chunks,
         counted=len(messages), covered=sum(c["row"].message_count for c in chunks),
-        size=size, overlap=overlap, cur_size=cur_size, cur_overlap=cur_overlap,
+        size=size, overlap=overlap, version=version, cur_size=cur_size,
+        cur_overlap=cur_overlap, cur_version=PROMPT_VERSION,
         is_current=is_current, series=series, queued=queued,
         due=max(0, due - queued), revision=db.housekeeping_revision(),
         **_helpers())
