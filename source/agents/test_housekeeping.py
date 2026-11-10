@@ -348,7 +348,7 @@ def _fake_chunk_model(monkeypatch, reply=None):
     return prompts
 
 
-V = 4   # agents.room_chunks.PROMPT_VERSION
+V = 5   # agents.room_chunks.PROMPT_VERSION
 
 
 def test_chunks_are_cut_in_order_and_wait_for_their_context(app_ctx):
@@ -395,7 +395,7 @@ def test_a_run_end_queues_two_chunks_and_each_is_summarized_once(app_ctx, monkey
             "result": "a forecast was given", "reactions": ["moved_on"],
             "calibration": "calibrated",
             "calibration_basis": "the human went on without contesting it",
-            "signals": {"replies": 5, "runs": {}, "first_run": None, "last_run": None,
+            "signals": {"replies": 5, "repeats": 0, "bare": 0, "runs": {}, "first_run": None, "last_run": None,
                         "criteria_not_met": 0, "revisions": 0, "up": 0, "down": 0}}]
         # The first chunk has no context before it; the second has two each side.
         assert "not part of it:\n(none)" in prompts[0]
@@ -542,7 +542,7 @@ def test_a_parts_signals_are_counted_from_the_records_of_its_replies():
         summary="letters and boards", topics=["misc"])
     _s, _t, parts, _p = rc.settle(reply, 40, 45, chunk)
     assert parts[0]["signals"] == {
-        "replies": 2, "runs": {"resolved": 2}, "first_run": "resolved",
+        "replies": 2, "repeats": 0, "bare": 1, "runs": {"resolved": 2}, "first_run": "resolved",
         "last_run": "resolved", "criteria_not_met": 1,
         "revisions": 4, "up": 1, "down": 1}
     assert parts[1]["signals"]["runs"] == {"partial": 1}
@@ -560,20 +560,29 @@ def test_a_parts_signals_are_counted_from_the_records_of_its_replies():
     # A vote down or a correction outranks everything else.
     (["moved_on"], 1, {"down": 1, "up": 1, "last_run": "resolved"}, "overconfident"),
     (["corrected"], 1, {"runs": {"resolved": 1}, "last_run": "resolved"}, "overconfident"),
-    # Asked again: delivered only on the retry.
+    # A bare retry the model read as asking again: delivered only on the retry.
     (["asked_again", "moved_on"], 1,
-     {"runs": {"partial": 1, "resolved": 1}, "first_run": "partial", "last_run": "resolved"},
-     "underconfident"),
-    # Asked again after an answer that did not settle it.
-    (["asked_again"], 1,
-     {"runs": {"resolved": 1, "partial": 2}, "first_run": "resolved", "last_run": "partial",
-      "criteria_not_met": 2}, "overconfident"),
-    # The same request joined three times counts as asking again.
-    (["moved_on"], 3, {"runs": {"resolved": 3}, "first_run": "resolved", "last_run": "resolved"},
-     "overconfident"),
+     {"bare": 1, "runs": {"partial": 1, "resolved": 1}, "first_run": "partial",
+      "last_run": "resolved"}, "underconfident"),
+    # The request repeated in its text, after an answer that did not settle it.
+    (["pushed_for_more"], 1,
+     {"repeats": 2, "runs": {"resolved": 1, "partial": 2}, "first_run": "resolved",
+      "last_run": "partial", "criteria_not_met": 2}, "overconfident"),
+    # The model alone saying "asked again" is not enough: it says so of a new
+    # question on the same subject.
+    (["asked_again", "asked_again"], 2,
+     {"runs": {"resolved": 2}, "first_run": "resolved", "last_run": "resolved"}, "calibrated"),
+    # A bare follow-up the model read as thanks is not asking again.
+    (["thanked"], 1, {"bare": 1, "runs": {"resolved": 1}, "last_run": "resolved"}, "calibrated"),
+    # Three different questions joined into one part are not asking again.
+    (["pushed_for_more", "moved_on"], 3,
+     {"runs": {"resolved": 3}, "first_run": "resolved", "last_run": "resolved"}, "calibrated"),
+    # A request repeated word for word is, whatever the model read.
+    (["moved_on"], 1, {"repeats": 1, "runs": {"resolved": 2}, "first_run": "resolved",
+                       "last_run": "resolved"}, "overconfident"),
     # Asked again and never delivered: a failure, not a matter of confidence.
-    (["asked_again"], 1, {"runs": {"failed": 2}, "first_run": "failed", "last_run": "failed"},
-     "unclear"),
+    (["asked_again"], 1, {"bare": 1, "runs": {"failed": 2}, "first_run": "failed",
+                          "last_run": "failed"}, "unclear"),
     (["thanked"], 1, {"up": 1, "runs": {"partial": 1}, "last_run": "partial"}, "calibrated"),
     (["not_shown"], 1, {"runs": {"resolved": 1}, "last_run": "resolved"}, "unclear"),
     (["moved_on"], 1, {"runs": {"resolved": 1}, "last_run": "resolved"}, "calibrated"),
@@ -626,3 +635,24 @@ def test_a_subject_without_a_version_is_from_the_first_prompt():
     assert db.parse_chunk_subject(db.chunk_subject(5, 0, 2, 7, 1, 9)) == {
         "size": 5, "overlap": 0, "version": 2, "seq": 7, "first_id": 1, "last_id": 9}
     assert db.parse_chunk_subject("nonsense") is None
+
+
+def test_repeats_are_read_from_the_requests_text():
+    from agents import room_chunks as rc
+
+    count = "count the number of r in the word strawberry"
+    assert rc.count_repeats([count, count + " using python",
+                             count + " using python and ignore case"]) == (2, 0)
+    assert rc.count_repeats([count, count.upper()]) == (1, 0)
+    # Retyped with slips in it, it is still the same request.
+    assert rc.count_repeats(["when is the first mention of the harbour in my diary",
+                             "when is the frist mention of the harbour i n my diary"]) == (1, 0)
+    # Another value is another question.
+    assert rc.count_repeats(["what is 1176 feet in metres", "what is 358 inches in metres"]) == (0, 0)
+    assert rc.count_repeats(["what is 1176 feet", "what is 358 inches"]) == (0, 0)
+    assert rc.count_repeats(["what did I do on 01 august 1999",
+                             "what did I do on 01 september 1999"]) == (0, 0)
+    # A few words with no request of their own are bare, not repeats.
+    assert rc.count_repeats(["tell me about the old harbour", "try again", "thanks"]) == (0, 2)
+    assert rc.count_repeats(["again"]) == (0, 0)        # the first is never a follow-up
+    assert rc.count_repeats([]) == (0, 0)

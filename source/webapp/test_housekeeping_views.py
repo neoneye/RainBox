@@ -189,7 +189,7 @@ def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
                             "criteria_not_met": 1, "revisions": 4, "up": 0, "down": 1}},
                {"first_message": 6, "last_message": 9, "requests": 1,
                 "summary": "how numbers are written", "topics": ["notation"]}],
-        model="model-a", prompt_version=4)
+        model="model-a", prompt_version=5)
     try:
         body = c.get(f"/assistant/housekeeping/room/{room.uuid}").get_data(as_text=True)
         assert "Messages 0&ndash;9" in body and "questions about numbers" in body

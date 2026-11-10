@@ -17,6 +17,7 @@ notes/housekeeping-design.md.
 """
 from __future__ import annotations
 
+import difflib
 import hashlib
 import re
 import unicodedata
@@ -28,7 +29,7 @@ from pydantic import BaseModel, Field
 #: Bumped when the prompt, the schema or the parsing changes. A chunk belongs
 #: to the series of the version that wrote it, so a new version summarizes a
 #: room again beside the old series, and the two can be compared.
-PROMPT_VERSION = 4
+PROMPT_VERSION = 5
 
 SUMMARY_MAX_CHARS = 120
 RESULT_MAX_CHARS = 160
@@ -93,9 +94,10 @@ SYSTEM_PROMPT = (
     "- result: what came of it, in at most twenty words: the one main thing "
     "that was found or concluded, or that nothing was. No list of details;\n"
     "- human_reaction: what the human did after the replies in this part. "
-    "moved_on: went to another subject. asked_again: asked the same thing "
-    "again or told it to retry. corrected: said a reply was wrong or gave "
-    "the right answer. pushed_for_more: asked for more on the same subject. "
+    "moved_on: went to another subject. asked_again: sent the same request "
+    "once more, or told it to retry. corrected: said a reply was wrong or "
+    "gave the right answer. pushed_for_more: asked a further question on "
+    "the same subject. "
     "thanked: acknowledged it. not_shown: the chunk ends before any "
     "reaction;\n"
     "- one or two topic names.\n\n"
@@ -259,21 +261,78 @@ def _tile(parts: list[dict[str, Any]], last_index: int) -> list[dict[str, Any]]:
     return parts
 
 
+#: Two requests this alike, letter for letter with the spaces taken out, are
+#: the same request typed again. A slip of the keys keeps them this close.
+#: The same question about another thing does not: another word changes more
+#: letters than a slip does, and another number is ruled out outright.
+REPEAT_MIN_LIKENESS = 0.92
+#: A request needs this many words to be matched as a repeat.
+REPEAT_MIN_WORDS = 3
+#: A request that is an earlier one with up to this many words added counts
+#: as the earlier one asked again.
+REPEAT_MAX_ADDED = 8
+#: A follow-up of at most this many words carries no request of its own: it
+#: is a retry, a thanks or a nudge. Which of these it is, is the one thing
+#: taken from the model's reading of the reaction.
+BARE_MAX_WORDS = 3
+
+
+def _tokens(text: str) -> list[str]:
+    return re.findall(r"[^\W_]+", unicodedata.normalize("NFKC", text).casefold())
+
+
+def _same_request(words: list[str], earlier: list[str]) -> bool:
+    if not earlier or len(words) < REPEAT_MIN_WORDS:
+        return False
+    added = len(words) - len(earlier)
+    if 1 <= added <= REPEAT_MAX_ADDED and words[:len(earlier)] == earlier:
+        return True
+    if len(earlier) < REPEAT_MIN_WORDS:
+        return False
+    numbers = lambda ws: sorted(w for w in ws if w.isdigit())  # noqa: E731
+    if numbers(words) != numbers(earlier):
+        return False
+    return difflib.SequenceMatcher(
+        None, "".join(words), "".join(earlier)).ratio() >= REPEAT_MIN_LIKENESS
+
+
+def count_repeats(requests: list[str]) -> tuple[int, int]:
+    """`(repeats, bare)` over a part's requests, in order, read from their
+    text alone. `repeats`: how many are an earlier one of them asked again
+    (the same words, a few words added, or the same but for a slip). `bare`:
+    how many after the first are too short to be a request of their own."""
+    seen: list[list[str]] = []
+    repeats = bare = 0
+    for n, text in enumerate(requests):
+        words = _tokens(text)
+        if n and len(words) <= BARE_MAX_WORDS:
+            bare += 1
+        elif any(_same_request(words, earlier) for earlier in seen):
+            repeats += 1
+        seen.append(words)
+    return repeats, bare
+
+
 def part_signals(part: dict[str, Any], chunk: list[dict[str, Any]],
                  first_index: int) -> dict[str, Any]:
     """What the records say about one part, counted over its replies:
-    `{replies, runs: {outcome: n}, first_run, last_run, criteria_not_met,
-    revisions, up, down}`. These are facts, kept beside the model's own
-    words about the part."""
-    out: dict[str, Any] = {"replies": 0, "runs": {}, "first_run": None,
-                           "last_run": None, "criteria_not_met": 0,
-                           "revisions": 0, "up": 0, "down": 0}
+    `{replies, repeats, bare, runs: {outcome: n}, first_run, last_run,
+    criteria_not_met, revisions, up, down}`. `repeats` and `bare` are read
+    from the text of the part's requests (`count_repeats`). These are facts,
+    kept beside the model's own words about the part."""
+    out: dict[str, Any] = {"replies": 0, "repeats": 0, "bare": 0, "runs": {},
+                           "first_run": None, "last_run": None,
+                           "criteria_not_met": 0, "revisions": 0,
+                           "up": 0, "down": 0}
     if part.get("first_message") is None:
         return out
     runs: Counter[str] = Counter()
+    requests: list[str] = []
     for k, m in enumerate(chunk):
-        if m["sender"] == "human" or not (
-                part["first_message"] <= first_index + k <= part["last_message"]):
+        if not part["first_message"] <= first_index + k <= part["last_message"]:
+            continue
+        if m["sender"] == "human":
+            requests.append(m["text"])
             continue
         out["replies"] += 1
         signals = m.get("signals") or {}
@@ -286,22 +345,27 @@ def part_signals(part: dict[str, Any], chunk: list[dict[str, Any]],
         out["up"] += int(signals.get("vote") == "upvote")
         out["down"] += int(signals.get("vote") == "downvote")
     out["runs"] = dict(runs)
+    out["repeats"], out["bare"] = count_repeats(requests)
     return out
 
 
 def calibrate(part: dict[str, Any]) -> tuple[Calibration, str]:
     """How well calibrated the assistant was in one part, and on what basis.
 
-    A rule over what the model read (the human's reactions, how many times
-    the request was made) and what the records say (runs, acceptance
-    criteria, votes). The first rule that applies decides:
+    A rule over what the model read (the human's reactions) and what the
+    records say (repeated requests, runs, acceptance criteria, votes). The
+    first rule that applies decides:
 
     1. A reply was voted down, or the human corrected one: overconfident.
-    2. The human asked again, or the request was repeated:
+    2. The human asked again. Either a request in the part repeats an
+       earlier one, by its text; or the part has a bare follow-up (a few
+       words with no request of their own) and the model read the reaction
+       as asking again. The model's reading alone is not enough: it calls a
+       new question on the same subject asking again.
        - the first run did not resolve it and the last did: underconfident.
          It delivered only once it was asked again.
-       - a run resolved it, or a reply did not meet its criteria:
-         overconfident. It answered, and the answer did not settle it.
+       - a run resolved it: overconfident. It answered, and the answer did
+         not settle it.
        - otherwise unclear: it never delivered, which is a failure and not a
          matter of confidence.
     3. A reply was voted up: calibrated.
@@ -317,10 +381,11 @@ def calibrate(part: dict[str, Any]) -> tuple[Calibration, str]:
         return "overconfident", "a reply was voted down"
     if "corrected" in reactions:
         return "overconfident", "the human corrected a reply"
-    if "asked_again" in reactions or (part.get("requests") or 1) > 1:
+    if signals.get("repeats") or (
+            signals.get("bare") and "asked_again" in reactions):
         if first and first != "resolved" and last == "resolved":
             return "underconfident", "it delivered only after being asked again"
-        if runs.get("resolved") or signals.get("criteria_not_met"):
+        if runs.get("resolved"):
             return "overconfident", "it answered, and the human kept asking"
         return "unclear", "asked again, and nothing was delivered"
     if signals.get("up"):
