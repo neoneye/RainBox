@@ -138,8 +138,37 @@ lost attempts.
 **No back-off and no cap on kills.** The work arrives slower than the gaps
 clear it. A chunk's `asked` phrase is due once per 10 messages, and a
 summary once per turn, while every reply is followed by a gap. A job killed
-in one gap finishes in a later one, so the queue does not grow. The
-measurement below says if that ever stops being true.
+in one gap finishes in a later one, so the queue does not grow. If it grows
+anyway, catching up (below) clears it.
+
+**Catching up: when too much has piled up, housekeeping goes first.** Kills
+only work while the queue stays short. If it does not, the worker stops
+giving way:
+- **It starts** when 10 or more generative jobs are waiting, or when a job
+  has been killed 3 times. Ten is one burst, the most the machine takes
+  before a cool-down (decision 3).
+- **While it runs, /chat is locked.** The composer is disabled in every
+  room, with a banner in its place: `Housekeeping: 4 of 12 done, about 3
+  minutes left`, linking to the Housekeeping page (decision 5). The estimate
+  comes from each job type's recorded durations.
+- **A message that arrives anyway waits.** A bridged message, or one sent
+  from another window, stays in the inbox, and its turn starts when
+  catching up ends. No call is killed during it.
+- **It ends** when the waiting jobs are done, or after one burst of 10
+  calls, whichever comes first. So the lock is bounded by one burst. If
+  jobs remain, they go back to the normal rule, and catching up can start
+  again only after the cool-down.
+- **The banner has a Skip button.** It ends catching up after the call in
+  progress, and unlocks. The operator is the only one who can judge that
+  their message matters more than the backlog.
+- **Backfill never counts.** It is work the operator started for idle time,
+  and it must not lock the room. Only jobs that belong to a run or to a due
+  chunk are counted.
+- **Thermal pressure still pauses it.** The lock is released while paused,
+  since nothing is running.
+
+Every catch-up is recorded: when, why it started, how many jobs, how long
+the lock lasted, and whether it was skipped.
 
 **What this costs the next turn.** The model server keeps one cached prompt
 per model. A generative housekeeping call on the assistant's model replaces
@@ -199,23 +228,77 @@ caps them at two decision calls per turn.
 - **Switching a feature off** cancels its pending jobs before they start.
   Results already written stay.
 
-### 5. Shown where it happened
+### 5. Shown where it happened, and on a page of its own
 
-On /assistant, a run's page gains an **After the turn** group below its
-timeline. It lists each housekeeping job:
-- its start time and duration;
-- its model;
-- its outcome (`done`, `skipped: already done`, `deferred: budget`,
-  `deferred: thermal`, `deferred: turn`, `dropped: input changed`,
-  `failed: reason`);
-- links to what it wrote.
+**One row per job, written when the job is created.**
 
-These are later events, so they are shown after the turn's own rows and
-dated, never inside its steps.
+```
+housekeeping_job      uuid, job_type, tier, run_uuid, room_uuid, subject,
+                      job_version, state, outcome, created_at, finished_at
+housekeeping_attempt  uuid, job_uuid, started_at, ended_at, model,
+                      result ('done' | 'killed: turn' | 'failed' | 'timeout'
+                              | 'dropped: input changed'),
+                      model_ms, llm_call_uuid, error
+housekeeping_catchup  uuid, started_at, ended_at, reason, jobs_waiting,
+                      jobs_done, skipped
+```
 
-The run list gets a small indicator for runs whose housekeeping is still
-pending or failed. The global housekeeping state (queue depth, budget used
-this hour, thermal state) gets one line on the /assistant index page.
+- **`state`** is `waiting`, `running`, `deferred` or `final`. A deferred job
+  carries why: `budget`, `thermal`, `turn`.
+- **An attempt is appended** each time the job runs, so a job killed twice
+  and finished on the third try shows all three, each with the model time
+  it used.
+- **`llm_call_uuid`** links to the stored call, which already holds the
+  prompt and the raw reply. Nothing is copied.
+
+**The Housekeeping page.** A `Housekeeping` item in the Assistant menu,
+after Runs, at `/assistant/housekeeping`. Housekeeping is one word in
+English, and it is the name of the role, so the menu, the page, the banner
+and the code all use it.
+
+At the top, the state now:
+- what is running, with its elapsed time, or `idle`;
+- how many jobs are waiting, per tier;
+- the generative minutes used this hour, and the calls left in the burst;
+- the thermal state;
+- whether it is catching up.
+
+Below it, the log: one line per job, newest first, updated live.
+
+| column | content |
+|---|---|
+| when | created, and finished or `running` |
+| job | its type: run summary, verdict detection, chunk node, … |
+| for | the room, and the run or the chunk's message range, as links |
+| model | the model of the latest attempt, or `none` |
+| time | model time over all attempts; the number of attempts when more than one |
+| outcome | `done`, `waiting`, `running`, `deferred: reason`, `failed: reason`, `dropped: input changed` |
+
+Catch-ups appear in the same log as their own lines, at the time they
+started.
+
+The log filters by state, job type and room. `failed` and `running` are
+one click each, because those are the two the operator comes for.
+
+**Clicking a line opens the job.** Its page shows:
+- what it was for, with links to the run, the room and the messages;
+- every attempt, in order, with its start, its duration, its model and how
+  it ended;
+- per attempt, the prompt that was sent and the reply that came back, read
+  from the stored call. For a job that is running, the reply is shown as it
+  arrives;
+- what the job wrote, as links: the summary on its run, the verdict on its
+  message, the node of its chunk;
+- for a final failure, a button to enqueue it again.
+
+A job with no model, such as a chunk node, shows the row it wrote and
+nothing else.
+
+**On a run's page**, an **After the turn** group below its timeline lists
+that run's jobs, each line linking to the job's page. These are later
+events, so they are shown after the turn's own rows and dated, never inside
+its steps. The run list gets a small indicator for runs whose housekeeping
+is still waiting or failed.
 
 ## Measuring it
 
@@ -235,6 +318,9 @@ this hour, thermal state) gets one line on the /assistant index page.
   turn that follows another turn. This is measured together with the room
   digest's layout change, because housekeeping is what can take that gain
   away.
+- **Catch-ups.** How often catching up starts, what started it, how long
+  the lock lasted, and how often it was skipped. More than a few a week
+  means the queue's rules are wrong, not that the lock is working.
 - **Summary lag as the operator meets it.** How often a run's page is opened
   before its summary exists, and how long the page then waits.
 - **Budget use.** The generative minutes per hour, and how often jobs were
@@ -244,13 +330,13 @@ this hour, thermal state) gets one line on the /assistant index page.
 
 1. The `housekeeping` role, with the run summary moved into it, unchanged in
    behaviour apart from being killed when a turn starts. That is the gate,
-   the order, the sweep for due jobs and the after-the-turn view, with one
-   job.
+   the order, the sweep for due jobs, the job tables, the Housekeeping page
+   and the after-the-turn view, with one job.
 2. Digest chunk nodes, which need no model and no other feature.
 3. Each other feature's jobs join as that feature reaches its recording
    phase, in the roadmap's order.
-4. The budget and thermal pause, before the first generative job beyond the
-   summary: topic naming, `asked` phrases or backfill.
+4. Catching up and the /chat lock, with the budget and thermal pause, before
+   the first generative job beyond the summary: topic naming, `asked` phrases or backfill.
 
 ## What this does not do
 

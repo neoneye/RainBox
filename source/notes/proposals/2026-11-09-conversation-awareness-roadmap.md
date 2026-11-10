@@ -22,7 +22,7 @@ each one buys and costs, and lists what is still the operator's to decide.
 | [The room digest](2026-11-09-room-digest.md) | chunks of every 10 messages, counted from message 0, built from records and never invalidated, described thread by thread with the operator's opening words; `room_history` to read a range back; topics, derived status and a timeline for the window; a generated phrase per chunk only if it earns its place |
 | [Decision-model foundation](2026-11-09-decision-model-foundation.md) | one System One client, two slots, verified local execution, one record per call, the probe as regression suite |
 | [Detector labels](2026-11-09-detector-labels.md) | one place and one UI for "that detection was wrong" or "it missed this", which every promotion gate reads |
-| [Post-turn housekeeping](2026-11-09-post-turn-housekeeping.md) | one ordered queue that starts when the reply has posted; a new message kills the generative call in progress; a heat budget |
+| [Post-turn housekeeping](2026-11-09-post-turn-housekeeping.md) | one ordered queue that starts when the reply has posted; a new message kills the generative call in progress; a pile-up locks /chat while it catches up; a Housekeeping page in the Assistant menu; a heat budget |
 | [Cross-room continuity](2026-11-09-cross-room-continuity.md) | topics and statuses shown in other rooms, only between rooms the operator opts in that have no other audience |
 | [The conversation working set](2026-10-17-conversation-working-set.md) (earlier) | evidence fetched by earlier turns, carried exactly, under today's access rules |
 | [Acceptance-criteria cost](2026-09-16-acceptance-criteria-cost-and-removal.md) (earlier) | where the criteria call's seconds go |
@@ -43,7 +43,8 @@ more.
    exact link from a run to the human message it answers. Today it is only
    recoverable through the journal payload.
 2. **Move the run summarizer into the `housekeeping` role**, with its
-   turn-activity gate and the After the turn view on /assistant. The summary
+   turn-activity gate, the Housekeeping page in the Assistant menu and the
+   After the turn view on a run's page. The summary
    itself does not change. It starts when the reply has posted, and a new
    message kills it, to run again after that turn.
 
