@@ -49,15 +49,18 @@ def _overview_status(run) -> tuple[str, str]:
     return ("Unresolved", "unresolved")
 
 
-def _serialize_run(run, step_count: int) -> dict:
+def _serialize_run(run, step_count: int, housekeeping: str | None = None) -> dict:
     """A run flattened to one overview-table row. `summary` is the digest's
-    trigger line, or None while the run is still being summarized."""
+    trigger line, or None while the run is still being summarized.
+    `housekeeping` is `failed` or `waiting` while the run's after-the-turn
+    jobs are not all done, so a missing summary can say why."""
     label, kind = _overview_status(run)
     trigger = (run.summary or {}).get("trigger")
     started = run.started_at
     return {
         "uuid": str(run.uuid),
         "summary": trigger if trigger else None,
+        "housekeeping": housekeeping,
         "status_label": label,
         "status_kind": kind,
         "started_date": started.strftime("%Y-%m-%d") if started else "",
@@ -100,7 +103,9 @@ def assistant_overview_runs() -> tuple[Response, int] | Response:
         offset=(page - 1) * per_page, limit=per_page,
     )
     step_counts = db.assistant_step_counts([r.uuid for r in runs])
-    rows = [_serialize_run(r, step_counts.get(r.uuid, 0)) for r in runs]
+    flags = db.run_housekeeping_flags([r.uuid for r in runs])
+    rows = [_serialize_run(r, step_counts.get(r.uuid, 0), flags.get(r.uuid))
+            for r in runs]
     pages = max(1, math.ceil(total / per_page)) if total else 1
     return jsonify({
         "ok": True, "runs": rows, "total": total,

@@ -56,7 +56,9 @@ def test_summary_shows_live_progress_and_steps_stays_a_bare_count():
     a long run read "Step 8 of 6". The Steps column stays a plain integer."""
     b = _body()
     assert "const live = run.status_kind === 'running';" in b
-    assert ("s.textContent = live ? 'Step ' + run.steps "
-            ": (run.summary || 'summarizing…');") in b
+    assert "s.textContent = live ? 'Step ' + run.steps\n" in b
+    # A run whose summary job failed says so, and stops promising one.
+    assert ("(run.summary || (run.housekeeping === 'failed' "
+            "? 'summary failed' : 'summarizing…'))") in b
     assert "run.step_limit" not in b
     assert "stepsA.textContent = run.steps;" in b
