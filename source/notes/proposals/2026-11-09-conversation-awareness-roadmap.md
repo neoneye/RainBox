@@ -1,6 +1,7 @@
 # Roadmap: conversation awareness
 
-**Status:** Roadmap over proposals. Nothing on it is built except the probe.
+**Status:** Roadmap over proposals. Built: the probe, and step 0
+(`notes/housekeeping-design.md`).
 **Date:** 2026-11-09
 
 ## Where this started
@@ -37,7 +38,7 @@ Each step is buildable and useful on its own, and each unblocks the next.
 Sizes are rough: S is a day or two of focused work, M is several, and L is
 more.
 
-### Step 0. Two small foundations that need no model (S)
+### Step 0. Two small foundations that need no model (S), built
 
 1. **Record `metadata_["request_message"]` on every run.** This is the
    exact link from a run to the human message it answers. Today it is only

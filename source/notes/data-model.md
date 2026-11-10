@@ -177,7 +177,9 @@ Key fields:
 - `step_limit`
 - `started_at`, `finished_at`
 - `final_summary`
-- `metadata` (run/model diagnostics). While a decide call is in flight,
+- `metadata` (run/model diagnostics). `metadata.request_message` is the uuid
+  of the chat message the run answers, written when the run starts; a run
+  started with no message has no such key. While a decide call is in flight,
   `metadata.active_call` checkpoints `{step_index, system_prompt, user_prompt,
   followup_turns, requested_at, model_group_uuid, attempts[]}`. Attempt entries retain the
   resolved model UUID/name, configured timeout, timestamps, and any error so a
@@ -187,6 +189,12 @@ Key fields:
   summarized_at}`); failures receive a deterministic digest immediately, while
   the off-path `assistant.run_summarizer` may later replace it with a
   model-produced digest
+
+### `housekeeping_job`, `housekeeping_attempt`
+
+The work that follows a turn, and each try at it. One job row per piece of
+work (a run's summary), one attempt row per try. Columns and states are in
+`housekeeping-design.md`.
 
 ### `assistant_step`
 

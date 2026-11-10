@@ -1065,10 +1065,12 @@ pointer rides in `meta`, never in the text: the text is the answer, it is what
 Copy yields, and it is what the model reads back as conversation next turn.
 
 After every terminal state the assistant stores an immediate deterministic
-failure digest when applicable, then enqueues the
-**`assistant.run_summarizer`** agent (off the critical path), which makes one
-structured call over the trace and stores a `{trigger, obstacles[], outcome}`
-digest on `assistant_run.summary` for the inspector. The deterministic digest
+failure digest when applicable, then hands the run to the **housekeeping**
+role (off the critical path, see `housekeeping-design.md`). Its run-summary
+job has the **`assistant.run_summarizer`** make one
+structured call over the trace and store a `{trigger, obstacles[], outcome}`
+digest on `assistant_run.summary` for the inspector. A new message kills that
+call, and the job runs again when the turn is over. The deterministic digest
 means a failed run is useful even if the summarizer model is unavailable; a
 later successful summarizer call may replace it. The summarizer posts no chat
 and enqueues nothing, so it can never summarize itself.

@@ -123,7 +123,7 @@ unexpected exit, or supervisor shutdown — `_recover_assistant_journal`
 (`core.py`) settles the orphan: if the journal belongs to an assistant run,
 `db.recover_interrupted_assistant_run` (`db/assistant.py`) fails the running
 step with a reason (including the active model and its timeout), finishes the
-run as `killed`, posts a failure notice, and enqueues the run summarizer;
+run as `killed`, posts a failure notice, and hands the run to housekeeping;
 otherwise `fail_journal_if_processing` (`db/queue.py`) marks the journal
 `failed` — guarded so it never overwrites a result that already went terminal.
 On startup, `_recover_runs_from_previous_supervisor` sweeps runs left active
