@@ -1,6 +1,11 @@
 # The room digest: topics, a compact timeline, and a fading summary
 
-**Status:** Proposal. Nothing here is built.
+**Status:** Proposal. One part is built as an experiment, to see how a local
+model does: a generated `asked` phrase and topic names per chunk of a room's
+messages, shown on the Housekeeping page and reaching no prompt
+(`notes/housekeeping-design.md`). There the chunk size and the context on each
+side are settings, a chunk is summarized once that context exists, and
+nothing waits for the window.
 **Date:** 2026-11-09
 **Related:**
 - [Noticing a repeated request](2026-11-09-noticing-a-repeated-request.md):

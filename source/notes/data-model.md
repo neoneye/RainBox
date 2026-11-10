@@ -190,11 +190,12 @@ Key fields:
   the off-path `assistant.run_summarizer` may later replace it with a
   model-produced digest
 
-### `housekeeping_job`, `housekeeping_attempt`
+### `housekeeping_job`, `housekeeping_attempt`, `room_chunk`
 
 The work that follows a turn, and each try at it. One job row per piece of
-work (a run's summary), one attempt row per try. Columns and states are in
-`housekeeping-design.md`.
+work (a run's summary, a room chunk's summary), one attempt row per try.
+`room_chunk` holds each summarized stretch of a room's messages. Columns and
+states are in `housekeeping-design.md`.
 
 ### `assistant_step`
 

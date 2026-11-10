@@ -3,8 +3,9 @@
 **Status:** Rollout step 1 is built and described in
 `notes/housekeeping-design.md`: the role with the run summary as its one job,
 the gate and the kill, the sweep, the job tables, the Housekeeping page and
-the After the turn group. Not built: every other job, the heat budget, and
-catching up with its /chat lock.
+the After the turn group. Also built: the room chunk summary job and the
+rest after ten calls. Not built: the other jobs, the hourly budget and
+thermal pause, and catching up with its /chat lock.
 **Date:** 2026-11-09
 **Related:**
 - [The decision-model foundation](2026-11-09-decision-model-foundation.md):

@@ -1,8 +1,14 @@
 # Housekeeping — design
 
-Housekeeping is the work that follows a turn. Today that is one job, the run
-summary. The role, its queue and its page are built so that later jobs
-(detectors, digest chunk nodes) join the same queue.
+Housekeeping is the work that follows a turn. It has two jobs: the run
+summary, and the room chunk summary. The role, its queue and its page are
+built so that later jobs (detectors) join the same queue.
+
+The two summaries are different things:
+- **The run summary** describes one assistant run: what triggered it, the
+  obstacles in its steps, and its outcome.
+- **The room chunk summary** describes a stretch of a room's messages: what
+  was asked, in kind, and topic names. It is the compaction of a long room.
 
 The plan for those later jobs, and for a heat budget and a catch-up lock, is
 in `proposals/2026-11-09-post-turn-housekeeping.md`. This page describes what
@@ -17,6 +23,8 @@ exists.
 | `housekeeping_job` / `housekeeping_attempt` | `db/models.py` |
 | The Housekeeping page and a job's page | `webapp/housekeeping_views.py` |
 | The run summary's model call | `agents/assistant_run_summarizer.py` |
+| The chunk summary's prompt and parsing | `agents/room_chunks.py` |
+| `room_chunk` | `db/models.py` |
 
 ## From a run ending to a summary
 
@@ -30,6 +38,62 @@ exists.
    twice is one row.
 4. **The worker runs every waiting job**, not only the ones the item named,
    and exits when none is left.
+
+## Room chunk summaries
+
+A room's **counted messages** are its real messages that have finished
+streaming, in id order. Progress and thinking rows do not count.
+
+**Cutting.** The counted messages are cut into chunks of
+`housekeeping.room_chunk_size` (default 10), from the room's first message.
+A chunk is due once `housekeeping.room_chunk_overlap` (default 2) counted
+messages follow it, because the model reads that many messages on each side
+as context. The next chunk starts after the newest stored chunk's last
+message id, so appending to a room never changes a chunk already cut.
+
+**A series per pair of settings.** A chunk belongs to the series of its
+`(chunk_size, overlap)`. Changing either setting starts a new series from the
+room's first message, beside the old one. Both stay readable on the room's
+page, which is how two sizes are compared.
+
+**When jobs are queued.**
+- When a run ends, the next 2 due chunks of its room, if
+  `housekeeping.room_summaries` is on (the default).
+- When the operator presses **Summarize the rest** on a room's page, every
+  due chunk of the current series, up to 200.
+
+**The call.** One plain-text call per chunk on the `assistant.room_summarizer`
+slot, which falls back to `assistant.default`. The prompt holds the chunk, the
+context on each side marked as not to be described, and the topic names
+earlier chunks of the series used. The reply is two labelled lines:
+
+```
+asked: conversions between units, and tasks on a board
+topics: unit-conversion, kanban
+```
+
+- `asked` says what kind of thing was asked, in at most 120 characters. The
+  prompt forbids stating an answer, a value or a name from a reply.
+- `topics` are one to four names, reused from earlier chunks when the subject
+  is the same.
+- A reply with no `asked:` line is sent back to the model once with the
+  reason. Anything else off-format is stored in `problems` and shown.
+
+**Local models only.** The call reads the room's own messages, so members of
+the group that are not on a loopback endpoint, or are `:cloud` names, are left
+out. With none left the job fails and says so.
+
+**What is stored.** One `room_chunk` row per chunk, written once: its series
+and `seq`, its edges as message ids, a `content_hash` of its messages, `asked`,
+`topics`, `problems`, the model and the prompt version. The page recomputes
+the hash and marks a chunk whose messages have changed since.
+
+**Where it goes.** The summaries are shown on the room's page. They reach no
+prompt.
+
+**A rest after ten calls.** The worker counts its model calls, of any job
+type. After 10 in a row it rests for 60 seconds before the next, and the
+waiting job shows as resting. A new message still stops the call in progress.
 
 ## Order
 
@@ -124,6 +188,16 @@ The inbox item is a hint. The rows say what is due.
 | `response_preview` | the reply so far, written every 2 seconds while the call streams |
 | `error` | for a failed attempt |
 
+`room_chunk`: one row per summarized chunk.
+
+| column | meaning |
+|---|---|
+| `room_uuid`, `chunk_size`, `overlap`, `seq` | the room, the series, and the chunk's place in it |
+| `first_message_id`, `last_message_id`, `message_count` | its edges and size |
+| `content_hash` | over its messages' ids and texts when it was written |
+| `asked`, `topics`, `problems` | what the model wrote, and where its reply strayed from the format |
+| `model`, `prompt_version`, `job_uuid` | what wrote it |
+
 The prompt and the reply are never copied. A job's page reads them from the
 attempt's `llm_call` row.
 
@@ -141,6 +215,16 @@ attempt's `llm_call` row.
 - Every attempt in order: how it ended, its model and time, its prompts, and
   its reply. A running attempt shows the reply so far.
 - For a final failure, an Enqueue again button.
+
+**A room's chunks** (`/assistant/housekeeping/room/<uuid>`), reached from
+the `chunks` link beside a room's name in the log.
+- How many messages the room has, how many are summarized, and how many
+  chunks are queued or due.
+- One card per chunk: its messages' numbers and dates, `asked`, the topics,
+  the model, a link to the job's prompt and reply, and the messages
+  themselves, folded.
+- A chip per series the room has chunks in.
+- **Summarize the rest**, with the number of model calls it will make.
 
 **A run's page** has an **After the turn** group below its timeline, one line
 per job, each linking to the job's page. The run list says `summary failed`

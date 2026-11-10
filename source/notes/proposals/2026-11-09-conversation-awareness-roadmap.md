@@ -1,6 +1,7 @@
 # Roadmap: conversation awareness
 
-**Status:** Roadmap over proposals. Built: the probe, and step 0
+**Status:** Roadmap over proposals. Built: the probe, step 0, and from step 7
+the generated chunk summary as an experiment shown on the Housekeeping page
 (`notes/housekeeping-design.md`).
 **Date:** 2026-11-09
 
@@ -312,6 +313,18 @@ These cost little, collect data, and change nothing.
    costs nothing today. It becomes a real trade only if step 1's aligned
    window is measured to give prefix reuse across turns. Decide it then,
    with both numbers.
+
+9. **Chunk size and context, by comparison.** Ten messages per chunk and two
+   of context on each side are starting values, and the operator doubts both.
+   They are settings, and each pair of values is its own series of chunks, so
+   two sizes can be read side by side on a room's Housekeeping page before
+   one is chosen.
+10. **A decision model over the messages.** The operator's idea for later: a
+    System One model (`d1` or `d3`) marks which messages carry little, and
+    where a decision was made. That would give a chunk two things a generated
+    phrase does not: what can be left out, and what was settled. It needs
+    its questions added to the probe first, and its marks would be records
+    per message, shown before anything is dropped.
 
 ## What the probes taught, for whoever builds this
 
