@@ -317,7 +317,7 @@ def _reply(first: int, n: int = 10, topic: str = "weather"):
         parts=[ChunkPart(first_message=first, last_message=first + n - 1,
                          summary="questions about the weather",
                          result="a forecast was given", human_reaction="moved_on",
-                         calibration="calibrated", topics=[topic])],
+                         topics=[topic])],
         summary="weather questions", topics=["Weather Talk"])
 
 
@@ -348,7 +348,7 @@ def _fake_chunk_model(monkeypatch, reply=None):
     return prompts
 
 
-V = 3   # agents.room_chunks.PROMPT_VERSION
+V = 4   # agents.room_chunks.PROMPT_VERSION
 
 
 def test_chunks_are_cut_in_order_and_wait_for_their_context(app_ctx):
@@ -392,10 +392,11 @@ def test_a_run_end_queues_two_chunks_and_each_is_summarized_once(app_ctx, monkey
         assert chunks[1].parts == [{
             "first_message": 10, "last_message": 19, "requests": 1,
             "summary": "questions about the weather", "topics": ["weather"],
-            "result": "a forecast was given", "human_reaction": "moved_on",
+            "result": "a forecast was given", "reactions": ["moved_on"],
             "calibration": "calibrated",
-            "signals": {"replies": 5, "runs": {}, "criteria_not_met": 0,
-                        "revisions": 0, "up": 0, "down": 0}}]
+            "calibration_basis": "the human went on without contesting it",
+            "signals": {"replies": 5, "runs": {}, "first_run": None, "last_run": None,
+                        "criteria_not_met": 0, "revisions": 0, "up": 0, "down": 0}}]
         # The first chunk has no context before it; the second has two each side.
         assert "not part of it:\n(none)" in prompts[0]
         assert "[m8 human] message number 8" in prompts[1]
@@ -439,8 +440,7 @@ def test_what_is_off_in_a_reply_is_stored_with_the_chunk(app_ctx, monkeypatch):
     room = _room_with_messages(app_ctx, 12)
     _fake_chunk_model(monkeypatch, lambda first: ChunkSummary(
         parts=[ChunkPart(first_message=40, last_message=44, summary="x" * 130,
-                         result="", human_reaction="not_shown",
-                         calibration="unclear", topics=[])],
+                         result="", human_reaction="not_shown", topics=[])],
         summary="", topics=["a", "b", "c", "d"]))
     agent = _agent(monkeypatch)
     agent.handle(uuid4(), {"room_uuid": str(room.uuid), "room_chunks": True})
@@ -493,13 +493,11 @@ def test_the_worker_rests_after_a_burst_of_calls(app_ctx, monkeypatch):
         db.session.commit()
 
 
-def _part(first, last, summary, *topics, result="done", reaction="moved_on",
-          calibration="calibrated"):
+def _part(first, last, summary, *topics, result="done", reaction="moved_on"):
     from agents import room_chunks as rc
 
     return rc.ChunkPart(first_message=first, last_message=last, summary=summary,
-                        result=result, human_reaction=reaction,
-                        calibration=calibration, topics=list(topics))
+                        result=result, human_reaction=reaction, topics=list(topics))
 
 
 def test_settle_joins_repeats_and_makes_parts_cover_the_chunk():
@@ -507,8 +505,7 @@ def test_settle_joins_repeats_and_makes_parts_cover_the_chunk():
 
     reply = rc.ChunkSummary(
         parts=[_part(20, 20, "compute a square root", "sqrt", "number",
-                     result="step limit reached", reaction="asked_again",
-                     calibration="unclear"),
+                     result="step limit reached", reaction="asked_again"),
                _part(22, 22, "compute another square root", "sqrt"),
                _part(24, 24, "compute a third", "sqrt", "maths", result="a value was given"),
                _part(26, 26, "which boards exist", "Kanban Boards")],
@@ -519,8 +516,8 @@ def test_settle_joins_repeats_and_makes_parts_cover_the_chunk():
     # The joined part keeps the first phrase and ends where the subject ended up.
     assert (first["first_message"], first["last_message"], first["requests"]) == (20, 25, 3)
     assert first["summary"] == "compute a square root"
-    assert (first["result"], first["human_reaction"], first["calibration"]) == (
-        "a value was given", "moved_on", "calibrated")
+    assert first["result"] == "a value was given"
+    assert first["reactions"] == ["asked_again", "moved_on", "moved_on"]
     assert first["topics"] == ["sqrt", "number"]
     assert (second["first_message"], second["last_message"], second["topics"]) == (
         26, 29, ["kanban-boards"])
@@ -540,20 +537,55 @@ def test_a_parts_signals_are_counted_from_the_records_of_its_replies():
         {"id": 6, "sender": "agent", "text": "two boards", "signals": {"run": "partial"}},
     ]
     reply = rc.ChunkSummary(
-        parts=[_part(40, 43, "count letters", "letters", reaction="corrected",
-                     calibration="overconfident"),
+        parts=[_part(40, 43, "count letters", "letters", reaction="corrected"),
                _part(44, 45, "list boards", "boards")],
         summary="letters and boards", topics=["misc"])
     _s, _t, parts, _p = rc.settle(reply, 40, 45, chunk)
     assert parts[0]["signals"] == {
-        "replies": 2, "runs": {"resolved": 2}, "criteria_not_met": 1,
+        "replies": 2, "runs": {"resolved": 2}, "first_run": "resolved",
+        "last_run": "resolved", "criteria_not_met": 1,
         "revisions": 4, "up": 1, "down": 1}
     assert parts[1]["signals"]["runs"] == {"partial": 1}
+    assert (parts[0]["calibration"], parts[0]["calibration_basis"]) == (
+        "overconfident", "a reply was voted down")
+    assert parts[1]["calibration"] == "unclear"
 
     prompt = rc.build_prompt([], chunk, [], 40)["user"]
     assert ("[m41 assistant] two\n    signals for m41: run resolved; "
             "criteria not met; voted down by the human") in prompt
     assert "signals for m43: run resolved; criteria met after 1 revision; voted up" in prompt
+
+
+@pytest.mark.parametrize("reactions, requests, signals, expected", [
+    # A vote down or a correction outranks everything else.
+    (["moved_on"], 1, {"down": 1, "up": 1, "last_run": "resolved"}, "overconfident"),
+    (["corrected"], 1, {"runs": {"resolved": 1}, "last_run": "resolved"}, "overconfident"),
+    # Asked again: delivered only on the retry.
+    (["asked_again", "moved_on"], 1,
+     {"runs": {"partial": 1, "resolved": 1}, "first_run": "partial", "last_run": "resolved"},
+     "underconfident"),
+    # Asked again after an answer that did not settle it.
+    (["asked_again"], 1,
+     {"runs": {"resolved": 1, "partial": 2}, "first_run": "resolved", "last_run": "partial",
+      "criteria_not_met": 2}, "overconfident"),
+    # The same request joined three times counts as asking again.
+    (["moved_on"], 3, {"runs": {"resolved": 3}, "first_run": "resolved", "last_run": "resolved"},
+     "overconfident"),
+    # Asked again and never delivered: a failure, not a matter of confidence.
+    (["asked_again"], 1, {"runs": {"failed": 2}, "first_run": "failed", "last_run": "failed"},
+     "unclear"),
+    (["thanked"], 1, {"up": 1, "runs": {"partial": 1}, "last_run": "partial"}, "calibrated"),
+    (["not_shown"], 1, {"runs": {"resolved": 1}, "last_run": "resolved"}, "unclear"),
+    (["moved_on"], 1, {"runs": {"resolved": 1}, "last_run": "resolved"}, "calibrated"),
+    (["pushed_for_more"], 1, {"runs": {"failed": 1}, "last_run": "failed"}, "unclear"),
+    (["moved_on"], 1, {}, "calibrated"),            # a reply with no run behind it
+])
+def test_calibration_is_decided_by_rule(reactions, requests, signals, expected):
+    from agents import room_chunks as rc
+
+    label, basis = rc.calibrate(
+        {"reactions": reactions, "requests": requests, "signals": signals})
+    assert label == expected and basis
 
 
 def test_reply_signals_come_from_the_run_the_audit_and_the_vote(app_ctx):

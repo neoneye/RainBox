@@ -562,8 +562,9 @@ _ROOM_FRAGMENT = """
               {% if part.result %}<div class="hk-result">&rarr; {{ part.result }}</div>{% endif %}
               {% if part.calibration %}
               <div class="hk-signals">
-                <span class="hk-pill hk-cal-{{ part.calibration }}" title="The model's judgement, from the human's reaction and the signals">{{ part.calibration }}</span>
-                {% if part.human_reaction %}<span class="hk-mono" title="What the model read as the human's reaction">{{ part.human_reaction|replace('_', ' ') }}</span>{% endif %}
+                <span class="hk-pill hk-cal-{{ part.calibration }}" title="{{ 'Decided by rule from the reaction and the records' if part.calibration_basis else 'Judged by the model' }}">{{ part.calibration }}</span>
+                {% if part.calibration_basis %}<span>{{ part.calibration_basis }}</span>{% endif %}
+                {% for r in (part.reactions or ([part.human_reaction] if part.human_reaction else [])) %}<span class="hk-mono" title="What the model read as the human's reaction">{{ r|replace('_', ' ') }}</span>{% endfor %}
                 {% for text in signal_texts(part.signals) %}<span class="hk-chip" title="From the records">{{ text }}</span>{% endfor %}
               </div>
               {% endif %}
@@ -600,10 +601,11 @@ _ROOM_PAGE = """
   <h1 class="hk-head">{{ room_name }}</h1>
   <p class="hk-lede">This room's messages in chunks, each summarized once by a
     local model: the chunk split into parts, each with what was wanted, what
-    came of it and how well calibrated the assistant was, under one broader
-    phrase. The grey labels beside a part are records (how its runs ended,
-    acceptance criteria, your votes); the coloured one is the model's
-    judgement. The summaries are shown here and reach no prompt. <a class="hk-back" href="/chat?id={{ room_uuid }}">Open the room</a></p>
+    came of it and how you reacted, under one broader phrase. The grey
+    labels beside a part are records (how its runs ended, acceptance
+    criteria, your votes). The coloured label says how well calibrated the
+    assistant was, decided by rule from your reaction and those records.
+    The summaries are shown here and reach no prompt. <a class="hk-back" href="/chat?id={{ room_uuid }}">Open the room</a></p>
   <div class="hk-filters">
     <div class="hk-field">
       <label>Series</label>

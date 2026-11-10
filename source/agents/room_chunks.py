@@ -3,8 +3,10 @@
 A room's counted messages are cut into chunks (`db.due_room_chunks`). This
 module turns one chunk into a prompt, and the model's structured reply into
 what is stored: the chunk split into parts, each with what was wanted, what
-came of it, how well calibrated the assistant was, and topic names; and one
-broader phrase and broader topics over the whole chunk.
+came of it, how the human reacted, and topic names; and one broader phrase
+and broader topics over the whole chunk. How well calibrated the assistant
+was in a part is then decided by rule (`calibrate`), from that reaction and
+the records, and not by the model.
 
 The model reads both sides of the conversation. Under each assistant reply
 it is given what the records say about that reply: how its run ended,
@@ -26,7 +28,7 @@ from pydantic import BaseModel, Field
 #: Bumped when the prompt, the schema or the parsing changes. A chunk belongs
 #: to the series of the version that wrote it, so a new version summarizes a
 #: room again beside the old series, and the two can be compared.
-PROMPT_VERSION = 3
+PROMPT_VERSION = 4
 
 SUMMARY_MAX_CHARS = 120
 RESULT_MAX_CHARS = 160
@@ -51,17 +53,17 @@ class ChunkPart(BaseModel):
     result: str = Field(description="A short phrase: what came of it.")
     human_reaction: Reaction = Field(
         description="What the human did after the replies in this part.")
-    calibration: Calibration = Field(description="How well calibrated the assistant was in this part.")
     topics: list[str] = Field(description="Names for this part's subject.")
 
 
 class ChunkSummary(BaseModel):
     """The parts come first, so the broader phrase is written with them in
-    view: a breakdown read bottom-up. Within a part the human's reaction comes
-    before the calibration: it is something the model can read off the
-    messages, and the calibration follows from it. Asked for a reason
-    instead, the model wrote the calibration word twice; asked for the
-    reaction in its own words, it copied the prompt's, so it is a choice."""
+    view: a breakdown read bottom-up. The human's reaction is a choice,
+    because the model can read it off the messages; asked for it in its own
+    words, it copied the prompt's. The model is not asked for the
+    calibration: given the reaction and the records, it still called an
+    answer that was repeated unchanged while the human kept asking
+    "calibrated"."""
 
     parts: list[ChunkPart] = Field(description="The chunk's parts, in order.")
     summary: str = Field(description="A short phrase covering the whole chunk.")
@@ -96,19 +98,7 @@ SYSTEM_PROMPT = (
     "the right answer. pushed_for_more: asked for more on the same subject. "
     "thanked: acknowledged it. not_shown: the chunk ends before any "
     "reaction;\n"
-    "- calibration, which follows from the reaction and the signals;\n"
     "- one or two topic names.\n\n"
-    "Calibration says whether the assistant's confidence matched what it "
-    "could deliver in that part:\n"
-    "- overconfident: it stated something as settled that did not hold. "
-    "Signs: the human corrects it, votes it down, or keeps asking the same "
-    "thing after getting an answer.\n"
-    "- underconfident: it said it could not answer, found nothing or did "
-    "not know, and then delivered once the human asked again or pushed.\n"
-    "- calibrated: its replies held up. Signs: the human moves on or votes "
-    "up, and nothing is contested. An honest statement that something is "
-    "not known, which stays true, is calibrated.\n"
-    "- unclear: the part does not show it.\n"
     "A reply voted up after a hard request is worth naming in the result. A "
     "reply voted down had something wrong with it: say what the human "
     "objected to when the messages show it.\n\n"
@@ -244,10 +234,10 @@ def _join_repeats(parts: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 and prev["first_message"] is not None):
             prev["last_message"] = part["last_message"]
             prev["requests"] += 1
-            # The later part is where the subject ended up.
-            for key in ("result", "human_reaction", "calibration"):
-                if key in part:
-                    prev[key] = part[key]
+            # The later part is where the subject ended up, and every
+            # reaction along the way is kept.
+            prev["result"] = part["result"]
+            prev["reactions"] += part["reactions"]
             prev["topics"] += [t for t in part["topics"]
                                if t not in prev["topics"]][:MAX_PART_TOPICS - len(prev["topics"])]
         else:
@@ -272,9 +262,11 @@ def _tile(parts: list[dict[str, Any]], last_index: int) -> list[dict[str, Any]]:
 def part_signals(part: dict[str, Any], chunk: list[dict[str, Any]],
                  first_index: int) -> dict[str, Any]:
     """What the records say about one part, counted over its replies:
-    `{replies, runs: {outcome: n}, criteria_not_met, revisions, up, down}`.
-    These are facts, kept beside the model's own words about the part."""
-    out: dict[str, Any] = {"replies": 0, "runs": {}, "criteria_not_met": 0,
+    `{replies, runs: {outcome: n}, first_run, last_run, criteria_not_met,
+    revisions, up, down}`. These are facts, kept beside the model's own
+    words about the part."""
+    out: dict[str, Any] = {"replies": 0, "runs": {}, "first_run": None,
+                           "last_run": None, "criteria_not_met": 0,
                            "revisions": 0, "up": 0, "down": 0}
     if part.get("first_message") is None:
         return out
@@ -287,12 +279,57 @@ def part_signals(part: dict[str, Any], chunk: list[dict[str, Any]],
         signals = m.get("signals") or {}
         if signals.get("run"):
             runs[signals["run"]] += 1
+            out["first_run"] = out["first_run"] or signals["run"]
+            out["last_run"] = signals["run"]
         out["criteria_not_met"] += int(signals.get("criteria") == "not met")
         out["revisions"] += signals.get("revisions") or 0
         out["up"] += int(signals.get("vote") == "upvote")
         out["down"] += int(signals.get("vote") == "downvote")
     out["runs"] = dict(runs)
     return out
+
+
+def calibrate(part: dict[str, Any]) -> tuple[Calibration, str]:
+    """How well calibrated the assistant was in one part, and on what basis.
+
+    A rule over what the model read (the human's reactions, how many times
+    the request was made) and what the records say (runs, acceptance
+    criteria, votes). The first rule that applies decides:
+
+    1. A reply was voted down, or the human corrected one: overconfident.
+    2. The human asked again, or the request was repeated:
+       - the first run did not resolve it and the last did: underconfident.
+         It delivered only once it was asked again.
+       - a run resolved it, or a reply did not meet its criteria:
+         overconfident. It answered, and the answer did not settle it.
+       - otherwise unclear: it never delivered, which is a failure and not a
+         matter of confidence.
+    3. A reply was voted up: calibrated.
+    4. No reaction is shown: unclear.
+    5. The human moved on, thanked or went deeper, and the last run resolved
+       the request: calibrated. If it did not: unclear.
+    """
+    signals = part.get("signals") or {}
+    reactions = set(part.get("reactions") or [])
+    runs = signals.get("runs") or {}
+    first, last = signals.get("first_run"), signals.get("last_run")
+    if signals.get("down"):
+        return "overconfident", "a reply was voted down"
+    if "corrected" in reactions:
+        return "overconfident", "the human corrected a reply"
+    if "asked_again" in reactions or (part.get("requests") or 1) > 1:
+        if first and first != "resolved" and last == "resolved":
+            return "underconfident", "it delivered only after being asked again"
+        if runs.get("resolved") or signals.get("criteria_not_met"):
+            return "overconfident", "it answered, and the human kept asking"
+        return "unclear", "asked again, and nothing was delivered"
+    if signals.get("up"):
+        return "calibrated", "a reply was voted up"
+    if not reactions or reactions == {"not_shown"}:
+        return "unclear", "the chunk shows no reaction"
+    if last == "resolved" or not runs:
+        return "calibrated", "the human went on without contesting it"
+    return "unclear", f"the human went on, and the last run was {last}"
 
 
 def settle(reply: ChunkSummary, first_index: int, last_index: int,
@@ -305,7 +342,8 @@ def settle(reply: ChunkSummary, first_index: int, last_index: int,
     with the chunk. A part whose numbers lie outside the chunk keeps its text
     and loses its numbers. Two things are settled by rule and not reported:
     repeats are joined, and parts are made to cover the chunk end to end.
-    Each part then gets its `signals`, counted from `chunk`'s records."""
+    Each part then gets its `signals`, counted from `chunk`'s records, and
+    its `calibration`, by rule."""
     problems: list[str] = []
     parts: list[dict[str, Any]] = []
     for n, part in enumerate(reply.parts[:MAX_PARTS], start=1):
@@ -320,8 +358,7 @@ def settle(reply: ChunkSummary, first_index: int, last_index: int,
             "summary": _sentence(part.summary, where, problems),
             "result": _sentence(part.result, f"{where} result", problems,
                                 RESULT_MAX_CHARS),
-            "human_reaction": part.human_reaction,
-            "calibration": part.calibration,
+            "reactions": [part.human_reaction],
             "topics": _topics(part.topics, MAX_PART_TOPICS, where, problems),
         })
     if len(reply.parts) > MAX_PARTS:
@@ -331,6 +368,7 @@ def settle(reply: ChunkSummary, first_index: int, last_index: int,
     parts = _tile(_join_repeats(parts), last_index)
     for part in parts:
         part["signals"] = part_signals(part, chunk or [], first_index)
+        part["calibration"], part["calibration_basis"] = calibrate(part)
     summary = _sentence(reply.summary, "chunk", problems)
     topics = _topics(reply.topics, MAX_CHUNK_TOPICS, "chunk", problems)
     return summary, topics, parts, problems
