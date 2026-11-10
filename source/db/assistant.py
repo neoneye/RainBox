@@ -76,14 +76,21 @@ def start_assistant_run(
     room_uuid: UUID,
     agent_uuid: UUID,
     step_limit: int = 6,
+    request_message: UUID | None = None,
 ) -> AssistantRun:
-    """Open a run row (status 'running') and return it."""
+    """Open a run row (status 'running') and return it.
+
+    `request_message` is the chat message the run answers, from the inbox
+    payload. It is stored as `metadata["request_message"]`: the exact link
+    from a run to its request. A run started with no message has no key."""
     run = AssistantRun(
         journal_id=journal_id,
         room_uuid=room_uuid,
         agent_uuid=agent_uuid,
         status="running",
         step_limit=step_limit,
+        metadata_=(
+            {"request_message": str(request_message)} if request_message else {}),
     )
     db.session.add(run)
     db.session.flush()

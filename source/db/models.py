@@ -1082,6 +1082,76 @@ class AssistantRun(db.Model):
     )
 
 
+class HousekeepingJob(db.Model):
+    """One piece of work done after a turn: a run's summary today, and the
+    detectors and digest jobs that join it later.
+
+    The row is written when the job is created and is the record of what
+    became of it. `state` says where it is now (`waiting`, `running`,
+    `deferred`, `final`); `outcome` says how it ended, in words the
+    Housekeeping page prints as they are. A job is identified by what it is
+    for, so the same work is never queued twice: one row per
+    `(job_type, run_uuid, subject, job_version)`.
+    """
+
+    __tablename__ = "housekeeping_job"
+    uuid: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    job_type: Mapped[str] = mapped_column(Text)
+    # 1: the next turn reads the result. 2: generative, read eventually.
+    tier: Mapped[int] = mapped_column(default=2)
+    run_uuid: Mapped[UUID | None] = mapped_column(index=True)
+    room_uuid: Mapped[UUID | None] = mapped_column()
+    # What the job is about when a run does not say it all (a chunk's range).
+    subject: Mapped[str] = mapped_column(Text, default="")
+    job_version: Mapped[int] = mapped_column(default=1)
+    state: Mapped[str] = mapped_column(Text, default="waiting")
+    outcome: Mapped[str | None] = mapped_column(Text)
+    # Why a deferred job is waiting: `turn` after a new message killed it.
+    deferred_reason: Mapped[str | None] = mapped_column(Text)
+    # Failures already retried. A killed attempt is not a failure.
+    retries: Mapped[int] = mapped_column(default=0)
+    # Set when someone opens the run's page: the job moves to the front of
+    # its tier, because that is the moment its result is being looked for.
+    bumped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('waiting','running','deferred','final')",
+            name="housekeeping_job_state_check",
+        ),
+        UniqueConstraint("job_type", "run_uuid", "subject", "job_version",
+                         name="housekeeping_job_key"),
+        Index("housekeeping_job_by_state", "state", "tier", "created_at"),
+    )
+
+
+class HousekeepingAttempt(db.Model):
+    """One try at a housekeeping job. A job killed twice by new messages and
+    finished on the third try has three rows, each with the model time it
+    used. `result` is NULL while the attempt runs."""
+
+    __tablename__ = "housekeeping_attempt"
+    uuid: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    job_uuid: Mapped[UUID] = mapped_column(index=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    model: Mapped[str | None] = mapped_column(Text)
+    # 'done' | 'killed: turn' | 'failed' | 'skipped'
+    result: Mapped[str | None] = mapped_column(Text)
+    model_ms: Mapped[int | None] = mapped_column()
+    # The stored call, which holds the prompt and the reply. Nothing is copied.
+    llm_call_uuid: Mapped[UUID | None] = mapped_column()
+    error: Mapped[str | None] = mapped_column(Text)
+    # The reply so far, while the call streams. Bounded; the stored call has
+    # the whole of it once the attempt ends.
+    response_preview: Mapped[str | None] = mapped_column(Text)
+
+
 class AssistantStep(db.Model):
     """One logical step in an assistant run, as **a single mutable row**. A normal
     action step is inserted at `phase="running"` (so a crash mid-action leaves a

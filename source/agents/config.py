@@ -37,6 +37,7 @@ class AgentConfigEntry(TypedDict):
 AGENT_CLASS_PATHS: dict[str, str] = {
     "assistant": "agents.assistant:AssistantAgent",
     "assistant.run_summarizer": "agents.assistant_run_summarizer:AssistantRunSummarizerAgent",
+    "housekeeping": "agents.housekeeping:HousekeepingAgent",
     "chat_structured": "agents.chat_structured:StructuredChatAgent",
     "chat_unstructured": "agents.chat_unstructured:UnstructuredChatAgent",
     "direct_chat": "agents.direct_chat:DirectChatAgent",
@@ -84,6 +85,8 @@ EDIT_DOCUMENT_V6_UUID: UUID = UUID("4bf3271f-a58f-4dd0-a07f-b85dac906cd0")
 MCP_UUID: UUID = UUID("828ae65d-a902-4b4e-bcd3-f761afe23d29")
 DIRECT_CHAT_UUID: UUID = UUID("7c2f0d5e-8b4a-4c3d-9e6f-1a2b3c4d5e6f")
 ASSISTANT_UUID: UUID = UUID("cad11db6-a8e6-4cdd-a37e-a98bbc53e74d")
+# The one worker for everything that runs after a turn (notes/housekeeping-design.md).
+HOUSEKEEPING_UUID: UUID = UUID("b7e3f1c2-4a5d-4e86-9f0b-6c2d8a1e7f34")
 
 # One model slot per model call the assistant makes, named exactly as that call
 # labels itself on /activity (agents.base.Agent._caller_tag). /agentmodel and
@@ -249,7 +252,11 @@ agent_config: dict[str, AgentConfigEntry] = {
     "assistant.run_summarizer": {
         "uuid": ASSISTANT_RUN_SUMMARIZER_UUID,
         "requires_structured_output": True,
-        "description": "summarizes a completed assistant run (trigger + obstacles + outcome) via one structured call; enqueued by the assistant at every terminal state. The one assistant.* slot that is also a real agent — it runs off the critical path, so a slow model here costs the operator nothing.",
+        "description": "the model that SUMMARIZES a completed assistant run (trigger + obstacles + outcome) via one structured call. The housekeeping role makes the call after the reply has posted, so a slow model here costs the operator nothing.",
+    },
+    "housekeeping": {
+        "uuid": HOUSEKEEPING_UUID,
+        "description": "runs the work that follows a turn (the run summary), one job at a time, starting when the reply has posted and giving way the moment a new message arrives. Binds no model of its own: each job uses its own slot.",
     },
 }
 

@@ -40,6 +40,7 @@ from db.activity import *  # noqa: F401,F403  re-export llm_call recording + /ac
 from db.benchmark import *  # noqa: F401,F403  re-export benchmark_result recording + retention
 from db.benchmark_vision import *  # noqa: F401,F403  re-export /benchmark_vision trial recording + retention
 from db.assistant_log import *  # noqa: F401,F403  re-export the assistant run read model
+from db.housekeeping import *  # noqa: F401,F403  re-export the after-the-turn job queue and its record
 from db.diary import *  # noqa: F401,F403  re-export diary source/publication/retention ops
 
 #: The SQLAlchemy session, re-exported so a caller who has `import db`

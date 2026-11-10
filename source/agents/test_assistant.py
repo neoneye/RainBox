@@ -187,9 +187,13 @@ def test_non_reasoning_model_leaves_no_reasoning_trace(room):
 
 
 def test_terminal_run_enqueues_a_summary(room):
-    """When a run reaches a terminal state, the assistant enqueues the
-    assistant_run_summarizer (off the critical path) carrying this run's uuid."""
-    from agents.config import ASSISTANT_RUN_SUMMARIZER_UUID
+    """When a run reaches a terminal state, the assistant hands it to
+    housekeeping (off the critical path), with the run's uuid and the message
+    it answered."""
+    import json
+    from uuid import UUID
+
+    from agents.config import HOUSEKEEPING_UUID
     from db.models import Inbox
 
     room_uuid, message_uuid = room
@@ -200,10 +204,13 @@ def test_terminal_run_enqueues_a_summary(room):
     run_uuid = result["assistant_run_uuid"]
     items = (
         db.session.query(Inbox)
-        .filter(Inbox.agent_uuid == ASSISTANT_RUN_SUMMARIZER_UUID)
+        .filter(Inbox.agent_uuid == HOUSEKEEPING_UUID)
         .all()
     )
-    assert any(run_uuid in (i.payload or "") for i in items)
+    mine = [json.loads(i.payload) for i in items if run_uuid in (i.payload or "")]
+    assert mine and mine[0]["request_message"] == str(message_uuid)
+    run = db.get_assistant_run(UUID(run_uuid))
+    assert run.metadata_["request_message"] == str(message_uuid)
 
 
 def test_reply_action_posts_one_message_and_finishes(room):

@@ -20,7 +20,7 @@ from werkzeug.serving import make_server  # noqa: E402
 
 import db  # noqa: E402
 from agents.config import (  # noqa: E402
-    ASSISTANT_RUN_SUMMARIZER_UUID,
+    HOUSEKEEPING_UUID,
     AgentConfigEntry,
     agent_config,
 )
@@ -122,9 +122,7 @@ def _recover_assistant_journal(journal_id: UUID, reason: str) -> None:
     try:
         run = db.recover_interrupted_assistant_run(journal_id, reason)
         if run is not None:
-            db.enqueue(
-                ASSISTANT_RUN_SUMMARIZER_UUID, {"run_uuid": str(run.uuid)}
-            )
+            db.request_run_housekeeping(run.uuid, room_uuid=run.room_uuid)
             logger.error(
                 "recovered interrupted assistant run %s journal=%s: %s",
                 run.uuid,
@@ -154,6 +152,21 @@ def _recover_runs_from_previous_supervisor() -> None:
             )
 
 
+def _recover_housekeeping_from_previous_supervisor() -> None:
+    """On startup, settle the job a dead housekeeping worker was on, find the
+    jobs that are due with no row, and wake the worker if anything waits. A
+    housekeeping bug must not stop the supervisor from starting."""
+    try:
+        db.recover_running_housekeeping_jobs(
+            "Supervisor restarted while the job was running.")
+        db.sweep_due_housekeeping_jobs()
+        if db.next_housekeeping_job() is not None:
+            db.enqueue(HOUSEKEEPING_UUID, {"sweep": True})
+    except Exception:
+        logger.exception("failed to recover housekeeping jobs")
+        db.session.rollback()
+
+
 def supervisor_loop(stop_event: threading.Event) -> None:
     uuid_to_role: dict[UUID, str] = {p["uuid"]: n for n, p in agent_config.items()}
     sel = selectors.DefaultSelector()
@@ -163,6 +176,7 @@ def supervisor_loop(stop_event: threading.Event) -> None:
 
     with app.app_context():
         _recover_runs_from_previous_supervisor()
+        _recover_housekeeping_from_previous_supervisor()
         while not stop_event.is_set():
             # Cron scheduler pass (throttled). Self-guarded: a cron bug must not
             # take down the supervisor thread.
