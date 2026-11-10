@@ -22,7 +22,7 @@ each one buys and costs, and lists what is still the operator's to decide.
 | [The room digest](2026-11-09-room-digest.md) | chunks of every 10 messages, counted from message 0, built from records and never invalidated, described thread by thread with the operator's opening words; `room_history` to read a range back; topics, derived status and a timeline for the window; a generated phrase per chunk only if it earns its place |
 | [Decision-model foundation](2026-11-09-decision-model-foundation.md) | one System One client, two slots, verified local execution, one record per call, the probe as regression suite |
 | [Detector labels](2026-11-09-detector-labels.md) | one place and one UI for "that detection was wrong" or "it missed this", which every promotion gate reads |
-| [Post-turn housekeeping](2026-11-09-post-turn-housekeeping.md) | one ordered queue after each turn, never during one; generative work waits for a quiet period; a heat budget |
+| [Post-turn housekeeping](2026-11-09-post-turn-housekeeping.md) | one ordered queue that starts when the reply has posted; a new message kills the generative call in progress; a heat budget |
 | [Cross-room continuity](2026-11-09-cross-room-continuity.md) | topics and statuses shown in other rooms, only between rooms the operator opts in that have no other audience |
 | [The conversation working set](2026-10-17-conversation-working-set.md) (earlier) | evidence fetched by earlier turns, carried exactly, under today's access rules |
 | [Acceptance-criteria cost](2026-09-16-acceptance-criteria-cost-and-removal.md) (earlier) | where the criteria call's seconds go |
@@ -43,9 +43,9 @@ more.
    exact link from a run to the human message it answers. Today it is only
    recoverable through the journal payload.
 2. **Move the run summarizer into the `housekeeping` role**, with its
-   turn-activity gate, its quiet period and the After the turn view on
-   /assistant. The summary itself does not change. It is written when the
-   room goes quiet, or when its run's page is opened.
+   turn-activity gate and the After the turn view on /assistant. The summary
+   itself does not change. It starts when the reply has posted, and a new
+   message kills it, to run again after that turn.
 
 - **Pros:**
   - Every later step needs the request link.
@@ -303,12 +303,13 @@ These cost little, collect data, and change nothing.
    yes, with the marking the window already gives such messages, because
    nothing else in the system scrubs history at a boundary. The stricter
    choice is to stop at the boundary.
-8. **The quiet period.** Generative housekeeping, the run summary included,
-   waits until no human message has arrived for 90 seconds. A run's summary
-   is therefore not there seconds after its reply during a conversation,
-   unless its page is opened, which moves it to the front. If the summary is
-   read mid-conversation more often than that allows, the summary alone can
-   be exempted, at the price of the next turn's cached prompt.
+8. **Housekeeping between turns, against a cached prompt.** Housekeeping
+   starts when the reply has posted and is killed by a new message, as the
+   operator chose. A generative call on the assistant's model replaces the
+   server's cached prompt, so the next turn prefills from nothing. That
+   costs nothing today. It becomes a real trade only if step 1's aligned
+   window is measured to give prefix reuse across turns. Decide it then,
+   with both numbers.
 
 ## What the probes taught, for whoever builds this
 

@@ -29,7 +29,7 @@ process. The proposals in this series add more:
 | digest `asked` phrase, if enabled | digest, decision 5 | generative | eventually |
 | digest backfill, if the operator runs it | digest, decision 5 | generative | eventually |
 
-Three things go wrong if each job is simply enqueued to a role of its own:
+Four things go wrong if each job is simply enqueued to a role of its own:
 
 - **They compete with the next turn for the GPU.** The supervisor runs one
   process per role, in parallel across roles. A summarizer call can already
@@ -71,8 +71,7 @@ call, or none, so seconds in total:
 
 **Tier 2, eventually.** Generative calls of up to two minutes:
 1. **Run summary.** The existing summarizer logic, moved behind this role.
-   It comes first in its tier, so it waits only for tier 1 and the quiet
-   period (decision 2).
+   It comes first in its tier, so it waits only for tier 1's seconds.
 2. **Digest `asked` phrases**, when enabled. At most one per run.
 3. **Digest backfill**, when the operator has started it for a room.
 
@@ -83,8 +82,7 @@ delays a fresh run's verdicts.
 
 **One exception to oldest first.** Opening a run's page on /assistant moves
 that run's summary to the front of tier 2. The summary matters when the
-inspector is read, and that is the moment someone is reading it. It still
-waits for the quiet period (decision 2).
+inspector is read, and that is the moment someone is reading it.
 
 **The queue is a hint. The records say what is due.** A job is due when its
 result is missing: a finished run with no summary, a chunk the window has
@@ -119,37 +117,38 @@ Before starting each job, the worker checks for **turn activity**: any
 assistant role. If there is activity, it waits, polling every 2 seconds,
 and starts the job only once the system is idle.
 
-**Tier 1 starts as soon as the system is idle.** Its jobs take seconds, and
-the next turn reads their results.
+**Housekeeping starts when the reply has posted.** Tier 1 first, then tier
+2, with no waiting period. The operator's measure is that 30 to 120 seconds
+pass between a reply and their next message. That gap is the time
+housekeeping has, and it is enough for tier 1 and usually for the run
+summary.
 
-**Tier 2 waits for a quiet period.** A generative job starts only when no
-human message has arrived in any room for 90 seconds, and no turn is active.
-While the operator is in a conversation, turns follow each other faster than
-that, so no generative housekeeping runs between them. That does three
-things:
-- **A call is rarely started only to be cancelled.** A job that starts 2
-  seconds after a reply posts is the job most likely to meet the next
-  request.
-- **The slot's cached prompt survives a conversation.** Between two turns
-  less than 90 seconds apart, nothing else has used the assistant's model.
-- **The heat of a conversation and the heat of housekeeping do not stack.**
-  The work moves to where the machine was going to be idle.
+**A new message kills the generative call in progress.** The worker keeps
+polling every 2 seconds while a call runs. On turn activity it closes its
+request to the model server, records `deferred: turn`, and requeues the job.
+The turn gets the machine to itself. That is safe because every job is
+idempotent. The builder confirms that closing the request stops generation
+on the server, not only in the client. Each cancellation is recorded with
+the model time it wasted.
 
-**A generative call running when a turn starts is cancelled.** The worker
-keeps polling every 2 seconds while a call runs. On turn activity it closes
-its request to the model server, records `deferred: turn`, and requeues the
-job. That is safe because every job is idempotent. The builder confirms that
-closing the request stops generation on the server, not only in the client.
+**A killed job runs again after that turn's reply**, ahead of the new run's
+tier 2 jobs, since it is older. It never runs through a turn to make up for
+lost attempts.
 
-**A turn always wins, and each cancellation doubles the wait.** A cancelled
-job never runs through a later turn to make up for it: on a one-slot server
-that would put the operator's request in a queue behind a summary. What a
-cancellation changes is the quiet period before that job's next attempt:
-180 seconds after the first, 360 after the second, and so on up to 30
-minutes. Each cancelled attempt has already spent its heat, and a longer
-wait makes the next one unlikely to be wasted too. Each cancellation is
-recorded with the model time it wasted. The quiet period returns to 90
-seconds when the job completes.
+**A job killed twice waits for a longer gap.** A 120-second summary does not
+fit a 30-second gap, and trying it after every reply would spend its heat
+each time and finish nothing. After its second kill, a job waits until no
+human message has arrived for 5 minutes. Jobs behind it in the queue are not
+held up: the worker goes on to the next one.
+
+**What this costs the next turn.** The model server keeps one cached prompt
+per model. A generative housekeeping call on the assistant's model replaces
+it, so the turn after it prefills from nothing. Today that loses nothing,
+because no prompt bytes are reused across turns. If the room digest's
+aligned window makes cross-turn reuse real, housekeeping between turns is
+what gives it back, and the two are measured together (Measuring it). The
+choice then is between summaries right after the reply and a faster first
+call of the next turn.
 
 A decision-model request is allowed to finish. Its 4-second deadline
 (decision 4) bounds the overlap, and it runs on another model's slot.
@@ -227,8 +226,9 @@ this hour, thermal state) gets one line on the /assistant index page.
   being done. Tier 1 should normally be done before the operator's next
   message.
 - **Cancellations.** How often a generative call is cancelled for a turn,
-  and how much model time that wastes. With the quiet period, the target is
-  under one in twenty.
+  and how much model time that wastes, per job type. A job type that is
+  killed more often than it finishes is too long for the gap, and its
+  deadline or its prompt is what to change.
 - **The first call after housekeeping.** The decide call's cached share and
   prefill time on a turn that follows generative housekeeping, against a
   turn that follows another turn. This is measured together with the room
@@ -241,8 +241,8 @@ this hour, thermal state) gets one line on the /assistant index page.
 
 ## Rollout
 
-1. The `housekeeping` role, with the run summary moved into it. The summary
-   is the same; when it runs changes, to the quiet period. That is the gate,
+1. The `housekeeping` role, with the run summary moved into it, unchanged in
+   behaviour apart from being killed when a turn starts. That is the gate,
    the order, the sweep for due jobs and the after-the-turn view, with one
    job.
 2. Digest chunk nodes, which need no model and no other feature.
