@@ -87,7 +87,7 @@ in two levels:
 
 | level | fields |
 |---|---|
-| each part | `first_message`, `last_message`, `summary`, `result`, `human_reaction`, `calibration`, `topics` (one or two) |
+| each part | `first_message`, `last_message`, `summary`, `result`, `human_reaction`, `topics` (one or two) |
 | the chunk | `summary`, `topics` (one to three, broader) |
 
 A part is a run of consecutive messages about one subject. The parts come
@@ -99,22 +99,36 @@ first in the schema, so the chunk's phrase is written with them in view.
 - **`human_reaction`** is a choice: `moved_on`, `asked_again`, `corrected`,
   `pushed_for_more`, `thanked`, `not_shown`. It is something the model can
   read off the messages.
-- **`calibration`** is a choice that follows from the reaction and the
-  signals:
-  - `overconfident`: something was stated as settled that did not hold. The
-    human corrects it, votes it down, or keeps asking after an answer.
-  - `underconfident`: it said it could not answer or found nothing, and
-    delivered once the human asked again.
-  - `calibrated`: its replies held up, including an honest "not known" that
-    stayed true.
-  - `unclear`: the part does not show it.
+
+**Calibration is decided by rule, not by the model** (`room_chunks.calibrate`).
+The model supplies what it is good at: the result, and the human's reaction.
+Asked for the calibration too, it called an answer that was repeated
+unchanged while the human kept asking "calibrated", with the evidence in its
+own prompt. The rule reads the part's reactions, how many times the request
+was made, and the records. The first line that applies decides:
+
+| when | calibration | basis shown |
+|---|---|---|
+| a reply was voted down | overconfident | a reply was voted down |
+| the human corrected a reply | overconfident | the human corrected a reply |
+| asked again, and the first run did not resolve it but the last did | underconfident | it delivered only after being asked again |
+| asked again, and a run resolved it or a reply missed its criteria | overconfident | it answered, and the human kept asking |
+| asked again, and nothing was delivered | unclear | asked again, and nothing was delivered |
+| a reply was voted up | calibrated | a reply was voted up |
+| no reaction in the chunk | unclear | the chunk shows no reaction |
+| the human went on, and the last run resolved it (or no run is recorded) | calibrated | the human went on without contesting it |
+| the human went on, and the last run did not resolve it | unclear | the human went on, and the last run was … |
+
+"Asked again" means the model read that reaction, or code joined the same
+request more than once. A part never delivered is `unclear`: that is a
+failure, and not a matter of confidence.
 
 **A result is stored beside what is known about it.** Each part also gets
 `signals`, counted by code from the records of its replies: runs by outcome,
-replies that did not meet their criteria, revisions, votes up and down. The
-page shows the model's `calibration` in colour and these counts in grey, so
-the judgement and the facts are told apart. A result is an old answer, and
-it is never shown without them.
+the first and the last run's outcome, replies that did not meet their
+criteria, revisions, votes up and down. The page shows the calibration in
+colour with its basis, the reactions the model read, and these counts in
+grey. A result is an old answer, and it is never shown without them.
 
 **What code settles after the reply** (`room_chunks.settle`):
 - Topic names are normalized to lowercase words joined by hyphens.
@@ -122,11 +136,11 @@ it is never shown without them.
   its numbers.
 - Neighbouring parts with the same first topic are joined into one, which
   records how many it stands for in `requests`. The joined part keeps the
-  first phrase, and the result, reaction and calibration of the last: where
-  the subject ended up.
+  first phrase, the result of the last (where the subject ended up), and
+  every reaction along the way.
 - Each part is extended to the message before the next part, and the last to
   the chunk's end, so the parts cover the chunk.
-- Each part's `signals` are counted.
+- Each part's `signals` are counted, and its calibration is decided.
 - Anything else off (too many topics, an over-long or empty phrase, no parts)
   is listed in `problems` and shown with the chunk.
 
@@ -140,11 +154,10 @@ topic is a later step, and not this call's job.
 **What it does well and badly**, on gemma4:e4b-mlx, 4 to 8 seconds a chunk:
 - **Parts, results and topics are good.** Ranges are right and the topics
   name the subject.
-- **Calibration catches the clear cases**: an answer repeated unchanged while
-  the human keeps asking, a "nothing found" that became an answer on retry, a
-  reply voted down with a comment. It misses what needs two chunks to see: a
-  correction that arrives in a later chunk leaves the earlier part
-  `calibrated`.
+- **The reaction is read well enough to rule on**, but it is the rule's one
+  soft input: a reaction read wrong gives a wrong calibration.
+- **A correction in a later chunk is not seen.** The part it corrects stays
+  as it was written, because a chunk is summarized once and alone.
 - **The chunk's own phrase is weak** when its parts are unrelated.
 - **Phrases still begin with who spoke**, though the prompt asks otherwise.
 
@@ -265,7 +278,7 @@ The inbox item is a hint. The rows say what is due.
 | `first_message_id`, `last_message_id`, `message_count` | its edges and size |
 | `content_hash` | over its messages' ids and texts when it was written |
 | `summary`, `topics` | the chunk's phrase and broader topics |
-| `parts` | its parts: `{first_message, last_message, summary, topics, requests}`, and from prompt 3 `result`, `human_reaction`, `calibration`, `signals`; NULL for a chunk of the first prompt |
+| `parts` | its parts: `{first_message, last_message, summary, topics, requests}`, and from prompt 3 `result`, the reactions, `calibration`, `signals`; from prompt 4 `calibration_basis`; NULL for a chunk of the first prompt |
 | `problems` | what was off in the reply |
 | `model`, `job_uuid` | what wrote it |
 
@@ -295,8 +308,8 @@ the `chunks` link beside a room's name in the log.
   topics, the model, a link to the job's prompt and reply, and the messages
   themselves, folded.
 - Under it, each part: its message range, what was wanted, what came of it,
-  the model's calibration in colour with the reaction it read, and the
-  records in grey.
+  the calibration in colour with its basis, the reactions the model read,
+  and the records in grey.
 - A chip per series the room has chunks in, earlier prompts included.
 - **Summarize the rest**, with the number of model calls it will make.
 
