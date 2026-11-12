@@ -80,8 +80,9 @@ The signals are records, and the prompt says so. They are what lets a small
 model say something about reliability without judging an answer from its own
 knowledge.
 
-**The call.** One structured call per chunk on the `assistant.room_summarizer`
-slot, which falls back to `assistant.default`. The prompt holds the chunk and
+**The call.** A structured call on the `assistant.room_summarizer` slot,
+which falls back to `assistant.default`. A second call then checks the
+answer (see **The check** below). The prompt holds the chunk and
 the context on each side, marked as not part of it. The reply is a breakdown
 in two levels:
 
@@ -90,8 +91,11 @@ in two levels:
 | each part | `first_message`, `last_message`, `summary`, `result`, `human_reaction`, `topics` (one or two) |
 | the chunk | `summary`, `topics` (one to three, broader) |
 
-A part is a run of consecutive messages about one subject. The parts come
-first in the schema, so the chunk's phrase is written with them in view.
+A part is a run of consecutive messages about one subject. A request that
+is repeated, retried or corrected stays in its part. The same question about
+another thing or another value is a part of its own, because it has an
+answer of its own. The parts come first in the schema, so the chunk's phrase
+is written with them in view.
 
 - **`summary`** is what was wanted.
 - **`result`** is what came of it: the one main thing found or concluded, or
@@ -154,15 +158,71 @@ grey. A result is an old answer, and it is never shown without them.
 - Topic names are normalized to lowercase words joined by hyphens.
 - A part whose message numbers lie outside the chunk keeps its text and loses
   its numbers.
-- Neighbouring parts with the same first topic are joined into one, which
-  records how many it stands for in `requests`. The joined part keeps the
-  first phrase, the result of the last (where the subject ended up), and
-  every reaction along the way.
 - Each part is extended to the message before the next part, and the last to
   the chunk's end, so the parts cover the chunk.
+- A part that opens with the request before it asked again is joined to that
+  part. "Asked again" is read as the calibration rule reads it: the opening
+  request repeats one in the part before, by its text; or it is at most 3
+  words and the model read the reaction before it as asking again. The
+  joined part keeps the first phrase, the result of the last (where the
+  request ended up), and every reaction along the way.
+- A shared topic name does not join two parts. The model gives unrelated
+  questions one generic topic, and joined they would show the first
+  question beside the answer to the last.
 - Each part's `signals` are counted, and its calibration is decided.
+- `requests` is how many times the part's request was made: one, plus its
+  repeats, plus its bare follow-ups when the model read asking again. The
+  page shows it as ×N.
 - Anything else off (too many topics, an over-long or empty phrase, no parts)
   is listed in `problems` and shown with the chunk.
+
+**The check** (`room_chunks.AUDIT_PROMPT`, `settle_audit`). A second
+structured call, on the same local models, reads the chunk's own prompt
+followed by the summary as it was stored: each part with its message
+numbers, what was wanted, what came of it, the reactions, and how many times
+it was asked. For each part it writes its reasoning and then answers three
+questions with true or false:
+
+| answer | question |
+|---|---|
+| `request_matches` | does the "wanted" line say what the human asked in these messages |
+| `result_matches` | does the "came of it" line answer that same request, from a reply in these messages |
+| `reaction_matches` | is the reaction what the human did next |
+
+- **The reasoning comes first**, so the answers are given with it in view,
+  and so there is something to tell a rewrite. It is stored cut to 600
+  characters.
+- **A false request or result fails the part.** A false reaction is stored
+  and shown and fails nothing: the check disagrees with itself on reactions
+  from one run to the next.
+- **A failed part has the chunk written once more**
+  (`room_chunks.build_retry_prompt`). The prompt is the chunk's own, followed
+  by the first answer as it was stored and the check's reasoning for each
+  failed part. The second answer is settled and checked like the first, and
+  it is the one stored, whatever its check says. So a chunk is two calls as
+  a rule and four at most.
+- **Each stored part carries the check of itself** as `audit`: `{request,
+  result, reaction, reasoning}`. The row's `audit` says how many times the
+  chunk was written and, when twice, what the first answer had in the parts
+  that failed.
+- **A check or a rewrite that no model delivers** leaves the answer there
+  is, and the row's `audit.error` says which of the two it was.
+- **The check has its own caller label**, `assistant.room_auditor`. The
+  job's page shows the attempt's newest call by the summarizer's label,
+  which is the summary that was kept. The checks are on `/activity`.
+
+**Why three questions per part, and not a score.** Tried on 14 chunks of one
+room, on gemma4:e4b-mlx:
+- **The model scoring its own summary in the same reply** gave the middle of
+  a six-point scale to 13 of 14, among them a part that paired a request
+  with the answer to another.
+- **A second call giving one score for the chunk** found one of three badly
+  wrong chunks, and marked a sound one. Run again, it changed its score on
+  5 of 13 chunks. With its reasoning written first it found none of the
+  three: it confirmed each line against some message, and did not ask
+  whether the request and the result belonged together.
+- **A second call answering per part** failed a request or a result only
+  where the two did not belong together, in every run.
 
 **The prompt has no sample answers and no list of earlier topic names.** A
 small model copies both. With a list of earlier names to reuse, it chose
@@ -171,12 +231,18 @@ placeholder word as a topic. So topic names are not shared between chunks:
 the same subject can get two names in two chunks. Recognizing them as one
 topic is a later step, and not this call's job.
 
-**What it does well and badly**, on gemma4:e4b-mlx, 4 to 8 seconds a chunk:
+**What it does well and badly**, on gemma4:e4b-mlx, 4 to 8 seconds for the
+summary call; the check writes more and takes longer:
 - **Parts, results and topics are good.** Ranges are right and the topics
   name the subject.
-- **The reaction is read unevenly.** `corrected` and `moved_on` are usually
-  right; `asked_again` is not, which is why the rule reads repeats from the
-  text.
+- **The reaction is read unevenly.** `moved_on` is usually right;
+  `asked_again` is not, which is why the rule reads repeats from the text.
+  `not_shown` is given to parts in the middle of a chunk, and
+  `pushed_for_more` to a change of subject. The check sees some of these
+  and misses others.
+- **What the human states is not kept.** A part holds a request and its
+  result. When the human explains something, the part's result is the
+  human's own sentence or the last reply, and the rest is lost.
 - **A correction in a later chunk is not seen.** The part it corrects stays
   as it was written, because a chunk is summarized once and alone.
 - **The chunk's own phrase is weak** when its parts are unrelated.
@@ -188,14 +254,15 @@ out. With none left the job fails and says so.
 
 **What is stored.** One `room_chunk` row per chunk, written once: its series
 and `seq`, its edges as message ids, a `content_hash` of its messages,
-`summary`, `topics`, `parts`, `problems`, the model and the prompt version. The page recomputes
+`summary`, `topics`, `parts`, `problems`, `audit`, the model and the prompt
+version. The page recomputes
 the hash and marks a chunk whose messages have changed since.
 
 **Where it goes.** The summaries are shown on the room's page. They reach no
 prompt.
 
 **A rest after ten calls.** The worker counts its model calls, of any job
-type. After 10 in a row it rests for 60 seconds before the next, and the
+type, and a chunk's check and rewrite each count as one. After 10 in a row it rests for 60 seconds before the next, and the
 waiting job shows as resting. A new message still stops the call in progress.
 
 ## Order
@@ -299,12 +366,13 @@ The inbox item is a hint. The rows say what is due.
 | `first_message_id`, `last_message_id`, `message_count` | its edges and size |
 | `content_hash` | over its messages' ids and texts when it was written |
 | `summary`, `topics` | the chunk's phrase and broader topics |
-| `parts` | its parts: `{first_message, last_message, summary, topics, requests}`, and from prompt 3 `result`, the reactions, `calibration`, `signals`; from prompt 4 `calibration_basis`; NULL for a chunk of the first prompt |
-| `problems` | what was off in the reply |
+| `parts` | its parts: `{first_message, last_message, summary, topics, requests}`, and from prompt 3 `result`, the reactions, `calibration`, `signals`; from prompt 4 `calibration_basis`; from prompt 6 `audit`; NULL for a chunk of the first prompt |
+| `problems` | what was off in the reply, and in the check's reply |
+| `audit` | the check: `{attempts, rewritten, error}`; NULL for a chunk written before the check existed |
 | `model`, `job_uuid` | what wrote it |
 
 The prompt and the reply are never copied. A job's page reads them from the
-attempt's `llm_call` row.
+attempt's `llm_call` row: for a chunk, the summary that was kept.
 
 ## The pages
 
@@ -330,9 +398,12 @@ the `chunks` link beside a room's name in the log.
   themselves, folded.
 - Under it, each part: its message range, what was wanted, what came of it,
   the calibration in colour with its basis, the reactions the model read,
-  and the records in grey.
+  and the records in grey. A part the check still doubts says which of its
+  request, result and reaction, and why.
+- Whether the chunk was written once or twice, and for a second writing,
+  what the first answer had in the parts the check found wrong.
 - A chip per series the room has chunks in, earlier prompts included.
-- **Summarize the rest**, with the number of model calls it will make.
+- **Summarize the rest**, with the number of chunks it will write.
 
 **A run's page** has an **After the turn** group below its timeline, one line
 per job, each linking to the job's page. The run list says `summary failed`
