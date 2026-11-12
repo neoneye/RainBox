@@ -181,12 +181,13 @@ def _add_column_if_missing(table: str, column: str, ddl: str) -> None:
 
 def _migrate_room_chunk_parts() -> None:
     """Bring a `room_chunk` table from before parts existed up to date: the
-    chunk's phrase is `summary`, there is a `parts` column, and a series is
-    keyed by its prompt version too. Each step runs only when it is needed,
+    chunk's phrase is `summary`, there are `parts` and `audit` columns, and a
+    series is keyed by its prompt version too. Each step runs only when it is needed,
     so a current database takes no lock."""
     if _column_exists("room_chunk", "asked") and not _column_exists("room_chunk", "summary"):
         db.session.execute(sa.text("ALTER TABLE room_chunk RENAME COLUMN asked TO summary"))
     _add_column_if_missing("room_chunk", "parts", "parts JSONB")
+    _add_column_if_missing("room_chunk", "audit", "audit JSONB")
     old_key = db.session.execute(sa.text(
         "SELECT 1 FROM pg_constraint WHERE conname = 'room_chunk_key'")).scalar()
     if old_key:

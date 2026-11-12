@@ -356,9 +356,12 @@ class HousekeepingAgent(Agent):
         return "done"
 
     def _summarize_chunk(self, job: Any, attempt: Any, watch: TurnWatch) -> str:
-        """One chunk of a room's messages, summarized by one structured call
-        on the `assistant.room_summarizer` slot. The chunk is the one the
-        job's subject names; its row is written once, when the call returns."""
+        """One chunk of a room's messages, summarized by a structured call on
+        the `assistant.room_summarizer` slot, then checked part by part by a
+        second call on the same models, and written once more when the check
+        finds a part's request or result wrong: two calls as a rule, four at
+        most. The chunk is the one the job's subject names; its row is
+        written once, when the last call returns."""
         from agents import room_chunks
         from agents.config import ASSISTANT_ROOM_SUMMARIZER_UUID
         from agents.model_groups import resolve_assistant_model_uuids, structured_llm_call
@@ -421,13 +424,50 @@ class HousekeepingAgent(Agent):
             def failed(self, *args: Any, **kwargs: Any) -> None:
                 pass
 
-        with watch.interruptible():
-            reply, model_uuid = structured_llm_call(
-                db.JOB_CALLERS[db.ROOM_CHUNK_JOB], models,
-                prompt["system"], prompt["user"], room_chunks.ChunkSummary,
-                observer=Observer())
+        def call(p: dict[str, str], response_model: type, caller: str) -> tuple[Any, UUID]:
+            with watch.interruptible():
+                return structured_llm_call(
+                    caller, models, p["system"], p["user"], response_model,
+                    observer=Observer())
+
+        summarizer = db.JOB_CALLERS[db.ROOM_CHUNK_JOB]
+        reply, model_uuid = call(prompt, room_chunks.ChunkSummary, summarizer)
         summary, topics, parts, problems = room_chunks.settle(
             reply, first, last, chunk)  # type: ignore[arg-type]
+
+        # The check, and one rewrite when it finds a part's request or result
+        # wrong. The rewrite is checked too, so what is stored always carries
+        # the check of itself. A check or a rewrite that no model could
+        # deliver leaves the answer there is, and says so.
+        audit: dict[str, Any] = {"attempts": 1}
+        for attempt_no in (1, 2):
+            self._burst += 1
+            try:
+                check, _ = call(room_chunks.build_audit_prompt(prompt, summary, parts),
+                                room_chunks.ChunkCheck, room_chunks.AUDIT_CALLER)
+            except RuntimeError as e:
+                audit["error"] = f"check: {e}"[:300]
+                break
+            failed, check_problems = room_chunks.settle_audit(
+                check, parts)  # type: ignore[arg-type]
+            problems += check_problems
+            if not failed or attempt_no == 2:
+                break
+            self._burst += 1
+            try:
+                reply, model_uuid = call(
+                    room_chunks.build_retry_prompt(prompt, summary, parts, failed),
+                    room_chunks.ChunkSummary, summarizer)
+            except RuntimeError as e:
+                audit["error"] = f"rewrite: {e}"[:300]
+                break
+            audit["rewritten"] = [
+                {"first_message": p["first_message"], "last_message": p["last_message"],
+                 "summary": p["summary"], "result": p["result"],
+                 "reasoning": p["audit"]["reasoning"]} for p in failed]
+            summary, topics, parts, problems = room_chunks.settle(
+                reply, first, last, chunk)  # type: ignore[arg-type]
+            audit["attempts"] = 2
         _provider, model_name, _args = db.resolved_model_kwargs(model_uuid)
         db.store_room_chunk(
             room_uuid=job.room_uuid, chunk_size=size, overlap=overlap, seq=seq,
@@ -435,6 +475,7 @@ class HousekeepingAgent(Agent):
             message_count=len(chunk),
             content_hash=room_chunks.content_hash(chunk),
             summary=summary, topics=topics, parts=parts, problems=problems,
+            audit=audit,
             model=model_name, prompt_version=room_chunks.PROMPT_VERSION,
             job_uuid=job.uuid)
         return "done"

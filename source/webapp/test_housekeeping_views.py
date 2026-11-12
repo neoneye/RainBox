@@ -188,8 +188,13 @@ def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
                 "signals": {"replies": 3, "runs": {"resolved": 2, "failed": 1},
                             "criteria_not_met": 1, "revisions": 4, "up": 0, "down": 1}},
                {"first_message": 6, "last_message": 9, "requests": 1,
-                "summary": "how numbers are written", "topics": ["notation"]}],
-        model="model-a", prompt_version=5)
+                "summary": "how numbers are written", "topics": ["notation"],
+                "audit": {"request": True, "result": False, "reaction": True,
+                          "reasoning": "the reply was about another number"}}],
+        audit={"attempts": 2, "rewritten": [{
+            "first_message": 0, "last_message": 5, "summary": "which number is odd",
+            "result": "seven", "reasoning": "seven answers a later request"}]},
+        model="model-a", prompt_version=6)
     try:
         body = c.get(f"/assistant/housekeeping/room/{room.uuid}").get_data(as_text=True)
         assert "Messages 0&ndash;9" in body and "questions about numbers" in body
@@ -204,7 +209,12 @@ def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
         assert "[m3 agent] message number 3" in body
         assert "messages changed since" not in body
         # 34 messages: chunks 1 and 2 are due (the third needs messages 30-31 after it).
-        assert "Summarize the rest: 2 model calls" in body
+        assert "Summarize the rest: 2 chunks" in body
+        # The check: what it still doubts on a part, and what the first answer had.
+        assert "the result may not match the messages: the reply was about another number" in body
+        assert "The check found 1 part of the first answer wrong" in body
+        assert "which number is odd &rarr; seven" in body
+        assert "seven answers a later request" in body
 
         # An edit after the summary is shown, and the summary is left alone.
         db.session.query(db.ChatMessage).filter_by(id=messages[2]["id"]).update(

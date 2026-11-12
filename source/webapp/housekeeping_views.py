@@ -529,7 +529,7 @@ _ROOM_FRAGMENT = """
   <span><span class="k">Not yet queued</span><span class="v">{{ due }} chunk{{ '' if due == 1 else 's' }}</span></span>
   {% if is_current and due %}
   <form method="post" action="/assistant/housekeeping/room/{{ room_uuid }}/summarize" style="margin-left:auto">
-    <button class="hk-btn" type="submit" title="One model call per chunk, ten in a row and then a minute's rest. A new message stops the call in progress.">Summarize the rest: {{ due }} model call{{ '' if due == 1 else 's' }}</button>
+    <button class="hk-btn" type="submit" title="Two model calls per chunk, the summary and its check, and two more when the check has it written again. Ten in a row and then a minute's rest. A new message stops the call in progress.">Summarize the rest: {{ due }} chunk{{ '' if due == 1 else 's' }}</button>
   </form>
   {% endif %}
 </div>
@@ -568,11 +568,33 @@ _ROOM_FRAGMENT = """
                 {% for text in signal_texts(part.signals) %}<span class="hk-chip" title="From the records">{{ text }}</span>{% endfor %}
               </div>
               {% endif %}
+              {% if part.audit and not (part.audit.request and part.audit.result and part.audit.reaction) %}
+              <div class="hk-signals">
+                <span class="hk-pill failed" title="A second model call compared this part with its messages">check</span>
+                <span>{% if not part.audit.request %}the request {% endif %}{% if not part.audit.result %}{{ 'and ' if not part.audit.request }}the result {% endif %}{% if not part.audit.reaction %}{{ 'and ' if not (part.audit.request and part.audit.result) }}the reaction {% endif %}may not match the messages: {{ part.audit.reasoning }}</span>
+              </div>
+              {% endif %}
             </td>
             <td>{% for t in part.topics %}<span class="hk-chip">{{ t }}</span> {% endfor %}</td>
           </tr>
         {% endfor %}
         </table>
+      </dd>
+      {% endif %}
+      {% if c.row.audit %}
+      <dt>Check</dt>
+      <dd>
+        {% if c.row.audit.rewritten %}
+        Written twice. The check found {{ c.row.audit.rewritten|length }} part{{ '' if c.row.audit.rewritten|length == 1 else 's' }} of the first answer wrong, and what is shown is the second.
+        <details class="hk-text"><summary>what the first answer had</summary>
+          {% for w in c.row.audit.rewritten %}
+          <div class="hk-result"><span class="hk-mono">m{{ w.first_message }}&ndash;m{{ w.last_message }}</span> {{ w.summary }} &rarr; {{ w.result }}<br>{{ w.reasoning }}</div>
+          {% endfor %}
+        </details>
+        {% elif not c.row.audit.error %}
+        Written once. The check found every part's request and result in the messages.
+        {% endif %}
+        {% if c.row.audit.error %}<div class="hk-err" style="margin:0">{{ c.row.audit.error }}</div>{% endif %}
       </dd>
       {% endif %}
       {% if c.row.problems %}<dt>Format</dt><dd class="hk-err" style="margin:0">{{ c.row.problems|join('; ') }}</dd>{% endif %}
@@ -599,9 +621,11 @@ _ROOM_PAGE = """
 <div class="hk-wrap">
   <p style="margin:0 0 12px"><a class="hk-back" href="/assistant/housekeeping">&larr; Housekeeping</a></p>
   <h1 class="hk-head">{{ room_name }}</h1>
-  <p class="hk-lede">This room's messages in chunks, each summarized once by a
+  <p class="hk-lede">This room's messages in chunks, each summarized by a
     local model: the chunk split into parts, each with what was wanted, what
-    came of it and how you reacted, under one broader phrase. The grey
+    came of it and how you reacted, under one broader phrase. A second call
+    checks every part against its messages; when it finds a request or a
+    result wrong, the chunk is written once more. The grey
     labels beside a part are records (how its runs ended, acceptance
     criteria, your votes). The coloured label says how well calibrated the
     assistant was, decided by rule from your reaction and those records.

@@ -2,6 +2,7 @@
 agents/housekeeping.py. No model is called; the summarizer's call is faked."""
 from __future__ import annotations
 
+import re
 import time
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -321,17 +322,38 @@ def _reply(first: int, n: int = 10, topic: str = "weather"):
         summary="weather questions", topics=["Weather Talk"])
 
 
-def _fake_chunk_model(monkeypatch, reply=None):
-    """Stands in for the structured call. `reply(prompt)` builds the answer;
-    by default one part covering the chunk the prompt names."""
-    import re
+def _checks(prompt: str, wrong: tuple[int, ...] = ()):
+    """A check with one entry per part of the index in `prompt`. The parts
+    at the positions in `wrong` have a result that does not match."""
+    from agents.room_chunks import ChunkCheck, PartCheck
 
+    firsts = [int(n or 0) for n in re.findall(r"^Part (?:m(\d+) to|with no)", prompt, re.M)]
+    return ChunkCheck(parts=[
+        PartCheck(first_message=first, reasoning=f"read part {k}",
+                  request_matches=True, result_matches=k not in wrong,
+                  reaction_matches=True)
+        for k, first in enumerate(firsts)])
+
+
+def _fake_chunk_model(monkeypatch, reply=None, check=None):
+    """Stands in for the structured calls. `reply(first)` builds the summary;
+    by default one part covering the chunk the prompt names. `check(prompt)`
+    builds the check of it; by default one that finds nothing wrong. Returns
+    the summary calls' prompts; the checks' prompts are its `.checks`."""
     from agents import model_groups
+    from agents.room_chunks import ChunkCheck
 
-    prompts: list[str] = []
+    class Prompts(list):
+        checks: list[str]
+
+    prompts = Prompts()
+    prompts.checks = []
 
     def fake(agent_name, models, system_prompt, user_prompt, response_model, *,
              observer=None, **_kw):
+        if response_model is ChunkCheck:
+            prompts.checks.append(user_prompt)
+            return (check(user_prompt) if check else _checks(user_prompt)), models[0]
         prompts.append(user_prompt)
         first = int(re.search(r"The chunk, m(\d+) to", user_prompt).group(1))
         if observer is not None:
@@ -348,7 +370,7 @@ def _fake_chunk_model(monkeypatch, reply=None):
     return prompts
 
 
-V = 5   # agents.room_chunks.PROMPT_VERSION
+V = 6   # agents.room_chunks.PROMPT_VERSION
 
 
 def test_chunks_are_cut_in_order_and_wait_for_their_context(app_ctx):
@@ -389,12 +411,17 @@ def test_a_run_end_queues_two_chunks_and_each_is_summarized_once(app_ctx, monkey
             (0, 10, "weather questions", V), (1, 10, "weather questions", V)]
         assert chunks[0].topics == ["weather-talk"] and chunks[0].model == "model-a"
         assert chunks[0].problems == [] and chunks[0].job_uuid is not None
+        # Each summary was checked once, found right, and not written again.
+        assert chunks[0].audit == {"attempts": 1} and len(prompts.checks) == 2
+        assert prompts.checks[0].startswith(prompts[0] + "\n\nThe index to check:\n")
         assert chunks[1].parts == [{
             "first_message": 10, "last_message": 19, "requests": 1,
             "summary": "questions about the weather", "topics": ["weather"],
             "result": "a forecast was given", "reactions": ["moved_on"],
             "calibration": "calibrated",
             "calibration_basis": "the human went on without contesting it",
+            "audit": {"request": True, "result": True, "reaction": True,
+                      "reasoning": "read part 0"},
             "signals": {"replies": 5, "repeats": 0, "bare": 0, "runs": {}, "first_run": None, "last_run": None,
                         "criteria_not_met": 0, "revisions": 0, "up": 0, "down": 0}}]
         # The first chunk has no context before it; the second has two each side.
@@ -487,7 +514,9 @@ def test_the_worker_rests_after_a_burst_of_calls(app_ctx, monkeypatch):
     try:
         assert agent.handle(uuid4(), {"room_uuid": str(room.uuid), "room_chunks": True})[
             "jobs"] == {"done": 4}
-        assert rests == [2]                             # 2 calls, a rest, 2 more
+        # A chunk is two calls, the summary and its check: a rest after each
+        # of the first three, and the fourth ends the request.
+        assert rests == [2, 2, 2]
     finally:
         db.session.query(db.RoomChunk).filter_by(room_uuid=room.uuid).delete()
         db.session.commit()
@@ -500,27 +529,111 @@ def _part(first, last, summary, *topics, result="done", reaction="moved_on"):
                         result=result, human_reaction=reaction, topics=list(topics))
 
 
-def test_settle_joins_repeats_and_makes_parts_cover_the_chunk():
+def _asked(*texts):
+    """A chunk in which each request is followed by one reply."""
+    out = []
+    for text in texts:
+        out += [{"id": len(out) + 1, "sender": "human", "text": text},
+                {"id": len(out) + 2, "sender": "agent", "text": "a reply"}]
+    return out
+
+
+def test_settle_joins_a_request_asked_again_and_makes_parts_cover_the_chunk():
     from agents import room_chunks as rc
 
+    chunk = _asked("compute the square root of 1999", "compute the square root of 1999",
+                   "try again", "compute the square root of 2999", "which boards exist")
     reply = rc.ChunkSummary(
         parts=[_part(20, 20, "compute a square root", "sqrt", "number",
                      result="step limit reached", reaction="asked_again"),
-               _part(22, 22, "compute another square root", "sqrt"),
-               _part(24, 24, "compute a third", "sqrt", "maths", result="a value was given"),
-               _part(26, 26, "which boards exist", "Kanban Boards")],
+               _part(22, 22, "compute it once more", "sqrt", reaction="asked_again"),
+               _part(24, 24, "a retry", "sqrt", "maths", result="a value was given"),
+               _part(26, 26, "compute another square root", "sqrt", result="another value"),
+               _part(28, 28, "which boards exist", "Kanban Boards")],
         summary="square roots and boards", topics=["maths", "kanban"])
-    summary, topics, parts, problems = rc.settle(reply, 20, 29)
+    summary, topics, parts, problems = rc.settle(reply, 20, 29, chunk)
     assert (summary, topics, problems) == ("square roots and boards", ["maths", "kanban"], [])
-    first, second = parts
-    # The joined part keeps the first phrase and ends where the subject ended up.
+    first, second, third = parts
+    # The same request and a bare retry are one part with the first's phrase,
+    # and it ends where the request ended up.
     assert (first["first_message"], first["last_message"], first["requests"]) == (20, 25, 3)
     assert first["summary"] == "compute a square root"
     assert first["result"] == "a value was given"
-    assert first["reactions"] == ["asked_again", "moved_on", "moved_on"]
+    assert first["reactions"] == ["asked_again", "asked_again", "moved_on"]
     assert first["topics"] == ["sqrt", "number"]
-    assert (second["first_message"], second["last_message"], second["topics"]) == (
-        26, 29, ["kanban-boards"])
+    # The same question about another value keeps its own part and its own
+    # answer, though the model gave it the same topic.
+    assert (second["first_message"], second["last_message"], second["requests"],
+            second["result"]) == (26, 27, 1, "another value")
+    assert (third["first_message"], third["last_message"], third["topics"]) == (
+        28, 29, ["kanban-boards"])
+
+
+def test_the_check_is_put_on_its_parts_and_fails_on_request_or_result():
+    from agents import room_chunks as rc
+
+    def check(first, request=True, result=True, reaction=True):
+        return rc.PartCheck(first_message=first, reasoning=f"about {first}",
+                            request_matches=request, result_matches=result,
+                            reaction_matches=reaction)
+
+    parts = [{"first_message": 20, "last_message": 23}, {"first_message": 24, "last_message": 27},
+             {"first_message": 28, "last_message": 29}]
+    # Numbered 1, 2, 3 by the model: one per part, so they are taken in order.
+    failed, problems = rc.settle_audit(rc.ChunkCheck(parts=[
+        check(1, result=False), check(2, reaction=False), check(3)]), parts)
+    assert failed == [parts[0]] and problems == []
+    assert parts[0]["audit"] == {"request": True, "result": False, "reaction": True,
+                                 "reasoning": "about 1"}
+    assert parts[1]["audit"]["reaction"] is False       # shown, and fails nothing
+    # Fewer checks than parts: matched by message number, the rest unchecked.
+    parts = [{"first_message": 20, "last_message": 23}, {"first_message": 24, "last_message": 29}]
+    failed, problems = rc.settle_audit(rc.ChunkCheck(parts=[check(24, request=False)]), parts)
+    assert failed == [parts[1]] and "audit" not in parts[0]
+    assert problems == ["check: 1 checks for 2 parts"]
+
+
+def test_a_chunk_whose_check_fails_is_written_once_more(app_ctx, monkeypatch):
+    room = _room_with_messages(app_ctx, 12)
+    # The first answer's check finds its part wrong; the second's finds it
+    # wrong too, and that one is kept with the check on it.
+    prompts = _fake_chunk_model(monkeypatch, check=lambda p: _checks(p, wrong=(0,)))
+    agent = _agent(monkeypatch)
+    assert agent.handle(uuid4(), {"room_uuid": str(room.uuid), "room_chunks": True})[
+        "jobs"] == {"done": 1}
+    (chunk,) = db.list_room_chunks(room.uuid, 10, 2, V)
+    try:
+        assert len(prompts) == 2 and len(prompts.checks) == 2
+        assert prompts[1].startswith(prompts[0] + "\n\nAn earlier answer for this chunk")
+        assert "- Part m0 to m9: read part 0" in prompts[1]
+        assert chunk.audit == {"attempts": 2, "rewritten": [{
+            "first_message": 0, "last_message": 9, "summary": "questions about the weather",
+            "result": "a forecast was given", "reasoning": "read part 0"}]}
+        assert chunk.parts[0]["audit"]["result"] is False
+        assert agent._burst == 4                        # every call counts toward the rest
+    finally:
+        db.session.query(db.RoomChunk).filter_by(room_uuid=room.uuid).delete()
+        db.session.commit()
+
+
+def test_a_check_no_model_delivers_leaves_the_summary(app_ctx, monkeypatch):
+    room = _room_with_messages(app_ctx, 12)
+
+    def no_check(_prompt):
+        raise RuntimeError("every member failed")
+
+    prompts = _fake_chunk_model(monkeypatch, check=no_check)
+    agent = _agent(monkeypatch)
+    assert agent.handle(uuid4(), {"room_uuid": str(room.uuid), "room_chunks": True})[
+        "jobs"] == {"done": 1}
+    (chunk,) = db.list_room_chunks(room.uuid, 10, 2, V)
+    try:
+        assert len(prompts) == 1 and chunk.summary == "weather questions"
+        assert chunk.audit == {"attempts": 1, "error": "check: every member failed"}
+        assert "audit" not in chunk.parts[0]
+    finally:
+        db.session.query(db.RoomChunk).filter_by(room_uuid=room.uuid).delete()
+        db.session.commit()
 
 
 def test_a_parts_signals_are_counted_from_the_records_of_its_replies():

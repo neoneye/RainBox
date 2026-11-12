@@ -1191,6 +1191,15 @@ class RoomChunk(db.Model):
     parts: Mapped[list | None] = mapped_column(JSONB)
     # Where its reply strayed from the asked-for format.
     problems: Mapped[list] = mapped_column(JSONB, default=list)
+    # The check of the summary by a second call: `{attempts, rewritten,
+    # error}`. `attempts` is 2 when the check had the chunk written again;
+    # `rewritten` then lists the parts of the first answer it found wrong,
+    # each with its message numbers, `summary`, `result` and the check's
+    # `reasoning`. `error` says when a check or a rewrite could not be made.
+    # Each stored part carries the check of itself as `audit`: `{request,
+    # result, reaction, reasoning}`. NULL for a chunk written before the
+    # check existed.
+    audit: Mapped[dict | None] = mapped_column(JSONB)
     model: Mapped[str | None] = mapped_column(Text)
     prompt_version: Mapped[int] = mapped_column(default=1)
     job_uuid: Mapped[UUID | None] = mapped_column()
