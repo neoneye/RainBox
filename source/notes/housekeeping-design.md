@@ -95,7 +95,7 @@ A part is a run of consecutive messages about one subject. A request that
 is repeated, retried or corrected stays in its part. The same question about
 another thing or another value is a part of its own, because it has an
 answer of its own. The parts come first in the schema, so the chunk's subjects
-is written with them in view.
+are named with them in view.
 
 - **`subjects`** are names, at most five words each, and not sentences.
   Code joins them with commas into the chunk's stored `summary`. Asked for
