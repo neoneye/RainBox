@@ -35,7 +35,7 @@ from pydantic import BaseModel, Field
 #: Bumped when the prompt, the schema or the parsing changes. A chunk belongs
 #: to the series of the version that wrote it, so a new version summarizes a
 #: room again beside the old series, and the two can be compared.
-PROMPT_VERSION = 10
+PROMPT_VERSION = 11
 
 SUMMARY_MAX_CHARS = 120
 RESULT_MAX_CHARS = 160
@@ -54,7 +54,7 @@ PROMPT_REPLY_MAX_CHARS = 600
 Calibration = Literal["calibrated", "overconfident", "underconfident",
                       "uncontested", "unclear"]
 Reaction = Literal["moved_on", "asked_again", "corrected", "pushed_for_more",
-                   "thanked", "not_shown"]
+                   "thanked", "questioned", "not_shown"]
 #: What the model is asked about a part's human messages: the three things a
 #: rule cannot tell from where a message stands or from its letters.
 FollowUp = Literal["corrected", "retried", "thanked", "none"]
@@ -401,6 +401,29 @@ def part_signals(part: dict[str, Any], chunk: list[dict[str, Any]],
     return out
 
 
+#: A span between quotation marks of one of the common kinds. The apostrophe
+#: is left out: it also stands inside words.
+_QUOTED = re.compile(r'"([^"]+)"|“([^”]+)”|«([^»]+)»|„([^“”]+)[“”]|`([^`]+)`')
+
+
+def _within(span: list[str], words: list[str]) -> bool:
+    return any(words[i:i + len(span)] == span
+               for i in range(len(words) - len(span) + 1))
+
+
+def _quotes_back(text: str, replies: list[list[str]],
+                 requests: list[list[str]]) -> bool:
+    """Whether `text` puts between quotation marks words that a reply used
+    and no request did: the human holding the assistant's own wording up to
+    it. Words the human used first are theirs, and quoting them is not."""
+    for groups in _QUOTED.findall(text):
+        span = _tokens(next(g for g in groups if g))
+        if (span and any(_within(span, r) for r in replies)
+                and not any(_within(span, q) for q in requests)):
+            return True
+    return False
+
+
 def react(part: dict[str, Any], chunk: list[dict[str, Any]],
           after: list[dict[str, Any]], first_index: int) -> list[str]:
     """What the human did after the replies in one part, in order: one entry
@@ -424,6 +447,11 @@ def react(part: dict[str, Any], chunk: list[dict[str, Any]],
     the messages that follow the chunk:
     - no human message: `not_shown`. The room ends there;
     - a request of the part asked again, by its text: `asked_again`;
+    - it quotes words of a reply in the part back (`_quotes_back`):
+      `questioned`. The human is not done with the answer: they are probing
+      what it said. This is read from the quotation alone. Asked whether a
+      part opens with doubt about the reply before it, the model said so of
+      three new subjects in one room and not of the one message that did;
     - anything else: `moved_on`.
 
     `corrected` is the model's reading and stands before the last entry. A
@@ -434,12 +462,18 @@ def react(part: dict[str, Any], chunk: list[dict[str, Any]],
     seen: list[list[str]] = []
     out: list[str] = []
     following: list[str] | None = None
+    following_text = ""
+    replies: list[list[str]] = []
     for k, m in enumerate([*chunk, *after]):
-        if m["sender"] != "human" or first_index + k < part["first_message"]:
+        if first_index + k < part["first_message"]:
+            continue
+        if m["sender"] != "human":
+            if first_index + k <= part["last_message"]:
+                replies.append(_tokens(m["text"]))
             continue
         words = _tokens(m["text"])
         if first_index + k > part["last_message"]:
-            following = words
+            following, following_text = words, m["text"]
             break
         if seen:
             if len(words) <= BARE_MAX_WORDS:
@@ -459,6 +493,8 @@ def react(part: dict[str, Any], chunk: list[dict[str, Any]],
         out.append("not_shown")
     elif any(_same_request(following, earlier) for earlier in seen):
         out.append("asked_again")
+    elif _quotes_back(following_text, replies, seen):
+        out.append("questioned")
     else:
         out.append("moved_on")
     return out
@@ -471,7 +507,9 @@ def calibrate(part: dict[str, Any]) -> tuple[Calibration, str]:
     (runs, acceptance criteria, votes). The first rule that applies decides:
 
     1. A reply was voted down, or the human corrected one: overconfident.
-    2. The human asked again (`react` says how that is read). The model's
+    2. The human's next message questioned the reply: overconfident. The
+       reply was given as an answer, and the human took it up as a problem.
+    3. The human asked again (`react` says how that is read). The model's
        reading alone is not enough for it: it calls a new question on the
        same subject asking again.
        - the first run did not resolve it and the last did: underconfident.
@@ -480,9 +518,9 @@ def calibrate(part: dict[str, Any]) -> tuple[Calibration, str]:
          not settle it.
        - otherwise unclear: it never delivered, which is a failure and not a
          matter of confidence.
-    3. A reply was voted up: calibrated.
-    4. No reaction is shown, because the room ends there: unclear.
-    5. The human moved on, thanked or went deeper, and the last run resolved
+    4. A reply was voted up: calibrated.
+    5. No reaction is shown, because the room ends there: unclear.
+    6. The human moved on, thanked or went deeper, and the last run resolved
        the request: uncontested. Silence is not agreement, so this is not
        called calibrated: only the human saying so (a vote up) is. If the
        last run did not resolve it: unclear.
@@ -495,6 +533,8 @@ def calibrate(part: dict[str, Any]) -> tuple[Calibration, str]:
         return "overconfident", "a reply was voted down"
     if "corrected" in reactions:
         return "overconfident", "the human corrected a reply"
+    if "questioned" in reactions:
+        return "overconfident", "the human's next message questioned the reply"
     if "asked_again" in reactions:
         if first and first != "resolved" and last == "resolved":
             return "underconfident", "it delivered only after being asked again"

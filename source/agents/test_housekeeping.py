@@ -369,7 +369,7 @@ def _fake_chunk_model(monkeypatch, reply=None, check=None):
     return prompts
 
 
-V = 10   # agents.room_chunks.PROMPT_VERSION
+V = 11   # agents.room_chunks.PROMPT_VERSION
 
 
 def test_chunks_are_cut_in_order_and_wait_for_their_context(app_ctx):
@@ -750,6 +750,31 @@ def test_a_part_inside_the_chunk_is_followed_by_the_next_parts_request():
         subjects=["a lighthouse", "boards"], topics=["misc"])
     _s, _t, parts, _p = rc.settle(reply, 40, 43, chunk, [])
     assert [p["reactions"] for p in parts] == [["moved_on"], ["not_shown"]]
+
+
+@pytest.mark.parametrize("next_request, expected", [
+    # The reply's own wording held up to it, in two kinds of quotation mark.
+    ('who is "the keeper" here', "questioned"),
+    ("who is «the keeper» here", "questioned"),
+    # The human's own words in quotation marks are not the reply's.
+    ('search for "the lighthouse" once more in the notes of 1999', "moved_on"),
+    ("which boards exist", "moved_on"),
+])
+def test_a_next_message_that_quotes_the_reply_back_is_negative_feedback(next_request, expected):
+    from agents import room_chunks as rc
+
+    chunk = [{"id": 1, "sender": "human", "text": "tell me about the lighthouse"},
+             {"id": 2, "sender": "agent", "text": "The keeper built it in 1999.",
+              "signals": {"run": "resolved"}},
+             {"id": 3, "sender": "human", "text": next_request},
+             {"id": 4, "sender": "agent", "text": "a reply"}]
+    reply = rc.ChunkSummary(
+        parts=[_part(40, 41, "the lighthouse", "lighthouse"),
+               _part(42, 43, "a question", "question")],
+        subjects=["the lighthouse", "a question"], topics=["misc"])
+    _s, _t, parts, _p = rc.settle(reply, 40, 43, chunk, [])
+    assert parts[0]["reactions"] == [expected]
+    assert (parts[0]["calibration"] == "overconfident") == (expected == "questioned")
 
 
 def test_reply_signals_come_from_the_run_the_audit_and_the_vote(app_ctx):

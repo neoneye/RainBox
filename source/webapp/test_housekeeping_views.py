@@ -211,12 +211,12 @@ def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
         audit={"attempts": 2, "rewritten": [{
             "first_message": 0, "last_message": 5, "summary": "which number is odd",
             "result": "seven", "reasoning": "seven answers a later request"}]},
-        model="model-a", prompt_version=10)
+        model="model-a", prompt_version=11)
     try:
         body = c.get(f"/assistant/housekeeping/room/{room.uuid}").get_data(as_text=True)
         assert "Messages 0&ndash;9" in body and "questions about numbers" in body
         # The heading links to its own chunk in this series.
-        assert 'href="?size=10&amp;overlap=2&amp;prompt=10#chunk-0">Messages 0&ndash;9</a>' in body
+        assert 'href="?size=10&amp;overlap=2&amp;prompt=11#chunk-0">Messages 0&ndash;9</a>' in body
         assert '<span class="hk-chip">numbers</span>' in body
         assert "m0&ndash;m5" in body and "which number comes next" in body
         assert "&times;3" in body and '<span class="hk-chip">notation</span>' in body

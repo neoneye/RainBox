@@ -134,7 +134,16 @@ the rest of the chunk and in the context after it:
 |---|---|
 | there is none: the room ends there | `not_shown` |
 | a request of the part again, by its text | `asked_again` |
+| it puts words of a reply in the part between quotation marks | `questioned` |
 | anything else | `moved_on` |
+
+**A reply quoted back is negative feedback.** A human who quotes the
+assistant's wording in the next message is not done with the answer: they
+are finding out what it meant or where it went wrong. Words the human used
+first are theirs, and quoting them does not count. This is the only doubt
+that is read, and it is read from the quotation marks. Asked whether a part
+opens with doubt about the reply before it, the model said so of three new
+subjects in one room of 14 chunks, and not of the one message that did.
 
 `corrected` is the model's reading, and stands before the last entry. The
 model's `retried` counts in two places. On a message of a few words: such a
@@ -154,6 +163,7 @@ line that applies decides:
 |---|---|---|
 | a reply was voted down | overconfident | a reply was voted down |
 | the human corrected a reply | overconfident | the human corrected a reply |
+| the next message quoted the reply back | overconfident | the human's next message questioned the reply |
 | asked again, and the first run did not resolve it but the last did | underconfident | it delivered only after being asked again |
 | asked again, and a run resolved it | overconfident | it answered, and the human kept asking |
 | asked again, and nothing was delivered | unclear | asked again, and nothing was delivered |
@@ -289,6 +299,9 @@ summary call; the check writes more and takes longer:
   nobody thanked; none of them stood, because no message of a few words
   followed. `retried` was right three times out of four: the fourth turned
   a nudge for more into asking again.
+- **Doubt without a quotation is not seen.** A next message that probes
+  the reply in its own words reads as moving on, and the part stays
+  uncontested until the reply is voted on.
 - **A request asked again in other words is not seen**, unless it is the
   part's only follow-up and the model reads a retry.
 - **What the human states is not kept.** A part holds a request and its
