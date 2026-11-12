@@ -194,7 +194,7 @@ def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
         audit={"attempts": 2, "rewritten": [{
             "first_message": 0, "last_message": 5, "summary": "which number is odd",
             "result": "seven", "reasoning": "seven answers a later request"}]},
-        model="model-a", prompt_version=8)
+        model="model-a", prompt_version=9)
     try:
         body = c.get(f"/assistant/housekeeping/room/{room.uuid}").get_data(as_text=True)
         assert "Messages 0&ndash;9" in body and "questions about numbers" in body

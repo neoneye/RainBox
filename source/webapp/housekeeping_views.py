@@ -637,7 +637,7 @@ _ROOM_PAGE = """
   <h1 class="hk-head">{{ room_name }}</h1>
   <p class="hk-lede">This room's messages in chunks, each summarized by a
     local model: the chunk split into parts, each with what was wanted, what
-    came of it and how you reacted, under one broader phrase. A second call
+    came of it and how you reacted, under the names of its subjects. A second call
     checks every part against its messages; when it finds a request or a
     result wrong, the chunk is written once more. The grey
     labels beside a part are records (how its runs ended, acceptance

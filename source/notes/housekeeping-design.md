@@ -9,7 +9,7 @@ The two summaries are different things:
   obstacles in its steps, and its outcome.
 - **The room chunk summary** describes a stretch of a room's messages: its
   parts, each with what was wanted, what came of it and how well calibrated
-  the assistant was, under one broader phrase and broader topics. It is the
+  the assistant was, under the names of its subjects and broader topics. It is the
   compaction of a long room.
 
 The plan for those later jobs, and for a heat budget and a catch-up lock, is
@@ -89,14 +89,19 @@ in two levels:
 | level | fields |
 |---|---|
 | each part | `first_message`, `last_message`, `summary`, `result`, `follow_up`, `topics` (one or two) |
-| the chunk | `summary`, `topics` (one to three, broader) |
+| the chunk | `subjects` (the name of each part's subject), `topics` (one to three, broader) |
 
 A part is a run of consecutive messages about one subject. A request that
 is repeated, retried or corrected stays in its part. The same question about
 another thing or another value is a part of its own, because it has an
-answer of its own. The parts come first in the schema, so the chunk's phrase
+answer of its own. The parts come first in the schema, so the chunk's subjects
 is written with them in view.
 
+- **`subjects`** are names, at most five words each, and not sentences.
+  Code joins them with commas into the chunk's stored `summary`. Asked for
+  a phrase over the chunk, the model wrapped the names in words that said
+  nothing: that details were requested, that questions were asked. A list
+  leaves it nowhere to put them.
 - **`summary`** is what was wanted.
 - **`result`** is what came of it: the one main thing found or concluded, or
   that nothing was.
@@ -284,8 +289,10 @@ summary call; the check writes more and takes longer:
   human's own sentence or the last reply, and the rest is lost.
 - **A correction in a later chunk is not seen.** The part it corrects stays
   as it was written, because a chunk is summarized once and alone.
-- **The chunk's own phrase is weak** when its parts are unrelated.
-- **Phrases still begin with who spoke**, though the prompt asks otherwise.
+- **The chunk's subjects carry no filler**, in all 14 chunks of one room.
+  Many are the human's request word for word, which is longer than a name.
+- **A part's phrase sometimes still begins with who spoke**, though the
+  prompt asks otherwise.
 
 **Local models only.** The call reads the room's own messages, so members of
 the group that are not on a loopback endpoint, or are `:cloud` names, are left
@@ -404,7 +411,7 @@ The inbox item is a hint. The rows say what is due.
 | `room_uuid`, `chunk_size`, `overlap`, `prompt_version`, `seq` | the room, the series, and the chunk's place in it |
 | `first_message_id`, `last_message_id`, `message_count` | its edges and size |
 | `content_hash` | over its messages' ids and texts when it was written |
-| `summary`, `topics` | the chunk's phrase and broader topics |
+| `summary`, `topics` | the chunk's subjects, joined, and broader topics |
 | `parts` | its parts: `{first_message, last_message, summary, topics, requests}`, and from prompt 3 `result`, the reactions, `calibration`, `signals`; from prompt 4 `calibration_basis`; from prompt 6 `audit`; from prompt 7 the reactions are read by rule; NULL for a chunk of the first prompt |
 | `problems` | what was off in the reply, and in the check's reply |
 | `audit` | the check: `{attempts, rewritten, error}`; NULL for a chunk written before the check existed |

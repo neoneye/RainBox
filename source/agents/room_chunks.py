@@ -3,7 +3,7 @@
 A room's counted messages are cut into chunks (`db.due_room_chunks`). This
 module turns one chunk into a prompt, and the model's structured reply into
 what is stored: the chunk split into parts, each with what was wanted, what
-came of it, and topic names; and one broader phrase and broader topics over
+came of it, and topic names; and the names of its subjects and broader topics over
 the whole chunk. What the human did after each reply is read off the
 messages by rule (`react`), and how well calibrated the assistant was in a
 part is decided by rule from that and the records (`calibrate`), and not by
@@ -35,11 +35,12 @@ from pydantic import BaseModel, Field
 #: Bumped when the prompt, the schema or the parsing changes. A chunk belongs
 #: to the series of the version that wrote it, so a new version summarizes a
 #: room again beside the old series, and the two can be compared.
-PROMPT_VERSION = 8
+PROMPT_VERSION = 9
 
 SUMMARY_MAX_CHARS = 120
 RESULT_MAX_CHARS = 160
 TOPIC_MAX_CHARS = 32
+SUBJECT_MAX_CHARS = 48
 MAX_PARTS = 5
 MAX_PART_TOPICS = 2
 MAX_CHUNK_TOPICS = 3
@@ -67,7 +68,7 @@ class ChunkPart(BaseModel):
 
 
 class ChunkSummary(BaseModel):
-    """The parts come first, so the broader phrase is written with them in
+    """The parts come first, so the subjects are named with them in
     view: a breakdown read bottom-up. The model is not asked what the human
     did after a part: asked, it answered for the chunk's end and not for
     the part's, and missed a retry inside the part. Whether a message
@@ -79,7 +80,7 @@ class ChunkSummary(BaseModel):
     "calibrated"."""
 
     parts: list[ChunkPart] = Field(description="The chunk's parts, in order.")
-    summary: str = Field(description="A short phrase covering the whole chunk.")
+    subjects: list[str] = Field(description="The name of each part's subject, in order.")
     topics: list[str] = Field(description="Broader names that group the parts' subjects.")
 
 
@@ -116,9 +117,11 @@ SYSTEM_PROMPT = (
     "A reply voted up after a hard request is worth naming in the result. A "
     "reply voted down had something wrong with it: say what the human "
     "objected to when the messages show it.\n\n"
-    "Then describe the whole chunk: a phrase that covers its parts and names "
-    "their subjects, and one to three broader topic names that group the "
-    "parts' subjects.\n\n"
+    "Then describe the whole chunk: subjects, the name of each part's "
+    "subject in order, and one to three broader topic names that group "
+    "them. A subject is the name of the thing itself, in the human's own "
+    "words and at most five words. It is a name and not a sentence: it "
+    "does not say that something was asked, wanted or discussed.\n\n"
     "Rules:\n"
     "- A phrase is at most fourteen words unless said otherwise. It does "
     "not begin by naming who spoke, and it does not announce itself.\n"
@@ -222,6 +225,25 @@ def _topics(raw: list[str], limit: int, where: str,
     elif len(out) > limit:
         problems.append(f"{where}: {len(out)} topics, kept {limit}")
     return out[:limit]
+
+
+def _subjects(raw: list[str], problems: list[str]) -> str:
+    """The chunk's phrase: its subjects' names, joined. Asked for a phrase,
+    the model wrapped the names in words that said nothing (that details
+    were requested, that questions were asked). A list leaves it nowhere to
+    put them."""
+    out: list[str] = []
+    for name in raw:
+        name = " ".join(str(name).split()).strip(".,;:")
+        if name and name.casefold() not in {n.casefold() for n in out}:
+            if len(name) > SUBJECT_MAX_CHARS:
+                problems.append(f"chunk: a subject of {len(name)} characters")
+            out.append(name)
+    if not out:
+        problems.append("chunk: empty")
+    elif len(out) > MAX_PARTS:
+        problems.append(f"chunk: {len(out)} subjects, kept {MAX_PARTS}")
+    return ", ".join(out[:MAX_PARTS])
 
 
 def _sentence(text: str, where: str, problems: list[str],
@@ -528,7 +550,7 @@ def settle(reply: ChunkSummary, first_index: int, last_index: int,
         part["requests"] = 1 + part["reactions"][:-1].count("asked_again")
         del part["read"]
         part["calibration"], part["calibration_basis"] = calibrate(part)
-    summary = _sentence(reply.summary, "chunk", problems)
+    summary = _subjects(reply.subjects, problems)
     topics = _topics(reply.topics, MAX_CHUNK_TOPICS, "chunk", problems)
     return summary, topics, parts, problems
 

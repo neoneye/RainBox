@@ -319,7 +319,7 @@ def _reply(first: int, n: int = 10, topic: str = "weather"):
                          summary="questions about the weather",
                          result="a forecast was given", follow_up="none",
                          topics=[topic])],
-        summary="weather questions", topics=["Weather Talk"])
+        subjects=["weather questions"], topics=["Weather Talk"])
 
 
 def _checks(prompt: str, wrong: tuple[int, ...] = ()):
@@ -369,7 +369,7 @@ def _fake_chunk_model(monkeypatch, reply=None, check=None):
     return prompts
 
 
-V = 8   # agents.room_chunks.PROMPT_VERSION
+V = 9   # agents.room_chunks.PROMPT_VERSION
 
 
 def test_chunks_are_cut_in_order_and_wait_for_their_context(app_ctx):
@@ -468,7 +468,7 @@ def test_what_is_off_in_a_reply_is_stored_with_the_chunk(app_ctx, monkeypatch):
     _fake_chunk_model(monkeypatch, lambda first: ChunkSummary(
         parts=[ChunkPart(first_message=40, last_message=44, summary="x" * 130,
                          result="", follow_up="none", topics=[])],
-        summary="", topics=["a", "b", "c", "d"]))
+        subjects=[], topics=["a", "b", "c", "d"]))
     agent = _agent(monkeypatch)
     agent.handle(uuid4(), {"room_uuid": str(room.uuid), "room_chunks": True})
     (chunk,) = db.list_room_chunks(room.uuid, 10, 2, V)
@@ -550,9 +550,9 @@ def test_settle_joins_a_request_asked_again_and_makes_parts_cover_the_chunk():
                _part(24, 24, "a retry", "sqrt", "maths", result="a value was given"),
                _part(26, 26, "compute another square root", "sqrt", result="another value"),
                _part(28, 28, "which boards exist", "Kanban Boards")],
-        summary="square roots and boards", topics=["maths", "kanban"])
+        subjects=["square roots", "Square Roots", "boards."], topics=["maths", "kanban"])
     summary, topics, parts, problems = rc.settle(reply, 20, 29, chunk)
-    assert (summary, topics, problems) == ("square roots and boards", ["maths", "kanban"], [])
+    assert (summary, topics, problems) == ("square roots, boards", ["maths", "kanban"], [])
     first, second, third = parts
     # The same request and a bare retry are one part with the first's phrase,
     # and it ends where the request ended up.
@@ -649,7 +649,7 @@ def test_a_parts_signals_are_counted_from_the_records_of_its_replies():
     reply = rc.ChunkSummary(
         parts=[_part(40, 43, "count letters", "letters", read="corrected"),
                _part(44, 45, "list boards", "boards")],
-        summary="letters and boards", topics=["misc"])
+        subjects=["letters", "boards"], topics=["misc"])
     _s, _t, parts, _p = rc.settle(reply, 40, 45, chunk)
     assert parts[0]["signals"] == {
         "replies": 2, "repeats": 0, "bare": 1, "runs": {"resolved": 2}, "first_run": "resolved",
@@ -735,7 +735,7 @@ def test_reactions_are_read_from_the_messages(texts, read, after, expected):
     chunk = _asked(*texts)
     last = 40 + len(chunk) - 1
     reply = rc.ChunkSummary(parts=[_part(40, last, "the lighthouse", "lighthouse", read=read)],
-                            summary="the lighthouse", topics=["places"])
+                            subjects=["the lighthouse"], topics=["places"])
     _s, _t, parts, _p = rc.settle(reply, 40, last, chunk, _asked(*after))
     assert parts[0]["reactions"] == expected and "read" not in parts[0]
 
@@ -746,7 +746,7 @@ def test_a_part_inside_the_chunk_is_followed_by_the_next_parts_request():
     chunk = _asked("tell me about the lighthouse", "which boards exist")
     reply = rc.ChunkSummary(
         parts=[_part(40, 41, "the lighthouse", "lighthouse"), _part(42, 43, "boards", "boards")],
-        summary="a lighthouse and boards", topics=["misc"])
+        subjects=["a lighthouse", "boards"], topics=["misc"])
     _s, _t, parts, _p = rc.settle(reply, 40, 43, chunk, [])
     assert [p["reactions"] for p in parts] == [["moved_on"], ["not_shown"]]
 
