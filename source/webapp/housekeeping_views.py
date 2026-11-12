@@ -162,6 +162,11 @@ _STYLE = """
     background:#fbfdff;border-bottom:1px solid #e5e7eb;font-size:0.86rem}
   .hk-card .bd{padding:12px 14px}
   .hk-card h3{margin:0;font-size:0.9rem;color:#1a1a2e}
+  .hk-anchor{color:inherit;text-decoration:none}
+  .hk-anchor:hover{text-decoration:underline}
+  .hk-anchor:hover::after{content:" #";color:#9aa3af}
+  .hk-card:target{border-color:#6366f1;box-shadow:0 0 0 2px #e0e7ff}
+  .hk-card[id]{scroll-margin-top:12px}
   .hk-kv{display:grid;grid-template-columns:max-content 1fr;gap:6px 18px;font-size:0.86rem;margin:0}
   .hk-kv dt{font-size:0.68rem;font-weight:700;text-transform:uppercase;
     letter-spacing:0.05em;color:#9ca3af;padding-top:3px}
@@ -557,7 +562,7 @@ _ROOM_FRAGMENT = """
 {% for c in chunks %}
 <div class="hk-card" id="chunk-{{ c.row.seq }}">
   <div class="hd">
-    <h3>Messages {{ c.first_index }}&ndash;{{ c.last_index }}</h3>
+    <h3><a class="hk-anchor" title="Link to this chunk, in this series" href="?size={{ size }}&amp;overlap={{ overlap }}&amp;prompt={{ version }}#chunk-{{ c.row.seq }}">Messages {{ c.first_index }}&ndash;{{ c.last_index }}</a></h3>
     <span class="hk-mono">{{ c.dates }}</span>
     {% if c.stale %}<span class="hk-pill deferred" title="A message in this chunk was edited or deleted after the summary was written">messages changed since</span>{% endif %}
     <span style="margin-left:auto">{{ c.row.model or '' }}</span>

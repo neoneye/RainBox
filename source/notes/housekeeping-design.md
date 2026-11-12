@@ -442,6 +442,9 @@ the `chunks` link beside a room's name in the log.
 - One card per chunk: its messages' numbers and dates, its phrase and
   topics, the model, a link to the job's prompt and reply, and the messages
   themselves, folded.
+- A chunk's heading links to the chunk itself, in the series shown:
+  `?size=…&overlap=…&prompt=…#chunk-N`. The chunk the address names is
+  outlined.
 - Under it, each part: its message range, what was wanted, what came of it,
   the calibration in colour with its basis, the reactions, and the records
   in grey. A part the check still doubts says which of its request and
