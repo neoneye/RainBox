@@ -3,10 +3,11 @@
 A room's counted messages are cut into chunks (`db.due_room_chunks`). This
 module turns one chunk into a prompt, and the model's structured reply into
 what is stored: the chunk split into parts, each with what was wanted, what
-came of it, how the human reacted, and topic names; and one broader phrase
-and broader topics over the whole chunk. How well calibrated the assistant
-was in a part is then decided by rule (`calibrate`), from that reaction and
-the records, and not by the model.
+came of it, and topic names; and one broader phrase and broader topics over
+the whole chunk. What the human did after each reply is read off the
+messages by rule (`react`), and how well calibrated the assistant was in a
+part is decided by rule from that and the records (`calibrate`), and not by
+the model.
 
 A second call checks the stored parts against the messages (`AUDIT_PROMPT`,
 `settle_audit`). A part whose request or result does not match them has the
@@ -34,7 +35,7 @@ from pydantic import BaseModel, Field
 #: Bumped when the prompt, the schema or the parsing changes. A chunk belongs
 #: to the series of the version that wrote it, so a new version summarizes a
 #: room again beside the old series, and the two can be compared.
-PROMPT_VERSION = 6
+PROMPT_VERSION = 7
 
 SUMMARY_MAX_CHARS = 120
 RESULT_MAX_CHARS = 160
@@ -50,6 +51,9 @@ PROMPT_REPLY_MAX_CHARS = 600
 Calibration = Literal["calibrated", "overconfident", "underconfident", "unclear"]
 Reaction = Literal["moved_on", "asked_again", "corrected", "pushed_for_more",
                    "thanked", "not_shown"]
+#: What the model is asked about a part's human messages: the three things a
+#: rule cannot tell from where a message stands or from its letters.
+FollowUp = Literal["corrected", "retried", "thanked", "none"]
 
 
 class ChunkPart(BaseModel):
@@ -57,17 +61,20 @@ class ChunkPart(BaseModel):
     last_message: int = Field(description="Number of the part's last message.")
     summary: str = Field(description="A short phrase: what was wanted in this part.")
     result: str = Field(description="A short phrase: what came of it.")
-    human_reaction: Reaction = Field(
-        description="What the human did after the replies in this part.")
+    follow_up: FollowUp = Field(
+        description="What the human's messages in this part say about the replies.")
     topics: list[str] = Field(description="Names for this part's subject.")
 
 
 class ChunkSummary(BaseModel):
     """The parts come first, so the broader phrase is written with them in
-    view: a breakdown read bottom-up. The human's reaction is a choice,
-    because the model can read it off the messages; asked for it in its own
-    words, it copied the prompt's. The model is not asked for the
-    calibration: given the reaction and the records, it still called an
+    view: a breakdown read bottom-up. The model is not asked what the human
+    did after a part: asked, it answered for the chunk's end and not for
+    the part's, and missed a retry inside the part. Whether a message
+    follows, where it stands and whether it repeats a request are read by
+    rule (`react`). The model is left the one question that takes reading:
+    whether a message corrects, retries or acknowledges. Nor is it asked for
+    the calibration: given the reaction and the records, it still called an
     answer that was repeated unchanged while the human kept asking
     "calibrated"."""
 
@@ -100,13 +107,11 @@ SYSTEM_PROMPT = (
     "- summary: what the human wanted;\n"
     "- result: what came of it, in at most twenty words: the one main thing "
     "that was found or concluded, or that nothing was. No list of details;\n"
-    "- human_reaction: what the human did after the replies in this part. "
-    "moved_on: went to another subject. asked_again: sent the same request "
-    "once more, or told it to retry. corrected: said a reply was wrong or "
-    "gave the right answer. pushed_for_more: asked a further question on "
-    "the same subject. "
-    "thanked: acknowledged it. not_shown: the chunk ends before any "
-    "reaction;\n"
+    "- follow_up: what the human's messages in this part say about the "
+    "replies. corrected: one says a reply was wrong, or gives the right "
+    "answer. retried: one tells the assistant to do the request once more. "
+    "thanked: one acknowledges a reply. none: none of these. When several "
+    "fit, the first that fits in this order;\n"
     "- one or two topic names.\n\n"
     "A reply voted up after a hard request is worth naming in the result. A "
     "reply voted down had something wrong with it: say what the human "
@@ -235,14 +240,14 @@ def _join_repeats(parts: list[dict[str, Any]], chunk: list[dict[str, Any]],
     to that part. A small model gives a retry a part of its own, whatever
     the prompt says. "Asked again" is read as `calibrate` reads it: from the
     text (`_same_request`), or the opening request is too short to be one of
-    its own and the model read the reaction before it as asking again. A
+    its own and the model read a retry in it or in the part before it. A
     short request alone is not enough, since a new question can be three
     words. Nor is a shared topic name: the same question about another value
     has its own answer, and joined to the first it would be shown with the
     wrong one.
 
     The joined part keeps the first one's phrase, the result of the last
-    (where the request ended up) and every reaction along the way. Expects
+    (where the request ended up) and what the model read in both. Expects
     parts that cover the chunk (`_tile`)."""
     def requests(part: dict[str, Any]) -> list[list[str]]:
         return [_tokens(m["text"]) for k, m in enumerate(chunk)
@@ -256,12 +261,13 @@ def _join_repeats(parts: list[dict[str, Any]], chunk: list[dict[str, Any]],
                 and prev["first_message"] is not None):
             earlier, mine = requests(prev), requests(part)
             retry = (len(mine[0]) <= BARE_MAX_WORDS
-                     and prev["reactions"][-1] == "asked_again") if mine else False
+                     and "retried" in (prev["read"][-1], part["read"][0])
+                     ) if mine else False
             if earlier and mine and (
                     retry or any(_same_request(mine[0], e) for e in earlier)):
                 prev["last_message"] = part["last_message"]
                 prev["result"] = part["result"]
-                prev["reactions"] += part["reactions"]
+                prev["read"] += part["read"]
                 prev["topics"] += [t for t in part["topics"]
                                    if t not in prev["topics"]][:MAX_PART_TOPICS - len(prev["topics"])]
                 continue
@@ -293,8 +299,8 @@ REPEAT_MIN_WORDS = 3
 #: as the earlier one asked again.
 REPEAT_MAX_ADDED = 8
 #: A follow-up of at most this many words carries no request of its own: it
-#: is a retry, a thanks or a nudge. Which of these it is, is the one thing
-#: taken from the model's reading of the reaction.
+#: is a retry, a thanks or a nudge. Which of these it is, is taken from the
+#: model's reading (`ChunkPart.follow_up`).
 BARE_MAX_WORDS = 3
 
 
@@ -370,19 +376,72 @@ def part_signals(part: dict[str, Any], chunk: list[dict[str, Any]],
     return out
 
 
+def react(part: dict[str, Any], chunk: list[dict[str, Any]],
+          after: list[dict[str, Any]], first_index: int) -> list[str]:
+    """What the human did after the replies in one part, in order: one entry
+    for each human message that follows the part's first request inside the
+    part, and one for the first human message after the part.
+
+    Inside the part, by the same reading as `count_repeats`:
+    - a few words with no request of their own: `asked_again` when the model
+      read a retry in the part, `thanked` when it read thanks, otherwise
+      `pushed_for_more`;
+    - an earlier request of the part asked again, by its text: `asked_again`;
+    - anything else: `pushed_for_more`. It is in the part, so it is on the
+      part's subject.
+
+    After the part, looked for in the rest of the chunk and then in `after`,
+    the messages that follow the chunk:
+    - no human message: `not_shown`. The room ends there;
+    - a request of the part asked again, by its text: `asked_again`;
+    - anything else: `moved_on`.
+
+    `corrected` is the model's reading and stands before the last entry. A
+    part with no message numbers has no reactions."""
+    if part.get("first_message") is None:
+        return []
+    read = part.get("read") or []
+    seen: list[list[str]] = []
+    out: list[str] = []
+    following: list[str] | None = None
+    for k, m in enumerate([*chunk, *after]):
+        if m["sender"] != "human" or first_index + k < part["first_message"]:
+            continue
+        words = _tokens(m["text"])
+        if first_index + k > part["last_message"]:
+            following = words
+            break
+        if seen:
+            if len(words) <= BARE_MAX_WORDS:
+                out.append("asked_again" if "retried" in read
+                           else "thanked" if "thanked" in read
+                           else "pushed_for_more")
+            elif any(_same_request(words, earlier) for earlier in seen):
+                out.append("asked_again")
+            else:
+                out.append("pushed_for_more")
+        seen.append(words)
+    if "corrected" in read:
+        out.append("corrected")
+    if following is None:
+        out.append("not_shown")
+    elif any(_same_request(following, earlier) for earlier in seen):
+        out.append("asked_again")
+    else:
+        out.append("moved_on")
+    return out
+
+
 def calibrate(part: dict[str, Any]) -> tuple[Calibration, str]:
     """How well calibrated the assistant was in one part, and on what basis.
 
-    A rule over what the model read (the human's reactions) and what the
-    records say (repeated requests, runs, acceptance criteria, votes). The
-    first rule that applies decides:
+    A rule over the part's reactions (`react`) and what the records say
+    (runs, acceptance criteria, votes). The first rule that applies decides:
 
     1. A reply was voted down, or the human corrected one: overconfident.
-    2. The human asked again. Either a request in the part repeats an
-       earlier one, by its text; or the part has a bare follow-up (a few
-       words with no request of their own) and the model read the reaction
-       as asking again. The model's reading alone is not enough: it calls a
-       new question on the same subject asking again.
+    2. The human asked again (`react` says how that is read). The model's
+       reading alone is not enough for it: it calls a new question on the
+       same subject asking again.
        - the first run did not resolve it and the last did: underconfident.
          It delivered only once it was asked again.
        - a run resolved it: overconfident. It answered, and the answer did
@@ -390,7 +449,7 @@ def calibrate(part: dict[str, Any]) -> tuple[Calibration, str]:
        - otherwise unclear: it never delivered, which is a failure and not a
          matter of confidence.
     3. A reply was voted up: calibrated.
-    4. No reaction is shown: unclear.
+    4. No reaction is shown, because the room ends there: unclear.
     5. The human moved on, thanked or went deeper, and the last run resolved
        the request: calibrated. If it did not: unclear.
     """
@@ -402,8 +461,7 @@ def calibrate(part: dict[str, Any]) -> tuple[Calibration, str]:
         return "overconfident", "a reply was voted down"
     if "corrected" in reactions:
         return "overconfident", "the human corrected a reply"
-    if signals.get("repeats") or (
-            signals.get("bare") and "asked_again" in reactions):
+    if "asked_again" in reactions:
         if first and first != "resolved" and last == "resolved":
             return "underconfident", "it delivered only after being asked again"
         if runs.get("resolved"):
@@ -412,7 +470,7 @@ def calibrate(part: dict[str, Any]) -> tuple[Calibration, str]:
     if signals.get("up"):
         return "calibrated", "a reply was voted up"
     if not reactions or reactions == {"not_shown"}:
-        return "unclear", "the chunk shows no reaction"
+        return "unclear", "the room shows no reaction yet"
     if last == "resolved" or not runs:
         return "calibrated", "the human went on without contesting it"
     return "unclear", f"the human went on, and the last run was {last}"
@@ -420,6 +478,7 @@ def calibrate(part: dict[str, Any]) -> tuple[Calibration, str]:
 
 def settle(reply: ChunkSummary, first_index: int, last_index: int,
            chunk: list[dict[str, Any]] | None = None,
+           after: list[dict[str, Any]] | None = None,
            ) -> tuple[str, list[str], list[dict[str, Any]], list[str]]:
     """What is stored from a reply: `(summary, topics, parts, problems)`.
 
@@ -430,8 +489,8 @@ def settle(reply: ChunkSummary, first_index: int, last_index: int,
     parts are made to cover the chunk end to end, and a part that opens with
     the request before it asked again is joined to that part. Each part then
     gets its `signals`, counted from `chunk`'s records, `requests` (how many
-    times its request was made, by the same reading as `calibrate`'s "asked
-    again"), and its `calibration`, by rule."""
+    times its request was made), its `reactions` (`react`; `after` is the
+    messages that follow the chunk), and its `calibration`, by rule."""
     problems: list[str] = []
     parts: list[dict[str, Any]] = []
     for n, part in enumerate(reply.parts[:MAX_PARTS], start=1):
@@ -446,7 +505,7 @@ def settle(reply: ChunkSummary, first_index: int, last_index: int,
             "summary": _sentence(part.summary, where, problems),
             "result": _sentence(part.result, f"{where} result", problems,
                                 RESULT_MAX_CHARS),
-            "reactions": [part.human_reaction],
+            "read": [part.follow_up],
             "topics": _topics(part.topics, MAX_PART_TOPICS, where, problems),
         })
     if len(reply.parts) > MAX_PARTS:
@@ -457,7 +516,9 @@ def settle(reply: ChunkSummary, first_index: int, last_index: int,
     for part in parts:
         signals = part["signals"] = part_signals(part, chunk or [], first_index)
         part["requests"] = 1 + signals["repeats"] + (
-            signals["bare"] if "asked_again" in part["reactions"] else 0)
+            signals["bare"] if "retried" in part["read"] else 0)
+        part["reactions"] = react(part, chunk or [], after or [], first_index)
+        del part["read"]
         part["calibration"], part["calibration_basis"] = calibrate(part)
     summary = _sentence(reply.summary, "chunk", problems)
     topics = _topics(reply.topics, MAX_CHUNK_TOPICS, "chunk", problems)
@@ -473,7 +534,7 @@ AUDIT_CALLER = "assistant.room_auditor"
 
 
 class PartCheck(BaseModel):
-    """The reasoning comes first, so the three answers are given with it in
+    """The reasoning comes first, so the two answers are given with it in
     view. Without it the answers came with nothing a rewrite could be told."""
 
     first_message: int = Field(description="Number of the part's first message.")
@@ -485,15 +546,15 @@ class PartCheck(BaseModel):
     result_matches: bool = Field(
         description="The part's 'came of it' line answers that same request, "
                     "from a reply in these messages.")
-    reaction_matches: bool = Field(
-        description="The part's reaction is what the human did next.")
 
 
 class ChunkCheck(BaseModel):
     parts: list[PartCheck] = Field(description="One check per part, in order.")
 
 
-# Three yes-or-no questions per part and no score. Asked for one score over
+# Two yes-or-no questions per part and no score. The reactions are not put
+# to the check: they are read by rule, and when they were the model's the
+# check disagreed with itself on them from one run to the next. Asked for one score over
 # the whole index, the same model gave the middle of the scale to an index
 # whose parts paired one request with the answer to another, and wrote
 # reasoning that confirmed each line against some message without asking
@@ -503,13 +564,13 @@ AUDIT_PROMPT = (
     "assistant. You are given the chunk's numbered messages, with a few "
     "messages of context before and after, and then the index that was "
     "written for the chunk: its parts, each with the messages it covers, "
-    "what the human wanted, what came of it, and what the human did after. "
+    "what the human wanted and what came of it. "
     "A part marked as asked several times claims that the human made the "
     "same request that many times. For each part, in order, read the "
-    "messages it covers and answer three questions with true or false: "
+    "messages it covers and answer two questions with true or false: "
     "does the 'wanted' line say what the human asked there; does the 'came "
-    "of it' line answer that same request from a reply there; is the "
-    "reaction what the human did next. Before the three answers for a part, "
+    "of it' line answer that same request from a reply there. "
+    "Before the two answers for a part, "
     "write its reasoning: what the human asked and was answered in the "
     "messages it covers, and where the part differs from them."
 )
@@ -529,9 +590,7 @@ def render_index(summary: str, parts: list[dict[str, Any]]) -> str:
         out.append(
             _span(part) + (f", asked {asked} times" if asked > 1 else "") + ":\n"
             f"  wanted: {part['summary']}\n"
-            f"  came of it: {part.get('result') or ''}\n"
-            "  the human then: "
-            + ", ".join(r.replace("_", " ") for r in part.get("reactions") or []))
+            f"  came of it: {part.get('result') or ''}")
     return "\n".join(out)
 
 
@@ -547,12 +606,9 @@ def build_audit_prompt(prompt: dict[str, str], summary: str,
 def settle_audit(check: ChunkCheck, parts: list[dict[str, Any]],
                  ) -> tuple[list[dict[str, Any]], list[str]]:
     """Put each check on its part, as `part["audit"]`: `{request, result,
-    reaction, reasoning}`. Returns `(failed, problems)`: the parts whose
+    reasoning}`. Returns `(failed, problems)`: the parts whose
     request or result the check found not to match the messages, and what
     was off in the check's own reply.
-
-    The reaction's answer is kept and shown, and does not fail a part: the
-    check disagrees with itself on reactions from one run to the next.
 
     Checks are matched to parts in order when there is one per part. The
     model sometimes numbers them 1, 2, 3 in place of the message numbers, so
@@ -569,7 +625,6 @@ def settle_audit(check: ChunkCheck, parts: list[dict[str, Any]],
     for part, c in pairs:
         part["audit"] = {
             "request": c.request_matches, "result": c.result_matches,
-            "reaction": c.reaction_matches,
             "reasoning": _cut(c.reasoning, AUDIT_REASONING_MAX_CHARS)}
         if not (c.request_matches and c.result_matches):
             failed.append(part)

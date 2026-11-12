@@ -1184,7 +1184,8 @@ class RoomChunk(db.Model):
     topics: Mapped[list] = mapped_column(JSONB, default=list)
     # The chunk's parts, in order, with message numbers counted from the
     # room's first message: `{first_message, last_message, summary, topics,
-    # requests}`, and from prompt 3 also `result`, the human's reaction,
+    # requests}`, and from prompt 3 also `result`, `reactions` (what the human
+    # did after each reply; read by the model before prompt 7, by rule since),
     # `calibration` and `signals` (what the records say about the part's
     # replies). From prompt 4 the calibration is decided by rule and carries
     # its `calibration_basis`. NULL for a chunk written before parts existed.
@@ -1197,7 +1198,7 @@ class RoomChunk(db.Model):
     # each with its message numbers, `summary`, `result` and the check's
     # `reasoning`. `error` says when a check or a rewrite could not be made.
     # Each stored part carries the check of itself as `audit`: `{request,
-    # result, reaction, reasoning}`. NULL for a chunk written before the
+    # result, reasoning}`, and before prompt 7 also `reaction`. NULL for a chunk written before the
     # check existed.
     audit: Mapped[dict | None] = mapped_column(JSONB)
     model: Mapped[str | None] = mapped_column(Text)

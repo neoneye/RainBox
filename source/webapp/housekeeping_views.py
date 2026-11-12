@@ -10,6 +10,7 @@ current by polling one small value (`…/api/revision`) and reloading their own
 content when it moves, so nothing is pushed and nothing is diffed in script.
 Design: notes/housekeeping-design.md.
 """
+import itertools
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -67,6 +68,18 @@ def _chunk_link(job) -> dict | None:
                  f"?size={spec['size']}&overlap={spec['overlap']}"
                  f"&prompt={spec['version']}#chunk-{spec['seq']}"),
     }
+
+
+def _reaction_texts(part: dict) -> list[str]:
+    """A part's reactions in order, with a run of the same one written once
+    and counted."""
+    reactions = part.get("reactions") or (
+        [part["human_reaction"]] if part.get("human_reaction") else [])
+    out: list[str] = []
+    for reaction, run in itertools.groupby(reactions):
+        n = len(list(run))
+        out.append(reaction.replace("_", " ") + (f" \u00d7{n}" if n > 1 else ""))
+    return out
 
 
 def _signal_texts(signals: dict | None) -> list[str]:
@@ -423,7 +436,8 @@ def run_housekeeping_lines(run_uuid: UUID) -> list[dict]:
 def _helpers() -> dict:
     return {"when": _when, "seconds": _seconds, "label": _job_label,
             "outcome": _outcome, "elapsed": _elapsed, "chunk_link": _chunk_link,
-            "signal_texts": _signal_texts}
+            "signal_texts": _signal_texts,
+            "reaction_texts": _reaction_texts}
 
 
 def _room_arg() -> UUID | None:
@@ -564,14 +578,14 @@ _ROOM_FRAGMENT = """
               <div class="hk-signals">
                 <span class="hk-pill hk-cal-{{ part.calibration }}" title="{{ 'Decided by rule from the reaction and the records' if part.calibration_basis else 'Judged by the model' }}">{{ part.calibration }}</span>
                 {% if part.calibration_basis %}<span>{{ part.calibration_basis }}</span>{% endif %}
-                {% for r in (part.reactions or ([part.human_reaction] if part.human_reaction else [])) %}<span class="hk-mono" title="What the model read as the human's reaction">{{ r|replace('_', ' ') }}</span>{% endfor %}
+                {% for r in reaction_texts(part) %}<span class="hk-mono" title="What the human did after each reply">{{ r }}</span>{% endfor %}
                 {% for text in signal_texts(part.signals) %}<span class="hk-chip" title="From the records">{{ text }}</span>{% endfor %}
               </div>
               {% endif %}
-              {% if part.audit and not (part.audit.request and part.audit.result and part.audit.reaction) %}
+              {% if part.audit and not (part.audit.request and part.audit.result and part.audit.get('reaction', true)) %}
               <div class="hk-signals">
                 <span class="hk-pill failed" title="A second model call compared this part with its messages">check</span>
-                <span>{% if not part.audit.request %}the request {% endif %}{% if not part.audit.result %}{{ 'and ' if not part.audit.request }}the result {% endif %}{% if not part.audit.reaction %}{{ 'and ' if not (part.audit.request and part.audit.result) }}the reaction {% endif %}may not match the messages: {{ part.audit.reasoning }}</span>
+                <span>{% if not part.audit.request %}the request {% endif %}{% if not part.audit.result %}{{ 'and ' if not part.audit.request }}the result {% endif %}{% if not part.audit.get('reaction', true) %}{{ 'and ' if not (part.audit.request and part.audit.result) }}the reaction {% endif %}may not match the messages: {{ part.audit.reasoning }}</span>
               </div>
               {% endif %}
             </td>

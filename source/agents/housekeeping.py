@@ -390,9 +390,9 @@ class HousekeepingAgent(Agent):
         shown = messages[max(0, first - overlap):last + 1 + overlap]
         db.attach_reply_signals(job.room_uuid, shown)
         chunk = messages[first:last + 1]
+        after = messages[last + 1:last + 1 + overlap]
         prompt = room_chunks.build_prompt(
-            messages[max(0, first - overlap):first], chunk,
-            messages[last + 1:last + 1 + overlap], first)
+            messages[max(0, first - overlap):first], chunk, after, first)
 
         models, _label = resolve_assistant_model_uuids(ASSISTANT_ROOM_SUMMARIZER_UUID)
         models = [m for m in models or [] if _is_local_model(m)]
@@ -433,7 +433,7 @@ class HousekeepingAgent(Agent):
         summarizer = db.JOB_CALLERS[db.ROOM_CHUNK_JOB]
         reply, model_uuid = call(prompt, room_chunks.ChunkSummary, summarizer)
         summary, topics, parts, problems = room_chunks.settle(
-            reply, first, last, chunk)  # type: ignore[arg-type]
+            reply, first, last, chunk, after)  # type: ignore[arg-type]
 
         # The check, and one rewrite when it finds a part's request or result
         # wrong. The rewrite is checked too, so what is stored always carries
@@ -466,7 +466,7 @@ class HousekeepingAgent(Agent):
                  "summary": p["summary"], "result": p["result"],
                  "reasoning": p["audit"]["reasoning"]} for p in failed]
             summary, topics, parts, problems = room_chunks.settle(
-                reply, first, last, chunk)  # type: ignore[arg-type]
+                reply, first, last, chunk, after)  # type: ignore[arg-type]
             audit["attempts"] = 2
         _provider, model_name, _args = db.resolved_model_kwargs(model_uuid)
         db.store_room_chunk(

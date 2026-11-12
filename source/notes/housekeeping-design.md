@@ -88,7 +88,7 @@ in two levels:
 
 | level | fields |
 |---|---|
-| each part | `first_message`, `last_message`, `summary`, `result`, `human_reaction`, `topics` (one or two) |
+| each part | `first_message`, `last_message`, `summary`, `result`, `follow_up`, `topics` (one or two) |
 | the chunk | `summary`, `topics` (one to three, broader) |
 
 A part is a run of consecutive messages about one subject. A request that
@@ -100,16 +100,48 @@ is written with them in view.
 - **`summary`** is what was wanted.
 - **`result`** is what came of it: the one main thing found or concluded, or
   that nothing was.
-- **`human_reaction`** is a choice: `moved_on`, `asked_again`, `corrected`,
-  `pushed_for_more`, `thanked`, `not_shown`. It is something the model can
-  read off the messages.
+- **`follow_up`** is a choice: `corrected`, `retried`, `thanked`, `none`.
+  It is what the human's messages in the part say about the replies, and
+  the only part of the human's reaction left to the model.
+
+**What the human did after each reply is read by rule** (`room_chunks.react`),
+and stored as the part's `reactions`, in order. Whether a message follows a
+reply, where it stands and whether it repeats a request can all be read off
+the messages. Asked for the reaction, the model answered for the end of the
+chunk and not for the part: it gave `not_shown` to parts in the middle of a
+chunk, and `moved_on` to a part with a retry inside it.
+
+One entry for each human message inside the part after its first request:
+
+| the message | reaction |
+|---|---|
+| at most 3 words, and the model read `retried` in the part | `asked_again` |
+| at most 3 words, and the model read `thanked` | `thanked` |
+| at most 3 words otherwise | `pushed_for_more` |
+| an earlier request of the part again, by its text | `asked_again` |
+| anything else | `pushed_for_more`: it is in the part, so on its subject |
+
+Then one entry for the first human message after the part, looked for in
+the rest of the chunk and in the context after it:
+
+| the message | reaction |
+|---|---|
+| there is none: the room ends there | `not_shown` |
+| a request of the part again, by its text | `asked_again` |
+| anything else | `moved_on` |
+
+`corrected` is the model's reading, and stands before the last entry. A
+message of a few words is the one place where the model's `retried` and
+`thanked` count: such a message has no request of its own, so it is a
+retry, a thanks or a nudge, and telling these apart takes reading. On a
+longer message the model's `retried` counts for nothing, because it says so
+of a new question on the same subject.
 
 **Calibration is decided by rule, not by the model** (`room_chunks.calibrate`).
-The model supplies what it is good at: the result, and the human's reaction.
-Asked for the calibration too, it called an answer that was repeated
+The model supplies what it is good at: the result. Asked for the calibration too, it called an answer that was repeated
 unchanged while the human kept asking "calibrated", with the evidence in its
-own prompt. The rule reads the part's reactions, the text of its requests,
-and the records. The first line that applies decides:
+own prompt. The rule reads the part's reactions and the records. The first
+line that applies decides:
 
 | when | calibration | basis shown |
 |---|---|---|
@@ -119,7 +151,7 @@ and the records. The first line that applies decides:
 | asked again, and a run resolved it | overconfident | it answered, and the human kept asking |
 | asked again, and nothing was delivered | unclear | asked again, and nothing was delivered |
 | a reply was voted up | calibrated | a reply was voted up |
-| no reaction in the chunk | unclear | the chunk shows no reaction |
+| the room ends after the part | unclear | the room shows no reaction yet |
 | the human went on, and the last run resolved it (or no run is recorded) | calibrated | the human went on without contesting it |
 | the human went on, and the last run did not resolve it | unclear | the human went on, and the last run was … |
 
@@ -151,8 +183,9 @@ a request answered only on the retry can come out overconfident.
 text, and from the records of its replies the runs by outcome, the first and
 the last run's outcome, replies that did not meet their criteria, revisions,
 votes up and down. The page shows the calibration in
-colour with its basis, the reactions the model read, and these counts in
-grey. A result is an old answer, and it is never shown without them.
+colour with its basis, the reactions, and these counts in grey. A run of
+the same reaction is written once with its count. A result is an old
+answer, and it is never shown without them.
 
 **What code settles after the reply** (`room_chunks.settle`):
 - Topic names are normalized to lowercase words joined by hyphens.
@@ -163,38 +196,38 @@ grey. A result is an old answer, and it is never shown without them.
 - A part that opens with the request before it asked again is joined to that
   part. "Asked again" is read as the calibration rule reads it: the opening
   request repeats one in the part before, by its text; or it is at most 3
-  words and the model read the reaction before it as asking again. The
-  joined part keeps the first phrase, the result of the last (where the
-  request ended up), and every reaction along the way.
+  words and the model read `retried` in it or in the part before it. The
+  joined part keeps the first phrase and the result of the last (where the
+  request ended up).
 - A shared topic name does not join two parts. The model gives unrelated
   questions one generic topic, and joined they would show the first
   question beside the answer to the last.
-- Each part's `signals` are counted, and its calibration is decided.
+- Each part's `signals` are counted, its `reactions` are read, and its
+  calibration is decided.
 - `requests` is how many times the part's request was made: one, plus its
-  repeats, plus its bare follow-ups when the model read asking again. The
-  page shows it as ×N.
+  repeats, plus its follow-ups of at most 3 words when the model read
+  `retried`. The page shows it as ×N.
 - Anything else off (too many topics, an over-long or empty phrase, no parts)
   is listed in `problems` and shown with the chunk.
 
 **The check** (`room_chunks.AUDIT_PROMPT`, `settle_audit`). A second
 structured call, on the same local models, reads the chunk's own prompt
 followed by the summary as it was stored: each part with its message
-numbers, what was wanted, what came of it, the reactions, and how many times
-it was asked. For each part it writes its reasoning and then answers three
-questions with true or false:
+numbers, what was wanted, what came of it, and how many times it was asked.
+For each part it writes its reasoning and then answers two questions with
+true or false:
 
 | answer | question |
 |---|---|
 | `request_matches` | does the "wanted" line say what the human asked in these messages |
 | `result_matches` | does the "came of it" line answer that same request, from a reply in these messages |
-| `reaction_matches` | is the reaction what the human did next |
 
 - **The reasoning comes first**, so the answers are given with it in view,
   and so there is something to tell a rewrite. It is stored cut to 600
   characters.
-- **A false request or result fails the part.** A false reaction is stored
-  and shown and fails nothing: the check disagrees with itself on reactions
-  from one run to the next.
+- **A false request or result fails the part.** The reactions are not put
+  to the check. They are read by rule; and when they were the model's, the
+  check disagreed with itself on them from one run to the next.
 - **A failed part has the chunk written once more**
   (`room_chunks.build_retry_prompt`). The prompt is the chunk's own, followed
   by the first answer as it was stored and the check's reasoning for each
@@ -202,7 +235,7 @@ questions with true or false:
   it is the one stored, whatever its check says. So a chunk is two calls as
   a rule and four at most.
 - **Each stored part carries the check of itself** as `audit`: `{request,
-  result, reaction, reasoning}`. The row's `audit` says how many times the
+  result, reasoning}`. The row's `audit` says how many times the
   chunk was written and, when twice, what the first answer had in the parts
   that failed.
 - **A check or a rewrite that no model delivers** leaves the answer there
@@ -211,7 +244,7 @@ questions with true or false:
   job's page shows the attempt's newest call by the summarizer's label,
   which is the summary that was kept. The checks are on `/activity`.
 
-**Why three questions per part, and not a score.** Tried on 14 chunks of one
+**Why questions per part, and not a score.** Tried on 14 chunks of one
 room, on gemma4:e4b-mlx:
 - **The model scoring its own summary in the same reply** gave the middle of
   a six-point scale to 13 of 14, among them a part that paired a request
@@ -235,11 +268,17 @@ topic is a later step, and not this call's job.
 summary call; the check writes more and takes longer:
 - **Parts, results and topics are good.** Ranges are right and the topics
   name the subject.
-- **The reaction is read unevenly.** `moved_on` is usually right;
-  `asked_again` is not, which is why the rule reads repeats from the text.
-  `not_shown` is given to parts in the middle of a chunk, and
-  `pushed_for_more` to a change of subject. The check sees some of these
-  and misses others.
+- **The reactions hold where they are read by rule.** No part inside a
+  room is left without a reaction, and a request typed again is always
+  seen.
+- **`follow_up` is read unevenly.** `corrected` was right both times it was
+  given in one room of 14 chunks. `thanked` was given six times where
+  nobody thanked; none of them stood, because no message of a few words
+  followed. `retried` was right three times out of four: the fourth turned
+  a nudge for more into asking again.
+- **A retry of more than 3 words that adds something is not seen.** The
+  model reads it as `retried`, and the rule does not take its word for a
+  longer message. Nor is a request asked again in other words.
 - **What the human states is not kept.** A part holds a request and its
   result. When the human explains something, the part's result is the
   human's own sentence or the last reply, and the rest is lost.
@@ -366,7 +405,7 @@ The inbox item is a hint. The rows say what is due.
 | `first_message_id`, `last_message_id`, `message_count` | its edges and size |
 | `content_hash` | over its messages' ids and texts when it was written |
 | `summary`, `topics` | the chunk's phrase and broader topics |
-| `parts` | its parts: `{first_message, last_message, summary, topics, requests}`, and from prompt 3 `result`, the reactions, `calibration`, `signals`; from prompt 4 `calibration_basis`; from prompt 6 `audit`; NULL for a chunk of the first prompt |
+| `parts` | its parts: `{first_message, last_message, summary, topics, requests}`, and from prompt 3 `result`, the reactions, `calibration`, `signals`; from prompt 4 `calibration_basis`; from prompt 6 `audit`; from prompt 7 the reactions are read by rule; NULL for a chunk of the first prompt |
 | `problems` | what was off in the reply, and in the check's reply |
 | `audit` | the check: `{attempts, rewritten, error}`; NULL for a chunk written before the check existed |
 | `model`, `job_uuid` | what wrote it |
@@ -397,9 +436,9 @@ the `chunks` link beside a room's name in the log.
   topics, the model, a link to the job's prompt and reply, and the messages
   themselves, folded.
 - Under it, each part: its message range, what was wanted, what came of it,
-  the calibration in colour with its basis, the reactions the model read,
-  and the records in grey. A part the check still doubts says which of its
-  request, result and reaction, and why.
+  the calibration in colour with its basis, the reactions, and the records
+  in grey. A part the check still doubts says which of its request and
+  result, and why.
 - Whether the chunk was written once or twice, and for a second writing,
   what the first answer had in the parts the check found wrong.
 - A chip per series the room has chunks in, earlier prompts included.

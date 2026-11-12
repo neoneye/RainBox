@@ -317,7 +317,7 @@ def _reply(first: int, n: int = 10, topic: str = "weather"):
     return ChunkSummary(
         parts=[ChunkPart(first_message=first, last_message=first + n - 1,
                          summary="questions about the weather",
-                         result="a forecast was given", human_reaction="moved_on",
+                         result="a forecast was given", follow_up="none",
                          topics=[topic])],
         summary="weather questions", topics=["Weather Talk"])
 
@@ -330,8 +330,7 @@ def _checks(prompt: str, wrong: tuple[int, ...] = ()):
     firsts = [int(n or 0) for n in re.findall(r"^Part (?:m(\d+) to|with no)", prompt, re.M)]
     return ChunkCheck(parts=[
         PartCheck(first_message=first, reasoning=f"read part {k}",
-                  request_matches=True, result_matches=k not in wrong,
-                  reaction_matches=True)
+                  request_matches=True, result_matches=k not in wrong)
         for k, first in enumerate(firsts)])
 
 
@@ -370,7 +369,7 @@ def _fake_chunk_model(monkeypatch, reply=None, check=None):
     return prompts
 
 
-V = 6   # agents.room_chunks.PROMPT_VERSION
+V = 7   # agents.room_chunks.PROMPT_VERSION
 
 
 def test_chunks_are_cut_in_order_and_wait_for_their_context(app_ctx):
@@ -417,11 +416,12 @@ def test_a_run_end_queues_two_chunks_and_each_is_summarized_once(app_ctx, monkey
         assert chunks[1].parts == [{
             "first_message": 10, "last_message": 19, "requests": 1,
             "summary": "questions about the weather", "topics": ["weather"],
-            "result": "a forecast was given", "reactions": ["moved_on"],
+            "result": "a forecast was given",
+            # Four more messages inside the part, then the next chunk's first.
+            "reactions": ["pushed_for_more"] * 4 + ["moved_on"],
             "calibration": "calibrated",
             "calibration_basis": "the human went on without contesting it",
-            "audit": {"request": True, "result": True, "reaction": True,
-                      "reasoning": "read part 0"},
+            "audit": {"request": True, "result": True, "reasoning": "read part 0"},
             "signals": {"replies": 5, "repeats": 0, "bare": 0, "runs": {}, "first_run": None, "last_run": None,
                         "criteria_not_met": 0, "revisions": 0, "up": 0, "down": 0}}]
         # The first chunk has no context before it; the second has two each side.
@@ -467,7 +467,7 @@ def test_what_is_off_in_a_reply_is_stored_with_the_chunk(app_ctx, monkeypatch):
     room = _room_with_messages(app_ctx, 12)
     _fake_chunk_model(monkeypatch, lambda first: ChunkSummary(
         parts=[ChunkPart(first_message=40, last_message=44, summary="x" * 130,
-                         result="", human_reaction="not_shown", topics=[])],
+                         result="", follow_up="none", topics=[])],
         summary="", topics=["a", "b", "c", "d"]))
     agent = _agent(monkeypatch)
     agent.handle(uuid4(), {"room_uuid": str(room.uuid), "room_chunks": True})
@@ -522,11 +522,11 @@ def test_the_worker_rests_after_a_burst_of_calls(app_ctx, monkeypatch):
         db.session.commit()
 
 
-def _part(first, last, summary, *topics, result="done", reaction="moved_on"):
+def _part(first, last, summary, *topics, result="done", read="none"):
     from agents import room_chunks as rc
 
     return rc.ChunkPart(first_message=first, last_message=last, summary=summary,
-                        result=result, human_reaction=reaction, topics=list(topics))
+                        result=result, follow_up=read, topics=list(topics))
 
 
 def _asked(*texts):
@@ -545,8 +545,8 @@ def test_settle_joins_a_request_asked_again_and_makes_parts_cover_the_chunk():
                    "try again", "compute the square root of 2999", "which boards exist")
     reply = rc.ChunkSummary(
         parts=[_part(20, 20, "compute a square root", "sqrt", "number",
-                     result="step limit reached", reaction="asked_again"),
-               _part(22, 22, "compute it once more", "sqrt", reaction="asked_again"),
+                     result="step limit reached", read="retried"),
+               _part(22, 22, "compute it once more", "sqrt", read="retried"),
                _part(24, 24, "a retry", "sqrt", "maths", result="a value was given"),
                _part(26, 26, "compute another square root", "sqrt", result="another value"),
                _part(28, 28, "which boards exist", "Kanban Boards")],
@@ -572,20 +572,17 @@ def test_settle_joins_a_request_asked_again_and_makes_parts_cover_the_chunk():
 def test_the_check_is_put_on_its_parts_and_fails_on_request_or_result():
     from agents import room_chunks as rc
 
-    def check(first, request=True, result=True, reaction=True):
+    def check(first, request=True, result=True):
         return rc.PartCheck(first_message=first, reasoning=f"about {first}",
-                            request_matches=request, result_matches=result,
-                            reaction_matches=reaction)
+                            request_matches=request, result_matches=result)
 
     parts = [{"first_message": 20, "last_message": 23}, {"first_message": 24, "last_message": 27},
              {"first_message": 28, "last_message": 29}]
     # Numbered 1, 2, 3 by the model: one per part, so they are taken in order.
     failed, problems = rc.settle_audit(rc.ChunkCheck(parts=[
-        check(1, result=False), check(2, reaction=False), check(3)]), parts)
+        check(1, result=False), check(2), check(3)]), parts)
     assert failed == [parts[0]] and problems == []
-    assert parts[0]["audit"] == {"request": True, "result": False, "reaction": True,
-                                 "reasoning": "about 1"}
-    assert parts[1]["audit"]["reaction"] is False       # shown, and fails nothing
+    assert parts[0]["audit"] == {"request": True, "result": False, "reasoning": "about 1"}
     # Fewer checks than parts: matched by message number, the rest unchecked.
     parts = [{"first_message": 20, "last_message": 23}, {"first_message": 24, "last_message": 29}]
     failed, problems = rc.settle_audit(rc.ChunkCheck(parts=[check(24, request=False)]), parts)
@@ -650,7 +647,7 @@ def test_a_parts_signals_are_counted_from_the_records_of_its_replies():
         {"id": 6, "sender": "agent", "text": "two boards", "signals": {"run": "partial"}},
     ]
     reply = rc.ChunkSummary(
-        parts=[_part(40, 43, "count letters", "letters", reaction="corrected"),
+        parts=[_part(40, 43, "count letters", "letters", read="corrected"),
                _part(44, 45, "list boards", "boards")],
         summary="letters and boards", topics=["misc"])
     _s, _t, parts, _p = rc.settle(reply, 40, 45, chunk)
@@ -673,26 +670,19 @@ def test_a_parts_signals_are_counted_from_the_records_of_its_replies():
     # A vote down or a correction outranks everything else.
     (["moved_on"], 1, {"down": 1, "up": 1, "last_run": "resolved"}, "overconfident"),
     (["corrected"], 1, {"runs": {"resolved": 1}, "last_run": "resolved"}, "overconfident"),
-    # A bare retry the model read as asking again: delivered only on the retry.
+    # Asked again, and delivered only then.
     (["asked_again", "moved_on"], 1,
      {"bare": 1, "runs": {"partial": 1, "resolved": 1}, "first_run": "partial",
       "last_run": "resolved"}, "underconfident"),
     # The request repeated in its text, after an answer that did not settle it.
-    (["pushed_for_more"], 1,
+    (["asked_again", "asked_again", "moved_on"], 1,
      {"repeats": 2, "runs": {"resolved": 1, "partial": 2}, "first_run": "resolved",
       "last_run": "partial", "criteria_not_met": 2}, "overconfident"),
-    # The model alone saying "asked again" is not enough: it says so of a new
-    # question on the same subject.
-    (["asked_again", "asked_again"], 2,
-     {"runs": {"resolved": 2}, "first_run": "resolved", "last_run": "resolved"}, "calibrated"),
-    # A bare follow-up the model read as thanks is not asking again.
+    # A bare follow-up read as thanks is not asking again.
     (["thanked"], 1, {"bare": 1, "runs": {"resolved": 1}, "last_run": "resolved"}, "calibrated"),
     # Three different questions joined into one part are not asking again.
     (["pushed_for_more", "moved_on"], 3,
      {"runs": {"resolved": 3}, "first_run": "resolved", "last_run": "resolved"}, "calibrated"),
-    # A request repeated word for word is, whatever the model read.
-    (["moved_on"], 1, {"repeats": 1, "runs": {"resolved": 2}, "first_run": "resolved",
-                       "last_run": "resolved"}, "overconfident"),
     # Asked again and never delivered: a failure, not a matter of confidence.
     (["asked_again"], 1, {"bare": 1, "runs": {"failed": 2}, "first_run": "failed",
                           "last_run": "failed"}, "unclear"),
@@ -708,6 +698,52 @@ def test_calibration_is_decided_by_rule(reactions, requests, signals, expected):
     label, basis = rc.calibrate(
         {"reactions": reactions, "requests": requests, "signals": signals})
     assert label == expected and basis
+
+
+@pytest.mark.parametrize("texts, read, after, expected", [
+    # A few words after a reply are what the model read them as, and a nudge
+    # when it read nothing.
+    (["tell me about the lighthouse", "more"], "none", ["which boards exist"],
+     ["pushed_for_more", "moved_on"]),
+    (["tell me about the lighthouse", "once more"], "retried", ["which boards exist"],
+     ["asked_again", "moved_on"]),
+    (["tell me about the lighthouse", "good"], "thanked", ["which boards exist"],
+     ["thanked", "moved_on"]),
+    # The model reading a retry does not make a further question one.
+    (["tell me about the lighthouse", "and who built the lighthouse keeper's house"],
+     "retried", ["which boards exist"], ["pushed_for_more", "moved_on"]),
+    # The same request typed again is asking again whatever the model read,
+    # also when it is the first message after the part.
+    (["tell me about the lighthouse", "tell me about the lighthouse"], "none",
+     ["which boards exist"], ["asked_again", "moved_on"]),
+    (["tell me about the lighthouse"], "none", ["tell me about the lighthouse, from memory"],
+     ["asked_again"]),
+    # A correction is the model's to read.
+    (["tell me about the lighthouse", "it was built of brick and not of stone"], "corrected",
+     ["which boards exist"], ["pushed_for_more", "corrected", "moved_on"]),
+    # Only a room that ends there shows no reaction.
+    (["tell me about the lighthouse"], "none", [], ["not_shown"]),
+])
+def test_reactions_are_read_from_the_messages(texts, read, after, expected):
+    from agents import room_chunks as rc
+
+    chunk = _asked(*texts)
+    last = 40 + len(chunk) - 1
+    reply = rc.ChunkSummary(parts=[_part(40, last, "the lighthouse", "lighthouse", read=read)],
+                            summary="the lighthouse", topics=["places"])
+    _s, _t, parts, _p = rc.settle(reply, 40, last, chunk, _asked(*after))
+    assert parts[0]["reactions"] == expected and "read" not in parts[0]
+
+
+def test_a_part_inside_the_chunk_is_followed_by_the_next_parts_request():
+    from agents import room_chunks as rc
+
+    chunk = _asked("tell me about the lighthouse", "which boards exist")
+    reply = rc.ChunkSummary(
+        parts=[_part(40, 41, "the lighthouse", "lighthouse"), _part(42, 43, "boards", "boards")],
+        summary="a lighthouse and boards", topics=["misc"])
+    _s, _t, parts, _p = rc.settle(reply, 40, 43, chunk, [])
+    assert [p["reactions"] for p in parts] == [["moved_on"], ["not_shown"]]
 
 
 def test_reply_signals_come_from_the_run_the_audit_and_the_vote(app_ctx):
