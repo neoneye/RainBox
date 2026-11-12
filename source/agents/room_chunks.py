@@ -35,7 +35,7 @@ from pydantic import BaseModel, Field
 #: Bumped when the prompt, the schema or the parsing changes. A chunk belongs
 #: to the series of the version that wrote it, so a new version summarizes a
 #: room again beside the old series, and the two can be compared.
-PROMPT_VERSION = 7
+PROMPT_VERSION = 8
 
 SUMMARY_MAX_CHARS = 120
 RESULT_MAX_CHARS = 160
@@ -389,6 +389,11 @@ def react(part: dict[str, Any], chunk: list[dict[str, Any]],
     - an earlier request of the part asked again, by its text: `asked_again`;
     - anything else: `pushed_for_more`. It is in the part, so it is on the
       part's subject.
+    One case goes before these: the model read a retry in the part and the
+    part has a single such message. The reading can then only mean that
+    message, so it is `asked_again` whatever its length. With several
+    messages to choose from, the model's word does not say which, and it
+    calls a new question on the same subject a retry.
 
     After the part, looked for in the rest of the chunk and then in `after`,
     the messages that follow the chunk:
@@ -421,6 +426,8 @@ def react(part: dict[str, Any], chunk: list[dict[str, Any]],
             else:
                 out.append("pushed_for_more")
         seen.append(words)
+    if len(out) == 1 and "retried" in read:
+        out = ["asked_again"]
     if "corrected" in read:
         out.append("corrected")
     if following is None:
@@ -489,7 +496,8 @@ def settle(reply: ChunkSummary, first_index: int, last_index: int,
     parts are made to cover the chunk end to end, and a part that opens with
     the request before it asked again is joined to that part. Each part then
     gets its `signals`, counted from `chunk`'s records, `requests` (how many
-    times its request was made), its `reactions` (`react`; `after` is the
+    times its request was made: one, and one more for each time it was asked
+    again inside the part), its `reactions` (`react`; `after` is the
     messages that follow the chunk), and its `calibration`, by rule."""
     problems: list[str] = []
     parts: list[dict[str, Any]] = []
@@ -515,9 +523,9 @@ def settle(reply: ChunkSummary, first_index: int, last_index: int,
     parts = _join_repeats(_tile(parts, last_index), chunk or [], first_index)
     for part in parts:
         signals = part["signals"] = part_signals(part, chunk or [], first_index)
-        part["requests"] = 1 + signals["repeats"] + (
-            signals["bare"] if "retried" in part["read"] else 0)
         part["reactions"] = react(part, chunk or [], after or [], first_index)
+        # The last entry is what followed the part, not a request in it.
+        part["requests"] = 1 + part["reactions"][:-1].count("asked_again")
         del part["read"]
         part["calibration"], part["calibration_basis"] = calibrate(part)
     summary = _sentence(reply.summary, "chunk", problems)

@@ -115,6 +115,7 @@ One entry for each human message inside the part after its first request:
 
 | the message | reaction |
 |---|---|
+| the only such message in the part, and the model read `retried` | `asked_again` |
 | at most 3 words, and the model read `retried` in the part | `asked_again` |
 | at most 3 words, and the model read `thanked` | `thanked` |
 | at most 3 words otherwise | `pushed_for_more` |
@@ -130,12 +131,13 @@ the rest of the chunk and in the context after it:
 | a request of the part again, by its text | `asked_again` |
 | anything else | `moved_on` |
 
-`corrected` is the model's reading, and stands before the last entry. A
-message of a few words is the one place where the model's `retried` and
-`thanked` count: such a message has no request of its own, so it is a
-retry, a thanks or a nudge, and telling these apart takes reading. On a
-longer message the model's `retried` counts for nothing, because it says so
-of a new question on the same subject.
+`corrected` is the model's reading, and stands before the last entry. The
+model's `retried` counts in two places. On a message of a few words: such a
+message has no request of its own, so it is a retry, a thanks or a nudge,
+and telling these apart takes reading. And on a part's only follow-up: the
+reading can then mean no other message. Where a part has several longer
+follow-ups the model's `retried` counts for nothing, because it does not say
+which one, and it says so of a new question on the same subject.
 
 **Calibration is decided by rule, not by the model** (`room_chunks.calibrate`).
 The model supplies what it is good at: the result. Asked for the calibration too, it called an answer that was repeated
@@ -204,9 +206,8 @@ answer, and it is never shown without them.
   question beside the answer to the last.
 - Each part's `signals` are counted, its `reactions` are read, and its
   calibration is decided.
-- `requests` is how many times the part's request was made: one, plus its
-  repeats, plus its follow-ups of at most 3 words when the model read
-  `retried`. The page shows it as ×N.
+- `requests` is how many times the part's request was made: one, and one
+  more for each `asked_again` inside the part. The page shows it as ×N.
 - Anything else off (too many topics, an over-long or empty phrase, no parts)
   is listed in `problems` and shown with the chunk.
 
@@ -276,9 +277,8 @@ summary call; the check writes more and takes longer:
   nobody thanked; none of them stood, because no message of a few words
   followed. `retried` was right three times out of four: the fourth turned
   a nudge for more into asking again.
-- **A retry of more than 3 words that adds something is not seen.** The
-  model reads it as `retried`, and the rule does not take its word for a
-  longer message. Nor is a request asked again in other words.
+- **A request asked again in other words is not seen**, unless it is the
+  part's only follow-up and the model reads a retry.
 - **What the human states is not kept.** A part holds a request and its
   result. When the human explains something, the part's result is the
   human's own sentence or the last reply, and the rest is lost.

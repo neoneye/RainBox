@@ -369,7 +369,7 @@ def _fake_chunk_model(monkeypatch, reply=None, check=None):
     return prompts
 
 
-V = 7   # agents.room_chunks.PROMPT_VERSION
+V = 8   # agents.room_chunks.PROMPT_VERSION
 
 
 def test_chunks_are_cut_in_order_and_wait_for_their_context(app_ctx):
@@ -709,9 +709,14 @@ def test_calibration_is_decided_by_rule(reactions, requests, signals, expected):
      ["asked_again", "moved_on"]),
     (["tell me about the lighthouse", "good"], "thanked", ["which boards exist"],
      ["thanked", "moved_on"]),
-    # The model reading a retry does not make a further question one.
-    (["tell me about the lighthouse", "and who built the lighthouse keeper's house"],
-     "retried", ["which boards exist"], ["pushed_for_more", "moved_on"]),
+    # A retry the model read in a part with one follow-up is that message,
+    # whatever its length.
+    (["tell me about the lighthouse", "do that again and look in the 1999 notes"],
+     "retried", ["which boards exist"], ["asked_again", "moved_on"]),
+    # With two to choose from its reading does not say which, so neither is.
+    (["tell me about the lighthouse", "and who built the lighthouse keeper's house",
+      "what colour is the lighthouse keeper's house"],
+     "retried", ["which boards exist"], ["pushed_for_more", "pushed_for_more", "moved_on"]),
     # The same request typed again is asking again whatever the model read,
     # also when it is the first message after the part.
     (["tell me about the lighthouse", "tell me about the lighthouse"], "none",
