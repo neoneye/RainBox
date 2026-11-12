@@ -188,7 +188,9 @@ _STYLE = """
 </style>
 """
 
-# Polls the revision and swaps the live container when it moves. Open
+# Polls the revision and swaps the live container when it moves. A page
+# whose content is narrower than the whole log names its own revision in
+# `data-revision-url`, so it is not reloaded for changes it does not show. Open
 # <details> blocks are remembered by id across the swap, so reading a prompt
 # is not interrupted by a line being added elsewhere. No backslashes: this
 # string is not raw, and Python would interpret them before the browser does.
@@ -220,7 +222,7 @@ _LIVE_SCRIPT = """
   function tick() {
     if (busy) { return; }
     busy = true;
-    fetch('/assistant/housekeeping/api/revision')
+    fetch(box.getAttribute('data-revision-url') || '/assistant/housekeeping/api/revision')
       .then(function (r) { return r.json(); })
       .then(function (j) { if (j.revision !== seen) { return reload(j.revision); } })
       .catch(function () {})
@@ -412,7 +414,7 @@ _JOB_PAGE = """
 <style>.pp-nav{margin-bottom:0}</style>
 <div class="hk-wrap">
   <p style="margin:0 0 12px"><a class="hk-back" href="/assistant/housekeeping">&larr; Housekeeping</a></p>
-  <div id="hk-live" data-revision="{{ revision }}">""" + _JOB_FRAGMENT + """</div>
+  <div id="hk-live" data-revision="{{ revision }}" data-revision-url="/assistant/housekeeping/api/revision?job={{ job.uuid }}">""" + _JOB_FRAGMENT + """</div>
 </div>
 """ + _LIVE_SCRIPT
 
@@ -515,7 +517,7 @@ def housekeeping_job_page(job_uuid: UUID) -> str:
         job=job, attempts=attempts, wrote=_wrote(job),
         request_message=(run.metadata_ or {}).get("request_message") if run else None,
         rooms=db.housekeeping_room_names([job.room_uuid] if job.room_uuid else []),
-        revision=db.housekeeping_revision(), **_helpers())
+        revision=db.housekeeping_revision(job.uuid), **_helpers())
     template = _JOB_FRAGMENT if request.args.get("fragment") else _JOB_PAGE
     return render_template_string(template, **ctx)
 
@@ -737,4 +739,9 @@ def housekeeping_room_summarize(room_uuid: UUID) -> Response:
 
 @app.route("/assistant/housekeeping/api/revision")
 def housekeeping_revision_api() -> Response:
-    return jsonify({"revision": db.housekeeping_revision()})
+    """`?job=<uuid>` narrows it to one job, for that job's page."""
+    try:
+        job = UUID(request.args["job"]) if request.args.get("job") else None
+    except ValueError:
+        abort(400, "job is not a uuid")
+    return jsonify({"revision": db.housekeeping_revision(job)})

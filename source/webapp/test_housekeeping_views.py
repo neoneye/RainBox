@@ -149,6 +149,23 @@ def test_revision_moves_when_a_job_changes(client):
     assert c.get("/assistant/housekeeping/api/revision").get_json()["revision"] != before
 
 
+def test_a_jobs_page_follows_its_own_job_and_no_other(client):
+    c, made = client
+    job, _ = _job(_run(made))
+    url = f"/assistant/housekeeping/api/revision?job={job.uuid}"
+    assert f'data-revision-url="{url}"' in c.get(
+        f"/assistant/housekeeping/{job.uuid}").get_data(as_text=True)
+    before = c.get(url).get_json()["revision"]
+    # Another job running and writing its reply so far moves the log, not this page.
+    other, attempt = _job(_run(made), result=None)
+    db.checkpoint_housekeeping_attempt(attempt.uuid, response_preview="more of a reply")
+    assert c.get(url).get_json()["revision"] == before
+    # Its own job running again does.
+    db.start_housekeeping_attempt(job)
+    assert c.get(url).get_json()["revision"] != before
+    assert c.get("/assistant/housekeeping/api/revision?job=nope").status_code == 400
+
+
 def test_the_run_page_lists_its_jobs_after_the_turn_and_moves_them_forward(client):
     c, made = client
     run = _run(made)

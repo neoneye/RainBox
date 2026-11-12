@@ -455,9 +455,12 @@ the `chunks` link beside a room's name in the log.
 per job, each linking to the job's page. The run list says `summary failed`
 for a run whose summary job failed.
 
-**Staying current.** Both housekeeping pages poll
+**Staying current.** The housekeeping pages poll
 `/assistant/housekeeping/api/revision` every 2 seconds and reload their own
 content when the value moves. Open prompt blocks stay open across a reload.
+The log and a room's page follow the whole log. A job's page polls with
+`?job=<uuid>`, a value over that job and its attempts alone, so it reloads
+when its own job moves and not while another one runs.
 
 ## Adding a job type
 

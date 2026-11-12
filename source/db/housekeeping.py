@@ -464,23 +464,32 @@ def housekeeping_now() -> dict[str, Any]:
     }
 
 
-def housekeeping_revision() -> str:
+def housekeeping_revision(job_uuid: UUID | None = None) -> str:
     """A value that changes whenever the log would render differently. The
-    pages poll it and reload their content when it moves."""
-    jobs = db.session.query(
+    pages poll it and reload their content when it moves. With `job_uuid`
+    it is over that job and its attempts alone: a job's page shows nothing
+    else, so another job's progress does not reload it."""
+    job_q = db.session.query(
         sa.func.count(), sa.func.max(HousekeepingJob.finished_at),
         sa.func.max(HousekeepingJob.bumped_at),
-    ).select_from(HousekeepingJob).one()
-    states = (db.session.query(HousekeepingJob.state, sa.func.count())
-              .group_by(HousekeepingJob.state).all())
-    attempts = db.session.query(
+    ).select_from(HousekeepingJob)
+    state_q = db.session.query(HousekeepingJob.state, sa.func.count())
+    attempt_q = db.session.query(
         sa.func.count(), sa.func.max(HousekeepingAttempt.ended_at),
         sa.func.sum(sa.func.length(
             sa.func.coalesce(HousekeepingAttempt.response_preview, ""))),
-    ).select_from(HousekeepingAttempt).one()
-    chunks = db.session.query(sa.func.count()).select_from(RoomChunk).scalar()
-    return "|".join(str(v) for v in (
-        *jobs, sorted(states), *attempts, chunks, int(turn_activity())))
+        sa.func.count(HousekeepingAttempt.model),
+    ).select_from(HousekeepingAttempt)
+    if job_uuid is not None:
+        job_q = job_q.filter(HousekeepingJob.uuid == job_uuid)
+        state_q = state_q.filter(HousekeepingJob.uuid == job_uuid)
+        attempt_q = attempt_q.filter(HousekeepingAttempt.job_uuid == job_uuid)
+    states = state_q.group_by(HousekeepingJob.state).all()
+    values = [*job_q.one(), sorted(states), *attempt_q.one()]
+    if job_uuid is None:
+        values += [db.session.query(sa.func.count()).select_from(RoomChunk).scalar(),
+                   int(turn_activity())]
+    return "|".join(str(v) for v in values)
 
 
 def run_housekeeping_flags(run_uuids: list[UUID]) -> dict[UUID, str]:
