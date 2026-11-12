@@ -159,7 +159,7 @@ line that applies decides:
 | asked again, and nothing was delivered | unclear | asked again, and nothing was delivered |
 | a reply was voted up | calibrated | a reply was voted up |
 | the room ends after the part | unclear | the room shows no reaction yet |
-| the human went on, and the last run resolved it (or no run is recorded) | calibrated | the human went on without contesting it |
+| the human went on, and the last run resolved it (or no run is recorded) | uncontested | the human went on, and did not say whether it was right |
 | the human went on, and the last run did not resolve it | unclear | the human went on, and the last run was … |
 
 **"Asked again" is read from the text, not taken from the model**
@@ -186,6 +186,13 @@ summary. A reply that said "nothing found" is often recorded as resolved, so
 a request answered only on the retry can come out overconfident.
 
 **A result is stored beside what is known about it.** Each part also gets
+**Uncontested is not calibrated.** A reply can be wrong and get no answer:
+the human reads it, sees it is muddled, and asks about something else. So
+going on in silence is its own label, shown in grey, and "calibrated" is
+kept for the one case where the human said the answer was right: a vote up.
+The human's verdict reaches a part through the vote on the reply. A vote
+down makes it overconfident, a vote up calibrated.
+
 `signals`, counted by code: repeated and bare requests, read from their
 text, and from the records of its replies the runs by outcome, the first and
 the last run's outcome, replies that did not meet their criteria, revisions,

@@ -35,7 +35,7 @@ from pydantic import BaseModel, Field
 #: Bumped when the prompt, the schema or the parsing changes. A chunk belongs
 #: to the series of the version that wrote it, so a new version summarizes a
 #: room again beside the old series, and the two can be compared.
-PROMPT_VERSION = 9
+PROMPT_VERSION = 10
 
 SUMMARY_MAX_CHARS = 120
 RESULT_MAX_CHARS = 160
@@ -49,7 +49,10 @@ MAX_CHUNK_TOPICS = 3
 PROMPT_MESSAGE_MAX_CHARS = 1500
 PROMPT_REPLY_MAX_CHARS = 600
 
-Calibration = Literal["calibrated", "overconfident", "underconfident", "unclear"]
+#: `uncontested` is not a kind of calibrated: nobody objected, and nobody
+#: said the answer was right either. A reply can be wrong and go unanswered.
+Calibration = Literal["calibrated", "overconfident", "underconfident",
+                      "uncontested", "unclear"]
 Reaction = Literal["moved_on", "asked_again", "corrected", "pushed_for_more",
                    "thanked", "not_shown"]
 #: What the model is asked about a part's human messages: the three things a
@@ -480,7 +483,9 @@ def calibrate(part: dict[str, Any]) -> tuple[Calibration, str]:
     3. A reply was voted up: calibrated.
     4. No reaction is shown, because the room ends there: unclear.
     5. The human moved on, thanked or went deeper, and the last run resolved
-       the request: calibrated. If it did not: unclear.
+       the request: uncontested. Silence is not agreement, so this is not
+       called calibrated: only the human saying so (a vote up) is. If the
+       last run did not resolve it: unclear.
     """
     signals = part.get("signals") or {}
     reactions = set(part.get("reactions") or [])
@@ -501,7 +506,7 @@ def calibrate(part: dict[str, Any]) -> tuple[Calibration, str]:
     if not reactions or reactions == {"not_shown"}:
         return "unclear", "the room shows no reaction yet"
     if last == "resolved" or not runs:
-        return "calibrated", "the human went on without contesting it"
+        return "uncontested", "the human went on, and did not say whether it was right"
     return "unclear", f"the human went on, and the last run was {last}"
 
 

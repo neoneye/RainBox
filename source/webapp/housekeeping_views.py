@@ -185,6 +185,7 @@ _STYLE = """
   .hk-signals{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:4px}
   .hk-signals .hk-chip{font-weight:500;padding:2px 9px}
   .hk-pill.hk-cal-calibrated{color:#166534;background:#dcfce7}
+  .hk-pill.hk-cal-uncontested{color:#4b5563;background:#f3f4f6}
   .hk-pill.hk-cal-overconfident{color:#b91c1c;background:#fee2e2}
   .hk-pill.hk-cal-underconfident{color:#92400e;background:#fef3c7}
   .hk-btn{padding:7px 14px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;
@@ -650,6 +651,8 @@ _ROOM_PAGE = """
     labels beside a part are records (how its runs ended, acceptance
     criteria, your votes). The coloured label says how well calibrated the
     assistant was, decided by rule from your reaction and those records.
+    A grey "uncontested" means you went on without saying whether the
+    answer was right; a vote on the reply in the room settles it.
     The summaries are shown here and reach no prompt. <a class="hk-back" href="/chat?id={{ room_uuid }}">Open the room</a></p>
   <div class="hk-filters">
     <div class="hk-field">

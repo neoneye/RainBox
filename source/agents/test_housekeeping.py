@@ -369,7 +369,7 @@ def _fake_chunk_model(monkeypatch, reply=None, check=None):
     return prompts
 
 
-V = 9   # agents.room_chunks.PROMPT_VERSION
+V = 10   # agents.room_chunks.PROMPT_VERSION
 
 
 def test_chunks_are_cut_in_order_and_wait_for_their_context(app_ctx):
@@ -419,8 +419,8 @@ def test_a_run_end_queues_two_chunks_and_each_is_summarized_once(app_ctx, monkey
             "result": "a forecast was given",
             # Four more messages inside the part, then the next chunk's first.
             "reactions": ["pushed_for_more"] * 4 + ["moved_on"],
-            "calibration": "calibrated",
-            "calibration_basis": "the human went on without contesting it",
+            "calibration": "uncontested",
+            "calibration_basis": "the human went on, and did not say whether it was right",
             "audit": {"request": True, "result": True, "reasoning": "read part 0"},
             "signals": {"replies": 5, "repeats": 0, "bare": 0, "runs": {}, "first_run": None, "last_run": None,
                         "criteria_not_met": 0, "revisions": 0, "up": 0, "down": 0}}]
@@ -679,18 +679,19 @@ def test_a_parts_signals_are_counted_from_the_records_of_its_replies():
      {"repeats": 2, "runs": {"resolved": 1, "partial": 2}, "first_run": "resolved",
       "last_run": "partial", "criteria_not_met": 2}, "overconfident"),
     # A bare follow-up read as thanks is not asking again.
-    (["thanked"], 1, {"bare": 1, "runs": {"resolved": 1}, "last_run": "resolved"}, "calibrated"),
+    (["thanked"], 1, {"bare": 1, "runs": {"resolved": 1}, "last_run": "resolved"}, "uncontested"),
     # Three different questions joined into one part are not asking again.
     (["pushed_for_more", "moved_on"], 3,
-     {"runs": {"resolved": 3}, "first_run": "resolved", "last_run": "resolved"}, "calibrated"),
+     {"runs": {"resolved": 3}, "first_run": "resolved", "last_run": "resolved"}, "uncontested"),
     # Asked again and never delivered: a failure, not a matter of confidence.
     (["asked_again"], 1, {"bare": 1, "runs": {"failed": 2}, "first_run": "failed",
                           "last_run": "failed"}, "unclear"),
     (["thanked"], 1, {"up": 1, "runs": {"partial": 1}, "last_run": "partial"}, "calibrated"),
     (["not_shown"], 1, {"runs": {"resolved": 1}, "last_run": "resolved"}, "unclear"),
-    (["moved_on"], 1, {"runs": {"resolved": 1}, "last_run": "resolved"}, "calibrated"),
+    # Going on without a word is not agreement: only a vote up is.
+    (["moved_on"], 1, {"runs": {"resolved": 1}, "last_run": "resolved"}, "uncontested"),
     (["pushed_for_more"], 1, {"runs": {"failed": 1}, "last_run": "failed"}, "unclear"),
-    (["moved_on"], 1, {}, "calibrated"),            # a reply with no run behind it
+    (["moved_on"], 1, {}, "uncontested"),          # a reply with no run behind it
 ])
 def test_calibration_is_decided_by_rule(reactions, requests, signals, expected):
     from agents import room_chunks as rc
