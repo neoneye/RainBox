@@ -449,7 +449,6 @@ _JOB_FRAGMENT = """
     <p class="hk-lede" style="margin:0 0 10px">Asked before the summary, once for each follow-up in the chunk. The model generates no text: it is given the input and the question, and returns a probability.</p>
     {% for d in decisions %}
     {% set answer = (d.row.answers or [{}])[0] %}
-    {% set question = (d.row.questions or [{}])[0] %}
     <details class="hk-text" id="d{{ d.row.uuid }}">
       <summary>
         {% if d.state %}<span class="hk-mono">m{{ d.state.message }}</span>{% endif %}
@@ -458,8 +457,6 @@ _JOB_FRAGMENT = """
         {% if d.state %} <span style="text-transform:none;letter-spacing:0;font-weight:400">{{ d.state.next_message|truncate(70) }}</span>{% endif %}
         {% if d.row.elapsed_ms is not none %}<span class="hk-num">{{ d.row.elapsed_ms }} ms</span>{% endif %}
       </summary>
-      <div class="hk-result"><b>Prompt</b> ({{ question.name }}, version {{ question.version }})</div>
-      <pre class="hk-pre">{{ question.instructions or 'This call was recorded without its wording.' }}</pre>
       <div class="hk-result"><b>Input</b></div>
       {% if d.state %}
       <pre class="hk-pre">request:
@@ -473,10 +470,15 @@ next_message:
       {% else %}
       <p class="hk-lede" style="margin:4px 0 8px">The input is not kept with the call. It is rebuilt from the room's messages, and they no longer match what was asked (digest <span class="hk-mono">{{ d.row.state_digest[:12] }}</span>).</p>
       {% endif %}
-      <div class="hk-result"><b>Output</b></div>
-      <pre class="hk-pre">{% if answer.status == 'ok' %}P(yes) = {{ answer.p }}
-label: {{ answer.label }}  (yes at {{ answer.bands.yes }} or above, no at {{ answer.bands.no }} or below){% else %}no answer: {{ answer.reason or d.row.reason }}{% endif %}
-model: {{ d.row.model }}{% if d.row.model_digest %} ({{ d.row.model_digest[:12] }}){% endif %}{% if d.row.server_version %}, server {{ d.row.server_version }}{% endif %}</pre>
+      <div class="hk-result"><b>Question{{ '' if d.row.questions|length == 1 else 's' }}</b></div>
+      <pre class="hk-pre">{% for q in d.row.questions %}{{ q.name }} ({{ q.kind }}, version {{ q.version }}):
+{{ q.instructions or 'This call was recorded without its wording.' }}{% for name, text in (q.options or {}).items() %}
+  {{ name }}: {{ text }}{% endfor %}{{ '' if loop.last else '\n\n' }}{% endfor %}</pre>
+      <div class="hk-result"><b>Answer{{ '' if d.row.answers|length == 1 else 's' }}</b></div>
+      <pre class="hk-pre">{% for a in d.row.answers %}{{ a.name }}: {% if a.status != 'ok' %}no answer: {{ a.reason or d.row.reason }}{% elif a.probabilities %}{{ a.label or 'none above ' ~ a.bands.choice }}{% for name, p in a.probabilities.items() %}
+  P({{ name }}) = {{ p }}{% endfor %}{% else %}{{ a.label }}
+  P(yes) = {{ a.p }}  (yes at {{ a.bands.yes }} or above, no at {{ a.bands.no }} or below){% endif %}
+{% endfor %}model: {{ d.row.model }}{% if d.row.model_digest %} ({{ d.row.model_digest[:12] }}){% endif %}{% if d.row.server_version %}, server {{ d.row.server_version }}{% endif %}</pre>
     </details>
     {% endfor %}
   </div>
