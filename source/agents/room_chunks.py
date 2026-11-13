@@ -35,7 +35,7 @@ from pydantic import BaseModel, Field
 #: Bumped when the prompt, the schema or the parsing changes. A chunk belongs
 #: to the series of the version that wrote it, so a new version summarizes a
 #: room again beside the old series, and the two can be compared.
-PROMPT_VERSION = 14
+PROMPT_VERSION = 15
 
 SUMMARY_MAX_CHARS = 120
 RESULT_MAX_CHARS = 160
@@ -430,8 +430,8 @@ def _quotes_back(text: str, replies: list[list[str]],
 def follow_ups(chunk: list[dict[str, Any]], after: list[dict[str, Any]],
                first_index: int) -> list[dict[str, Any]]:
     """Every human message that follows a reply to an earlier request of
-    the chunk, as `{message, request, reply, next_message}`: what the
-    decision model is asked about. The first human message after the chunk
+    the chunk, as `{message, request, reply, next_message}`: the decision
+    model is asked about the request and the next message. The first human message after the chunk
     is one of them, so a request asked again across a chunk's edge is put to
     the model by the chunk that holds the request. Texts are cut as the
     summary's prompt cuts them."""

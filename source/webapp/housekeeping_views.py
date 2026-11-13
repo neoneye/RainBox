@@ -10,6 +10,7 @@ current by polling one small value (`…/api/revision`) and reloading their own
 content when it moves, so nothing is pushed and nothing is diffed in script.
 Design: notes/housekeeping-design.md.
 """
+import html
 import itertools
 from datetime import UTC, datetime
 from uuid import UUID
@@ -109,10 +110,15 @@ def _decision_calls(job) -> list[dict]:
                     messages[first:last + 1],
                     messages[last + 1:last + 1 + spec["overlap"]], first):
                 shown = {"message": item["message"], "next_message": item["next_message"]}
-                text = follow_up_state(item["request"], item["reply"], item["next_message"])
+                text = follow_up_state(item["request"], item["next_message"])
                 states[state_digest(text)] = {**shown, "text": text}
-                # A call from before the messages were tagged was given them
-                # as an object with these three keys.
+                # Earlier calls were given the reply as well: between the
+                # two in tags, or before that as an object with three keys.
+                tagged = "\n".join(
+                    f"<{tag}>{html.escape(item[k], quote=False)}</{tag}>" for tag, k in (
+                        ("request1", "request"), ("reply1", "reply"),
+                        ("request2", "next_message")))
+                states[state_digest(tagged)] = {**shown, "text": tagged}
                 keyed = {k: item[k] for k in ("request", "reply", "next_message")}
                 states[state_digest(keyed)] = {**shown, "text": "\n\n".join(
                     f"{k}:\n{v}" for k, v in keyed.items())}

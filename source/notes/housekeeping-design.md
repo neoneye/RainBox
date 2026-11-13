@@ -125,15 +125,17 @@ message that follows a reply to an earlier request of the chunk
 chunk, so a request asked again across a chunk's edge is seen by the chunk
 that holds the request:
 
-- **One request per follow-up.** The three messages are given as a text,
-  each inside a tag of its own (`<request1>`, `<reply1>`, `<request2>`),
-  cut as the summary's prompt cuts them, with angle brackets escaped so a
-  message cannot close its tag. The question is a choice, "Does request2
-  ask again for what request1 asked for?", with three options: `duplicate`
-  (yes, in the same or almost the same words), `same` (yes, in different
-  words, or by asking for another attempt), `different` (no, it asks for
-  something else). The follow-up asks again when `duplicate` and
-  `same` hold at least half of the probability between them.
+- **One request per follow-up, of two human messages.** The request and
+  the human's next message are given as a text, each inside a tag of its
+  own (`<message1>`, `<message2>`), cut as the summary's prompt cuts them,
+  with angle brackets escaped so a message cannot close its tag. The
+  assistant's reply between them is not given. The question is a choice,
+  "Does message2 ask again for what message1 asked for?", with three
+  options: `duplicate` (yes, in the same or almost the same words), `same`
+  (yes, in different words, or by asking for another attempt), `different`
+  (no, it asks for something else). The follow-up asks again when
+  `duplicate` and `same` hold at least half of the probability between
+  them.
 - **Its yes makes the message `asked_again`**, inside a part or after it,
   and joins a part that opens with such a message to the part before. The
   text rule's yes stands whatever the model said.
@@ -160,24 +162,34 @@ that holds the request:
 - **These calls do not count toward the rest.** Each is a fraction of a
   second of scoring, and no text is generated.
 
-Measured on one room with `d1:3b`, on 15 follow-ups that asked again and
-43 that did not, labelled by hand before the run: the choice over tagged
-messages caught 14 and called 1 of the others one, in about a fifth of a
-second each. A yes-or-no question over an object with the keys request,
-reply and next_message caught 12 and called none. Asked whether the reply
-"did not do what was asked", the same model separated the two no better than
-chance; `d3:4b` said yes to nearly everything at 0.5 and took eight times as
-long. A generative call on gemma4:e4b-mlx judging the same follow-ups was no
-better, at several seconds each.
+Measured on one room with `d1:3b`, on 16 follow-ups that asked again and
+41 that did not, labelled by hand before the run: the question caught 14
+and called none of the others one, in about a fifth of a second each.
+
+- **With the reply between the two messages** it caught 15 and called 1.
+  One run cannot tell these apart, so the reply is left out: the input is
+  smaller, and a reply can carry text from elsewhere.
+- **With the three human messages before it as well**, and one question
+  per earlier message, it found one request asked again across another
+  subject, and tied 2 to 4 messages to a request they did not repeat. A
+  short nudge or retry is taken to repeat whatever stands a few messages
+  back. So only the message just before is asked about.
+- **A yes-or-no question** over an object with the keys request, reply and
+  next_message caught 12 of 15 and called none.
+- **Asked whether the reply "did not do what was asked"**, the same model
+  separated the two no better than chance. `d3:4b` said yes to nearly
+  everything at 0.5 and took eight times as long. A generative call on
+  gemma4:e4b-mlx judging the same follow-ups was no better, at several
+  seconds each.
 
 **What the tags do and do not do.** They mark where each message begins
-and ends. They do not make the model deaf to what a message says. A
+and ends. They do not make the model deaf to what a message says: a
 sentence planted in the next message, saying that it repeats the request,
-moved 42 of 43 unrelated follow-ups to "asks again", with tags as without.
-Planted in the reply, it moved 2 of 43. So the assistant's reply, which can
-carry text from elsewhere, steers the answer little; the human's own next
-message steers it fully. What a wrong answer costs is one part's reaction
-and calibration on a page: nothing acts on it.
+moved nearly every unrelated follow-up to "asks again", with tags as
+without. That message is the human's own, and the answer is about it. The
+reply, which could carry planted text from elsewhere, is not in the input.
+What a wrong answer costs is one part's reaction and calibration on a page:
+nothing acts on it.
 
 One entry for each human message inside the part after its first request,
 where the decision model did not answer:

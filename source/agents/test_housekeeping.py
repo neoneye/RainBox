@@ -369,7 +369,7 @@ def _fake_chunk_model(monkeypatch, reply=None, check=None):
     return prompts
 
 
-V = 14   # agents.room_chunks.PROMPT_VERSION
+V = 15   # agents.room_chunks.PROMPT_VERSION
 
 
 def test_chunks_are_cut_in_order_and_wait_for_their_context(app_ctx):
@@ -838,7 +838,7 @@ def test_the_worker_asks_the_decision_model_about_each_follow_up(app_ctx, monkey
     (chunk,) = db.list_room_chunks(room.uuid, 10, 2, V)
     try:
         # Four follow-ups inside the chunk and the first message after it.
-        assert len(asked) == 5 and asked[0][0].startswith("<request1>message number 0")
+        assert len(asked) == 5 and asked[0][0].startswith("<message1>message number 0") and "message number 1 " not in asked[0][0]
         assert asked[0][1] == chunk.job_uuid and asked[0][2][1] == "decider"
         assert chunk.audit["repeat_check"] == {"model": "decider", "asked": 5, "answered": 4}
         assert chunk.parts[0]["reactions"][0] == "asked_again"

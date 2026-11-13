@@ -511,7 +511,7 @@ class HousekeepingAgent(Agent):
         asked = room_chunks.follow_ups(chunk, after, first)
         said: dict[int, dict[str, Any]] = {}
         for item in asked:
-            state = follow_up_state(item["request"], item["reply"], item["next_message"])
+            state = follow_up_state(item["request"], item["next_message"])
             with watch.interruptible():
                 (answer,) = systemone.ask(
                     ASSISTANT_REPEAT_CHECK_UUID, state, [FOLLOW_UP_REPEAT],
