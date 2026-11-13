@@ -35,7 +35,7 @@ from pydantic import BaseModel, Field
 #: Bumped when the prompt, the schema or the parsing changes. A chunk belongs
 #: to the series of the version that wrote it, so a new version summarizes a
 #: room again beside the old series, and the two can be compared.
-PROMPT_VERSION = 11
+PROMPT_VERSION = 12
 
 SUMMARY_MAX_CHARS = 120
 RESULT_MAX_CHARS = 160
@@ -260,12 +260,14 @@ def _sentence(text: str, where: str, problems: list[str],
 
 
 def _join_repeats(parts: list[dict[str, Any]], chunk: list[dict[str, Any]],
-                  first_index: int) -> list[dict[str, Any]]:
+                  first_index: int, retries: dict[int, dict[str, Any]],
+                  ) -> list[dict[str, Any]]:
     """A part that opens with the request before it asked again is joined
     to that part. A small model gives a retry a part of its own, whatever
     the prompt says. "Asked again" is read as `calibrate` reads it: from the
     text (`_same_request`), or the opening request is too short to be one of
-    its own and the model read a retry in it or in the part before it. A
+    its own and the model read a retry in it or in the part before it; or
+    the decision model said the opening request asks again (`retries`). A
     short request alone is not enough, since a new question can be three
     words. Nor is a shared topic name: the same question about another value
     has its own answer, and joined to the first it would be shown with the
@@ -288,8 +290,9 @@ def _join_repeats(parts: list[dict[str, Any]], chunk: list[dict[str, Any]],
             retry = (len(mine[0]) <= BARE_MAX_WORDS
                      and "retried" in (prev["read"][-1], part["read"][0])
                      ) if mine else False
+            again = (retries.get(part["first_message"]) or {}).get("yes")
             if earlier and mine and (
-                    retry or any(_same_request(mine[0], e) for e in earlier)):
+                    retry or again or any(_same_request(mine[0], e) for e in earlier)):
                 prev["last_message"] = part["last_message"]
                 prev["result"] = part["result"]
                 prev["read"] += part["read"]
@@ -424,11 +427,54 @@ def _quotes_back(text: str, replies: list[list[str]],
     return False
 
 
+def follow_ups(chunk: list[dict[str, Any]], after: list[dict[str, Any]],
+               first_index: int) -> list[dict[str, Any]]:
+    """Every human message that follows a reply to an earlier request of
+    the chunk, as `{message, request, reply, next_message}`: what the
+    decision model is asked about. The first human message after the chunk
+    is one of them, so a request asked again across a chunk's edge is put to
+    the model by the chunk that holds the request. Texts are cut as the
+    summary's prompt cuts them."""
+    out: list[dict[str, Any]] = []
+    request = reply = None
+    for k, m in enumerate([*chunk, *after]):
+        if m["sender"] != "human":
+            if request is not None:
+                reply = m["text"]
+            continue
+        if request is not None and reply is not None:
+            out.append({"message": first_index + k, "request": _cut(request),
+                        "reply": _cut(reply, PROMPT_REPLY_MAX_CHARS),
+                        "next_message": _cut(m["text"])})
+        if k >= len(chunk):
+            break
+        request, reply = m["text"], None
+    return out
+
+
+def _next_request(part: dict[str, Any], chunk: list[dict[str, Any]],
+                  after: list[dict[str, Any]], first_index: int) -> int:
+    """The number of the first human message after the part, or the part's
+    last message when there is none."""
+    for k, m in enumerate([*chunk, *after]):
+        if m["sender"] == "human" and first_index + k > part["last_message"]:
+            return first_index + k
+    return part["last_message"]
+
+
 def react(part: dict[str, Any], chunk: list[dict[str, Any]],
-          after: list[dict[str, Any]], first_index: int) -> list[str]:
+          after: list[dict[str, Any]], first_index: int,
+          retries: dict[int, dict[str, Any]] | None = None) -> list[str]:
     """What the human did after the replies in one part, in order: one entry
     for each human message that follows the part's first request inside the
     part, and one for the first human message after the part.
+
+    Whether a message asks again is the decision model's to say where it
+    answered (`retries`, by message number): it sees a request asked again
+    in other words, which the text rule does not. Its yes makes the message
+    `asked_again`; so does the text rule, whatever the model said. Where it
+    did not answer, the reading below stands alone. Its no does not undo
+    the last case below, a part's only follow-up read as a retry.
 
     Inside the part, by the same reading as `count_repeats`:
     - a few words with no request of their own: `asked_again` when the model
@@ -461,8 +507,9 @@ def react(part: dict[str, Any], chunk: list[dict[str, Any]],
     read = part.get("read") or []
     seen: list[list[str]] = []
     out: list[str] = []
+    retries = retries or {}
     following: list[str] | None = None
-    following_text = ""
+    following_text, following_at = "", -1
     replies: list[list[str]] = []
     for k, m in enumerate([*chunk, *after]):
         if first_index + k < part["first_message"]:
@@ -474,16 +521,22 @@ def react(part: dict[str, Any], chunk: list[dict[str, Any]],
         words = _tokens(m["text"])
         if first_index + k > part["last_message"]:
             following, following_text = words, m["text"]
+            following_at = first_index + k
             break
         if seen:
-            if len(words) <= BARE_MAX_WORDS:
-                out.append("asked_again" if "retried" in read
+            said = retries.get(first_index + k)
+            bare = len(words) <= BARE_MAX_WORDS
+            if not bare and any(_same_request(words, earlier) for earlier in seen):
+                out.append("asked_again")
+            elif said is not None:
+                out.append("asked_again" if said["yes"]
+                           else "thanked" if bare and "thanked" in read
+                           else "pushed_for_more")
+            else:
+                out.append("pushed_for_more" if not bare
+                           else "asked_again" if "retried" in read
                            else "thanked" if "thanked" in read
                            else "pushed_for_more")
-            elif any(_same_request(words, earlier) for earlier in seen):
-                out.append("asked_again")
-            else:
-                out.append("pushed_for_more")
         seen.append(words)
     if len(out) == 1 and "retried" in read:
         out = ["asked_again"]
@@ -491,7 +544,8 @@ def react(part: dict[str, Any], chunk: list[dict[str, Any]],
         out.append("corrected")
     if following is None:
         out.append("not_shown")
-    elif any(_same_request(following, earlier) for earlier in seen):
+    elif (any(_same_request(following, earlier) for earlier in seen)
+          or (retries.get(following_at) or {}).get("yes")):
         out.append("asked_again")
     elif _quotes_back(following_text, replies, seen):
         out.append("questioned")
@@ -553,6 +607,7 @@ def calibrate(part: dict[str, Any]) -> tuple[Calibration, str]:
 def settle(reply: ChunkSummary, first_index: int, last_index: int,
            chunk: list[dict[str, Any]] | None = None,
            after: list[dict[str, Any]] | None = None,
+           retries: dict[int, dict[str, Any]] | None = None,
            ) -> tuple[str, list[str], list[dict[str, Any]], list[str]]:
     """What is stored from a reply: `(summary, topics, parts, problems)`.
 
@@ -565,7 +620,9 @@ def settle(reply: ChunkSummary, first_index: int, last_index: int,
     gets its `signals`, counted from `chunk`'s records, `requests` (how many
     times its request was made: one, and one more for each time it was asked
     again inside the part), its `reactions` (`react`; `after` is the
-    messages that follow the chunk), and its `calibration`, by rule."""
+    messages that follow the chunk; `retries` is what the decision model said
+    of each follow-up, by message number, as `{yes, p}`: see `follow_ups`),
+    and its `calibration`, by rule."""
     problems: list[str] = []
     parts: list[dict[str, Any]] = []
     for n, part in enumerate(reply.parts[:MAX_PARTS], start=1):
@@ -587,10 +644,21 @@ def settle(reply: ChunkSummary, first_index: int, last_index: int,
         problems.append(f"{len(reply.parts)} parts, kept {MAX_PARTS}")
     if not parts:
         problems.append("no parts")
-    parts = _join_repeats(_tile(parts, last_index), chunk or [], first_index)
+    parts = _join_repeats(_tile(parts, last_index), chunk or [], first_index,
+                          retries or {})
     for part in parts:
         signals = part["signals"] = part_signals(part, chunk or [], first_index)
-        part["reactions"] = react(part, chunk or [], after or [], first_index)
+        part["reactions"] = react(part, chunk or [], after or [], first_index,
+                                  retries or {})
+        # The follow-ups the decision model called asking again, with its
+        # probability: in the part, or the first message after it.
+        said = [{"message": n, "p": round(v["p"], 2)}
+                for n, v in sorted((retries or {}).items())
+                if v.get("yes") and part["first_message"] is not None
+                and part["first_message"] < n <= _next_request(
+                    part, chunk or [], after or [], first_index)]
+        if said:
+            part["asked_again_at"] = said
         # The last entry is what followed the part, not a request in it.
         part["requests"] = 1 + part["reactions"][:-1].count("asked_again")
         del part["read"]

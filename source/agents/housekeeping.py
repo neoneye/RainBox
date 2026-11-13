@@ -360,8 +360,10 @@ class HousekeepingAgent(Agent):
         the `assistant.room_summarizer` slot, then checked part by part by a
         second call on the same models, and written once more when the check
         finds a part's request or result wrong: two calls as a rule, four at
-        most. The chunk is the one the job's subject names; its row is
-        written once, when the last call returns."""
+        most. Before them the decision model is asked of each follow-up
+        whether it asks again (`_ask_follow_ups`). The chunk is the one the
+        job's subject names; its row is written once, when the last call
+        returns."""
         from agents import room_chunks
         from agents.config import ASSISTANT_ROOM_SUMMARIZER_UUID
         from agents.model_groups import resolve_assistant_model_uuids, structured_llm_call
@@ -430,16 +432,17 @@ class HousekeepingAgent(Agent):
                     caller, models, p["system"], p["user"], response_model,
                     observer=Observer())
 
+        retries, repeat_check = self._ask_follow_ups(job, chunk, after, first, watch)
         summarizer = db.JOB_CALLERS[db.ROOM_CHUNK_JOB]
         reply, model_uuid = call(prompt, room_chunks.ChunkSummary, summarizer)
         summary, topics, parts, problems = room_chunks.settle(
-            reply, first, last, chunk, after)  # type: ignore[arg-type]
+            reply, first, last, chunk, after, retries)  # type: ignore[arg-type]
 
         # The check, and one rewrite when it finds a part's request or result
         # wrong. The rewrite is checked too, so what is stored always carries
         # the check of itself. A check or a rewrite that no model could
         # deliver leaves the answer there is, and says so.
-        audit: dict[str, Any] = {"attempts": 1}
+        audit: dict[str, Any] = {"attempts": 1, "repeat_check": repeat_check}
         for attempt_no in (1, 2):
             self._burst += 1
             try:
@@ -466,7 +469,7 @@ class HousekeepingAgent(Agent):
                  "summary": p["summary"], "result": p["result"],
                  "reasoning": p["audit"]["reasoning"]} for p in failed]
             summary, topics, parts, problems = room_chunks.settle(
-                reply, first, last, chunk, after)  # type: ignore[arg-type]
+                reply, first, last, chunk, after, retries)  # type: ignore[arg-type]
             audit["attempts"] = 2
         _provider, model_name, _args = db.resolved_model_kwargs(model_uuid)
         db.store_room_chunk(
@@ -479,6 +482,45 @@ class HousekeepingAgent(Agent):
             model=model_name, prompt_version=room_chunks.PROMPT_VERSION,
             job_uuid=job.uuid)
         return "done"
+
+    #: A decision call answers in well under a second. One that has not by
+    #: then is given up, and the follow-up is read by rule.
+    FOLLOW_UP_DEADLINE_SECONDS = 20.0
+    #: A follow-up whose three messages are longer than this is not asked.
+    FOLLOW_UP_MAX_STATE_CHARS = 8000
+
+    def _ask_follow_ups(self, job: Any, chunk: list[dict[str, Any]],
+                        after: list[dict[str, Any]], first: int, watch: TurnWatch,
+                        ) -> tuple[dict[int, dict[str, Any]], dict[str, Any]]:
+        """Ask the decision model, of every follow-up in the chunk, whether
+        it asks for the same thing again. Returns what it said by message
+        number, as `{yes, p}`, and a line for the chunk's record: the model,
+        how many follow-ups were asked and how many it answered; or why none
+        was asked. An unanswered follow-up is simply absent, and is read by
+        rule. These calls are not counted toward the rest: each is a
+        fraction of a second of scoring, with no text generated."""
+        from agents import room_chunks
+        from agents.config import ASSISTANT_REPEAT_CHECK_UUID
+        from llm import systemone
+        from llm.systemone_questions import FOLLOW_UP_RETRY, FOLLOW_UP_SET_VERSION
+
+        bound = systemone.slot_model(ASSISTANT_REPEAT_CHECK_UUID)
+        if bound is None:
+            return {}, {"reason": "unbound"}
+        asked = room_chunks.follow_ups(chunk, after, first)
+        said: dict[int, dict[str, Any]] = {}
+        for item in asked:
+            state = {k: item[k] for k in ("request", "reply", "next_message")}
+            with watch.interruptible():
+                (answer,) = systemone.ask(
+                    ASSISTANT_REPEAT_CHECK_UUID, state, [FOLLOW_UP_RETRY],
+                    deadline_s=self.FOLLOW_UP_DEADLINE_SECONDS,
+                    max_state_chars=self.FOLLOW_UP_MAX_STATE_CHARS,
+                    question_set_version=FOLLOW_UP_SET_VERSION,
+                    job_uuid=job.uuid, bound=bound)
+            if answer.status == "ok" and answer.p is not None:
+                said[item["message"]] = {"yes": answer.yes, "p": answer.p}
+        return said, {"model": bound[1], "asked": len(asked), "answered": len(said)}
 
     _RUNNERS: dict[str, Callable[..., str]] = {
         db.RUN_SUMMARY_JOB: _summarize_run,

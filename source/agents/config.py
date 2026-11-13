@@ -112,6 +112,9 @@ ASSISTANT_REPLY_AUDIT_UUID: UUID = UUID("5c8e3a17-4d92-4b6f-8a30-1e7c9f2b45d8")
 ASSISTANT_RUN_SUMMARIZER_UUID: UUID = UUID("5d9a8c74-1e2b-4f3a-bc6d-7a0e9f481c25")
 ASSISTANT_PYTHON_PROGRAM_UUID: UUID = UUID("6fa4ebf0-9975-4349-b9ef-f7f0855acf6e")
 ASSISTANT_ROOM_SUMMARIZER_UUID: UUID = UUID("2f6c1d8e-7b3a-4c59-a1e4-9d0b5f3c8a67")
+# A decision slot: bound to one decision model (llm/systemone.py), and never
+# falling back to assistant.default, which cannot answer that API.
+ASSISTANT_REPEAT_CHECK_UUID: UUID = UUID("9b2e4f70-3c1a-4d86-b5e9-6a7f0c2d1e38")
 
 # The in-flight progress bubble, posted at enqueue time (the moment a human
 # message triggers a turn) so it appears immediately — before the agent process
@@ -249,6 +252,11 @@ agent_config: dict[str, AgentConfigEntry] = {
         "uuid": ASSISTANT_ROOM_SUMMARIZER_UUID,
         "requires_structured_output": True,
         "description": "binding-only: the model that SUMMARIZES a chunk of a room's messages for the housekeeping role, after a turn, as one structured call. Must be a local model: it reads the room's own messages. Unbound, it falls back to assistant.default.",
+    },
+    "assistant.repeat_check": {
+        "uuid": ASSISTANT_REPEAT_CHECK_UUID,
+        "requires_structured_output": False,
+        "description": "binding-only: the DECISION model (Ollama's /v1/systemone, e.g. d1:3b) that scores fast yes-or-no questions. The housekeeping role asks it whether a follow-up message asks for the same thing again. Must be a local model with the decision capability; only the group's first member is used. Does NOT fall back to assistant.default: unbound, the questions go unanswered and the callers use their rules alone.",
     },
     "assistant.response_language_classifier": {
         "uuid": ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID,

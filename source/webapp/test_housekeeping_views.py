@@ -201,6 +201,7 @@ def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
                 "summary": "which number comes next", "topics": ["sequences"],
                 "result": "the wrong number was given twice",
                 "reactions": ["asked_again", "asked_again", "moved_on"], "calibration": "overconfident",
+                "asked_again_at": [{"message": 2, "p": 0.91}],
                 "calibration_basis": "it answered, and the human kept asking",
                 "signals": {"replies": 3, "runs": {"resolved": 2, "failed": 1},
                             "criteria_not_met": 1, "revisions": 4, "up": 0, "down": 1}},
@@ -208,15 +209,17 @@ def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
                 "summary": "how numbers are written", "topics": ["notation"],
                 "audit": {"request": True, "result": False,
                           "reasoning": "the reply was about another number"}}],
-        audit={"attempts": 2, "rewritten": [{
+        audit={"attempts": 2, "repeat_check": {"model": "decider", "asked": 5, "answered": 4},
+               "rewritten": [{
             "first_message": 0, "last_message": 5, "summary": "which number is odd",
             "result": "seven", "reasoning": "seven answers a later request"}]},
-        model="model-a", prompt_version=11)
+        model="model-a", prompt_version=12)
     try:
         body = c.get(f"/assistant/housekeeping/room/{room.uuid}").get_data(as_text=True)
         assert "Messages 0&ndash;9" in body and "questions about numbers" in body
+        assert "m2 asks again 0.91" in body and "was asked of 5 follow-ups" in body
         # The heading links to its own chunk in this series.
-        assert 'href="?size=10&amp;overlap=2&amp;prompt=11#chunk-0">Messages 0&ndash;9</a>' in body
+        assert 'href="?size=10&amp;overlap=2&amp;prompt=12#chunk-0">Messages 0&ndash;9</a>' in body
         assert '<span class="hk-chip">numbers</span>' in body
         assert "m0&ndash;m5" in body and "which number comes next" in body
         assert "&times;3" in body and '<span class="hk-chip">notation</span>' in body

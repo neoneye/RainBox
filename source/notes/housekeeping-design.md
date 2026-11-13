@@ -116,7 +116,44 @@ the messages. Asked for the reaction, the model answered for the end of the
 chunk and not for the part: it gave `not_shown` to parts in the middle of a
 chunk, and `moved_on` to a part with a retry inside it.
 
-One entry for each human message inside the part after its first request:
+**Whether a follow-up asks again is put to a decision model**
+(`llm/systemone.py`, slot `assistant.repeat_check`). The text rule sees a
+request typed again; it does not see one asked again in other words. Before
+the summary call, the worker asks the decision model about every human
+message that follows a reply to an earlier request of the chunk
+(`room_chunks.follow_ups`), and about the first human message after the
+chunk, so a request asked again across a chunk's edge is seen by the chunk
+that holds the request:
+
+- **One request per follow-up.** The state is `{request, reply,
+  next_message}`, cut as the summary's prompt cuts them, and the question is
+  whether the next message asks for the same thing as the request once
+  more. The answer is a probability, and yes at 0.5 or above.
+- **Its yes makes the message `asked_again`**, inside a part or after it,
+  and joins a part that opens with such a message to the part before. The
+  text rule's yes stands whatever the model said.
+- **Each part lists the messages the model called asking again**, with the
+  probability, as `asked_again_at`. The chunk's `audit.repeat_check` says
+  which model was asked, of how many follow-ups, and how many it answered.
+- **Unbound, timed out or refused, a follow-up is read by rule alone.** The
+  slot has no fallback to `assistant.default`: a generative model cannot
+  answer this API. The model must have its weights on this machine.
+- **Every request is a `decision_call` row**: the question, the
+  probability, the label and the bands that gave it, the model's digest, and
+  a digest of the state. The state's text is not stored.
+- **These calls do not count toward the rest.** Each is a fraction of a
+  second of scoring, and no text is generated.
+
+Measured on one room of 70 follow-ups, labelled by hand before the run, with
+`d1:3b`: at 0.5 the question caught 14 of 19 follow-ups that asked again and
+called 1 of 43 others one, in about a quarter of a second each. Asked whether
+the reply "did not do what was asked", the same model separated the two no
+better than chance; `d3:4b` said yes to nearly everything at 0.5 and took
+eight times as long. A generative call on gemma4:e4b-mlx judging the same
+follow-ups caught 15 of 18 with 3 false, at several seconds each.
+
+One entry for each human message inside the part after its first request,
+where the decision model did not answer:
 
 | the message | reaction |
 |---|---|
@@ -302,8 +339,10 @@ summary call; the check writes more and takes longer:
 - **Doubt without a quotation is not seen.** A next message that probes
   the reply in its own words reads as moving on, and the part stays
   uncontested until the reply is voted on.
-- **A request asked again in other words is not seen**, unless it is the
-  part's only follow-up and the model reads a retry.
+- **The decision model takes a nudge for more as asking again.** A
+  follow-up of a word or two that asks for more detail scores above 0.5.
+- **It misses a retry that names something new**, such as a retry with a
+  date added.
 - **What the human states is not kept.** A part holds a request and its
   result. When the human explains something, the part's result is the
   human's own sentence or the last reply, and the rest is lost.
@@ -432,9 +471,9 @@ The inbox item is a hint. The rows say what is due.
 | `first_message_id`, `last_message_id`, `message_count` | its edges and size |
 | `content_hash` | over its messages' ids and texts when it was written |
 | `summary`, `topics` | the chunk's subjects, joined, and broader topics |
-| `parts` | its parts: `{first_message, last_message, summary, topics, requests}`, and from prompt 3 `result`, the reactions, `calibration`, `signals`; from prompt 4 `calibration_basis`; from prompt 6 `audit`; from prompt 7 the reactions are read by rule; NULL for a chunk of the first prompt |
+| `parts` | its parts: `{first_message, last_message, summary, topics, requests}`, and from prompt 3 `result`, the reactions, `calibration`, `signals`; from prompt 4 `calibration_basis`; from prompt 6 `audit`; from prompt 7 the reactions are read by rule; from prompt 12 `asked_again_at`; NULL for a chunk of the first prompt |
 | `problems` | what was off in the reply, and in the check's reply |
-| `audit` | the check: `{attempts, rewritten, error}`; NULL for a chunk written before the check existed |
+| `audit` | the check: `{attempts, rewritten, error}`, and `repeat_check`, what the decision model was asked; NULL for a chunk written before the check existed |
 | `model`, `job_uuid` | what wrote it |
 
 The prompt and the reply are never copied. A job's page reads them from the
@@ -469,6 +508,9 @@ the `chunks` link beside a room's name in the log.
   the calibration in colour with its basis, the reactions, and the records
   in grey. A part the check still doubts says which of its request and
   result, and why.
+- The messages the decision model called asking again, each with its
+  probability, and under the chunk which model was asked and how many
+  follow-ups it answered.
 - Whether the chunk was written once or twice, and for a second writing,
   what the first answer had in the parts the check found wrong.
 - A chip per series the room has chunks in, earlier prompts included.

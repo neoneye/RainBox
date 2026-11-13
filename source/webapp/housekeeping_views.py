@@ -586,6 +586,7 @@ _ROOM_FRAGMENT = """
               <div class="hk-signals">
                 <span class="hk-pill hk-cal-{{ part.calibration }}" title="{{ 'Decided by rule from the reaction and the records' if part.calibration_basis else 'Judged by the model' }}">{{ part.calibration }}</span>
                 {% if part.calibration_basis %}<span>{{ part.calibration_basis }}</span>{% endif %}
+                {% for a in part.asked_again_at or [] %}<span class="hk-chip" title="The decision model's probability that this message asks for the same thing again">m{{ a.message }} asks again {{ '%.2f'|format(a.p) }}</span>{% endfor %}
                 {% for r in reaction_texts(part) %}<span class="hk-mono" title="What the human did after each reply">{{ r }}</span>{% endfor %}
                 {% for text in signal_texts(part.signals) %}<span class="hk-chip" title="From the records">{{ text }}</span>{% endfor %}
               </div>
@@ -618,6 +619,16 @@ _ROOM_FRAGMENT = """
         {% endif %}
         {% if c.row.audit.error %}<div class="hk-err" style="margin:0">{{ c.row.audit.error }}</div>{% endif %}
       </dd>
+      {% if c.row.audit.repeat_check %}
+      <dt>Asked again</dt>
+      <dd>
+        {% if c.row.audit.repeat_check.model %}
+        <span class="hk-mono">{{ c.row.audit.repeat_check.model }}</span> was asked of {{ c.row.audit.repeat_check.asked }} follow-up{{ '' if c.row.audit.repeat_check.asked == 1 else 's' }} whether it asks for the same thing again, and answered {{ c.row.audit.repeat_check.answered }}.
+        {% else %}
+        No decision model is bound to <span class="hk-mono">assistant.repeat_check</span>, so a request asked again in other words is not seen.
+        {% endif %}
+      </dd>
+      {% endif %}
       {% endif %}
       {% if c.row.problems %}<dt>Format</dt><dd class="hk-err" style="margin:0">{{ c.row.problems|join('; ') }}</dd>{% endif %}
     </dl>

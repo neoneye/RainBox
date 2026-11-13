@@ -76,6 +76,7 @@ def test_the_slot_roster_is_exactly_the_assistants_calls():
         "assistant.run_summarizer",
         "assistant.python_program",
         "assistant.room_summarizer",
+        "assistant.repeat_check",
     }
 
 
@@ -99,11 +100,28 @@ def test_every_structured_slot_requires_structured_output():
     """Every other call behind these slots parses into a Pydantic model, so a
     group that does not promise structured output must not be offerable for
     one. The program writer answers in plain source — the point of its own
-    call — so any group may run it."""
+    call — so any group may run it. A decision slot returns probabilities
+    and no text at all."""
+    unstructured = PLAIN_TEXT_SLOTS | {"assistant.repeat_check"}
     for name, entry in agent_config.items():
         if name.startswith("assistant."):
             assert (entry.get("requires_structured_output") is True) is (
-                name not in PLAIN_TEXT_SLOTS), name
+                name not in unstructured), name
+
+
+def test_a_decision_slot_does_not_fall_back_to_the_default(monkeypatch):
+    """A generative model cannot answer the decision API, so binding only the
+    default must leave the decision slot unbound."""
+    from agents.config import ASSISTANT_REPEAT_CHECK_UUID
+    from llm import systemone
+
+    default_group, own = uuid4(), uuid4()
+    _bind(monkeypatch, {ASSISTANT_DEFAULT_UUID: default_group})
+    assert systemone.slot_model(ASSISTANT_REPEAT_CHECK_UUID) is None
+    _bind(monkeypatch, {ASSISTANT_DEFAULT_UUID: default_group, ASSISTANT_REPEAT_CHECK_UUID: own})
+    monkeypatch.setattr(mg, "model_base_url", lambda member: "http://127.0.0.1:11434")
+    monkeypatch.setattr(mg.db, "resolved_model_kwargs", lambda member: ("ollama", "decider", {}))
+    assert systemone.slot_model(ASSISTANT_REPEAT_CHECK_UUID) == ("http://127.0.0.1:11434", "decider")
 
 
 def test_role_name_maps_a_slot_uuid_back_to_its_name():

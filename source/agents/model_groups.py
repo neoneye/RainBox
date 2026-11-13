@@ -518,4 +518,13 @@ def assistant_models_all_local() -> tuple[bool, str | None]:
             url = model_base_url(member)
             if url is None or not is_loopback_url(url):
                 return False, role_name(slot) or str(slot)
+    # The decision slots read the same messages, and have no fallback.
+    from agents.config import ASSISTANT_REPEAT_CHECK_UUID
+    for slot in (ASSISTANT_REPEAT_CHECK_UUID,):
+        name = role_name(slot) or str(slot)
+        group_uuid, _label = resolve_model_group([(slot, name)])
+        for member in db.get_model_group_member_uuids(group_uuid) if group_uuid else []:
+            url = model_base_url(member)
+            if url is None or not is_loopback_url(url):
+                return False, name
     return True, None

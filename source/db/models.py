@@ -1152,6 +1152,42 @@ class HousekeepingAttempt(db.Model):
     response_preview: Mapped[str | None] = mapped_column(Text)
 
 
+class DecisionCall(db.Model):
+    """One request to a decision model (`llm/systemone.py`): which questions
+    were asked, of which model, and what it answered.
+
+    The state the questions were asked of is not stored. It is the
+    operator's messages, which have their own rows; `state_digest` and the
+    run or job say which state it was.
+    """
+    __tablename__ = "decision_call"
+
+    uuid: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), index=True)
+    run_uuid: Mapped[UUID | None] = mapped_column(index=True)
+    # The housekeeping job that asked, for a call made after the turn.
+    job_uuid: Mapped[UUID | None] = mapped_column(index=True)
+    slot: Mapped[str] = mapped_column(Text)
+    model: Mapped[str | None] = mapped_column(Text)
+    model_digest: Mapped[str | None] = mapped_column(Text)
+    server_version: Mapped[str | None] = mapped_column(Text)
+    question_set_version: Mapped[int] = mapped_column()
+    bands_version: Mapped[int] = mapped_column()
+    # sha256 of the serialized state.
+    state_digest: Mapped[str] = mapped_column(Text)
+    # `[{name, kind, version}]`: never the state's text.
+    questions: Mapped[list] = mapped_column(JSONB, default=list)
+    # `[{name, status, p, label, probabilities, reason, bands}]`: the raw
+    # probability, the label it was given, and the bands that gave it.
+    answers: Mapped[list] = mapped_column(JSONB, default=list)
+    # `ok` when every question was answered, else `unknown` with a reason.
+    status: Mapped[str] = mapped_column(Text)
+    reason: Mapped[str | None] = mapped_column(Text)
+    elapsed_ms: Mapped[int | None] = mapped_column()
+    deadline_ms: Mapped[int | None] = mapped_column()
+
+
 class RoomChunk(db.Model):
     """A stretch of one room's messages, summarized once by a local model.
 
@@ -1197,6 +1233,8 @@ class RoomChunk(db.Model):
     # `rewritten` then lists the parts of the first answer it found wrong,
     # each with its message numbers, `summary`, `result` and the check's
     # `reasoning`. `error` says when a check or a rewrite could not be made.
+    # `repeat_check` is what the decision model was asked about the chunk's
+    # follow-ups: `{model, asked, answered}`, or `{reason}` when none was.
     # Each stored part carries the check of itself as `audit`: `{request,
     # result, reasoning}`, and before prompt 7 also `reaction`. NULL for a chunk written before the
     # check existed.

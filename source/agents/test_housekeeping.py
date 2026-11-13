@@ -369,7 +369,7 @@ def _fake_chunk_model(monkeypatch, reply=None, check=None):
     return prompts
 
 
-V = 11   # agents.room_chunks.PROMPT_VERSION
+V = 12   # agents.room_chunks.PROMPT_VERSION
 
 
 def test_chunks_are_cut_in_order_and_wait_for_their_context(app_ctx):
@@ -411,7 +411,9 @@ def test_a_run_end_queues_two_chunks_and_each_is_summarized_once(app_ctx, monkey
         assert chunks[0].topics == ["weather-talk"] and chunks[0].model == "model-a"
         assert chunks[0].problems == [] and chunks[0].job_uuid is not None
         # Each summary was checked once, found right, and not written again.
-        assert chunks[0].audit == {"attempts": 1} and len(prompts.checks) == 2
+        # No decision model is bound, so the follow-ups were read by rule.
+        assert chunks[0].audit == {"attempts": 1, "repeat_check": {"reason": "unbound"}}
+        assert len(prompts.checks) == 2
         assert prompts.checks[0].startswith(prompts[0] + "\n\nThe index to check:\n")
         assert chunks[1].parts == [{
             "first_message": 10, "last_message": 19, "requests": 1,
@@ -603,7 +605,7 @@ def test_a_chunk_whose_check_fails_is_written_once_more(app_ctx, monkeypatch):
         assert len(prompts) == 2 and len(prompts.checks) == 2
         assert prompts[1].startswith(prompts[0] + "\n\nAn earlier answer for this chunk")
         assert "- Part m0 to m9: read part 0" in prompts[1]
-        assert chunk.audit == {"attempts": 2, "rewritten": [{
+        assert chunk.audit == {"attempts": 2, "repeat_check": {"reason": "unbound"}, "rewritten": [{
             "first_message": 0, "last_message": 9, "summary": "questions about the weather",
             "result": "a forecast was given", "reasoning": "read part 0"}]}
         assert chunk.parts[0]["audit"]["result"] is False
@@ -626,7 +628,8 @@ def test_a_check_no_model_delivers_leaves_the_summary(app_ctx, monkeypatch):
     (chunk,) = db.list_room_chunks(room.uuid, 10, 2, V)
     try:
         assert len(prompts) == 1 and chunk.summary == "weather questions"
-        assert chunk.audit == {"attempts": 1, "error": "check: every member failed"}
+        assert chunk.audit == {"attempts": 1, "repeat_check": {"reason": "unbound"},
+                               "error": "check: every member failed"}
         assert "audit" not in chunk.parts[0]
     finally:
         db.session.query(db.RoomChunk).filter_by(room_uuid=room.uuid).delete()
@@ -775,6 +778,73 @@ def test_a_next_message_that_quotes_the_reply_back_is_negative_feedback(next_req
     _s, _t, parts, _p = rc.settle(reply, 40, 43, chunk, [])
     assert parts[0]["reactions"] == [expected]
     assert (parts[0]["calibration"] == "overconfident") == (expected == "questioned")
+
+
+def test_the_decision_model_says_which_follow_up_asks_again():
+    from agents import room_chunks as rc
+
+    chunk = _asked("tell me about the lighthouse", "look the lighthouse up in the notes of 1999",
+                   "and who kept it", "which boards exist")
+    after = _asked("what boards are there in all")
+    assert [(f["message"], f["request"], f["next_message"]) for f in rc.follow_ups(chunk, after, 40)] == [
+        (42, "tell me about the lighthouse", "look the lighthouse up in the notes of 1999"),
+        (44, "look the lighthouse up in the notes of 1999", "and who kept it"),
+        (46, "and who kept it", "which boards exist"),
+        (48, "which boards exist", "what boards are there in all")]
+    reply = rc.ChunkSummary(
+        parts=[_part(40, 41, "the lighthouse", "lighthouse"),
+               _part(42, 45, "the lighthouse in the notes", "lighthouse"),
+               _part(46, 47, "boards", "boards")],
+        subjects=["the lighthouse", "boards"], topics=["misc"])
+    # In other words, so the text rule sees neither: the model does.
+    retries = {42: {"yes": True, "p": 0.91}, 44: {"yes": False, "p": 0.12},
+               46: {"yes": False, "p": 0.05}, 48: {"yes": True, "p": 0.74}}
+    _s, _t, parts, _p = rc.settle(reply, 40, 47, chunk, after, retries)
+    lighthouse, boards = parts
+    # The part that opened with the request asked again is joined to it.
+    assert (lighthouse["first_message"], lighthouse["last_message"], lighthouse["requests"]) == (40, 45, 2)
+    assert lighthouse["reactions"] == ["asked_again", "pushed_for_more", "moved_on"]
+    assert lighthouse["asked_again_at"] == [{"message": 42, "p": 0.91}]
+    # Asked again across the chunk's edge: the message after the chunk.
+    assert boards["reactions"] == ["asked_again"]
+    assert boards["asked_again_at"] == [{"message": 48, "p": 0.74}]
+    # Without the model both read as going on.
+    _s, _t, parts, _p = rc.settle(reply, 40, 47, chunk, after)
+    assert [p["reactions"] for p in parts] == [["moved_on"], ["pushed_for_more", "moved_on"], ["moved_on"]]
+    assert all("asked_again_at" not in p for p in parts)
+
+
+def test_the_worker_asks_the_decision_model_about_each_follow_up(app_ctx, monkeypatch):
+    from llm import systemone
+
+    room = _room_with_messages(app_ctx, 12)
+    _fake_chunk_model(monkeypatch)
+    asked = []
+
+    def ask(slot, state, questions, **kw):
+        asked.append((state, kw["job_uuid"], kw["bound"]))
+        if len(asked) == 2:     # one it could not answer
+            return [systemone.Answer("retry", "unknown", reason="timeout")]
+        return [systemone.Answer("retry", "ok", p=0.9 if len(asked) == 1 else 0.1,
+                                 label="yes" if len(asked) == 1 else "no")]
+
+    monkeypatch.setattr(systemone, "slot_model", lambda slot: ("http://127.0.0.1:1", "decider"))
+    monkeypatch.setattr(systemone, "ask", ask)
+    agent = _agent(monkeypatch)
+    assert agent.handle(uuid4(), {"room_uuid": str(room.uuid), "room_chunks": True})[
+        "jobs"] == {"done": 1}
+    (chunk,) = db.list_room_chunks(room.uuid, 10, 2, V)
+    try:
+        # Four follow-ups inside the chunk and the first message after it.
+        assert len(asked) == 5 and set(asked[0][0]) == {"request", "reply", "next_message"}
+        assert asked[0][1] == chunk.job_uuid and asked[0][2][1] == "decider"
+        assert chunk.audit["repeat_check"] == {"model": "decider", "asked": 5, "answered": 4}
+        assert chunk.parts[0]["reactions"][0] == "asked_again"
+        assert chunk.parts[0]["asked_again_at"] == [{"message": 2, "p": 0.9}]
+        assert agent._burst == 2        # scoring calls do not count toward the rest
+    finally:
+        db.session.query(db.RoomChunk).filter_by(room_uuid=room.uuid).delete()
+        db.session.commit()
 
 
 def test_reply_signals_come_from_the_run_the_audit_and_the_vote(app_ctx):
