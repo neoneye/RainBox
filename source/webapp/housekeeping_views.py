@@ -468,7 +468,7 @@ _JOB_FRAGMENT = """
 reply:
 {{ d.state.reply }}
 
-next_message (m{{ d.state.message }}):
+next_message:
 {{ d.state.next_message }}</pre>
       {% else %}
       <p class="hk-lede" style="margin:4px 0 8px">The input is not kept with the call. It is rebuilt from the room's messages, and they no longer match what was asked (digest <span class="hk-mono">{{ d.row.state_digest[:12] }}</span>).</p>

@@ -223,7 +223,10 @@ def test_a_chunk_jobs_page_shows_what_the_decision_model_was_asked_and_answered(
         # and the output with the bands that labelled it.
         assert "The next message asks again." in body
         assert "request:\nhow tall is the lighthouse" in body
-        assert "next_message (m2):\nlook up the height of the lighthouse" in body
+        assert "next_message:\nlook up the height of the lighthouse" in body
+        # The input is what the model was given: the message's number is the
+        # page's, and stands in the line above it.
+        assert "next_message (m" not in body and '<span class="hk-mono">m2</span>' in body
         assert "P(yes) = 0.91" in body and "yes at 0.5 or above" in body
         assert "they no longer match what was asked" in body
         assert second["message"] == 4       # the message after the chunk is a follow-up too
