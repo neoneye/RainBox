@@ -26,6 +26,7 @@ from db import (
     AssistantRun,
     AssistantStep,
     AssistantWriteIntent,
+    DecisionCall,
     HousekeepingAttempt,
     HousekeepingJob,
     RoomChunk,
@@ -885,6 +886,18 @@ class RoomChunkView(ModelView):
 
 
 admin.add_view(RoomChunkView(RoomChunk, db, category="Assistant"))
+
+
+class DecisionCallView(ModelView):
+    # One row per request to a decision model; read-only here.
+    column_default_sort = ("created_at", True)
+    can_create = False
+    can_edit = False
+    column_type_formatters = CRON_TYPE_FORMATTERS
+    column_formatters = {"uuid": _fmt_short_uuid}
+
+
+admin.add_view(DecisionCallView(DecisionCall, db, category="Assistant"))
 
 
 class EvalRunView(ModelView):
