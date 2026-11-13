@@ -138,6 +138,12 @@ that holds the request:
 - **Unbound, timed out or refused, a follow-up is read by rule alone.** The
   slot has no fallback to `assistant.default`: a generative model cannot
   answer this API. The model must have its weights on this machine.
+- **The slot takes a SystemOne model group only.** On `/modelgroup` a new
+  group's first choice is SystemOne. "Must have" admits only models the
+  provider reports with the `decision` capability (`model_config.systemone`,
+  observed at every sync), and fixes structured output to "Must have",
+  since such a model's output is always structured. On `/agentmodel` a
+  SystemOne group is offered to a decision slot and to no other agent.
 - **Every request is a `decision_call` row**: the question, the
   probability, the label and the bands that gave it, the model's digest, and
   a digest of the state. The state's text is not stored.

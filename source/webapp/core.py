@@ -305,6 +305,10 @@ def _sync_one_provider(
         default_arguments=prov.default_arguments(),
         sizes_by_name=sizes,
         function_calling_by_name=func_calling,
+        systemone_by_name=(
+            {m["id"]: ("decision" in (m.get("capabilities") or []))
+             for m in native if m.get("id")}
+            if native is not None else None),
         force_update_arguments=force_update_arguments,
         # A curated provider's catalog is far too large to mirror into rows;
         # the operator adds them one at a time on /model, and sync only keeps

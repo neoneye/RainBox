@@ -256,7 +256,8 @@ agent_config: dict[str, AgentConfigEntry] = {
     "assistant.repeat_check": {
         "uuid": ASSISTANT_REPEAT_CHECK_UUID,
         "requires_structured_output": False,
-        "description": "binding-only: the DECISION model (Ollama's /v1/systemone, e.g. d1:3b) that scores fast yes-or-no questions. The housekeeping role asks it whether a follow-up message asks for the same thing again. Must be a local model with the decision capability; only the group's first member is used. Does NOT fall back to assistant.default: unbound, the questions go unanswered and the callers use their rules alone.",
+        "requires_systemone": True,
+        "description": "binding-only: the DECISION model (Ollama's /v1/systemone, e.g. d1:3b) that scores fast yes-or-no questions. The housekeeping role asks it whether a follow-up message asks for the same thing again. Takes only a model group that requires SystemOne, and the model must be local; only the group's first member is used. Does NOT fall back to assistant.default: unbound, the questions go unanswered and the callers use their rules alone.",
     },
     "assistant.response_language_classifier": {
         "uuid": ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID,

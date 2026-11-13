@@ -579,6 +579,11 @@ def init_db(app: Flask) -> None:
         _add_column_if_missing(
             "model_group", "reasoning_constraint",
             "reasoning_constraint TEXT NOT NULL DEFAULT 'dont_care'")
+        _add_column_if_missing(
+            "model_group", "systemone_constraint",
+            "systemone_constraint TEXT NOT NULL DEFAULT 'dont_care'")
+        _add_column_if_missing(
+            "model_config", "systemone", "systemone BOOLEAN NOT NULL DEFAULT false")
         has_old_caps = _column_exists("model_group", "requires_function_calling")
         if has_old_caps:
             # One-time backfill: a previously-required capability becomes

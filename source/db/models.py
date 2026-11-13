@@ -81,6 +81,10 @@ class ModelConfig(db.Model):
     arguments: Mapped[dict] = mapped_column(JSONB, default=dict)
     available: Mapped[bool] = mapped_column(default=True)
     size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    # Whether the provider reports this as a SystemOne (decision) model: one
+    # that scores typed questions over /v1/systemone and generates no text.
+    # Observed at every sync, like `size_bytes`, and not part of `arguments`.
+    systemone: Mapped[bool] = mapped_column(default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
@@ -501,6 +505,10 @@ class ModelGroup(db.Model):
         Text, default="dont_care"
     )
     reasoning_constraint: Mapped[str] = mapped_column(Text, default="dont_care")
+    # SystemOne (decision) models answer a different API from generative
+    # ones, so a group is one kind or the other: "must_have" admits only
+    # SystemOne models and is the only kind a decision slot can be bound to.
+    systemone_constraint: Mapped[str] = mapped_column(Text, default="dont_care")
 
     # Back-compat shims: callers that only ask "is this group guaranteed to
     # support capability X?" (agents binding to a group, the agent↔group
@@ -513,6 +521,10 @@ class ModelGroup(db.Model):
     @property
     def requires_structured_output(self) -> bool:
         return self.structured_output_constraint == "must_have"
+
+    @property
+    def requires_systemone(self) -> bool:
+        return self.systemone_constraint == "must_have"
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)

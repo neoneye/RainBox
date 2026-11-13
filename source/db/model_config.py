@@ -238,6 +238,7 @@ def sync_model_configs(
     default_arguments: dict[str, Any],
     sizes_by_name: dict[str, int] | None = None,
     function_calling_by_name: dict[str, bool] | None = None,
+    systemone_by_name: dict[str, bool] | None = None,
     force_update_arguments: bool = False,
     create_missing: bool = True,
 ) -> dict[str, int]:
@@ -276,8 +277,13 @@ def sync_model_configs(
     native API was unreachable) to leave the flag untouched rather than clobber
     it to False.
 
+    `systemone_by_name` maps model name -> whether the provider reports the
+    `decision` capability. It is observational, like the size: applied to new
+    and existing rows alike, and left untouched for a name it does not hold.
+
     Returns a counts summary for logging."""
     available_set = set(available_model_names)
+    systemone = systemone_by_name or {}
     sizes = sizes_by_name or {}
     func_calling = function_calling_by_name or {}
     existing = {
@@ -308,6 +314,7 @@ def sync_model_configs(
                     arguments=arguments,
                     available=True,
                     size_bytes=size,
+                    systemone=bool(systemone.get(name)),
                 )
             )
             created += 1
@@ -321,6 +328,9 @@ def sync_model_configs(
             # updating is safe.
             if size is not None and cfg.size_bytes != size:
                 cfg.size_bytes = size
+            # Observed like the size: what the provider says the model is.
+            if name in systemone and cfg.systemone != systemone[name]:
+                cfg.systemone = systemone[name]
             # Only with the explicit force flag do we mutate an existing row's
             # arguments — refreshing is_function_calling_model to match what
             # the provider reports (reassign the dict so SQLAlchemy sees the
@@ -368,18 +378,27 @@ def create_model_group(
     function_calling_constraint: str = "dont_care",
     structured_output_constraint: str = "dont_care",
     reasoning_constraint: str = "dont_care",
+    systemone_constraint: str = "dont_care",
 ) -> ModelGroup:
+    """A SystemOne group always requires structured output: a SystemOne
+    model answers with typed values and nothing else, so the choice is not
+    open, whatever was passed."""
     if function_calling_constraint not in CAPABILITY_CONSTRAINTS:
         raise ValueError(f"invalid function_calling_constraint: {function_calling_constraint!r}")
     if structured_output_constraint not in CAPABILITY_CONSTRAINTS:
         raise ValueError(f"invalid structured_output_constraint: {structured_output_constraint!r}")
     if reasoning_constraint not in CAPABILITY_CONSTRAINTS:
         raise ValueError(f"invalid reasoning_constraint: {reasoning_constraint!r}")
+    if systemone_constraint not in CAPABILITY_CONSTRAINTS:
+        raise ValueError(f"invalid systemone_constraint: {systemone_constraint!r}")
+    if systemone_constraint == "must_have":
+        structured_output_constraint = "must_have"
     row = ModelGroup(
         name=name,
         function_calling_constraint=function_calling_constraint,
         structured_output_constraint=structured_output_constraint,
         reasoning_constraint=reasoning_constraint,
+        systemone_constraint=systemone_constraint,
     )
     db.session.add(row)
     db.session.commit()
@@ -414,6 +433,17 @@ def member_supports_reasoning(member_uuid: UUID) -> bool:
     except LookupError:
         return False
     return args_reasoning_on(args)
+
+
+def member_is_systemone(member_uuid: UUID) -> bool:
+    """Whether a ModelConfig/ModelConfigOverride uuid is a SystemOne
+    (decision) model: its config's `systemone`, which an override inherits.
+    Missing members resolve to False."""
+    cfg = get_model_config(member_uuid)
+    if cfg is None:
+        override = get_model_config_override(member_uuid)
+        cfg = get_model_config(override.model_config_uuid) if override else None
+    return bool(cfg is not None and cfg.systemone)
 
 
 def rename_model_group(group_uuid: UUID, name: str) -> None:
@@ -493,6 +523,12 @@ def set_model_group_members(group_uuid: UUID, member_uuids: list[UUID]) -> None:
             member_uuids,
             member_supports_reasoning,
             "reasoning",
+        )
+        _enforce_capability_constraint(
+            group.systemone_constraint,
+            member_uuids,
+            member_is_systemone,
+            "SystemOne",
         )
     db.session.query(ModelGroupMember).filter(
         ModelGroupMember.group_uuid == group_uuid

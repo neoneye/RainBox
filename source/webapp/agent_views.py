@@ -72,6 +72,7 @@ exactly one call. The names match the caller labels on
     <td>
       <div class="role">{{ a.name }}</div>
       <div class="desc">{{ a.description }}</div>
+      {% if a.requires_systemone %}<div class="desc"><b>requires SystemOne</b></div>{% endif %}
       {% if a.requires_function_calling %}<div class="desc"><b>requires function calling</b></div>{% endif %}
       {% if a.requires_structured_output %}<div class="desc"><b>requires structured output</b></div>{% endif %}
       {% if a.excludes_structured_output %}<div class="desc"><b>requires structured output off</b></div>{% endif %}
@@ -104,6 +105,7 @@ exactly one call. The names match the caller labels on
           {% endfor %}
         </select>
         <button type="submit">Save</button>
+        {% if a.requires_systemone %}<br><small class="desc">only groups that require SystemOne</small>{% endif %}
         {% if a.requires_function_calling %}<br><small class="desc">only groups that require function calling</small>{% endif %}
         {% if a.requires_structured_output %}<br><small class="desc">only groups that require structured output</small>{% endif %}
         {% if a.excludes_structured_output %}<br><small class="desc">only groups that exclude structured output</small>{% endif %}
@@ -142,6 +144,7 @@ def _group_options() -> list[dict]:
                 "requires_function_calling": group.requires_function_calling,
                 "requires_structured_output": group.requires_structured_output,
                 "structured_output_constraint": group.structured_output_constraint,
+                "requires_systemone": group.requires_systemone,
             }
         )
     return options
@@ -152,14 +155,18 @@ def _agent_group_options(entry: Mapping[str, Any], groups: list[dict]) -> list[d
     bind to, given the capability constraints it declares in agent_config. The
     constraints are independent: a group may be required to support function
     calling, required to support structured output, or (for unstructured agents)
-    required to forbid structured output."""
+    required to forbid structured output. SystemOne is not independent: a
+    decision slot takes SystemOne groups only, and every other agent takes
+    none of them, because the two kinds of model answer different APIs."""
     requires_fc = bool(entry.get("requires_function_calling"))
     requires_struct = bool(entry.get("requires_structured_output"))
     excludes_struct = bool(entry.get("excludes_structured_output"))
+    requires_systemone = bool(entry.get("requires_systemone"))
     return [
         o
         for o in groups
-        if (not requires_fc or o["requires_function_calling"])
+        if bool(o.get("requires_systemone")) == requires_systemone
+        and (not requires_fc or o["requires_function_calling"])
         and (not requires_struct or o["requires_structured_output"])
         and (not excludes_struct or o["structured_output_constraint"] == "must_not_have")
     ]
@@ -226,6 +233,10 @@ def agent_models_page() -> str | Response:
             abort(400, "this agent does not use a model group")
         if group_uuid is not None and entry:
             g = get_model_group(group_uuid)
+            if bool(entry.get("requires_systemone")) != bool(g and g.requires_systemone):
+                abort(400, "this agent requires a SystemOne group"
+                      if entry.get("requires_systemone")
+                      else "a SystemOne group can only be bound to a decision slot")
             if entry.get("requires_function_calling") and (
                 g is None or not g.requires_function_calling
             ):
@@ -273,6 +284,7 @@ def agent_models_page() -> str | Response:
                 "requires_function_calling": requires_fc,
                 "requires_structured_output": requires_struct,
                 "excludes_structured_output": excludes_struct,
+                "requires_systemone": bool(entry.get("requires_systemone")),
                 "groups": agent_groups,
                 # What this row runs on when it is left unassigned. Shown in
                 # place of "none assigned", which would read as "this call does

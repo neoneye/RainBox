@@ -103,6 +103,7 @@ def test_every_structured_slot_requires_structured_output():
     call — so any group may run it. A decision slot returns probabilities
     and no text at all."""
     unstructured = PLAIN_TEXT_SLOTS | {"assistant.repeat_check"}
+    assert agent_config["assistant.repeat_check"]["requires_systemone"] is True
     for name, entry in agent_config.items():
         if name.startswith("assistant."):
             assert (entry.get("requires_structured_output") is True) is (
