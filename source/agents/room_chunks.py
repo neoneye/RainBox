@@ -35,7 +35,7 @@ from pydantic import BaseModel, Field
 #: Bumped when the prompt, the schema or the parsing changes. A chunk belongs
 #: to the series of the version that wrote it, so a new version summarizes a
 #: room again beside the old series, and the two can be compared.
-PROMPT_VERSION = 12
+PROMPT_VERSION = 13
 
 SUMMARY_MAX_CHARS = 120
 RESULT_MAX_CHARS = 160
@@ -621,7 +621,7 @@ def settle(reply: ChunkSummary, first_index: int, last_index: int,
     times its request was made: one, and one more for each time it was asked
     again inside the part), its `reactions` (`react`; `after` is the
     messages that follow the chunk; `retries` is what the decision model said
-    of each follow-up, by message number, as `{yes, p}`: see `follow_ups`),
+    of each follow-up, by message number, as `{yes, p, kind}`: see `follow_ups`),
     and its `calibration`, by rule."""
     problems: list[str] = []
     parts: list[dict[str, Any]] = []
@@ -652,7 +652,7 @@ def settle(reply: ChunkSummary, first_index: int, last_index: int,
                                   retries or {})
         # The follow-ups the decision model called asking again, with its
         # probability: in the part, or the first message after it.
-        said = [{"message": n, "p": round(v["p"], 2)}
+        said = [{"message": n, "p": round(v["p"], 2), **({"kind": v["kind"]} if v.get("kind") else {})}
                 for n, v in sorted((retries or {}).items())
                 if v.get("yes") and part["first_message"] is not None
                 and part["first_message"] < n <= _next_request(

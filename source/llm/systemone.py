@@ -1,7 +1,8 @@
 """The decision models: typed questions scored by a local model.
 
 The only code that talks to `/v1/systemone` on the local Ollama server. A
-request is `{model, state, questions}`. Each question is answered alone,
+request is `{model, state, questions}`; the state is an object or a text.
+Each question is answered alone,
 against the shared state, with a probability and no generated text: a Noul
 question gets P(yes), a Choice question a probability per option.
 
@@ -131,7 +132,7 @@ def verify_local(base_url: str, model: str, timeout: float = 5.0) -> tuple[str, 
     return listed["digest"], version
 
 
-def state_digest(state: dict[str, Any]) -> str:
+def state_digest(state: dict[str, Any] | str) -> str:
     """What a `decision_call` row keeps of the state it was asked about. A
     page that rebuilds the state from the messages finds its row by this."""
     return hashlib.sha256(json.dumps(
@@ -169,11 +170,11 @@ def _answer(question: Question, raw: Any, bands: Bands) -> Answer:
 def _payload(question: Question) -> dict[str, Any]:
     out: dict[str, Any] = {"type": question.kind, "instructions": question.instructions}
     if question.kind == "choice":
-        out["options"] = question.options or {}
+        out["criteria"] = question.options or {}
     return out
 
 
-def ask_model(base_url: str, model: str, state: dict[str, Any],
+def ask_model(base_url: str, model: str, state: dict[str, Any] | str,
               questions: list[Question], *, deadline_s: float,
               max_state_chars: int, bands: Bands = DEFAULT_BANDS,
               ) -> tuple[list[Answer], dict[str, Any]]:
@@ -235,7 +236,7 @@ def slot_model(slot_uuid: UUID) -> tuple[str, str] | None:
     return None
 
 
-def ask(slot_uuid: UUID, state: dict[str, Any], questions: list[Question], *,
+def ask(slot_uuid: UUID, state: dict[str, Any] | str, questions: list[Question], *,
         deadline_s: float, max_state_chars: int, bands: Bands = DEFAULT_BANDS,
         question_set_version: int = 1, run_uuid: UUID | None = None,
         job_uuid: UUID | None = None,

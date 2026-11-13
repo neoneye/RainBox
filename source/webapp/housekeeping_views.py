@@ -84,12 +84,15 @@ def _reaction_texts(part: dict) -> list[str]:
 
 def _decision_calls(job) -> list[dict]:
     """A room-chunk job's requests to the decision model, in the order they
-    were made: `{row, state}`. The state is not stored with the call. It is
-    rebuilt here from the chunk's messages, as the worker built it, and
-    matched to its call by digest. `state` is None for a call whose messages
-    have changed since, or whose job is not a chunk's."""
+    were made: `{row, state, verdict}`. The state is not stored with the
+    call. It is rebuilt here from the chunk's messages, as the worker built
+    it, and matched to its call by digest: `{message, next_message, text}`,
+    `text` being what the model was given. It is None for a call whose
+    messages have changed since, or whose job is not a chunk's. `verdict` is
+    the first answer in a line: `{text, p, yes}`, or None without an answer."""
     from agents import room_chunks
     from llm.systemone import state_digest
+    from llm.systemone_questions import FOLLOW_UP_DIFFERENT, follow_up_state
 
     rows = db.list_decision_calls(job.uuid)
     if not rows:
@@ -105,9 +108,28 @@ def _decision_calls(job) -> list[dict]:
             for item in room_chunks.follow_ups(
                     messages[first:last + 1],
                     messages[last + 1:last + 1 + spec["overlap"]], first):
-                state = {k: item[k] for k in ("request", "reply", "next_message")}
-                states[state_digest(state)] = {"message": item["message"], **state}
-    return [{"row": r, "state": states.get(r.state_digest)} for r in rows]
+                shown = {"message": item["message"], "next_message": item["next_message"]}
+                text = follow_up_state(item["request"], item["reply"], item["next_message"])
+                states[state_digest(text)] = {**shown, "text": text}
+                # A call from before the messages were tagged was given them
+                # as an object with these three keys.
+                keyed = {k: item[k] for k in ("request", "reply", "next_message")}
+                states[state_digest(keyed)] = {**shown, "text": "\n\n".join(
+                    f"{k}:\n{v}" for k, v in keyed.items())}
+
+    def verdict(row) -> dict | None:
+        answer = (row.answers or [{}])[0]
+        if answer.get("status") != "ok":
+            return None
+        probabilities = answer.get("probabilities")
+        if probabilities:
+            top = max(probabilities, key=lambda k: probabilities[k])
+            return {"text": top, "p": probabilities[top], "yes": top != FOLLOW_UP_DIFFERENT}
+        return {"text": answer.get("label"), "p": answer.get("p"),
+                "yes": answer.get("label") == "yes"}
+
+    return [{"row": r, "state": states.get(r.state_digest), "verdict": verdict(r)}
+            for r in rows]
 
 
 def _signal_texts(signals: dict | None) -> list[str]:
@@ -452,21 +474,14 @@ _JOB_FRAGMENT = """
     <details class="hk-text" id="d{{ d.row.uuid }}">
       <summary>
         {% if d.state %}<span class="hk-mono">m{{ d.state.message }}</span>{% endif %}
-        {% if answer.status == 'ok' %}<span class="hk-pill {{ 'done' if answer.label == 'yes' else '' }}">{{ answer.label }}</span> <span class="hk-mono">{{ '%.2f'|format(answer.p) }}</span>
+        {% if d.verdict %}<span class="hk-pill {{ 'done' if d.verdict.yes else '' }}">{{ d.verdict.text }}</span> <span class="hk-mono">{{ '%.2f'|format(d.verdict.p) }}</span>
         {% else %}<span class="hk-pill failed">no answer: {{ answer.reason or d.row.reason }}</span>{% endif %}
         {% if d.state %} <span style="text-transform:none;letter-spacing:0;font-weight:400">{{ d.state.next_message|truncate(70) }}</span>{% endif %}
         {% if d.row.elapsed_ms is not none %}<span class="hk-num">{{ d.row.elapsed_ms }} ms</span>{% endif %}
       </summary>
       <div class="hk-result"><b>Input</b></div>
       {% if d.state %}
-      <pre class="hk-pre">request:
-{{ d.state.request }}
-
-reply:
-{{ d.state.reply }}
-
-next_message:
-{{ d.state.next_message }}</pre>
+      <pre class="hk-pre">{{ d.state.text }}</pre>
       {% else %}
       <p class="hk-lede" style="margin:4px 0 8px">The input is not kept with the call. It is rebuilt from the room's messages, and they no longer match what was asked (digest <span class="hk-mono">{{ d.row.state_digest[:12] }}</span>).</p>
       {% endif %}
@@ -660,7 +675,7 @@ _ROOM_FRAGMENT = """
               <div class="hk-signals">
                 <span class="hk-pill hk-cal-{{ part.calibration }}" title="{{ 'Decided by rule from the reaction and the records' if part.calibration_basis else 'Judged by the model' }}">{{ part.calibration }}</span>
                 {% if part.calibration_basis %}<span>{{ part.calibration_basis }}</span>{% endif %}
-                {% for a in part.asked_again_at or [] %}<span class="hk-chip" title="The decision model's probability that this message asks for the same thing again">m{{ a.message }} asks again {{ '%.2f'|format(a.p) }}</span>{% endfor %}
+                {% for a in part.asked_again_at or [] %}<span class="hk-chip" title="The decision model's probability that this message asks for the same thing again">m{{ a.message }} asks again {{ '%.2f'|format(a.p) }}{% if a.kind %} ({{ a.kind }}){% endif %}</span>{% endfor %}
                 {% for r in reaction_texts(part) %}<span class="hk-mono" title="What the human did after each reply">{{ r }}</span>{% endfor %}
                 {% for text in signal_texts(part.signals) %}<span class="hk-chip" title="From the records">{{ text }}</span>{% endfor %}
               </div>
@@ -697,7 +712,7 @@ _ROOM_FRAGMENT = """
       <dt>Asked again</dt>
       <dd>
         {% if c.row.audit.repeat_check.model %}
-        <span class="hk-mono">{{ c.row.audit.repeat_check.model }}</span> was asked of {{ c.row.audit.repeat_check.asked }} follow-up{{ '' if c.row.audit.repeat_check.asked == 1 else 's' }} whether it asks for the same thing again, and answered {{ c.row.audit.repeat_check.answered }}.{% if c.row.job_uuid %} <a class="hk-back" href="/assistant/housekeeping/{{ c.row.job_uuid }}#decisions">its question, input and output</a>{% endif %}
+        <span class="hk-mono">{{ c.row.audit.repeat_check.model }}</span> was asked of {{ c.row.audit.repeat_check.asked }} follow-up{{ '' if c.row.audit.repeat_check.asked == 1 else 's' }} whether it repeats the request before it, and answered {{ c.row.audit.repeat_check.answered }}.{% if c.row.job_uuid %} <a class="hk-back" href="/assistant/housekeeping/{{ c.row.job_uuid }}#decisions">its question, input and output</a>{% endif %}
         {% else %}
         No decision model is bound to <span class="hk-mono">assistant.repeat_check</span>, so a request asked again in other words is not seen.
         {% endif %}

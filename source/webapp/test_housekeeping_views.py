@@ -184,6 +184,7 @@ def test_a_chunk_jobs_page_shows_what_the_decision_model_was_asked_and_answered(
     from agents import room_chunks
     from agents.config import ASSISTANT_UUID
     from llm.systemone import state_digest
+    from llm.systemone_questions import follow_up_state
 
     c, made = client
     human = db.get_human_user()
@@ -212,7 +213,7 @@ def test_a_chunk_jobs_page_shows_what_the_decision_model_was_asked_and_answered(
                       "bands": {"yes": 0.5, "no": 0.5, "choice": 0.8}}],
             status="ok", reason=None, elapsed_ms=120, deadline_ms=20000, **over)
 
-    state = {k: first[k] for k in ("request", "reply", "next_message")}
+    state = follow_up_state(first["request"], first["reply"], first["next_message"])
     rows = [record(state, 0.91),
             # Asked of messages that are no longer what the room holds.
             record({"request": "gone", "reply": "gone", "next_message": "gone"}, 0.12)]
@@ -222,11 +223,11 @@ def test_a_chunk_jobs_page_shows_what_the_decision_model_was_asked_and_answered(
         # The prompt as it was worded, the input rebuilt from the messages,
         # and the output with the bands that labelled it.
         assert "The next message asks again." in body
-        assert "request:\nhow tall is the lighthouse" in body
-        assert "next_message:\nlook up the height of the lighthouse" in body
+        assert "&lt;request1&gt;how tall is the lighthouse&lt;/request1&gt;" in body
+        assert "&lt;request2&gt;look up the height of the lighthouse&lt;/request2&gt;" in body
         # The input is what the model was given: the message's number is the
         # page's, and stands in the line above it.
-        assert "next_message (m" not in body and '<span class="hk-mono">m2</span>' in body
+        assert "(m2)" not in body and '<span class="hk-mono">m2</span>' in body
         assert "P(yes) = 0.91" in body and "yes at 0.5 or above" in body
         # A request can hold several questions: the input they share comes
         # first, then every question, then every answer.
@@ -275,13 +276,13 @@ def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
                "rewritten": [{
             "first_message": 0, "last_message": 5, "summary": "which number is odd",
             "result": "seven", "reasoning": "seven answers a later request"}]},
-        model="model-a", prompt_version=12)
+        model="model-a", prompt_version=13)
     try:
         body = c.get(f"/assistant/housekeeping/room/{room.uuid}").get_data(as_text=True)
         assert "Messages 0&ndash;9" in body and "questions about numbers" in body
         assert "m2 asks again 0.91" in body and "was asked of 5 follow-ups" in body
         # The heading links to its own chunk in this series.
-        assert 'href="?size=10&amp;overlap=2&amp;prompt=12#chunk-0">Messages 0&ndash;9</a>' in body
+        assert 'href="?size=10&amp;overlap=2&amp;prompt=13#chunk-0">Messages 0&ndash;9</a>' in body
         assert '<span class="hk-chip">numbers</span>' in body
         assert "m0&ndash;m5" in body and "which number comes next" in body
         assert "&times;3" in body and '<span class="hk-chip">notation</span>' in body

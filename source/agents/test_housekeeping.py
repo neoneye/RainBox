@@ -369,7 +369,7 @@ def _fake_chunk_model(monkeypatch, reply=None, check=None):
     return prompts
 
 
-V = 12   # agents.room_chunks.PROMPT_VERSION
+V = 13   # agents.room_chunks.PROMPT_VERSION
 
 
 def test_chunks_are_cut_in_order_and_wait_for_their_context(app_ctx):
@@ -824,9 +824,11 @@ def test_the_worker_asks_the_decision_model_about_each_follow_up(app_ctx, monkey
     def ask(slot, state, questions, **kw):
         asked.append((state, kw["job_uuid"], kw["bound"]))
         if len(asked) == 2:     # one it could not answer
-            return [systemone.Answer("retry", "unknown", reason="timeout")]
-        return [systemone.Answer("retry", "ok", p=0.9 if len(asked) == 1 else 0.1,
-                                 label="yes" if len(asked) == 1 else "no")]
+            return [systemone.Answer("repeat", "unknown", reason="timeout")]
+        again = len(asked) == 1
+        return [systemone.Answer("repeat", "ok", p=0.7, label=None, probabilities=(
+            {"duplicate": 0.2, "same": 0.7, "different": 0.1} if again
+            else {"duplicate": 0.05, "same": 0.05, "different": 0.9}))]
 
     monkeypatch.setattr(systemone, "slot_model", lambda slot: ("http://127.0.0.1:1", "decider"))
     monkeypatch.setattr(systemone, "ask", ask)
@@ -836,11 +838,11 @@ def test_the_worker_asks_the_decision_model_about_each_follow_up(app_ctx, monkey
     (chunk,) = db.list_room_chunks(room.uuid, 10, 2, V)
     try:
         # Four follow-ups inside the chunk and the first message after it.
-        assert len(asked) == 5 and set(asked[0][0]) == {"request", "reply", "next_message"}
+        assert len(asked) == 5 and asked[0][0].startswith("<request1>message number 0")
         assert asked[0][1] == chunk.job_uuid and asked[0][2][1] == "decider"
         assert chunk.audit["repeat_check"] == {"model": "decider", "asked": 5, "answered": 4}
         assert chunk.parts[0]["reactions"][0] == "asked_again"
-        assert chunk.parts[0]["asked_again_at"] == [{"message": 2, "p": 0.9}]
+        assert chunk.parts[0]["asked_again_at"] == [{"message": 2, "p": 0.9, "kind": "same"}]
         assert agent._burst == 2        # scoring calls do not count toward the rest
     finally:
         db.session.query(db.RoomChunk).filter_by(room_uuid=room.uuid).delete()

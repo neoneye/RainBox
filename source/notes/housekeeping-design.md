@@ -125,15 +125,19 @@ message that follows a reply to an earlier request of the chunk
 chunk, so a request asked again across a chunk's edge is seen by the chunk
 that holds the request:
 
-- **One request per follow-up.** The state is `{request, reply,
-  next_message}`, cut as the summary's prompt cuts them, and the question is
-  whether the next message asks for the same thing as the request once
-  more. The answer is a probability, and yes at 0.5 or above.
+- **One request per follow-up.** The three messages are given as a text,
+  each inside a tag of its own (`<request1>`, `<reply1>`, `<request2>`),
+  cut as the summary's prompt cuts them, with angle brackets escaped so a
+  message cannot close its tag. The question is a choice, "Does request2
+  repeat request1?", with three options: `duplicate` (the same, or nearly
+  the same words), `same` (the same request expressed differently, or a
+  bare retry), `different`. The follow-up asks again when `duplicate` and
+  `same` hold at least half of the probability between them.
 - **Its yes makes the message `asked_again`**, inside a part or after it,
   and joins a part that opens with such a message to the part before. The
   text rule's yes stands whatever the model said.
 - **Each part lists the messages the model called asking again**, with the
-  probability, as `asked_again_at`. The chunk's `audit.repeat_check` says
+  probability and which of the two ways it was, as `asked_again_at`. The chunk's `audit.repeat_check` says
   which model was asked, of how many follow-ups, and how many it answered.
 - **Unbound, timed out or refused, a follow-up is read by rule alone.** The
   slot has no fallback to `assistant.default`: a generative model cannot
@@ -155,13 +159,24 @@ that holds the request:
 - **These calls do not count toward the rest.** Each is a fraction of a
   second of scoring, and no text is generated.
 
-Measured on one room of 70 follow-ups, labelled by hand before the run, with
-`d1:3b`: at 0.5 the question caught 14 of 19 follow-ups that asked again and
-called 1 of 43 others one, in about a quarter of a second each. Asked whether
-the reply "did not do what was asked", the same model separated the two no
-better than chance; `d3:4b` said yes to nearly everything at 0.5 and took
-eight times as long. A generative call on gemma4:e4b-mlx judging the same
-follow-ups caught 15 of 18 with 3 false, at several seconds each.
+Measured on one room with `d1:3b`, on 15 follow-ups that asked again and
+43 that did not, labelled by hand before the run: the choice over tagged
+messages caught 14 and called 1 of the others one, in about a fifth of a
+second each. A yes-or-no question over an object with the keys request,
+reply and next_message caught 12 and called none. Asked whether the reply
+"did not do what was asked", the same model separated the two no better than
+chance; `d3:4b` said yes to nearly everything at 0.5 and took eight times as
+long. A generative call on gemma4:e4b-mlx judging the same follow-ups was no
+better, at several seconds each.
+
+**What the tags do and do not do.** They mark where each message begins
+and ends. They do not make the model deaf to what a message says. A
+sentence planted in the next message, saying that it repeats the request,
+moved 42 of 43 unrelated follow-ups to "asks again", with tags as without.
+Planted in the reply, it moved 2 of 43. So the assistant's reply, which can
+carry text from elsewhere, steers the answer little; the human's own next
+message steers it fully. What a wrong answer costs is one part's reaction
+and calibration on a page: nothing acts on it.
 
 One entry for each human message inside the part after its first request,
 where the decision model did not answer:

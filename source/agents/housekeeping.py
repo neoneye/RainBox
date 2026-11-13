@@ -493,8 +493,8 @@ class HousekeepingAgent(Agent):
                         after: list[dict[str, Any]], first: int, watch: TurnWatch,
                         ) -> tuple[dict[int, dict[str, Any]], dict[str, Any]]:
         """Ask the decision model, of every follow-up in the chunk, whether
-        it asks for the same thing again. Returns what it said by message
-        number, as `{yes, p}`, and a line for the chunk's record: the model,
+        it repeats the request before it. Returns what it said by message
+        number, as `{yes, p, kind}`, and a line for the chunk's record: the model,
         how many follow-ups were asked and how many it answered; or why none
         was asked. An unanswered follow-up is simply absent, and is read by
         rule. These calls are not counted toward the rest: each is a
@@ -502,7 +502,8 @@ class HousekeepingAgent(Agent):
         from agents import room_chunks
         from agents.config import ASSISTANT_REPEAT_CHECK_UUID
         from llm import systemone
-        from llm.systemone_questions import FOLLOW_UP_RETRY, FOLLOW_UP_SET_VERSION
+        from llm.systemone_questions import (
+            FOLLOW_UP_REPEAT, FOLLOW_UP_SET_VERSION, follow_up_again, follow_up_state)
 
         bound = systemone.slot_model(ASSISTANT_REPEAT_CHECK_UUID)
         if bound is None:
@@ -510,16 +511,17 @@ class HousekeepingAgent(Agent):
         asked = room_chunks.follow_ups(chunk, after, first)
         said: dict[int, dict[str, Any]] = {}
         for item in asked:
-            state = {k: item[k] for k in ("request", "reply", "next_message")}
+            state = follow_up_state(item["request"], item["reply"], item["next_message"])
             with watch.interruptible():
                 (answer,) = systemone.ask(
-                    ASSISTANT_REPEAT_CHECK_UUID, state, [FOLLOW_UP_RETRY],
+                    ASSISTANT_REPEAT_CHECK_UUID, state, [FOLLOW_UP_REPEAT],
                     deadline_s=self.FOLLOW_UP_DEADLINE_SECONDS,
                     max_state_chars=self.FOLLOW_UP_MAX_STATE_CHARS,
                     question_set_version=FOLLOW_UP_SET_VERSION,
                     job_uuid=job.uuid, bound=bound)
-            if answer.status == "ok" and answer.p is not None:
-                said[item["message"]] = {"yes": answer.yes, "p": answer.p}
+            if answer.status == "ok" and answer.probabilities:
+                yes, p, kind = follow_up_again(answer.probabilities)
+                said[item["message"]] = {"yes": yes, "p": p, "kind": kind}
         return said, {"model": bound[1], "asked": len(asked), "answered": len(said)}
 
     _RUNNERS: dict[str, Callable[..., str]] = {
