@@ -256,6 +256,7 @@ def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
         db.post_chat_message(room.uuid, human.uuid if i % 2 == 0 else ASSISTANT_UUID,
                              f"message number {i}")
     messages = db.counted_room_messages(room.uuid)
+    job, _ = _job(_run(made))
     chunk = db.store_room_chunk(
         room_uuid=room.uuid, chunk_size=10, overlap=2, seq=0,
         first_message_id=messages[0]["id"], last_message_id=messages[9]["id"],
@@ -277,11 +278,17 @@ def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
                "rewritten": [{
             "first_message": 0, "last_message": 5, "summary": "which number is odd",
             "result": "seven", "reasoning": "seven answers a later request"}]},
-        model="model-a", prompt_version=15)
+        model="model-a", prompt_version=15, job_uuid=job.uuid)
     try:
         body = c.get(f"/assistant/housekeeping/room/{room.uuid}").get_data(as_text=True)
         assert "Messages 0&ndash;9" in body and "questions about numbers" in body
-        assert "m2 asks again 0.91" in body and "was asked of 5 follow-ups" in body
+        assert "m2 asks again 0.91" in body and "Each of 5 follow-ups was put to the decision model" in body
+        assert "4 were answered." in body
+        # The card names no model. Which ones wrote it is on the job's page,
+        # behind the button in the card's corner.
+        chunk_card = body[body.index('id="chunk-0"'):body.index('id="chunk-0-messages"')]
+        assert "model-a" not in chunk_card and "decider" not in chunk_card
+        assert f'href="/assistant/housekeeping/{job.uuid}"' in chunk_card and ">Inspect</a>" in chunk_card
         # The heading links to its own chunk in this series.
         assert 'href="?size=10&amp;overlap=2&amp;prompt=15#chunk-0">Messages 0&ndash;9</a>' in body
         assert '<span class="hk-chip">numbers</span>' in body

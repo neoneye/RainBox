@@ -538,8 +538,9 @@ the `chunks` link beside a room's name in the log.
 - How many messages the room has, how many are summarized, and how many
   chunks are queued or due.
 - One card per chunk: its messages' numbers and dates, its phrase and
-  topics, the model, a link to the job's prompt and reply, and the messages
-  themselves, folded.
+  topics, and the messages themselves, folded. The card names no model. An
+  Inspect button in its corner opens the job that wrote it: the models,
+  the prompts and replies, and what the decision model was asked.
 - A chunk's heading links to the chunk itself, in the series shown:
   `?size=…&overlap=…&prompt=…#chunk-N`. The chunk the address names is
   outlined.
@@ -548,8 +549,8 @@ the `chunks` link beside a room's name in the log.
   in grey. A part the check still doubts says which of its request and
   result, and why.
 - The messages the decision model called asking again, each with its
-  probability, and under the chunk which model was asked and how many
-  follow-ups it answered.
+  probability, and under the chunk how many follow-ups were put to the
+  decision model and how many it answered.
 - Whether the chunk was written once or twice, and for a second writing,
   what the first answer had in the parts the check found wrong.
 - A chip per series the room has chunks in, earlier prompts included.
