@@ -180,6 +180,60 @@ def test_the_run_page_lists_its_jobs_after_the_turn_and_moves_them_forward(clien
     assert "After the turn" not in c.get(f"/assistant?id={other.uuid}").get_data(as_text=True)
 
 
+def test_a_chunk_jobs_page_shows_what_the_decision_model_was_asked_and_answered(client):
+    from agents import room_chunks
+    from agents.config import ASSISTANT_UUID
+    from llm.systemone import state_digest
+
+    c, made = client
+    human = db.get_human_user()
+    room = db.create_chatroom(f"hkd-{uuid4().hex[:8]}", human.uuid, [ASSISTANT_UUID])
+    made["rooms"].append(room.uuid)
+    for i, text in enumerate(["how tall is the lighthouse", "It is not in the notes.",
+                              "look up the height of the lighthouse", "Still nothing.",
+                              "which boards exist", "Two boards."]):
+        db.post_chat_message(room.uuid, human.uuid if i % 2 == 0 else ASSISTANT_UUID, text)
+    messages = db.counted_room_messages(room.uuid)
+    job, _ = db.ensure_housekeeping_job(
+        db.ROOM_CHUNK_JOB, room_uuid=room.uuid,
+        subject=db.chunk_subject(4, 2, room_chunks.PROMPT_VERSION, 0,
+                                 messages[0]["id"], messages[3]["id"]))
+    first, second = room_chunks.follow_ups(messages[:4], messages[4:6], 0)
+
+    def record(state, p, **over):
+        return db.record_decision_call(
+            job_uuid=job.uuid, slot="assistant.repeat_check", model="decider",
+            model_digest="d" * 64, server_version="0.40.16", question_set_version=1,
+            bands_version=1, state_digest=state_digest(state),
+            questions=[{"name": "retry", "kind": "noul", "version": 1,
+                        "instructions": "The next message asks again.", "options": None}],
+            answers=[{"name": "retry", "status": "ok", "p": p, "label": "yes" if p >= 0.5 else "no",
+                      "probabilities": None, "reason": None,
+                      "bands": {"yes": 0.5, "no": 0.5, "choice": 0.8}}],
+            status="ok", reason=None, elapsed_ms=120, deadline_ms=20000, **over)
+
+    state = {k: first[k] for k in ("request", "reply", "next_message")}
+    rows = [record(state, 0.91),
+            # Asked of messages that are no longer what the room holds.
+            record({"request": "gone", "reply": "gone", "next_message": "gone"}, 0.12)]
+    try:
+        body = c.get(f"/assistant/housekeeping/{job.uuid}").get_data(as_text=True)
+        assert "Decision model" in body and "2 requests to" in body
+        # The prompt as it was worded, the input rebuilt from the messages,
+        # and the output with the bands that labelled it.
+        assert "The next message asks again." in body
+        assert "request:\nhow tall is the lighthouse" in body
+        assert "next_message (m2):\nlook up the height of the lighthouse" in body
+        assert "P(yes) = 0.91" in body and "yes at 0.5 or above" in body
+        assert "they no longer match what was asked" in body
+        assert second["message"] == 4       # the message after the chunk is a follow-up too
+    finally:
+        for r in rows:
+            db.session.delete(r)
+        db.session.delete(job)
+        db.session.commit()
+
+
 def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
     from agents.config import ASSISTANT_UUID, HOUSEKEEPING_UUID
     from agents.room_chunks import content_hash

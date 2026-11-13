@@ -147,6 +147,11 @@ that holds the request:
 - **Every request is a `decision_call` row**: the question, the
   probability, the label and the bands that gave it, the model's digest, and
   a digest of the state. The state's text is not stored.
+- **The job's page shows each request**: the question as it was worded,
+  the input, and the output with the bands that labelled it. The input is
+  rebuilt from the room's messages, as the worker built it, and matched to
+  its call by the digest. When the messages have changed since, the page
+  says the input can no longer be shown.
 - **These calls do not count toward the rest.** Each is a fraction of a
   second of scoring, and no text is generated.
 

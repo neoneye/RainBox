@@ -82,6 +82,34 @@ def _reaction_texts(part: dict) -> list[str]:
     return out
 
 
+def _decision_calls(job) -> list[dict]:
+    """A room-chunk job's requests to the decision model, in the order they
+    were made: `{row, state}`. The state is not stored with the call. It is
+    rebuilt here from the chunk's messages, as the worker built it, and
+    matched to its call by digest. `state` is None for a call whose messages
+    have changed since, or whose job is not a chunk's."""
+    from agents import room_chunks
+    from llm.systemone import state_digest
+
+    rows = db.list_decision_calls(job.uuid)
+    if not rows:
+        return []
+    states: dict[str, dict] = {}
+    spec = db.parse_chunk_subject(job.subject) if job.subject else None
+    if spec is not None and job.room_uuid is not None:
+        messages = db.counted_room_messages(job.room_uuid)
+        inside = [i for i, m in enumerate(messages)
+                  if spec["first_id"] <= m["id"] <= spec["last_id"]]
+        if inside:
+            first, last = inside[0], inside[-1]
+            for item in room_chunks.follow_ups(
+                    messages[first:last + 1],
+                    messages[last + 1:last + 1 + spec["overlap"]], first):
+                state = {k: item[k] for k in ("request", "reply", "next_message")}
+                states[state_digest(state)] = {"message": item["message"], **state}
+    return [{"row": r, "state": states.get(r.state_digest)} for r in rows]
+
+
 def _signal_texts(signals: dict | None) -> list[str]:
     """A part's records as short labels: runs by outcome, replies that did
     not meet their criteria, revisions, votes. Only what is non-zero."""
@@ -410,6 +438,50 @@ _JOB_FRAGMENT = """
 <div class="hk-empty"><div class="t">Not started yet</div>
   <div class="s">The job is waiting for its turn in the queue.</div></div>
 {% endfor %}
+
+{% if decisions %}
+<div class="hk-card" id="decisions">
+  <div class="hd">
+    <h3>Decision model</h3>
+    <span>{{ decisions|length }} request{{ '' if decisions|length == 1 else 's' }} to <span class="hk-mono">{{ decisions[0].row.model or decisions[0].row.slot }}</span></span>
+  </div>
+  <div class="bd">
+    <p class="hk-lede" style="margin:0 0 10px">Asked before the summary, once for each follow-up in the chunk. The model generates no text: it is given the input and the question, and returns a probability.</p>
+    {% for d in decisions %}
+    {% set answer = (d.row.answers or [{}])[0] %}
+    {% set question = (d.row.questions or [{}])[0] %}
+    <details class="hk-text" id="d{{ d.row.uuid }}">
+      <summary>
+        {% if d.state %}<span class="hk-mono">m{{ d.state.message }}</span>{% endif %}
+        {% if answer.status == 'ok' %}<span class="hk-pill {{ 'done' if answer.label == 'yes' else '' }}">{{ answer.label }}</span> <span class="hk-mono">{{ '%.2f'|format(answer.p) }}</span>
+        {% else %}<span class="hk-pill failed">no answer: {{ answer.reason or d.row.reason }}</span>{% endif %}
+        {% if d.state %} <span style="text-transform:none;letter-spacing:0;font-weight:400">{{ d.state.next_message|truncate(70) }}</span>{% endif %}
+        {% if d.row.elapsed_ms is not none %}<span class="hk-num">{{ d.row.elapsed_ms }} ms</span>{% endif %}
+      </summary>
+      <div class="hk-result"><b>Prompt</b> ({{ question.name }}, version {{ question.version }})</div>
+      <pre class="hk-pre">{{ question.instructions or 'This call was recorded without its wording.' }}</pre>
+      <div class="hk-result"><b>Input</b></div>
+      {% if d.state %}
+      <pre class="hk-pre">request:
+{{ d.state.request }}
+
+reply:
+{{ d.state.reply }}
+
+next_message (m{{ d.state.message }}):
+{{ d.state.next_message }}</pre>
+      {% else %}
+      <p class="hk-lede" style="margin:4px 0 8px">The input is not kept with the call. It is rebuilt from the room's messages, and they no longer match what was asked (digest <span class="hk-mono">{{ d.row.state_digest[:12] }}</span>).</p>
+      {% endif %}
+      <div class="hk-result"><b>Output</b></div>
+      <pre class="hk-pre">{% if answer.status == 'ok' %}P(yes) = {{ answer.p }}
+label: {{ answer.label }}  (yes at {{ answer.bands.yes }} or above, no at {{ answer.bands.no }} or below){% else %}no answer: {{ answer.reason or d.row.reason }}{% endif %}
+model: {{ d.row.model }}{% if d.row.model_digest %} ({{ d.row.model_digest[:12] }}){% endif %}{% if d.row.server_version %}, server {{ d.row.server_version }}{% endif %}</pre>
+    </details>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
 """
 
 _JOB_PAGE = """
@@ -520,7 +592,7 @@ def housekeeping_job_page(job_uuid: UUID) -> str:
                 for a in db.list_housekeeping_attempts(job.uuid)]
     run = db.get_assistant_run(job.run_uuid) if job.run_uuid else None
     ctx = dict(
-        job=job, attempts=attempts, wrote=_wrote(job),
+        job=job, attempts=attempts, wrote=_wrote(job), decisions=_decision_calls(job),
         request_message=(run.metadata_ or {}).get("request_message") if run else None,
         rooms=db.housekeeping_room_names([job.room_uuid] if job.room_uuid else []),
         revision=db.housekeeping_revision(job.uuid), **_helpers())
@@ -623,7 +695,7 @@ _ROOM_FRAGMENT = """
       <dt>Asked again</dt>
       <dd>
         {% if c.row.audit.repeat_check.model %}
-        <span class="hk-mono">{{ c.row.audit.repeat_check.model }}</span> was asked of {{ c.row.audit.repeat_check.asked }} follow-up{{ '' if c.row.audit.repeat_check.asked == 1 else 's' }} whether it asks for the same thing again, and answered {{ c.row.audit.repeat_check.answered }}.
+        <span class="hk-mono">{{ c.row.audit.repeat_check.model }}</span> was asked of {{ c.row.audit.repeat_check.asked }} follow-up{{ '' if c.row.audit.repeat_check.asked == 1 else 's' }} whether it asks for the same thing again, and answered {{ c.row.audit.repeat_check.answered }}.{% if c.row.job_uuid %} <a class="hk-back" href="/assistant/housekeeping/{{ c.row.job_uuid }}#decisions">its question, input and output</a>{% endif %}
         {% else %}
         No decision model is bound to <span class="hk-mono">assistant.repeat_check</span>, so a request asked again in other words is not seen.
         {% endif %}

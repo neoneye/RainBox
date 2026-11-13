@@ -8,8 +8,11 @@ question gets P(yes), a Choice question a probability per option.
 `ask` never raises for a model problem. A failure is an `Answer` whose
 status is `unknown` and whose `reason` says why, so a caller has one code
 path and falls back to whatever it did without the model. Every `ask`
-writes one `decision_call` row: the questions, the raw probabilities and the
-banded labels, and a digest of the state, never the state's text.
+writes one `decision_call` row: the questions as they were worded, the raw
+probabilities and the banded labels, and a digest of the state, never the
+state's text. The state is the operator's messages, which have their own
+rows: a page that shows a call rebuilds the state from them and finds the
+call by the digest (`state_digest`).
 
 A decision slot does not fall back to `assistant.default`: a generative
 model cannot answer this API. Design:
@@ -128,6 +131,13 @@ def verify_local(base_url: str, model: str, timeout: float = 5.0) -> tuple[str, 
     return listed["digest"], version
 
 
+def state_digest(state: dict[str, Any]) -> str:
+    """What a `decision_call` row keeps of the state it was asked about. A
+    page that rebuilds the state from the messages finds its row by this."""
+    return hashlib.sha256(json.dumps(
+        state, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
 def _valid_p(value: Any) -> bool:
     return (isinstance(value, (int, float)) and not isinstance(value, bool)
             and math.isfinite(value) and 0.0 <= value <= 1.0)
@@ -176,7 +186,7 @@ def ask_model(base_url: str, model: str, state: dict[str, Any],
     serialized = json.dumps(state, ensure_ascii=False, sort_keys=True)
     meta: dict[str, Any] = {
         "model_digest": None, "server_version": None, "elapsed_ms": None, "reason": None,
-        "state_digest": hashlib.sha256(serialized.encode()).hexdigest()}
+        "state_digest": state_digest(state)}
 
     def unknown(reason: str) -> tuple[list[Answer], dict[str, Any]]:
         meta["reason"] = reason
@@ -241,8 +251,7 @@ def ask(slot_uuid: UUID, state: dict[str, Any], questions: list[Question], *,
         answers = [Answer(q.name, "unknown", reason="unbound") for q in questions]
         meta: dict[str, Any] = {
             "model_digest": None, "server_version": None, "elapsed_ms": None,
-            "reason": "unbound", "state_digest": hashlib.sha256(json.dumps(
-                state, ensure_ascii=False, sort_keys=True).encode()).hexdigest()}
+            "reason": "unbound", "state_digest": state_digest(state)}
     else:
         answers, meta = ask_model(
             target[0], target[1], state, questions, deadline_s=deadline_s,
@@ -255,7 +264,9 @@ def ask(slot_uuid: UUID, state: dict[str, Any], questions: list[Question], *,
             model_digest=meta["model_digest"], server_version=meta["server_version"],
             question_set_version=question_set_version, bands_version=BANDS_VERSION,
             state_digest=meta["state_digest"],
-            questions=[{"name": q.name, "kind": q.kind, "version": q.version} for q in questions],
+            questions=[{"name": q.name, "kind": q.kind, "version": q.version,
+                        "instructions": q.instructions, "options": q.options}
+                       for q in questions],
             answers=[{"name": a.name, "status": a.status, "p": a.p, "label": a.label,
                       "probabilities": a.probabilities, "reason": a.reason,
                       "bands": vars(q.bands or bands)}

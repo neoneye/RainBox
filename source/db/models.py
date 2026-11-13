@@ -1188,7 +1188,8 @@ class DecisionCall(db.Model):
     bands_version: Mapped[int] = mapped_column()
     # sha256 of the serialized state.
     state_digest: Mapped[str] = mapped_column(Text)
-    # `[{name, kind, version}]`: never the state's text.
+    # `[{name, kind, version, instructions, options}]`: the questions as
+    # they were worded. Never the state's text.
     questions: Mapped[list] = mapped_column(JSONB, default=list)
     # `[{name, status, p, label, probabilities, reason, bands}]`: the raw
     # probability, the label it was given, and the bands that gave it.
