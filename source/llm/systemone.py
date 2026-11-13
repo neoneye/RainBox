@@ -212,13 +212,9 @@ def slot_model(slot_uuid: UUID) -> tuple[str, str] | None:
     to: the first member of its group. None when the slot is unbound. No
     fallback to another slot."""
     import db
-    from agents.config import role_name
-    from agents.model_groups import model_base_url, resolve_model_group
+    from agents.model_groups import decision_slot_member_uuids, model_base_url
 
-    group_uuid, _label = resolve_model_group([(slot_uuid, role_name(slot_uuid) or str(slot_uuid))])
-    if group_uuid is None:
-        return None
-    for member in db.get_model_group_member_uuids(group_uuid):
+    for member in decision_slot_member_uuids(slot_uuid):
         url = model_base_url(member)
         try:
             _provider, name, _args = db.resolved_model_kwargs(member)

@@ -141,11 +141,24 @@ def test_models_all_local_checks_every_member(monkeypatch, members, expected):
     ids = {name: uuid.uuid4() for name in members}
     by_id = {ids[n]: v for n, v in members.items()}
     monkeypatch.setattr(mg, "resolve_assistant_model_uuids", lambda slot: (list(ids.values()), "x"))
+    monkeypatch.setattr(mg, "decision_slot_member_uuids", lambda slot: [])
     monkeypatch.setattr(db, "resolved_model_kwargs",
                         lambda u: (by_id[u][0], "m", by_id[u][1]), raising=False)
     local, slot = mg.assistant_models_all_local()
     assert local is expected
     assert (slot is None) is expected
+
+
+def test_a_remote_decision_model_makes_the_assistant_not_local(monkeypatch):
+    """A decision slot reads the same messages, and has no generative
+    fallback to be checked through."""
+    remote = uuid.uuid4()
+    monkeypatch.setattr(mg, "resolve_assistant_model_uuids", lambda slot: ([], "x"))
+    monkeypatch.setattr(mg, "decision_slot_member_uuids", lambda slot: [remote])
+    monkeypatch.setattr(db, "resolved_model_kwargs",
+                        lambda u: ("ollama", "m", {"base_url": "http://10.0.0.7:11434"}),
+                        raising=False)
+    assert mg.assistant_models_all_local() == (False, "assistant.repeat_check")
 
 
 def test_every_assistant_slot_is_checked():
