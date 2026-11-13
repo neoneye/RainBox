@@ -35,7 +35,7 @@ from pydantic import BaseModel, Field
 #: Bumped when the prompt, the schema or the parsing changes. A chunk belongs
 #: to the series of the version that wrote it, so a new version summarizes a
 #: room again beside the old series, and the two can be compared.
-PROMPT_VERSION = 13
+PROMPT_VERSION = 14
 
 SUMMARY_MAX_CHARS = 120
 RESULT_MAX_CHARS = 160

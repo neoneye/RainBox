@@ -6,7 +6,7 @@ set's when a caller's set changes.
 """
 from llm.systemone import Question
 
-FOLLOW_UP_SET_VERSION = 2
+FOLLOW_UP_SET_VERSION = 3
 
 #: The option of `FOLLOW_UP_REPEAT` that says the follow-up does not ask
 #: again. The other options are the ways in which it does.
@@ -21,16 +21,18 @@ FOLLOW_UP_AGAIN_AT = 0.5
 #: Measured on one room with `d1:3b`, on 15 follow-ups that asked again and
 #: 43 that did not (labelled by hand before the run): at 0.5 it caught 14
 #: and called 1 of the others one. A yes-or-no question over an object with
-#: the keys request, reply and next_message caught 12 and called none.
+#: the keys request, reply and next_message caught 12 and called none. Of
+#: five wordings of the choice, this one and one other did best; it has no
+#: sample phrase in it.
 FOLLOW_UP_REPEAT = Question(
     name="repeat",
     kind="choice",
-    instructions="Does request2 repeat request1?",
-    version=1,
+    instructions="Does request2 ask again for what request1 asked for?",
+    version=2,
     options={
-        "duplicate": "near duplicate, is it the same or rephrased in a slightly different way",
-        "same": "same but expressed differently, such as 'try again'",
-        FOLLOW_UP_DIFFERENT: "The request2 is different from request1",
+        "duplicate": "Yes, in the same or almost the same words.",
+        "same": "Yes, in different words, or by asking for another attempt.",
+        FOLLOW_UP_DIFFERENT: "No, it asks for something else.",
     },
 )
 

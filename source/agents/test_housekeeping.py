@@ -369,7 +369,7 @@ def _fake_chunk_model(monkeypatch, reply=None, check=None):
     return prompts
 
 
-V = 13   # agents.room_chunks.PROMPT_VERSION
+V = 14   # agents.room_chunks.PROMPT_VERSION
 
 
 def test_chunks_are_cut_in_order_and_wait_for_their_context(app_ctx):

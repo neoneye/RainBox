@@ -129,9 +129,10 @@ that holds the request:
   each inside a tag of its own (`<request1>`, `<reply1>`, `<request2>`),
   cut as the summary's prompt cuts them, with angle brackets escaped so a
   message cannot close its tag. The question is a choice, "Does request2
-  repeat request1?", with three options: `duplicate` (the same, or nearly
-  the same words), `same` (the same request expressed differently, or a
-  bare retry), `different`. The follow-up asks again when `duplicate` and
+  ask again for what request1 asked for?", with three options: `duplicate`
+  (yes, in the same or almost the same words), `same` (yes, in different
+  words, or by asking for another attempt), `different` (no, it asks for
+  something else). The follow-up asks again when `duplicate` and
   `same` hold at least half of the probability between them.
 - **Its yes makes the message `asked_again`**, inside a part or after it,
   and joins a part that opens with such a message to the part before. The
