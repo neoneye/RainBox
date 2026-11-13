@@ -394,7 +394,7 @@ class HousekeepingAgent(Agent):
         chunk = messages[first:last + 1]
         after = messages[last + 1:last + 1 + overlap]
         prompt = room_chunks.build_prompt(
-            messages[max(0, first - overlap):first], chunk, after, first)
+            messages[max(0, first - overlap):first], chunk, after)
 
         models, _label = resolve_assistant_model_uuids(ASSISTANT_ROOM_SUMMARIZER_UUID)
         models = [m for m in models or [] if _is_local_model(m)]
@@ -434,9 +434,15 @@ class HousekeepingAgent(Agent):
 
         retries, repeat_check = self._ask_follow_ups(job, chunk, after, first, watch)
         summarizer = db.JOB_CALLERS[db.ROOM_CHUNK_JOB]
+
+        def room_numbers(reply: Any) -> Any:
+            return room_chunks.room_numbers(reply, first)
+
         reply, model_uuid = call(prompt, room_chunks.ChunkSummary, summarizer)
+        # The model answers in the prompt's numbers, m1 on; what is settled
+        # and stored is in the room's.
         summary, topics, parts, problems = room_chunks.settle(
-            reply, first, last, chunk, after, retries)  # type: ignore[arg-type]
+            room_numbers(reply), first, last, chunk, after, retries)
 
         # The check, and one rewrite when it finds a part's request or result
         # wrong. The rewrite is checked too, so what is stored always carries
@@ -446,20 +452,20 @@ class HousekeepingAgent(Agent):
         for attempt_no in (1, 2):
             self._burst += 1
             try:
-                check, _ = call(room_chunks.build_audit_prompt(prompt, summary, parts),
+                check, _ = call(room_chunks.build_audit_prompt(prompt, summary, parts, first),
                                 room_chunks.ChunkCheck, room_chunks.AUDIT_CALLER)
             except RuntimeError as e:
                 audit["error"] = f"check: {e}"[:300]
                 break
             failed, check_problems = room_chunks.settle_audit(
-                check, parts)  # type: ignore[arg-type]
+                check, parts, first)  # type: ignore[arg-type]
             problems += check_problems
             if not failed or attempt_no == 2:
                 break
             self._burst += 1
             try:
                 reply, model_uuid = call(
-                    room_chunks.build_retry_prompt(prompt, summary, parts, failed),
+                    room_chunks.build_retry_prompt(prompt, summary, parts, failed, first),
                     room_chunks.ChunkSummary, summarizer)
             except RuntimeError as e:
                 audit["error"] = f"rewrite: {e}"[:300]
@@ -469,7 +475,7 @@ class HousekeepingAgent(Agent):
                  "summary": p["summary"], "result": p["result"],
                  "reasoning": p["audit"]["reasoning"]} for p in failed]
             summary, topics, parts, problems = room_chunks.settle(
-                reply, first, last, chunk, after, retries)  # type: ignore[arg-type]
+                room_numbers(reply), first, last, chunk, after, retries)
             audit["attempts"] = 2
         _provider, model_name, _args = db.resolved_model_kwargs(model_uuid)
         db.store_room_chunk(

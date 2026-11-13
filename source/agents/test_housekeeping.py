@@ -369,7 +369,7 @@ def _fake_chunk_model(monkeypatch, reply=None, check=None):
     return prompts
 
 
-V = 15   # agents.room_chunks.PROMPT_VERSION
+V = 16   # agents.room_chunks.PROMPT_VERSION
 
 
 def test_chunks_are_cut_in_order_and_wait_for_their_context(app_ctx):
@@ -428,10 +428,15 @@ def test_a_run_end_queues_two_chunks_and_each_is_summarized_once(app_ctx, monkey
                         "criteria_not_met": 0, "revisions": 0, "up": 0, "down": 0}}]
         # The first chunk has no context before it; the second has two each side.
         assert "not part of it:\n(none)" in prompts[0]
-        assert "[m8 human] message number 8" in prompts[1]
-        assert "[m21 assistant]" in prompts[1] and "[m22" not in prompts[1]
+        assert "[human] message number 8" in prompts[1]
+        assert "[assistant] message number 21" in prompts[1] and "message number 22" not in prompts[1]
+        # Every prompt numbers its chunk from m1, wherever it stands in the
+        # room: the second chunk's first message is the room's tenth. The
+        # context has no numbers. What is stored is in the room's numbers.
+        assert "The chunk, m1 to m10:\n[m1 human] message number 10" in prompts[1]
+        assert "The chunk, m1 to m10:" in prompts[0] and "[m11" not in prompts[1]
         # The model reads both sides.
-        assert "[m11 assistant] message number 11" in prompts[1]
+        assert "[m2 assistant] message number 11" in prompts[1]
         # The series continues after the stored chunks, and nothing is redone.
         assert [d["seq"] for d in db.due_room_chunks(room.uuid, 10, 2, V, 10)] == [2, 3]
         assert agent.handle(uuid4(), {"room_uuid": str(room.uuid), "room_chunks": True})[
@@ -476,7 +481,8 @@ def test_what_is_off_in_a_reply_is_stored_with_the_chunk(app_ctx, monkeypatch):
     (chunk,) = db.list_room_chunks(room.uuid, 10, 2, V)
     try:
         assert chunk.problems == [
-            "part 1: messages 40-44 are not inside the chunk",
+            # Read as the prompt's numbers, and reported as the room's.
+            "part 1: messages 39-43 are not inside the chunk",
             "part 1: 130 characters", "part 1 result: empty", "part 1: no topics",
             "chunk: empty", "chunk: 4 topics, kept 3"]
         assert chunk.parts[0]["first_message"] is None and chunk.topics == ["a", "b", "c"]
@@ -582,14 +588,26 @@ def test_the_check_is_put_on_its_parts_and_fails_on_request_or_result():
              {"first_message": 28, "last_message": 29}]
     # Numbered 1, 2, 3 by the model: one per part, so they are taken in order.
     failed, problems = rc.settle_audit(rc.ChunkCheck(parts=[
-        check(1, result=False), check(2), check(3)]), parts)
+        check(1, result=False), check(2), check(3)]), parts, 20)
     assert failed == [parts[0]] and problems == []
     assert parts[0]["audit"] == {"request": True, "result": False, "reasoning": "about 1"}
     # Fewer checks than parts: matched by message number, the rest unchecked.
     parts = [{"first_message": 20, "last_message": 23}, {"first_message": 24, "last_message": 29}]
-    failed, problems = rc.settle_audit(rc.ChunkCheck(parts=[check(24, request=False)]), parts)
+    # The check answers in the prompt's numbers, where the chunk starts at
+    # m1: its m5 is the room's m24, in the number and in its own words.
+    failed, problems = rc.settle_audit(rc.ChunkCheck(parts=[rc.PartCheck(
+        first_message=5, reasoning="m5 asks for one thing and m6 answers another; see m400",
+        request_matches=False, result_matches=True)]), parts, 20)
     assert failed == [parts[1]] and "audit" not in parts[0]
     assert problems == ["check: 1 checks for 2 parts"]
+    assert parts[1]["audit"]["reasoning"] == (
+        "m24 asks for one thing and m25 answers another; see m400")
+    # A rewrite is told what was wrong in the prompt's numbers again.
+    retry = rc.build_retry_prompt({"system": "s", "user": "u"}, "a phrase", [
+        dict(parts[0], summary="one", result="two"), dict(parts[1], summary="three", result="four"),
+    ], [parts[1]], 20)["user"]
+    assert "Part m1 to m4:\n  wanted: one" in retry
+    assert "- Part m5 to m10: m5 asks for one thing and m6 answers another; see m400" in retry
 
 
 def test_a_chunk_whose_check_fails_is_written_once_more(app_ctx, monkeypatch):
@@ -604,7 +622,7 @@ def test_a_chunk_whose_check_fails_is_written_once_more(app_ctx, monkeypatch):
     try:
         assert len(prompts) == 2 and len(prompts.checks) == 2
         assert prompts[1].startswith(prompts[0] + "\n\nAn earlier answer for this chunk")
-        assert "- Part m0 to m9: read part 0" in prompts[1]
+        assert "- Part m1 to m10: read part 0" in prompts[1]
         assert chunk.audit == {"attempts": 2, "repeat_check": {"reason": "unbound"}, "rewritten": [{
             "first_message": 0, "last_message": 9, "summary": "questions about the weather",
             "result": "a forecast was given", "reasoning": "read part 0"}]}
@@ -663,10 +681,17 @@ def test_a_parts_signals_are_counted_from_the_records_of_its_replies():
         "overconfident", "a reply was voted down")
     assert parts[1]["calibration"] == "unclear"
 
-    prompt = rc.build_prompt([], chunk, [], 40)["user"]
-    assert ("[m41 assistant] two\n    signals for m41: run resolved; "
+    prompt = rc.build_prompt(chunk[4:], chunk[:4], [])["user"]
+    assert ("[m2 assistant] two\n    signals for m2: run resolved; "
             "criteria not met; voted down by the human") in prompt
-    assert "signals for m43: run resolved; criteria met after 1 revision; voted up" in prompt
+    assert "signals for m4: run resolved; criteria met after 1 revision; voted up" in prompt
+    # Context is not numbered, so its signals name the reply by its place.
+    assert "[assistant] two boards\n    signals for the reply above: run partial" in prompt
+
+    # The model's numbers are the prompt's; the room's are put in their place.
+    moved = rc.room_numbers(rc.ChunkSummary(
+        parts=[_part(1, 4, "count letters", "letters")], subjects=["letters"], topics=["misc"]), 40)
+    assert (moved.parts[0].first_message, moved.parts[0].last_message) == (40, 43)
 
 
 @pytest.mark.parametrize("reactions, requests, signals, expected", [

@@ -91,6 +91,17 @@ in two levels:
 | each part | `first_message`, `last_message`, `summary`, `result`, `follow_up`, `topics` (one or two) |
 | the chunk | `subjects` (the name of each part's subject), `topics` (one to three, broader) |
 
+**Every prompt numbers its chunk from m1.** A chunk's messages are m1 to
+m10 wherever the chunk stands in its room, and the context on each side has
+no numbers, since no answer refers to it. Counted from the room's first
+message the numbers grow with the room, and a small model handles a long
+number worse than a short one. The model answers in the prompt's numbers.
+Code puts the room's in their place (`room_chunks.room_numbers`) before
+anything is settled, so what is stored and what the pages show is counted
+from the room's first message. The check and a rewrite are given the stored
+parts in the prompt's numbers again, and a message number in the check's
+reasoning is stored as the room's.
+
 A part is a run of consecutive messages about one subject. A request that
 is repeated, retried or corrected stays in its part. The same question about
 another thing or another value is a part of its own, because it has an

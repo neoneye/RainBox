@@ -35,7 +35,7 @@ from pydantic import BaseModel, Field
 #: Bumped when the prompt, the schema or the parsing changes. A chunk belongs
 #: to the series of the version that wrote it, so a new version summarizes a
 #: room again beside the old series, and the two can be compared.
-PROMPT_VERSION = 15
+PROMPT_VERSION = 16
 
 SUMMARY_MAX_CHARS = 120
 RESULT_MAX_CHARS = 160
@@ -94,7 +94,7 @@ class ChunkSummary(BaseModel):
 SYSTEM_PROMPT = (
     "You index one chunk of a chat between a human and an assistant, so that "
     "the conversation can be found again later and its weak spots can be "
-    "seen. The chunk's messages are numbered. Under an assistant message "
+    "seen. The chunk's messages are numbered from m1. Under an assistant message "
     "there can be a line of signals. They are records, not opinions: how the "
     "assistant's run ended, whether its reply met the acceptance criteria it "
     "was checked against, and whether the human voted the reply up or down. "
@@ -181,33 +181,59 @@ def _cut(text: str, limit: int = PROMPT_MESSAGE_MAX_CHARS) -> str:
     return f"{text[:half]} [..] {text[-half:]}"
 
 
-def _lines(messages: list[dict[str, Any]], offset: int) -> str:
-    """Numbered lines, middle-cut when long. An assistant message that has
-    signals is followed by them on a line of its own."""
+def _lines(messages: list[dict[str, Any]], numbered: bool = True) -> str:
+    """The messages as lines, middle-cut when long. The chunk's are numbered
+    from m1; the context's are not, since no answer refers to them. An
+    assistant message that has signals is followed by them on a line of its
+    own."""
     out = []
-    for k, m in enumerate(messages):
+    for k, m in enumerate(messages, start=1):
+        tag = f"m{k} " if numbered else ""
         if m["sender"] == "human":
-            out.append(f"[m{offset + k} human] {_cut(m['text'])}")
+            out.append(f"[{tag}human] {_cut(m['text'])}")
             continue
-        out.append(f"[m{offset + k} assistant] {_cut(m['text'], PROMPT_REPLY_MAX_CHARS)}")
+        out.append(f"[{tag}assistant] {_cut(m['text'], PROMPT_REPLY_MAX_CHARS)}")
         signals = signal_line(m.get("signals"))
         if signals:
-            out.append(f"    signals for m{offset + k}: {signals}")
+            out.append(f"    signals for {f'm{k}' if numbered else 'the reply above'}: {signals}")
     return "\n".join(out) or "(none)"
 
 
 def build_prompt(before: list[dict[str, Any]], chunk: list[dict[str, Any]],
-                 after: list[dict[str, Any]], first_index: int) -> dict[str, str]:
-    """`first_index` is the chunk's first message counted from the room's
-    first, so the numbers the model sees and returns match the page."""
-    last_index = first_index + len(chunk) - 1
+                 after: list[dict[str, Any]]) -> dict[str, str]:
+    """A chunk's messages are numbered from m1 in every prompt, wherever
+    the chunk stands in its room. Counted from the room's first message the
+    numbers grow with the room, and a small model handles a long number
+    worse than a short one. What the model answers in these numbers is put
+    back into the room's (`room_numbers`), which is what is stored and what
+    the page shows."""
     user = "\n\n".join([
-        "Context before the chunk, not part of it:\n"
-        + _lines(before, first_index - len(before)),
-        f"The chunk, m{first_index} to m{last_index}:\n" + _lines(chunk, first_index),
-        "Context after the chunk, not part of it:\n" + _lines(after, last_index + 1),
+        "Context before the chunk, not part of it:\n" + _lines(before, numbered=False),
+        f"The chunk, m1 to m{len(chunk)}:\n" + _lines(chunk),
+        "Context after the chunk, not part of it:\n" + _lines(after, numbered=False),
     ])
     return {"system": SYSTEM_PROMPT, "user": user}
+
+
+def _renumber(text: str, shift: int, low: int, high: int) -> str:
+    """`text` with every message number from `low` to `high` moved by
+    `shift`: a number the model wrote in its own words, between a prompt's
+    numbering and the room's."""
+    def moved(match: re.Match[str]) -> str:
+        n = int(match.group(1))
+        return f"m{n + shift}" if low <= n <= high else match.group(0)
+    return re.sub(r"\bm(\d+)\b", moved, text)
+
+
+def room_numbers(reply: ChunkSummary, first_index: int) -> ChunkSummary:
+    """A reply whose parts are numbered as the prompt numbers them (from
+    m1), with the room's numbers in their place. `first_index` is the
+    chunk's first message counted from the room's first."""
+    shift = first_index - 1
+    return reply.model_copy(update={"parts": [
+        part.model_copy(update={"first_message": part.first_message + shift,
+                                "last_message": part.last_message + shift})
+        for part in reply.parts]})
 
 
 def slug(name: str) -> str:
@@ -719,34 +745,38 @@ AUDIT_PROMPT = (
 )
 
 
-def _span(part: dict[str, Any]) -> str:
+def _span(part: dict[str, Any], first_index: int | None = None) -> str:
+    """A part's range, in the room's numbers; with `first_index`, as the
+    chunk's prompt numbers them."""
     if part.get("first_message") is None:
         return "Part with no message numbers"
-    return f"Part m{part['first_message']} to m{part['last_message']}"
+    shift = first_index - 1 if first_index is not None else 0
+    return f"Part m{part['first_message'] - shift} to m{part['last_message'] - shift}"
 
 
-def render_index(summary: str, parts: list[dict[str, Any]]) -> str:
-    """The stored summary as the check and a rewrite read it."""
+def render_index(summary: str, parts: list[dict[str, Any]], first_index: int) -> str:
+    """The stored summary as the check and a rewrite read it, in the
+    numbers of the chunk's prompt."""
     out = [f"Whole chunk: {summary}"]
     for part in parts:
         asked = part.get("requests") or 1
         out.append(
-            _span(part) + (f", asked {asked} times" if asked > 1 else "") + ":\n"
+            _span(part, first_index) + (f", asked {asked} times" if asked > 1 else "") + ":\n"
             f"  wanted: {part['summary']}\n"
             f"  came of it: {part.get('result') or ''}")
     return "\n".join(out)
 
 
 def build_audit_prompt(prompt: dict[str, str], summary: str,
-                       parts: list[dict[str, Any]]) -> dict[str, str]:
+                       parts: list[dict[str, Any]], first_index: int) -> dict[str, str]:
     """`prompt` is the chunk's own prompt: the check reads the same messages
     and the same records as the call it checks."""
     return {"system": AUDIT_PROMPT,
             "user": prompt["user"] + "\n\nThe index to check:\n"
-                    + render_index(summary, parts)}
+                    + render_index(summary, parts, first_index)}
 
 
-def settle_audit(check: ChunkCheck, parts: list[dict[str, Any]],
+def settle_audit(check: ChunkCheck, parts: list[dict[str, Any]], first_index: int,
                  ) -> tuple[list[dict[str, Any]], list[str]]:
     """Put each check on its part, as `part["audit"]`: `{request, result,
     reasoning}`. Returns `(failed, problems)`: the parts whose
@@ -755,20 +785,26 @@ def settle_audit(check: ChunkCheck, parts: list[dict[str, Any]],
 
     Checks are matched to parts in order when there is one per part. The
     model sometimes numbers them 1, 2, 3 in place of the message numbers, so
-    the numbers are only used when the counts differ."""
+    the numbers are only used when the counts differ. The check answers in
+    the numbers of the chunk's prompt; a message number in its reasoning is
+    stored as the room's."""
     problems: list[str] = []
+    shift = first_index - 1
+    count = max((p["last_message"] for p in parts if p.get("last_message") is not None),
+                default=first_index) - shift
     if len(check.parts) == len(parts):
         pairs = list(zip(parts, check.parts))
     else:
         problems.append(f"check: {len(check.parts)} checks for {len(parts)} parts")
-        by_first = {c.first_message: c for c in check.parts}
+        by_first = {c.first_message + shift: c for c in check.parts}
         pairs = [(p, by_first[p["first_message"]]) for p in parts
                  if p.get("first_message") in by_first]
     failed = []
     for part, c in pairs:
         part["audit"] = {
             "request": c.request_matches, "result": c.result_matches,
-            "reasoning": _cut(c.reasoning, AUDIT_REASONING_MAX_CHARS)}
+            "reasoning": _renumber(
+                _cut(c.reasoning, AUDIT_REASONING_MAX_CHARS), shift, 1, count)}
         if not (c.request_matches and c.result_matches):
             failed.append(part)
     return failed, problems
@@ -776,14 +812,19 @@ def settle_audit(check: ChunkCheck, parts: list[dict[str, Any]],
 
 def build_retry_prompt(prompt: dict[str, str], summary: str,
                        parts: list[dict[str, Any]],
-                       failed: list[dict[str, Any]]) -> dict[str, str]:
+                       failed: list[dict[str, Any]], first_index: int) -> dict[str, str]:
     """The chunk's prompt once more, followed by the first answer as it was
-    stored and what the check found wrong with it."""
-    wrong = "\n".join(f"- {_span(p)}: {p['audit']['reasoning']}" for p in failed)
+    stored and what the check found wrong with it, in the prompt's numbers."""
+    shift = first_index - 1
+    last = max((p["last_message"] for p in parts if p.get("last_message") is not None),
+               default=first_index)
+    wrong = "\n".join(
+        f"- {_span(p, first_index)}: "
+        f"{_renumber(p['audit']['reasoning'], -shift, first_index, last)}" for p in failed)
     return {"system": prompt["system"], "user": (
         prompt["user"]
         + "\n\nAn earlier answer for this chunk, as it was stored:\n"
-        + render_index(summary, parts)
+        + render_index(summary, parts, first_index)
         + "\n\nA check of that answer against the messages found these "
           "parts wrong:\n" + wrong
         + "\n\nWrite the answer again from the messages. In every part the "

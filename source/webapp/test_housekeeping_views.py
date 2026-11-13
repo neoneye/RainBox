@@ -278,7 +278,7 @@ def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
                "rewritten": [{
             "first_message": 0, "last_message": 5, "summary": "which number is odd",
             "result": "seven", "reasoning": "seven answers a later request"}]},
-        model="model-a", prompt_version=15, job_uuid=job.uuid)
+        model="model-a", prompt_version=16, job_uuid=job.uuid)
     try:
         body = c.get(f"/assistant/housekeeping/room/{room.uuid}").get_data(as_text=True)
         assert "Messages 0&ndash;9" in body and "questions about numbers" in body
@@ -290,7 +290,7 @@ def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
         assert "model-a" not in chunk_card and "decider" not in chunk_card
         assert f'href="/assistant/housekeeping/{job.uuid}"' in chunk_card and ">Inspect</a>" in chunk_card
         # The heading links to its own chunk in this series.
-        assert 'href="?size=10&amp;overlap=2&amp;prompt=15#chunk-0">Messages 0&ndash;9</a>' in body
+        assert 'href="?size=10&amp;overlap=2&amp;prompt=16#chunk-0">Messages 0&ndash;9</a>' in body
         assert '<span class="hk-chip">numbers</span>' in body
         assert "m0&ndash;m5" in body and "which number comes next" in body
         assert "&times;3" in body and '<span class="hk-chip">notation</span>' in body
