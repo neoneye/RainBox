@@ -60,13 +60,16 @@ def test_the_assistant_menu_has_a_housekeeping_item(client):
     assert "No housekeeping jobs" in body and "idle" in body
 
 
-def test_the_log_lists_a_job_with_its_room_run_model_and_outcome(client):
+def test_the_log_lists_a_job_with_its_room_run_and_outcome(client):
     c, made = client
     run = _run(made)
     job, _ = _job(run)
     body = c.get("/assistant/housekeeping").get_data(as_text=True)
     assert f'data-href="/assistant/housekeeping/{job.uuid}"' in body
-    assert "run summary" in body and "model-a" in body
+    assert "run summary" in body
+    # The log names no model: a job's models are on its own page.
+    assert "model-a" not in body and "<th>Model</th>" not in body
+    assert '<th class="hk-right">Time</th>' in body
     assert f'/assistant?id={run.uuid}' in body and f'/chat?id={run.room_uuid}' in body
     assert '<span class="hk-pill done">done</span>' in body
     # The fragment is the live part alone: no page chrome to swap in twice.

@@ -199,6 +199,7 @@ _STYLE = """
   .hk-mono{font-family:ui-monospace,Menlo,monospace;font-size:0.78rem;color:#6b7280;
     white-space:nowrap}
   .hk-num{font-variant-numeric:tabular-nums;white-space:nowrap}
+  .hk-log th.hk-right,.hk-log td.hk-right{text-align:right}
   .hk-pill{display:inline-block;font-size:0.75rem;font-weight:700;padding:3px 10px;
     border-radius:999px;color:#6b7280;background:#eef0f4}
   .hk-pill.done{color:#166534;background:#dcfce7}
@@ -321,7 +322,7 @@ _NOW_FRAGMENT = """
 _LOG_FRAGMENT = _NOW_FRAGMENT + """
 {% if rows %}
 <table class="hk-log">
-  <thead><tr><th>When</th><th>Job</th><th>For</th><th>Model</th><th>Time</th><th>Outcome</th></tr></thead>
+  <thead><tr><th>When</th><th>Job</th><th>For</th><th class="hk-right">Time</th><th>Outcome</th></tr></thead>
   <tbody>
   {% for r in rows %}
     {% set text, kind = outcome(r.job) %}
@@ -336,8 +337,7 @@ _LOG_FRAGMENT = _NOW_FRAGMENT + """
         {% if chunk %} &middot; <a href="{{ chunk.href }}">{{ chunk.text }}</a>
         {% elif r.job.subject %} &middot; {{ r.job.subject }}{% endif %}
       </td>
-      <td>{{ r.model or '' }}</td>
-      <td class="hk-num">{{ seconds(r.model_ms) }}{% if r.attempts > 1 %} &middot; {{ r.attempts }} attempts{% endif %}</td>
+      <td class="hk-num hk-right">{{ seconds(r.model_ms) }}{% if r.attempts > 1 %} &middot; {{ r.attempts }} attempts{% endif %}</td>
       <td><span class="hk-pill {{ kind }}">{{ text }}</span></td>
     </tr>
   {% endfor %}
