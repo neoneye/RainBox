@@ -196,6 +196,7 @@ _STYLE = """
   .hk-log tr.row:hover td{background:#f8fafc}
   .hk-log a{color:#2563eb;text-decoration:none}
   .hk-log a:hover{text-decoration:underline}
+  .hk-log a.hk-rowlink,.hk-log a.hk-rowlink:hover{color:inherit;text-decoration:none}
   .hk-mono{font-family:ui-monospace,Menlo,monospace;font-size:0.78rem;color:#6b7280;
     white-space:nowrap}
   .hk-num{font-variant-numeric:tabular-nums;white-space:nowrap}
@@ -328,13 +329,11 @@ _LOG_FRAGMENT = _NOW_FRAGMENT + """
     {% set text, kind = outcome(r.job) %}
     <tr class="row" data-href="/assistant/housekeeping/{{ r.job.uuid }}">
       <td class="hk-mono">{{ when(r.job.created_at) }}{% if r.job.finished_at %}<br>{{ when(r.job.finished_at) }}{% endif %}</td>
-      <td><a href="/assistant/housekeeping/{{ r.job.uuid }}">{{ label(r.job.job_type) }}</a></td>
+      <td><a class="hk-rowlink" href="/assistant/housekeeping/{{ r.job.uuid }}">{{ label(r.job.job_type) }}</a></td>
       <td>
-        {% if r.job.room_uuid %}<a href="/chat?id={{ r.job.room_uuid }}">{{ rooms.get(r.job.room_uuid, 'room') }}</a>
-          (<a href="/assistant/housekeeping/room/{{ r.job.room_uuid }}">chunks</a>){% endif %}
-        {% if r.job.run_uuid %}{% if r.job.room_uuid %} &middot; {% endif %}<a href="/assistant?id={{ r.job.run_uuid }}">run</a>{% endif %}
+        {% if r.job.room_uuid %}{{ rooms.get(r.job.room_uuid, 'room') }}{% endif %}
         {% set chunk = chunk_link(r.job) %}
-        {% if chunk %} &middot; <a href="{{ chunk.href }}">{{ chunk.text }}</a>
+        {% if chunk %} &middot; {{ chunk.text }}
         {% elif r.job.subject %} &middot; {{ r.job.subject }}{% endif %}
       </td>
       <td class="hk-num hk-right">{{ seconds(r.model_ms) }}{% if r.attempts > 1 %} &middot; {{ r.attempts }} attempts{% endif %}</td>
@@ -409,7 +408,8 @@ _JOB_FRAGMENT = """
     <dl class="hk-kv">
       <dt>For</dt>
       <dd>
-        {% if job.room_uuid %}<a href="/chat?id={{ job.room_uuid }}">{{ rooms.get(job.room_uuid, 'room') }}</a>{% endif %}
+        {% if job.room_uuid %}<a href="/chat?id={{ job.room_uuid }}">{{ rooms.get(job.room_uuid, 'room') }}</a>
+          (<a href="/assistant/housekeeping/room/{{ job.room_uuid }}">chunks</a>){% endif %}
         {% if job.run_uuid %}{% if job.room_uuid %} &middot; {% endif %}<a href="/assistant?id={{ job.run_uuid }}">run {{ job.run_uuid }}</a>{% endif %}
         {% if request_message %} &middot; <a href="/chat?id={{ job.room_uuid }}&msg={{ request_message }}">the request</a>{% endif %}
         {% set chunk = chunk_link(job) %}

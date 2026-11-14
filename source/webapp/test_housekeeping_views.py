@@ -70,7 +70,12 @@ def test_the_log_lists_a_job_with_its_room_run_and_outcome(client):
     # The log names no model: a job's models are on its own page.
     assert "model-a" not in body and "<th>Model</th>" not in body
     assert '<th class="hk-right">Time</th>' in body
-    assert f'/assistant?id={run.uuid}' in body and f'/chat?id={run.room_uuid}' in body
+    # The row is the one thing to click. The room, its chunks and the run are
+    # linked from the job's page.
+    assert f'/assistant?id={run.uuid}' not in body and f'/chat?id={run.room_uuid}' not in body
+    page = c.get(f"/assistant/housekeeping/{job.uuid}").get_data(as_text=True)
+    assert f'/assistant?id={run.uuid}' in page and f'/chat?id={run.room_uuid}' in page
+    assert f'/assistant/housekeeping/room/{run.room_uuid}' in page
     assert '<span class="hk-pill done">done</span>' in body
     # The fragment is the live part alone: no page chrome to swap in twice.
     fragment = c.get("/assistant/housekeeping?fragment=1").get_data(as_text=True)
