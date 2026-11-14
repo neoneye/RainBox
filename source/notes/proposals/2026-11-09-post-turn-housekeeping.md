@@ -1,7 +1,7 @@
 # Post-turn housekeeping: one queue, in order, never during a turn
 
 **Status:** Rollout step 1 is built and described in
-`notes/housekeeping-design.md`: the role with the run summary as its one job,
+`notes/housekeeping-design.md`: the role with the assistant summary as its one job,
 the gate and the kill, the sweep, the job tables, the Housekeeping page and
 the After the turn group. Also built: the room chunk summary job and the
 rest after ten calls. Not built: the other jobs, the hourly budget and
@@ -24,7 +24,7 @@ process. The proposals in this series add more:
 
 | job | from | model | when it matters |
 |---|---|---|---|
-| run summary | exists | generative | when the inspector is read |
+| assistant summary | exists | generative | when the inspector is read |
 | reply checks on the delivered reply | repeat, decision 6 | `repeat_check` | diagnostics |
 | identity experiment | repeat, decision 1 | `repeat_check` + `repeat_confirm` | diagnostics |
 | verdict detection | verdicts, decision 2 | `repeat_confirm` | before the next turn, ideally |
@@ -75,7 +75,7 @@ call, or none, so seconds in total:
 4. **Digest chunk nodes** that became due. No model call.
 
 **Tier 2, eventually.** Generative calls of up to two minutes:
-1. **Run summary.** The existing summarizer logic, moved behind this role.
+1. **Assistant summary.** The existing summarizer logic, moved behind this role.
    It comes first in its tier, so it waits only for tier 1's seconds.
 2. **Digest `asked` phrases**, when enabled. At most one per run.
 3. **Digest backfill**, when the operator has started it for a room.
@@ -216,7 +216,7 @@ caps them at two decision calls per turn.
 
 | job | deadline |
 |---|---|
-| run summary | 120 s (today's behaviour) |
+| assistant summary | 120 s (today's behaviour) |
 | a decision-model request | 4 s, including load and queue |
 | topic naming | 30 s |
 | a digest chunk node | no model; one database write |
@@ -274,7 +274,7 @@ Below it, the log: one line per job, newest first, updated live.
 | column | content |
 |---|---|
 | when | created, and finished or `running` |
-| job | its type: run summary, verdict detection, chunk node, … |
+| job | its type: assistant summary, verdict detection, chunk node, … |
 | for | the room, and the run or the chunk's message range, as links |
 | model | the model of the latest attempt, or `none` |
 | time | model time over all attempts; the number of attempts when more than one |
@@ -334,7 +334,7 @@ is still waiting or failed.
 
 ## Rollout
 
-1. The `housekeeping` role, with the run summary moved into it, unchanged in
+1. The `housekeeping` role, with the assistant summary moved into it, unchanged in
    behaviour apart from being killed when a turn starts. That is the gate,
    the order, the sweep for due jobs, the job tables, the Housekeeping page
    and the after-the-turn view, with one job.

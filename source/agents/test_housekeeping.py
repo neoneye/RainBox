@@ -457,7 +457,7 @@ def test_the_setting_switches_room_summaries_off_for_run_ends(app_ctx, monkeypat
                 "housekeeping.room_chunk_size": 10, "housekeeping.room_chunk_overlap": 2}
     monkeypatch.setattr(db, "get_setting", lambda key: settings[key])
     payload = {"run_uuid": str(run.uuid), "room_uuid": str(room.uuid)}
-    assert agent.handle(uuid4(), payload)["jobs"] == {"done": 1}      # the run summary
+    assert agent.handle(uuid4(), payload)["jobs"] == {"done": 1}      # the assistant summary
     assert prompts == []
     settings["housekeeping.room_summaries"] = True
     try:

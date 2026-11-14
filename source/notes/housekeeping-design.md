@@ -5,7 +5,7 @@ summary, and the room chunk summary. The role, its queue and its page are
 built so that later jobs (detectors) join the same queue.
 
 The two summaries are different things:
-- **The run summary** describes one assistant run: what triggered it, the
+- **The assistant summary** describes one assistant run: what triggered it, the
   obstacles in its steps, and its outcome.
 - **The room chunk summary** describes a stretch of a room's messages: its
   parts, each with what was wanted, what came of it and how well calibrated
@@ -24,7 +24,7 @@ exists.
 | The queue and its record | `db/housekeeping.py` |
 | `housekeeping_job` / `housekeeping_attempt` | `db/models.py` |
 | The Housekeeping page and a job's page | `webapp/housekeeping_views.py` |
-| The run summary's model call | `agents/assistant_run_summarizer.py` |
+| The assistant summary's model call | `agents/assistant_run_summarizer.py` |
 | The chunk summary's prompt and parsing | `agents/room_chunks.py` |
 | `room_chunk` | `db/models.py` |
 
@@ -72,7 +72,7 @@ signals, when the records have any (`db.attach_reply_signals`):
 
 | signal | from |
 |---|---|
-| `run resolved` / `partial` / `failed` | the run summary's outcome for the reply's run, else the run's status |
+| `run resolved` / `partial` / `failed` | the assistant summary's outcome for the reply's run, else the run's status |
 | `criteria met` / `criteria not met`, and how many revisions | the reply audit's verdicts for that run: met when the last one was to send the reply |
 | `voted up` / `voted down`, with the comment | the human's latest vote on the message |
 

@@ -318,7 +318,7 @@ class HousekeepingAgent(Agent):
         return "done"
 
     def _summarize_run(self, job: Any, attempt: Any, watch: TurnWatch) -> str:
-        """The run summary: one structured call by the summarizer, on its own
+        """The assistant summary: one structured call by the summarizer, on its own
         model slot, interruptible for exactly the length of that call."""
         from agents.assistant_run_summarizer import AssistantRunSummarizerAgent
 

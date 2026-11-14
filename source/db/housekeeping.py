@@ -541,7 +541,7 @@ def attach_reply_signals(room_uuid: UUID,
     """Add `signals` to each assistant message: what the records say about
     that reply. Returns the same list.
 
-    - `run`: how the reply's run ended. The run summary's outcome
+    - `run`: how the reply's run ended. The assistant summary's outcome
       (`resolved`, `partial`, `failed`) when there is one, else the run's
       status.
     - `criteria`: `met` when the reply audit's last verdict was to send the
