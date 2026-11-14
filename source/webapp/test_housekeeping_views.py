@@ -58,6 +58,8 @@ def test_the_assistant_menu_has_a_housekeeping_item(client):
     body = c.get("/assistant/housekeeping").get_data(as_text=True)
     assert '<a href="/assistant/housekeeping" class="pp-active">Housekeeping</a>' in body
     assert "No housekeeping jobs" in body and "idle" in body
+    # The bar counts the jobs that have not run yet, as one number.
+    assert '<span class="k">Pending</span><span class="v">0</span>' in body
 
 
 def test_the_log_lists_a_job_with_its_room_run_and_outcome(client):

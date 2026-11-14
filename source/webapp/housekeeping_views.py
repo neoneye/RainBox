@@ -315,7 +315,7 @@ _NOW_FRAGMENT = """
       <span class="v">idle</span>
     {% endif %}
   </span>
-  <span><span class="k">Waiting</span><span class="v">{{ now.waiting[1] }} for the next turn &middot; {{ now.waiting[2] }} generative</span></span>
+  <span><span class="k">Pending</span><span class="v">{{ now.waiting[1] + now.waiting[2] }}</span></span>
   <span><span class="k">Failed</span><span class="v">{% if now.failed %}<a href="/assistant/housekeeping?outcome=failed">{{ now.failed }}</a>{% else %}0{% endif %}</span></span>
 </div>
 """
