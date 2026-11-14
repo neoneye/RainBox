@@ -3,7 +3,7 @@
 **Status:** Rollout step 1 is built and described in
 `notes/housekeeping-design.md`: the role with the assistant summary as its one job,
 the gate and the kill, the sweep, the job tables, the Housekeeping page and
-the After the turn group. Also built: the room chunk summary job and the
+the After the turn group. Also built: the chatroom chunk summary job and the
 rest after ten calls. Not built: the other jobs, the hourly budget and
 thermal pause, and catching up with its /chat lock.
 **Date:** 2026-11-09

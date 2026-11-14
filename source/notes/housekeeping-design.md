@@ -1,13 +1,13 @@
 # Housekeeping — design
 
 Housekeeping is the work that follows a turn. It has two jobs: the run
-summary, and the room chunk summary. The role, its queue and its page are
+summary, and the chatroom chunk summary. The role, its queue and its page are
 built so that later jobs (detectors) join the same queue.
 
 The two summaries are different things:
 - **The assistant summary** describes one assistant run: what triggered it, the
   obstacles in its steps, and its outcome.
-- **The room chunk summary** describes a stretch of a room's messages: its
+- **The chatroom chunk summary** describes a stretch of a room's messages: its
   parts, each with what was wanted, what came of it and how well calibrated
   the assistant was, under the names of its subjects and broader topics. It is the
   compaction of a long room.
@@ -41,7 +41,7 @@ exists.
 4. **The worker runs every waiting job**, not only the ones the item named,
    and exits when none is left.
 
-## Room chunk summaries
+## Chatroom chunk summaries
 
 A room's **counted messages** are its real messages that have finished
 streaming, in id order. Progress and thinking rows do not count.

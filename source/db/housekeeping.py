@@ -73,7 +73,7 @@ ROOM_CHUNK_JOB = "room_chunk_summary"
 #: generative work that is read eventually. The label is what the page prints.
 HOUSEKEEPING_JOB_TYPES: dict[str, tuple[int, str]] = {
     RUN_SUMMARY_JOB: (2, "assistant summary"),
-    ROOM_CHUNK_JOB: (2, "room chunk summary"),
+    ROOM_CHUNK_JOB: (2, "chatroom chunk summary"),
 }
 
 #: The /activity caller tag of each job type's model call. It is how an
