@@ -365,11 +365,11 @@ _LOG_PAGE = """
 <div class="hk-wrap">
   <h1 class="hk-head">Housekeeping</h1>
   <p class="hk-lede">Background work the assistant does on its own records
-    after a turn: it summarizes the run and the room's messages, and judges
-    how its replies landed. None of it answers anyone. A job starts when the
-    reply has posted, and a new message stops the model call in progress so
-    the turn has the machine to itself. A stopped job runs again
-    afterwards.</p>
+    after a turn: it summarizes each run (one invocation of the personal
+    assistant) and the chatroom's messages, and judges how its replies
+    landed. None of it answers anyone. A job starts when the reply has
+    posted, and a new message stops the model call in progress so the turn
+    has the machine to itself. A stopped job runs again afterwards.</p>
   <form class="hk-filters" method="get" action="/assistant/housekeeping">
     <div class="hk-field">
       <label>Outcome</label>
