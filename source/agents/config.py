@@ -271,7 +271,7 @@ agent_config: dict[str, AgentConfigEntry] = {
     },
     "housekeeping": {
         "uuid": HOUSEKEEPING_UUID,
-        "description": "runs the work that follows a turn (the run summary), one job at a time, starting when the reply has posted and giving way the moment a new message arrives. Binds no model of its own: each job uses its own slot.",
+        "description": "runs the work that follows a turn (the assistant summary), one job at a time, starting when the reply has posted and giving way the moment a new message arrives. Binds no model of its own: each job uses its own slot.",
     },
 }
 

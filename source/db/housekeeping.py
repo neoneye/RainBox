@@ -72,7 +72,7 @@ ROOM_CHUNK_JOB = "room_chunk_summary"
 #: job type -> (tier, label). Tier 1 is read by the next turn; tier 2 is
 #: generative work that is read eventually. The label is what the page prints.
 HOUSEKEEPING_JOB_TYPES: dict[str, tuple[int, str]] = {
-    RUN_SUMMARY_JOB: (2, "run summary"),
+    RUN_SUMMARY_JOB: (2, "assistant summary"),
     ROOM_CHUNK_JOB: (2, "room chunk summary"),
 }
 

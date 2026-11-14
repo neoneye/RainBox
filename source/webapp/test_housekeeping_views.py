@@ -66,7 +66,7 @@ def test_the_log_lists_a_job_with_its_room_run_and_outcome(client):
     job, _ = _job(run)
     body = c.get("/assistant/housekeeping").get_data(as_text=True)
     assert f'data-href="/assistant/housekeeping/{job.uuid}"' in body
-    assert "run summary" in body
+    assert "assistant summary" in body
     # The log names no model: a job's models are on its own page.
     assert "model-a" not in body and "<th>Model</th>" not in body
     assert '<th class="hk-right">Time</th>' in body
@@ -100,7 +100,7 @@ def test_a_running_job_shows_at_the_top_and_its_reply_so_far_on_its_page(client)
     c, made = client
     job, _ = _job(_run(made), result=None)
     log = c.get("/assistant/housekeeping").get_data(as_text=True)
-    assert f'running <a href="/assistant/housekeeping/{job.uuid}">run summary</a>' in log
+    assert f'running <a href="/assistant/housekeeping/{job.uuid}">assistant summary</a>' in log
     page = c.get(f"/assistant/housekeeping/{job.uuid}").get_data(as_text=True)
     assert "reply so far" in page and "{&#34;trigger&#34;: &#34;a que" in page
     assert "running for" in page
@@ -181,7 +181,7 @@ def test_the_run_page_lists_its_jobs_after_the_turn_and_moves_them_forward(clien
         db.RUN_SUMMARY_JOB, run_uuid=run.uuid, room_uuid=run.room_uuid)
     body = c.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
     assert "After the turn" in body
-    assert f'<a href="/assistant/housekeeping/{job.uuid}">run summary</a>' in body
+    assert f'<a href="/assistant/housekeeping/{job.uuid}">assistant summary</a>' in body
     db.session.refresh(job)
     assert job.bumped_at is not None        # opening the page asked for it first
     other = _run(made)
