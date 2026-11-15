@@ -975,7 +975,9 @@ CALL_TEMPLATE = """
                                overflow-wrap: normal; }
 </style>
 <main class="pp-call">
-  <h1>{{ call.caller }} &middot; {{ call.model or 'unknown model' }}</h1>
+  <h1>{{ call.caller }} &middot;
+    {% if model_label %}<a href="/model?id={{ call.model_uuid }}" title="The configured model this call ran on{% if call.model %}. The provider knows it as {{ call.model }}{% endif %}.">{{ model_label }}</a>
+    {% else %}{{ call.model or 'unknown model' }}{% endif %}</h1>
   <p class="sub">{{ call.started_at.strftime('%b %-d %Y, %H:%M:%S')
                     if call.started_at else 'unknown time' }}</p>
 
@@ -1077,9 +1079,13 @@ def activity_call_page(call_uuid: UUID) -> str:
         if isinstance(m, dict)
     ]
     cache_text, cache_hover, _cls = cache_reading(call)
+    # The configured model's own name, when the call recorded which one it ran
+    # on and that config still exists. Otherwise the provider's name stands.
+    model_label = db.model_label(call.model_uuid) if call.model_uuid else ""
     return render_template_string(
         CALL_TEMPLATE,
         call=call,
+        model_label=model_label,
         messages=messages,
         cache_text=cache_text,
         cache_hover=cache_hover,

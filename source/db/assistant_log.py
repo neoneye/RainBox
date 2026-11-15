@@ -1122,7 +1122,7 @@ def _ref_by_time(when, spans: list) -> str:
     return ""
 
 
-def _model_label(model_uuid) -> str:
+def model_label(model_uuid) -> str:
     """What to call the model behind a uuid.
 
     A step records the OVERRIDE it ran on, not the base config, so looking the
@@ -1193,7 +1193,7 @@ def _attach_model_names(events: list[dict]) -> None:
     names: dict[str, str] = {}
     for model_uuid in wanted:
         try:
-            name = _model_label(UUID(str(model_uuid)))
+            name = model_label(UUID(str(model_uuid)))
         except Exception:
             continue
         if name:

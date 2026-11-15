@@ -119,6 +119,35 @@ class TestCallDetail:
         assert model in body
         assert "4000 tokens" in body   # prompt_tokens, exact
 
+    def test_the_heading_names_the_configured_model_and_links_to_it(
+        self, client, model
+    ):
+        """The provider's name says which weights answered. The configured
+        model says which settings, and is the thing an operator can open."""
+        config = db.create_model_config("served-name", {})
+        override = db.create_model_config_override(
+            config.uuid, {"temperature": 0.2}, display_name="careful summarizer")
+        call_uuid = uuid4()
+        add_call(model, uuid=call_uuid, model_uuid=override.uuid)
+        try:
+            body = client.get(f"/activity/call/{call_uuid}").get_data(as_text=True)
+            heading = body[body.index("<h1>"):body.index("</h1>")]
+            assert f'href="/model?id={override.uuid}"' in heading
+            assert "served-name · careful summarizer" in heading
+        finally:
+            db.session.delete(override)
+            db.session.delete(config)
+            db.session.commit()
+
+    def test_a_call_with_no_configured_model_keeps_the_providers_name(
+        self, client, model
+    ):
+        call_uuid = uuid4()
+        add_call(model, uuid=call_uuid, model_uuid=uuid4())
+        body = client.get(f"/activity/call/{call_uuid}").get_data(as_text=True)
+        heading = body[body.index("<h1>"):body.index("</h1>")]
+        assert model in heading and "/model?id=" not in heading
+
     def test_a_row_with_no_stored_text_says_so_rather_than_showing_nothing(
         self, client, model
     ):
