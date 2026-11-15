@@ -139,6 +139,21 @@ class TestCallDetail:
             db.session.delete(config)
             db.session.commit()
 
+    def test_the_recent_list_names_the_configured_model(self, client, model):
+        config = db.create_model_config("served-name", {})
+        override = db.create_model_config_override(
+            config.uuid, {"temperature": 0.2}, display_name="careful summarizer")
+        add_call(model, model_uuid=override.uuid)
+        try:
+            body = client.get("/activity?range=24h").get_data(as_text=True)
+            recent = body[body.index("Recent calls"):]
+            assert "served-name · careful summarizer" in recent
+            assert f'title="The provider knows it as {model}."' in recent
+        finally:
+            db.session.delete(override)
+            db.session.delete(config)
+            db.session.commit()
+
     def test_a_call_with_no_configured_model_keeps_the_providers_name(
         self, client, model
     ):

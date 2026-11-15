@@ -496,6 +496,10 @@ def build_context(args: Any, now: datetime) -> dict:
         "by_caller": by_caller,
         "grouped": grouped,
         "recent": recent,
+        # One lookup per distinct configured model, not one per row.
+        "model_labels": {
+            u: db.model_label(u)
+            for u in {c.model_uuid for c in recent if c.model_uuid}},
         "errors": errors,
         "any_reported": any(
             c.cached_tokens_reported is not None for c in recent
@@ -901,7 +905,8 @@ ACTIVITY_TEMPLATE = """
       <tr>
         <td class="muted">{{ call.started_at.strftime('%b %-d %H:%M:%S')
                              if call.started_at else '—' }}</td>
-        <td class="name">{{ call.model or '—' }}</td>
+        {% set label = model_labels.get(call.model_uuid) %}
+        <td class="name"{% if label and call.model %} title="The provider knows it as {{ call.model }}."{% endif %}>{{ label or call.model or '—' }}</td>
         <td class="muted wrap">{{ dotted_breaks(call.caller) }}</td>
         {% set where, _, fn = (call.origin or '—').partition(' in ') %}
         <td class="muted origin wrap">{{ where }}{% if fn %} <span class="whole">in {{ fn }}</span>{% endif %}</td>
