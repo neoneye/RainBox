@@ -977,8 +977,7 @@ CALL_TEMPLATE = """
 <main class="pp-call">
   <h1>{{ call.caller }} &middot; {{ call.model or 'unknown model' }}</h1>
   <p class="sub">{{ call.started_at.strftime('%b %-d %Y, %H:%M:%S')
-                    if call.started_at else 'unknown time' }}
-     &middot; <a href="{{ url_for('activity_page') }}">back to Activity</a></p>
+                    if call.started_at else 'unknown time' }}</p>
 
   {% if not call.ok %}
   <div class="panel failed">
