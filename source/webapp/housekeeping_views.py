@@ -441,7 +441,7 @@ _JOB_FRAGMENT = """
     <span class="hk-mono">{{ when(a.row.started_at) }}</span>
     {% if a.row.model %}<span>{{ a.row.model }}</span>{% endif %}
     {% if a.row.model_ms %}<span class="hk-num">{{ seconds(a.row.model_ms) }}</span>{% endif %}
-    {% if a.call %}<a class="hk-back" style="margin-left:auto" href="/activity/call/{{ a.call.uuid }}">the call on /activity</a>{% endif %}
+    {% if a.call %}<a class="hk-back" style="margin-left:auto" href="/activity/call/{{ a.call.uuid }}" title="Open this model call on the Activity page. It shows everything that was sent to the model, message by message, and the full reply.">activity</a>{% endif %}
   </div>
   <div class="bd">
     {% if a.row.error %}<p class="hk-err">{{ a.row.error }}</p>{% endif %}
