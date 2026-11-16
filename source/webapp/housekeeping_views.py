@@ -519,7 +519,6 @@ _JOB_PAGE = """
 {% include "_nav.html" %}
 <style>.pp-nav{margin-bottom:0}</style>
 <div class="hk-wrap">
-  <p style="margin:0 0 12px"><a class="hk-back" href="/assistant/housekeeping">&larr; Housekeeping</a></p>
   <div id="hk-live" data-revision="{{ revision }}" data-revision-url="/assistant/housekeeping/api/revision?job={{ job.uuid }}">""" + _JOB_FRAGMENT + """</div>
 </div>
 """ + _LIVE_SCRIPT
