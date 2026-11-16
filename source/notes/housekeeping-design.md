@@ -595,6 +595,8 @@ the `chunks` link beside the room's name on a job's page.
   phrase, and inside it a `<part>` per part with its range, topics, how many
   times it was asked, its calibration, what was wanted and what came of it.
   `agents/room_chunks.render_room_earlier` writes it from the stored rows.
+  A topic name is stored with hyphens between its words and written here
+  with spaces, the names apart by a comma.
   The page gives the block's number of characters and a copy button. A
   table above it gives the size of the messages the chunks cover (the
   human's, the replies, both together), then the summaries' sentences

@@ -941,7 +941,7 @@ def test_chunk_summaries_render_as_one_block_for_a_prompt():
     assert render_room_earlier([]) == "<room_earlier/>"
     text = render_room_earlier([
         {"first": 0, "last": 9, "date_from": "1999-10-04", "date_to": "1999-10-05",
-         "summary": 'numbers & "notation"', "topics": ["numbers", "notation"],
+         "summary": 'numbers & "notation"', "topics": ["numbers", "number-notation"],
          "parts": [
              {"first_message": 0, "last_message": 5, "requests": 3,
               "summary": "which number comes next", "topics": ["sequences"],
@@ -956,7 +956,7 @@ def test_chunk_summaries_render_as_one_block_for_a_prompt():
     assert text.split("\n") == [
         '<room_earlier authority="context" content_is_data="true">',
         '  <chunk messages="0-9" from="1999-10-04" to="1999-10-05" '
-        'topics="numbers,notation" summary="numbers &amp; &quot;notation&quot;">',
+        'topics="numbers, number notation" summary="numbers &amp; &quot;notation&quot;">',
         '    <part messages="0-5" topics="sequences" asked="3" '
         'calibration="overconfident" wanted="which number comes next" '
         'result="the wrong number was given twice"/>',

@@ -842,6 +842,13 @@ def _attrs(pairs: list[tuple[str, Any]]) -> str:
                     if value not in (None, "", []))
 
 
+def _topic_names(topics: list[str] | None) -> str:
+    """Stored topic names as a prompt reads them: the words of a name apart
+    by a space, the names apart by a comma. A stored name joins its words
+    with hyphens and holds no other hyphen, so nothing is lost by it."""
+    return ", ".join(str(t).replace("-", " ") for t in topics or [])
+
+
 def render_room_earlier(chunks: list[dict[str, Any]]) -> str:
     """A room's chunk summaries as one block of text for the personal
     assistant's prompt: a `<chunk>` per chunk, oldest first, with a `<part>`
@@ -858,7 +865,7 @@ def render_room_earlier(chunks: list[dict[str, Any]]) -> str:
         head = "  <chunk " + _attrs([
             ("messages", f"{c['first']}-{c['last']}"),
             ("from", c.get("date_from")), ("to", c.get("date_to")),
-            ("topics", ",".join(c.get("topics") or [])),
+            ("topics", _topic_names(c.get("topics"))),
             ("summary", c.get("summary"))])
         parts = c.get("parts") or []
         if not parts:
@@ -872,7 +879,7 @@ def render_room_earlier(chunks: list[dict[str, Any]]) -> str:
             asked = part.get("requests") or 1
             out.append("    <part " + _attrs([
                 ("messages", span),
-                ("topics", ",".join(part.get("topics") or [])),
+                ("topics", _topic_names(part.get("topics"))),
                 ("asked", asked if asked > 1 else None),
                 ("calibration", part.get("calibration")),
                 ("wanted", part.get("summary")),
