@@ -223,8 +223,8 @@ _STYLE = """
     white-space:nowrap}
   .hk-num{font-variant-numeric:tabular-nums;white-space:nowrap}
   /* A call's figures, as its meta line reads on /assistant. */
-  .hk-card .ev-kpis{margin-left:auto;display:flex;gap:1rem;align-items:center;
-    flex-wrap:wrap;justify-content:flex-end;font-size:0.72rem;color:#98a2b3;
+  .hk-card .ev-kpis{display:flex;gap:1rem;align-items:center;flex-wrap:wrap;
+    justify-content:flex-end;margin-bottom:0.7rem;font-size:0.72rem;color:#98a2b3;
     font-variant-numeric:tabular-nums}
   .hk-card .ev-kpi{white-space:nowrap}
   .hk-card .ev-kpi a{color:#2563eb;text-decoration:none}
@@ -468,15 +468,16 @@ _JOB_FRAGMENT = """
       <span class="hk-pill running">running for {{ elapsed(a.row.started_at) }}</span>
     {% endif %}
     <span class="hk-mono">{{ when(a.row.started_at) }}</span>
-    {% if a.kpis %}
-    <div class="ev-kpis">{% for f in a.kpis %}<span class="ev-kpi" title="{{ f.title }}">{% if f.href %}<a href="{{ f.href }}">{{ f.html }}</a>{% else %}{{ f.html }}{% endif %}</span>{% endfor %}</div>
-    {% else %}
+    {% if not a.kpis %}
     {% if a.row.model %}<span>{{ a.row.model }}</span>{% endif %}
     {% if a.row.model_ms %}<span class="hk-num">{{ seconds(a.row.model_ms) }}</span>{% endif %}
     {% endif %}
-    {% if a.call %}<a class="hk-back" {% if not a.kpis %}style="margin-left:auto" {% endif %}href="/activity/call/{{ a.call.uuid }}" title="Open this model call on the Activity page. It shows everything that was sent to the model, message by message, and the full reply.">activity</a>{% endif %}
+    {% if a.call %}<a class="hk-back" style="margin-left:auto" href="/activity/call/{{ a.call.uuid }}" title="Open this model call on the Activity page. It shows everything that was sent to the model, message by message, and the full reply.">activity</a>{% endif %}
   </div>
   <div class="bd">
+    {% if a.kpis %}
+    <div class="ev-kpis">{% for f in a.kpis %}<span class="ev-kpi" title="{{ f.title }}">{% if f.href %}<a href="{{ f.href }}">{{ f.html }}</a>{% else %}{{ f.html }}{% endif %}</span>{% endfor %}</div>
+    {% endif %}
     {% if a.row.error %}<p class="hk-err">{{ a.row.error }}</p>{% endif %}
     {% if a.call %}
       {% for m in a.call.messages or [] %}

@@ -137,8 +137,10 @@ def test_a_job_page_shows_each_attempt_with_its_prompt_and_reply(client):
     assert "Attempt 2" in body and "You summarize a run." in body
     assert "Run status: finished" in body and "resolved" in body
     assert f"/activity/call/{call.uuid}" in body
-    # The attempt's header carries its call's figures, as a call's meta line
-    # reads on /assistant.
+    # The attempt carries its call's figures on a line under its header, as
+    # a call's meta line reads on /assistant.
+    header = body[body.index("Attempt 2"):]
+    assert "ev-kpis" not in header[:header.index('<div class="bd">')]
     kpis = body[body.index('<div class="ev-kpis">'):]
     kpis = kpis[:kpis.index("</div>")]
     for text in ("in 1193", "out 37", "cached 0", "prefill 0.8s", "decode 0.7s",
