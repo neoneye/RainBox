@@ -276,6 +276,7 @@ _STYLE = """
     border-bottom:1px solid #e5e7eb}
   .hk-log td{padding:9px 12px;border-bottom:1px solid #f1f3f5;vertical-align:top}
   .hk-log tr:last-child td{border-bottom:0}
+  table.hk-sizes{width:auto;min-width:32rem;margin:0 0 1.1rem}
   .hk-log tr.row{cursor:pointer}
   .hk-log tr.row:hover td{background:#f8fafc}
   .hk-log a{color:#2563eb;text-decoration:none}
@@ -745,6 +746,15 @@ _ROOM_FRAGMENT = """
   the way the personal assistant's prompt is going to hold them: ahead of the
   room's newest messages, which it reads in full. The block is
   <b>{{ '{:,}'.format(prompt_chars) }} characters</b>. No prompt holds it yet.</p>
+<table class="hk-log hk-sizes">
+  <thead><tr><th>Text</th><th class="hk-right">Messages</th><th class="hk-right">Characters</th><th class="hk-right">Of the original</th></tr></thead>
+  <tbody>
+    <tr><td>Your messages</td><td class="hk-num hk-right">{{ sizes.human_count }}</td><td class="hk-num hk-right">{{ '{:,}'.format(sizes.human) }}</td><td></td></tr>
+    <tr><td>The assistant's replies</td><td class="hk-num hk-right">{{ sizes.reply_count }}</td><td class="hk-num hk-right">{{ '{:,}'.format(sizes.replies) }}</td><td></td></tr>
+    <tr><td title="The text of every message inside the summarized chunks. Messages not summarized yet are not counted.">Original, in total</td><td class="hk-num hk-right">{{ sizes.human_count + sizes.reply_count }}</td><td class="hk-num hk-right">{{ '{:,}'.format(sizes.total) }}</td><td class="hk-num hk-right">100%</td></tr>
+    <tr><td title="The block below."><b>Summarized</b></td><td></td><td class="hk-num hk-right"><b>{{ '{:,}'.format(prompt_chars) }}</b></td><td class="hk-num hk-right"><b>{{ sizes.percent }}</b></td></tr>
+  </tbody>
+</table>
 <div class="tb-scope">{{ prompt_block }}</div>
 {% else %}
 {% for c in chunks %}
@@ -931,6 +941,11 @@ def housekeeping_room_page(room_uuid: UUID) -> str:
     due = len(db.due_room_chunks(room_uuid, size, overlap, version, 500)) \
         if is_current else 0
     as_prompt = request.args.get("view") == "prompt"
+    # What the summarized chunks' own messages come to, to hold the block's
+    # size against. A message of the human's is theirs; every other is a reply.
+    inside_all = [m for c in chunks for m in c["messages"]]
+    human = [len(m["text"] or "") for m in inside_all if m["sender"] == "human"]
+    replies = [len(m["text"] or "") for m in inside_all if m["sender"] != "human"]
     prompt_text = render_room_earlier([
         {"first": c["first_index"], "last": c["last_index"],
          "date_from": c["date_from"], "date_to": c["date_to"],
@@ -938,6 +953,12 @@ def housekeeping_room_page(room_uuid: UUID) -> str:
          "parts": c["row"].parts} for c in chunks]) if as_prompt else ""
     ctx = dict(
         as_prompt=as_prompt, prompt_chars=len(prompt_text),
+        sizes={
+            "human": sum(human), "human_count": len(human),
+            "replies": sum(replies), "reply_count": len(replies),
+            "total": sum(human) + sum(replies),
+            "percent": (f"{100 * len(prompt_text) / (sum(human) + sum(replies)):.0f}%"
+                        if human or replies else "")},
         prompt_block=text_block(
             f"room_earlier ({len(prompt_text):,} chars)", prompt_text, whole=True),
         room_uuid=room_uuid, room_name=names[room_uuid], chunks=chunks,
