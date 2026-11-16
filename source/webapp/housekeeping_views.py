@@ -20,6 +20,7 @@ from flask import Response, abort, jsonify, redirect, render_template_string, re
 import db
 
 from .core import app
+from .text_blocks import BLOCKS_SCRIPT, BLOCKS_STYLE
 
 _OUTCOMES = ("all", "running", "waiting", "deferred", "failed", "done")
 _PER_PAGE = 50
@@ -33,6 +34,26 @@ def _seconds(ms: int | None) -> str:
     if not ms:
         return ""
     return f"{ms / 1000:.1f} s"
+
+
+def _attempt_blocks(row, call) -> dict:
+    """An attempt's prompts and its reply as the blocks a pane on /assistant
+    draws: `{prompts, reply}`. Each prompt is collapsed, with its character
+    count, and every block can be copied. The reply is the stored call's,
+    or what has come back so far while the attempt runs."""
+    from markupsafe import Markup
+
+    from webapp.text_blocks import text_block
+
+    prompts = Markup("").join(
+        text_block(f"{m.get('role') or '?'} prompt", str(m.get("content") or ""),
+                   collapsed=True, key=f"a{row.uuid}-m{i}")
+        for i, m in enumerate((call.messages if call else None) or [], 1)
+        if isinstance(m, dict))
+    text = (call.response_text if call and call.response_text
+            else row.response_preview)
+    return {"prompts": prompts,
+            "reply": text_block("reply" if row.result else "reply so far", text)}
 
 
 def _call_kpis(call) -> list[dict]:
@@ -294,9 +315,14 @@ _LIVE_SCRIPT = """
   if (!box) { return; }
   var seen = box.getAttribute('data-revision');
   var busy = false;
+  // An open block is named by its id, or by its data-k where it is one of
+  // the text blocks (webapp/text_blocks.py).
+  function nameOf(d) { return d.id || d.getAttribute('data-k') || ''; }
   function openIds() {
     var ids = [];
-    box.querySelectorAll('details[open][id]').forEach(function (d) { ids.push(d.id); });
+    box.querySelectorAll('details[open]').forEach(function (d) {
+      if (nameOf(d)) { ids.push(nameOf(d)); }
+    });
     return ids;
   }
   function reload(rev) {
@@ -305,10 +331,10 @@ _LIVE_SCRIPT = """
     var keep = openIds();
     return fetch(url.toString()).then(function (r) { return r.text(); }).then(function (html) {
       box.innerHTML = html;
-      keep.forEach(function (id) {
-        var d = document.getElementById(id);
-        if (d) { d.open = true; }
+      box.querySelectorAll('details').forEach(function (d) {
+        if (keep.indexOf(nameOf(d)) !== -1) { d.open = true; }
       });
+      if (window.tbApply) { window.tbApply(box); }
       seen = rev;
     });
   }
@@ -474,25 +500,14 @@ _JOB_FRAGMENT = """
     {% endif %}
     {% if a.call %}<a class="hk-back" style="margin-left:auto" href="/activity/call/{{ a.call.uuid }}" title="Open this model call on the Activity page. It shows everything that was sent to the model, message by message, and the full reply.">activity</a>{% endif %}
   </div>
-  <div class="bd">
+  <div class="bd tb-scope">
     {% if a.kpis %}
     <div class="ev-kpis">{% for f in a.kpis %}<span class="ev-kpi" title="{{ f.title }}">{% if f.href %}<a href="{{ f.href }}">{{ f.html }}</a>{% else %}{{ f.html }}{% endif %}</span>{% endfor %}</div>
     {% endif %}
     {% if a.row.error %}<p class="hk-err">{{ a.row.error }}</p>{% endif %}
-    {% if a.call %}
-      {% for m in a.call.messages or [] %}
-      <details class="hk-text" id="a{{ a.row.uuid }}-m{{ loop.index }}">
-        <summary>{{ m.role }} prompt</summary>
-        <pre class="hk-pre">{{ m.content }}</pre>
-      </details>
-      {% endfor %}
-    {% endif %}
-    {% set reply = (a.call.response_text if a.call and a.call.response_text else a.row.response_preview) %}
-    {% if reply %}
-      <details class="hk-text" id="a{{ a.row.uuid }}-reply" open>
-        <summary>{{ 'reply so far' if not a.row.result else 'reply' }}</summary>
-        <pre class="hk-pre">{{ reply }}</pre>
-      </details>
+    {{ a.prompts }}
+    {% if a.reply %}
+      {{ a.reply }}
     {% elif not a.row.result %}
       <p class="hk-lede" style="margin:8px 0 0">Waiting for the model's first words.</p>
     {% elif not a.call and not a.row.error %}
@@ -549,13 +564,13 @@ _JOB_FRAGMENT = """
 _JOB_PAGE = """
 <!doctype html>
 <title>Housekeeping job &mdash; rainbox</title>
-""" + _STYLE + """
+""" + _STYLE + BLOCKS_STYLE + """
 {% include "_nav.html" %}
 <style>.pp-nav{margin-bottom:0}</style>
 <div class="hk-wrap">
   <div id="hk-live" data-revision="{{ revision }}" data-revision-url="/assistant/housekeeping/api/revision?job={{ job.uuid }}">""" + _JOB_FRAGMENT + """</div>
 </div>
-""" + _LIVE_SCRIPT
+""" + BLOCKS_SCRIPT + _LIVE_SCRIPT
 
 
 def run_housekeeping_lines(run_uuid: UUID) -> list[dict]:
@@ -653,6 +668,7 @@ def housekeeping_job_page(job_uuid: UUID) -> str:
                 for a in db.list_housekeeping_attempts(job.uuid)]
     for attempt in attempts:
         attempt["kpis"] = _call_kpis(attempt["call"])
+        attempt.update(_attempt_blocks(attempt["row"], attempt["call"]))
     run = db.get_assistant_run(job.run_uuid) if job.run_uuid else None
     ctx = dict(
         job=job, attempts=attempts, wrote=_wrote(job), decisions=_decision_calls(job),

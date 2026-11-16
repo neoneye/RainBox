@@ -539,25 +539,34 @@ attempt's `llm_call` row: for a chunk, the summary that was kept.
 ## The pages
 
 **Assistant → Housekeeping** (`/assistant/housekeeping`).
-- The top line says what is running now and for how long, how many jobs wait
-  in each tier, and how many have failed.
-- The log is one line per job, newest first: when, job, room and run, model,
-  model time and attempts, outcome.
+- The top line says what is running now and for how long, how many jobs
+  are pending, and how many have failed.
+- The log is one line per job, newest first: when, job, chatroom and
+  message range, model time and attempts, outcome. A line names no model
+  and holds no links: the whole line opens the job. A job that is done has
+  no outcome pill. A pill is for what is still going or went wrong.
 - It filters by outcome, job type and room.
 
 **A job** (`/assistant/housekeeping/<uuid>`).
-- What it is for, with links to the room, the run and the request.
-- Every attempt in order: how it ended, its model and time, its prompts, and
-  its reply. A running attempt shows the reply so far.
+- What it is for, with links to the room, its chunks, the run and the
+  request.
+- Every attempt in order: how it ended, a link to its call on `/activity`,
+  the call's figures as a call's meta line reads on `/assistant` (model,
+  tokens in and out, cached, prefill, decode, throughput, duration), its
+  prompts, and its reply. A running attempt shows the reply so far.
+- A prompt and a reply are the text blocks a pane on `/assistant` is made
+  of (`webapp/text_blocks.py`): a prompt is folded under its character
+  count, every block has a copy button, a long one is cut to a few lines
+  with a toggle, and a reply that is JSON has the raw and pretty switch.
 - For a final failure, an Enqueue again button.
 
 **A room's chunks** (`/assistant/housekeeping/room/<uuid>`), reached from
-the `chunks` link beside a room's name in the log.
+the `chunks` link beside the room's name on a job's page.
 - How many messages the room has, how many are summarized, and how many
   chunks are queued or due.
 - One card per chunk: its messages' numbers and dates, its phrase and
   topics, and the messages themselves, folded. The card names no model. An
-  Inspect button in its corner opens the job that wrote it: the models,
+  inspect link in its corner opens the job that wrote it: the models,
   the prompts and replies, and what the decision model was asked.
 - A chunk's heading links to the chunk itself, in the series shown:
   `?size=…&overlap=…&prompt=…#chunk-N`. The chunk the address names is

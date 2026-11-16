@@ -140,7 +140,15 @@ def test_a_job_page_shows_each_attempt_with_its_prompt_and_reply(client):
     # The attempt carries its call's figures on a line under its header, as
     # a call's meta line reads on /assistant.
     header = body[body.index("Attempt 2"):]
-    assert "ev-kpis" not in header[:header.index('<div class="bd">')]
+    assert "ev-kpis" not in header[:header.index('<div class="bd tb-scope">')]
+    # Each prompt is a collapsed block with its character count, and every
+    # block can be copied. The reply is JSON, so it has the raw | pretty
+    # switch.
+    assert "system prompt (20 chars)" in body and "user prompt (20 chars)" in body
+    card = header[:header.index("</pre></div>")]
+    assert card.count('class="ev-copy"') == 3
+    assert card.count('data-view="pretty"') == 1
+    assert f'data-k="a{second.uuid}-m1"' in body
     kpis = body[body.index('<div class="ev-kpis">'):]
     kpis = kpis[:kpis.index("</div>")]
     for text in ("in 1193", "out 37", "cached 0", "prefill 0.8s", "decode 0.7s",
