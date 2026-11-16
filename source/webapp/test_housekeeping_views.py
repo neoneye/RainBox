@@ -309,6 +309,30 @@ def test_a_chunk_jobs_page_shows_what_the_decision_model_was_asked_and_answered(
         # A call with no row on /activity says so.
         assert card.count("has no row on the Activity page") == 2
         assert second["message"] == 4       # the message after the chunk is a follow-up too
+        # No chunk is written yet, so the timeline has no result row.
+        assert 'kind-result' not in body
+        chunk = db.RoomChunk(
+            room_uuid=room.uuid, chunk_size=4, overlap=2, seq=0,
+            first_message_id=messages[0]["id"], last_message_id=messages[3]["id"],
+            message_count=4, content_hash=room_chunks.content_hash(messages[:4]),
+            summary="the height of the lighthouse", topics=["lighthouse"],
+            parts=[{"first_message": 0, "last_message": 3, "topics": ["lighthouse"],
+                    "summary": "how tall is the lighthouse", "result": "It was not found."}],
+            problems=[], prompt_version=room_chunks.PROMPT_VERSION, job_uuid=job.uuid)
+        db.session.add(chunk)
+        db.session.commit()
+        try:
+            body = c.get(f"/assistant/housekeeping/{job.uuid}").get_data(as_text=True)
+        finally:
+            db.session.delete(chunk)
+            db.session.commit()
+        # What the job wrote is the last row, shown as the room's page shows
+        # a chunk, with a link to it there.
+        names = re.findall(r'<span class="wf-name kind-[a-z]+">([^<]*)</span>', body)
+        assert names[-1] == "result" and names.count("result") == 1
+        pane = body[body.index(f'data-key="r{chunk.uuid}">'):]
+        assert "<b>Messages 0&ndash;3</b>" in pane and "&rarr; It was not found." in pane
+        assert "#chunk-0" in pane and "the 4 messages" in pane
     finally:
         for r in rows:
             db.session.delete(r)

@@ -41,6 +41,7 @@ __all__ = [
     "due_room_chunks",
     "ensure_room_chunk_jobs",
     "list_room_chunk_series",
+    "job_room_chunk",
     "list_room_chunks",
     "parse_chunk_subject",
     "store_room_chunk",
@@ -724,6 +725,11 @@ def list_room_chunks(room_uuid: UUID, size: int, overlap: int,
             .filter_by(room_uuid=room_uuid, chunk_size=size, overlap=overlap,
                        prompt_version=version)
             .order_by(RoomChunk.seq.asc()).all())
+
+
+def job_room_chunk(job_uuid: UUID) -> RoomChunk | None:
+    """The chunk a job wrote, or None when it wrote none."""
+    return db.session.query(RoomChunk).filter_by(job_uuid=job_uuid).first()
 
 
 def list_room_chunk_series(room_uuid: UUID) -> list[tuple[int, int, int, int]]:

@@ -171,6 +171,31 @@ def _chunk_link(job) -> dict | None:
     }
 
 
+def _chunk_view(row, messages: list[dict], index_of: dict) -> dict:
+    """A stored chunk with what a page shows beside it: `{row, messages,
+    dates, date_from, date_to, first_index, last_index, stale}`. `messages`
+    is the room's counted messages and `index_of` each one's number by its
+    id. `stale` says a message of the chunk was changed after the summary
+    was written."""
+    from agents.room_chunks import content_hash
+
+    inside = [m for m in messages
+              if row.first_message_id <= m["id"] <= row.last_message_id]
+    first_index = (index_of.get(inside[0]["id"], row.seq * row.chunk_size)
+                   if inside else row.seq * row.chunk_size)
+    dates = date_from = date_to = ""
+    if inside:
+        a, b = inside[0]["created_at"], inside[-1]["created_at"]
+        date_from, date_to = a.strftime("%Y-%m-%d"), b.strftime("%Y-%m-%d")
+        dates = date_from if a.date() == b.date() else f"{date_from} to {date_to}"
+    return {
+        "row": row, "messages": inside, "dates": dates,
+        "date_from": date_from, "date_to": date_to, "first_index": first_index,
+        "last_index": first_index + max(len(inside), 1) - 1,
+        "stale": content_hash(inside) != row.content_hash,
+    }
+
+
 def _reaction_texts(part: dict) -> list[str]:
     """A part's reactions in order, with a run of the same one written once
     and counted."""
@@ -262,7 +287,8 @@ def _decision_calls(job) -> list[dict]:
 _MIN_BAR_PCT: float = 0.6
 
 
-def _timeline(attempts: list[dict], now: datetime) -> list[dict]:
+def _timeline(attempts: list[dict], now: datetime, job=None,
+              wrote: dict | None = None) -> list[dict]:
     """A job's page as the rows of its timeline, in the order things began:
     each attempt, each request to the decision model, each model call, and
     the call still running when there is one.
@@ -275,7 +301,10 @@ def _timeline(attempts: list[dict], now: datetime) -> list[dict]:
     end. An attempt has no bar: its time is on the timeline as the calls it
     made, so it is a mark at its start. One row is `selected`, the one the
     page opens on: the call still running, else the first model call, else
-    the first row."""
+    the first row.
+
+    `wrote` is what the job wrote, a chunk as `_chunk_view` gives it. It is
+    the last row, of kind `result`: a mark where the job finished."""
     rows: list[dict] = []
     for n, a in enumerate(attempts, 1):
         row = a["row"]
@@ -321,6 +350,14 @@ def _timeline(attempts: list[dict], now: datetime) -> list[dict]:
         rows += mine
     # A stable sort: rows with the same start keep the order they were made in.
     rows.sort(key=lambda m: (m["start"] is None, m["start"] or now))
+    if wrote is not None:
+        rows.append({
+            "key": f"r{wrote['row'].uuid}", "kind": "result", "label": "result",
+            "description": f"messages {wrote['first_index']}\u2013{wrote['last_index']}",
+            "start": (job.finished_at if job is not None else None)
+            or wrote["row"].created_at,
+            "duration_ms": None, "failed": False, "result": wrote,
+            "attempt_no": None, "attempt": None})
     starts = [m["start"] for m in rows if m["start"]]
     span, first = 0.0, None
     if starts:
@@ -494,6 +531,8 @@ _STYLE = """
   .hk-card .wf-undated{position:absolute;left:4px;font-size:0.68rem;color:#98a2b3}
   .hk-card .wf-secs{font-size:0.76rem;color:#667085;text-align:right;
     font-variant-numeric:tabular-nums}
+  /* A chunk's body brings a card's padding; inside a pane it has the pane's. */
+  .hk-result-body > .bd{padding:0}
   .hk-card .ev-pane{display:none}
   .hk-card .ev-pane.on{display:block}
   .hk-btn{padding:7px 14px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;
@@ -704,6 +743,80 @@ _LOG_PAGE = """
 </div>
 """ + _LIVE_SCRIPT
 
+# What a chunk's summary holds, as the body of a card: on a room's page, and
+# as the result on the page of the job that wrote it. `c` is a `_chunk_view`.
+_CHUNK_BODY = """  <div class="bd">
+    <dl class="hk-kv">
+      <dt>Summary</dt><dd>{{ c.row.summary or '' }}</dd>
+      <dt>Topics</dt><dd>{% for t in c.row.topics %}<span class="hk-chip">{{ t }}</span> {% endfor %}</dd>
+      {% if c.row.parts %}
+      <dt>Parts</dt>
+      <dd>
+        <table class="hk-parts">
+        {% for part in c.row.parts %}
+          <tr>
+            <td class="hk-mono">{% if part.first_message is not none %}m{{ part.first_message }}{% if part.last_message != part.first_message %}&ndash;m{{ part.last_message }}{% endif %}{% endif %}</td>
+            <td>{{ part.summary }}{% if part.requests and part.requests > 1 %} <span class="hk-mono">&times;{{ part.requests }}</span>{% endif %}
+              {% if part.result %}<div class="hk-result">&rarr; {{ part.result }}</div>{% endif %}
+              {% if part.calibration %}
+              <div class="hk-signals">
+                <span class="hk-pill hk-cal-{{ part.calibration }}" title="{{ 'Decided by rule from the reaction and the records' if part.calibration_basis else 'Judged by the model' }}">{{ part.calibration }}</span>
+                {% if part.calibration_basis %}<span>{{ part.calibration_basis }}</span>{% endif %}
+                {% for a in part.asked_again_at or [] %}<span class="hk-chip" title="The decision model's probability that this message asks for the same thing again">m{{ a.message }} asks again {{ '%.2f'|format(a.p) }}{% if a.kind %} ({{ a.kind }}){% endif %}</span>{% endfor %}
+                {% for r in reaction_texts(part) %}<span class="hk-mono" title="What the human did after each reply">{{ r }}</span>{% endfor %}
+                {% for text in signal_texts(part.signals) %}<span class="hk-chip" title="From the records">{{ text }}</span>{% endfor %}
+              </div>
+              {% endif %}
+              {% if part.audit and not (part.audit.request and part.audit.result and part.audit.get('reaction', true)) %}
+              <div class="hk-signals">
+                <span class="hk-pill failed" title="A second model call compared this part with its messages">check</span>
+                <span>{% if not part.audit.request %}the request {% endif %}{% if not part.audit.result %}{{ 'and ' if not part.audit.request }}the result {% endif %}{% if not part.audit.get('reaction', true) %}{{ 'and ' if not (part.audit.request and part.audit.result) }}the reaction {% endif %}may not match the messages: {{ part.audit.reasoning }}</span>
+              </div>
+              {% endif %}
+            </td>
+            <td>{% for t in part.topics %}<span class="hk-chip">{{ t }}</span> {% endfor %}</td>
+          </tr>
+        {% endfor %}
+        </table>
+      </dd>
+      {% endif %}
+      {% if c.row.audit %}
+      <dt>Check</dt>
+      <dd>
+        {% if c.row.audit.rewritten %}
+        Written twice. The check found {{ c.row.audit.rewritten|length }} part{{ '' if c.row.audit.rewritten|length == 1 else 's' }} of the first answer wrong, and what is shown is the second.
+        <details class="hk-text"><summary>what the first answer had</summary>
+          {% for w in c.row.audit.rewritten %}
+          <div class="hk-result"><span class="hk-mono">m{{ w.first_message }}&ndash;m{{ w.last_message }}</span> {{ w.summary }} &rarr; {{ w.result }}<br>{{ w.reasoning }}</div>
+          {% endfor %}
+        </details>
+        {% elif not c.row.audit.error %}
+        Written once. The check found every part's request and result in the messages.
+        {% endif %}
+        {% if c.row.audit.error %}<div class="hk-err" style="margin:0">{{ c.row.audit.error }}</div>{% endif %}
+      </dd>
+      {% if c.row.audit.repeat_check %}
+      <dt>Asked again</dt>
+      <dd>
+        {% if c.row.audit.repeat_check.model %}
+        Each of {{ c.row.audit.repeat_check.asked }} follow-up{{ '' if c.row.audit.repeat_check.asked == 1 else 's' }} was put to the decision model, whether it repeats the request before it. {{ 'All were' if c.row.audit.repeat_check.answered == c.row.audit.repeat_check.asked else c.row.audit.repeat_check.answered ~ ' were' }} answered.
+        {% if c.row.audit.repeat_check.identical %}{{ c.row.audit.repeat_check.identical }} more {{ 'was' if c.row.audit.repeat_check.identical == 1 else 'were' }} the request word for word, and {{ 'was' if c.row.audit.repeat_check.identical == 1 else 'were' }} not put to the model.{% endif %}
+        {% else %}
+        No decision model is bound to <span class="hk-mono">assistant.repeat_check</span>, so a request asked again in other words is not seen.
+        {% endif %}
+      </dd>
+      {% endif %}
+      {% endif %}
+      {% if c.row.problems %}<dt>Format</dt><dd class="hk-err" style="margin:0">{{ c.row.problems|join('; ') }}</dd>{% endif %}
+    </dl>
+    <details class="hk-text" id="chunk-{{ c.row.seq }}-messages">
+      <summary>the {{ c.messages|length }} messages</summary>
+      <pre class="hk-pre">{% for m in c.messages %}[m{{ c.first_index + loop.index0 }} {{ m.sender }}] {{ m.text }}
+{% endfor %}</pre>
+    </details>
+  </div>
+"""
+
 _JOB_FRAGMENT = """
 {% set text, kind = outcome(job) %}
 <div class="hk-card">
@@ -769,7 +882,18 @@ _JOB_FRAGMENT = """
     {% for e in timeline %}
     {% set a = e.attempt %}
     <div class="ev-pane{% if e.selected %} on{% endif %}" data-key="{{ e.key }}">
-      {% if e.kind == 'attempt' %}
+      {% if e.kind == 'result' %}
+      {% set c = e.result %}
+      {% set chunk = chunk_link(job) %}
+      <div class="hk-call">
+        <b>Messages {{ c.first_index }}&ndash;{{ c.last_index }}</b>
+        <span class="hk-mono">{{ c.dates }}</span>
+        {% if c.stale %}<span class="hk-pill deferred" title="A message in this chunk was edited or deleted after the summary was written">messages changed since</span>{% endif %}
+        {% if chunk %}<a class="hk-back" style="margin-left:auto" href="{{ chunk.href }}" title="Open this chunk on the room's page, among the room's other chunks.">chunks</a>{% endif %}
+      </div>
+      <div class="hk-result-body">""" + _CHUNK_BODY + """</div>
+
+      {% elif e.kind == 'attempt' %}
       <div class="hk-call">
         <b>Attempt {{ e.attempt_no }}</b>
         {% if a.row.result == 'done' %}
@@ -953,9 +1077,16 @@ def housekeeping_job_page(job_uuid: UUID) -> str:
             d for d in decisions
             if (i == 0 or d["row"].created_at >= attempt["row"].started_at)
             and (until is None or d["row"].created_at < until)]
+    # What a chunk's job wrote, as the room's page shows it.
+    result = None
+    chunk = db.job_room_chunk(job.uuid) if job.job_type == db.ROOM_CHUNK_JOB else None
+    if chunk is not None:
+        messages = db.counted_room_messages(chunk.room_uuid)
+        result = _chunk_view(chunk, messages, {m["id"]: i for i, m in enumerate(messages)})
     run = db.get_assistant_run(job.run_uuid) if job.run_uuid else None
     ctx = dict(
-        job=job, attempts=attempts, timeline=_timeline(attempts, datetime.now(UTC)),
+        job=job, attempts=attempts,
+        timeline=_timeline(attempts, datetime.now(UTC), job, result),
         activity_hint="Open this model call on the Activity page. It shows "
                       "everything that was sent to the model, message by "
                       "message, and the full reply.",
@@ -1036,77 +1167,7 @@ _ROOM_FRAGMENT = """
     {% if c.stale %}<span class="hk-pill deferred" title="A message in this chunk was edited or deleted after the summary was written">messages changed since</span>{% endif %}
     {% if c.row.job_uuid %}<a class="hk-back" style="margin-left:auto" href="/assistant/housekeeping/{{ c.row.job_uuid }}" title="Open the job that wrote this summary. It shows its models, prompts and replies, and what the decision model was asked.">inspect</a>{% endif %}
   </div>
-  <div class="bd">
-    <dl class="hk-kv">
-      <dt>Summary</dt><dd>{{ c.row.summary or '' }}</dd>
-      <dt>Topics</dt><dd>{% for t in c.row.topics %}<span class="hk-chip">{{ t }}</span> {% endfor %}</dd>
-      {% if c.row.parts %}
-      <dt>Parts</dt>
-      <dd>
-        <table class="hk-parts">
-        {% for part in c.row.parts %}
-          <tr>
-            <td class="hk-mono">{% if part.first_message is not none %}m{{ part.first_message }}{% if part.last_message != part.first_message %}&ndash;m{{ part.last_message }}{% endif %}{% endif %}</td>
-            <td>{{ part.summary }}{% if part.requests and part.requests > 1 %} <span class="hk-mono">&times;{{ part.requests }}</span>{% endif %}
-              {% if part.result %}<div class="hk-result">&rarr; {{ part.result }}</div>{% endif %}
-              {% if part.calibration %}
-              <div class="hk-signals">
-                <span class="hk-pill hk-cal-{{ part.calibration }}" title="{{ 'Decided by rule from the reaction and the records' if part.calibration_basis else 'Judged by the model' }}">{{ part.calibration }}</span>
-                {% if part.calibration_basis %}<span>{{ part.calibration_basis }}</span>{% endif %}
-                {% for a in part.asked_again_at or [] %}<span class="hk-chip" title="The decision model's probability that this message asks for the same thing again">m{{ a.message }} asks again {{ '%.2f'|format(a.p) }}{% if a.kind %} ({{ a.kind }}){% endif %}</span>{% endfor %}
-                {% for r in reaction_texts(part) %}<span class="hk-mono" title="What the human did after each reply">{{ r }}</span>{% endfor %}
-                {% for text in signal_texts(part.signals) %}<span class="hk-chip" title="From the records">{{ text }}</span>{% endfor %}
-              </div>
-              {% endif %}
-              {% if part.audit and not (part.audit.request and part.audit.result and part.audit.get('reaction', true)) %}
-              <div class="hk-signals">
-                <span class="hk-pill failed" title="A second model call compared this part with its messages">check</span>
-                <span>{% if not part.audit.request %}the request {% endif %}{% if not part.audit.result %}{{ 'and ' if not part.audit.request }}the result {% endif %}{% if not part.audit.get('reaction', true) %}{{ 'and ' if not (part.audit.request and part.audit.result) }}the reaction {% endif %}may not match the messages: {{ part.audit.reasoning }}</span>
-              </div>
-              {% endif %}
-            </td>
-            <td>{% for t in part.topics %}<span class="hk-chip">{{ t }}</span> {% endfor %}</td>
-          </tr>
-        {% endfor %}
-        </table>
-      </dd>
-      {% endif %}
-      {% if c.row.audit %}
-      <dt>Check</dt>
-      <dd>
-        {% if c.row.audit.rewritten %}
-        Written twice. The check found {{ c.row.audit.rewritten|length }} part{{ '' if c.row.audit.rewritten|length == 1 else 's' }} of the first answer wrong, and what is shown is the second.
-        <details class="hk-text"><summary>what the first answer had</summary>
-          {% for w in c.row.audit.rewritten %}
-          <div class="hk-result"><span class="hk-mono">m{{ w.first_message }}&ndash;m{{ w.last_message }}</span> {{ w.summary }} &rarr; {{ w.result }}<br>{{ w.reasoning }}</div>
-          {% endfor %}
-        </details>
-        {% elif not c.row.audit.error %}
-        Written once. The check found every part's request and result in the messages.
-        {% endif %}
-        {% if c.row.audit.error %}<div class="hk-err" style="margin:0">{{ c.row.audit.error }}</div>{% endif %}
-      </dd>
-      {% if c.row.audit.repeat_check %}
-      <dt>Asked again</dt>
-      <dd>
-        {% if c.row.audit.repeat_check.model %}
-        Each of {{ c.row.audit.repeat_check.asked }} follow-up{{ '' if c.row.audit.repeat_check.asked == 1 else 's' }} was put to the decision model, whether it repeats the request before it. {{ 'All were' if c.row.audit.repeat_check.answered == c.row.audit.repeat_check.asked else c.row.audit.repeat_check.answered ~ ' were' }} answered.
-        {% if c.row.audit.repeat_check.identical %}{{ c.row.audit.repeat_check.identical }} more {{ 'was' if c.row.audit.repeat_check.identical == 1 else 'were' }} the request word for word, and {{ 'was' if c.row.audit.repeat_check.identical == 1 else 'were' }} not put to the model.{% endif %}
-        {% else %}
-        No decision model is bound to <span class="hk-mono">assistant.repeat_check</span>, so a request asked again in other words is not seen.
-        {% endif %}
-      </dd>
-      {% endif %}
-      {% endif %}
-      {% if c.row.problems %}<dt>Format</dt><dd class="hk-err" style="margin:0">{{ c.row.problems|join('; ') }}</dd>{% endif %}
-    </dl>
-    <details class="hk-text" id="chunk-{{ c.row.seq }}-messages">
-      <summary>the {{ c.messages|length }} messages</summary>
-      <pre class="hk-pre">{% for m in c.messages %}[m{{ c.first_index + loop.index0 }} {{ m.sender }}] {{ m.text }}
-{% endfor %}</pre>
-    </details>
-  </div>
-</div>
+""" + _CHUNK_BODY + """</div>
 {% else %}
 <div class="hk-empty"><div class="t">No chunk of this room is summarized yet</div>
   <div class="s">A chunk is summarized after a turn in the room, two at a time, or all at once with the button above.</div></div>
@@ -1168,7 +1229,7 @@ def _int_arg(name: str, default: int) -> int:
 
 @app.route("/assistant/housekeeping/room/<uuid:room_uuid>")
 def housekeeping_room_page(room_uuid: UUID) -> str:
-    from agents.room_chunks import PROMPT_VERSION, content_hash, render_room_earlier
+    from agents.room_chunks import PROMPT_VERSION, render_room_earlier
 
     names = db.housekeeping_room_names([room_uuid])
     if room_uuid not in names:
@@ -1182,25 +1243,8 @@ def housekeeping_room_page(room_uuid: UUID) -> str:
 
     messages = db.counted_room_messages(room_uuid)
     index_of = {m["id"]: i for i, m in enumerate(messages)}
-    chunks = []
-    for row in db.list_room_chunks(room_uuid, size, overlap, version):
-        inside = [m for m in messages
-                  if row.first_message_id <= m["id"] <= row.last_message_id]
-        first_index = index_of.get(inside[0]["id"], row.seq * size) if inside \
-            else row.seq * size
-        dates = date_from = date_to = ""
-        if inside:
-            a, b = inside[0]["created_at"], inside[-1]["created_at"]
-            date_from, date_to = a.strftime("%Y-%m-%d"), b.strftime("%Y-%m-%d")
-            dates = date_from if a.date() == b.date() \
-                else f"{date_from} to {date_to}"
-        chunks.append({
-            "row": row, "messages": inside, "dates": dates,
-            "date_from": date_from, "date_to": date_to,
-            "first_index": first_index,
-            "last_index": first_index + max(len(inside), 1) - 1,
-            "stale": content_hash(inside) != row.content_hash,
-        })
+    chunks = [_chunk_view(row, messages, index_of)
+              for row in db.list_room_chunks(room_uuid, size, overlap, version)]
     series = db.list_room_chunk_series(room_uuid)
     if not any((s, o, v) == (cur_size, cur_overlap, PROMPT_VERSION)
                for s, o, v, _n in series):

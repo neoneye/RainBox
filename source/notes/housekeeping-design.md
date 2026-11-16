@@ -570,7 +570,8 @@ attempt's `llm_call` row: for a chunk, the summary that was kept.
   time is on the timeline as the calls it made), each request to the
   decision model (`duplicate m<n>`, after the message it is about), each
   model call the attempt made (`db.housekeeping_attempt_calls`), named
-  `summary` or `check`, and the call still running. A chunk's attempt makes
+  `summary` or `check`, and the call still running. A chunk job that wrote
+  its chunk has `result` as the last row, a mark where the job finished. A chunk's attempt makes
   two to four model calls: a second summary and check when the check had
   the summary written again.
 - Under the timeline, the row that is selected, in full. A click on a row
@@ -585,6 +586,8 @@ attempt's `llm_call` row: for a chunk, the summary that was kept.
   - A request to the decision model: the verdict, and what its row on
     `/activity` shows.
   - The call still running: its reply so far.
+  - The result: the chunk the job wrote (`db.job_room_chunk`), as the
+    room's page shows a chunk, with a link to it there.
 - A prompt and a reply are the text blocks a pane on `/assistant` is made
   of (`webapp/text_blocks.py`): a prompt is folded under its character
   count, every block has a copy button, a long one is cut to a few lines
