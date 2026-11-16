@@ -563,11 +563,11 @@ _JOB_FRAGMENT = """
 <div class="hk-card" {% if attempt_first %}id="decisions"{% endif %}>
   <div class="hd">
     <h3>Decision model</h3>
-    <span>{{ decisions|length }} request{{ '' if decisions|length == 1 else 's' }} to <span class="hk-mono">{{ decisions[0].row.model or decisions[0].row.slot }}</span>{% if attempts|length > 1 %}, in attempt {{ attempt_no }}{% endif %}</span>
     <span class="hk-mono">{{ when(decisions[0].row.created_at) }}</span>
+    <span>{{ decisions|length }} model call{{ '' if decisions|length == 1 else 's' }}{% if attempts|length > 1 %}, in attempt {{ attempt_no }}{% endif %}</span>
   </div>
   <div class="bd">
-    <p class="hk-lede" style="margin:0 0 10px">Asked first, before the summary is written: once for each follow-up in the chunk. The model generates no text: it is given the input and the question, and returns a probability.</p>
+    <p class="hk-lede" style="margin:0 0 10px">Asked first, before the summary is written: once for each follow-up in the chunk. The model generates no text: it is given the input and the question, and returns a probability. The model is <span class="hk-mono">{{ decisions[0].row.model or decisions[0].row.slot }}</span>.</p>
     {% for d in decisions %}
     {% set answer = (d.row.answers or [{}])[0] %}
     <details class="hk-text" id="d{{ d.row.uuid }}">

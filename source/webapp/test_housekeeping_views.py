@@ -267,7 +267,7 @@ def test_a_chunk_jobs_page_shows_what_the_decision_model_was_asked_and_answered(
             record({"request": "gone", "reply": "gone", "next_message": "gone"}, 0.12)]
     try:
         body = c.get(f"/assistant/housekeeping/{job.uuid}").get_data(as_text=True)
-        assert "Decision model" in body and "2 requests to" in body
+        assert "Decision model" in body and "2 model calls" in body
         # In the order things happened: the decision model is asked before
         # the attempt's own model call.
         assert body.index('id="decisions"') < body.index("<h3>Attempt 1</h3>")
