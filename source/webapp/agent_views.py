@@ -32,7 +32,9 @@ AGENT_MODELS_TEMPLATE: str = """
   .current .unset{color:#888;font-style:italic}
   .current a{color:#0653a8;text-decoration:none}
   .bind-form{display:flex;gap:0.4em;align-items:center}
-  .bind-form select{padding:0.3em}
+  /* One width for every row's selector, so the Save buttons line up. */
+  .bind-form select{padding:0.3em;flex:none;width:20em}
+  .bind-form button{flex:none}
   .bind-form button{padding:0.3em 0.9em;border:none;border-radius:6px;background:#2563eb;color:#fff;cursor:pointer}
   .bind-form button:hover{background:#1d4ed8}
   .ok{color:#080}
@@ -105,10 +107,10 @@ exactly one call. The names match the caller labels on
           {% endfor %}
         </select>
         <button type="submit">Save</button>
-        {% if a.requires_systemone %}<br><small class="desc">only groups that require SystemOne</small>{% endif %}
-        {% if a.requires_function_calling %}<br><small class="desc">only groups that require function calling</small>{% endif %}
-        {% if a.requires_structured_output %}<br><small class="desc">only groups that require structured output</small>{% endif %}
-        {% if a.excludes_structured_output %}<br><small class="desc">only groups that exclude structured output</small>{% endif %}
+        {% if a.requires_systemone %}<small class="desc">only groups that require SystemOne</small>{% endif %}
+        {% if a.requires_function_calling %}<small class="desc">only groups that require function calling</small>{% endif %}
+        {% if a.requires_structured_output %}<small class="desc">only groups that require structured output</small>{% endif %}
+        {% if a.excludes_structured_output %}<small class="desc">only groups that exclude structured output</small>{% endif %}
       </form>
     </td>
   </tr>
