@@ -27,7 +27,7 @@ from typing import Any
 from uuid import UUID
 
 from db.model_config import get_model_config, get_model_config_override
-from db.models import AgentModelBinding, AssistantStep, LlmCall, db
+from db.models import AgentModelBinding, AssistantStep, HousekeepingJob, LlmCall, db
 
 
 def step_started_at(step):
@@ -1430,6 +1430,21 @@ def _summarizer_group_uuid(started_at) -> str | None:
     return str(group_uuid) if group_uuid else None
 
 
+def _summary_job_uuid(run) -> str | None:
+    """The housekeeping job that wrote the run's summary. None for a run
+    summarized before the job queue was."""
+    try:
+        job = (db.session.query(HousekeepingJob.uuid)
+               .filter(HousekeepingJob.run_uuid == run.uuid,
+                       HousekeepingJob.job_type == "run_summary")
+               .order_by(HousekeepingJob.created_at.desc()).first())
+    except Exception:
+        # The read model must never take the page down over a link.
+        db.session.rollback()
+        return None
+    return str(job.uuid) if job else None
+
+
 def _summary_events(run) -> list[dict]:
     """The summarizer's call, and the queue wait in front of it.
 
@@ -1465,6 +1480,7 @@ def _summary_events(run) -> list[dict]:
               "cached_tokens": (row.cached_tokens_reported
                                 if row.cached_tokens_reported is not None
                                 else row.cached_tokens_estimated),
+              "housekeeping_job_uuid": _summary_job_uuid(run),
               "call_uuid": str(row.uuid)},
         payload={"model_response": row.response_text or "",
                  **_prompts_from_messages(row.messages)}))

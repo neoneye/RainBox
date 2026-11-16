@@ -194,6 +194,14 @@ def event_kpis(event: dict) -> list[dict]:
     elif name:
         fields.append(_kpi("model", name, f"The model that answered: {name}"))
 
+    job_uuid = kpis.get("housekeeping_job_uuid")
+    if job_uuid:
+        fields.append(_kpi(
+            "housekeeping", f"housekeeping job {job_uuid}",
+            "Open the housekeeping job that made this call. It shows each "
+            "attempt, and whether a new message stopped one.",
+            href=f"/assistant/housekeeping/{job_uuid}", html="housekeeping ↗"))
+
     for key, label, fmt, title in _KPI_FIELDS:
         value = kpis.get(key)
         if value is None or value == "":

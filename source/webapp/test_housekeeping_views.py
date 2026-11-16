@@ -148,6 +148,9 @@ def test_a_job_page_shows_each_attempt_with_its_prompt_and_reply(client):
         assert text in kpis
     assert "the summary on its run" in body
     assert "Enqueue again" not in body
+    # The run's page links the summarizer's step to this job.
+    run_page = c.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+    assert f'<a href="/assistant/housekeeping/{job.uuid}">housekeeping ↗</a>' in run_page
     assert c.get(f"/assistant/housekeeping/{uuid4()}").status_code == 404
 
 
