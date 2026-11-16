@@ -140,3 +140,46 @@ def test_rename_goes_through_confirm_modal(seeded_two_providers):
     assert "function ppConfirmRenameModal" in body
     # The old always-visible rename field + submit button are gone.
     assert '<button type="submit">Rename</button>' not in body
+
+
+@pytest.fixture
+def deleted_model():
+    """One model its provider no longer has. Yields its uuid. Cleans up."""
+    a = make_app()
+    init_db(a)
+    with a.app_context():
+        row = ModelConfig(
+            provider="jan",
+            model_name="pp3-uitest-deleted",
+            arguments={"api_base": "http://y/v1", "api_key": "jan"},
+            available=False,
+        )
+        db.session.add(row)
+        db.session.commit()
+        try:
+            yield row.uuid
+        finally:
+            db.session.delete(row)
+            db.session.commit()
+
+
+def _tree_item(body: str, model_name: str) -> str:
+    """The opening <li> tag of the tree row that shows `model_name`."""
+    head = body[:body.index(f"<b>{model_name}</b>")]
+    return head[head.rindex("<li"):].split(">", 1)[0] + ">"
+
+
+def test_a_deleted_model_is_left_out_until_the_box_is_ticked(
+        seeded_two_providers, deleted_model):
+    body = app.test_client().get("/model").get_data(as_text=True)
+    assert 'id="pp-show-deleted"' in body
+    # The box starts unticked: nothing in the markup ticks it.
+    assert 'id="pp-show-deleted" onchange="ppShowDeleted(this.checked)">' in body
+    assert _tree_item(body, "pp3-uitest-deleted") == '<li class="pp-deleted">'
+    assert _tree_item(body, "pp3-uitest-jan") == "<li>"
+
+
+def test_the_selected_model_stays_in_the_tree_when_deleted(deleted_model):
+    body = app.test_client().get(
+        f"/model?new_override={deleted_model}").get_data(as_text=True)
+    assert _tree_item(body, "pp3-uitest-deleted") == "<li>"

@@ -95,6 +95,12 @@ MODELS_TEMPLATE: str = """
   ul.tree a.new-override{color:#0653a8;font-size:90%}
   .badge{display:inline-block;font-size:80%;padding:0 0.4em;border-radius:0.8em;background:#eee;color:#555;margin-left:0.3em}
   .badge.unavailable{background:#fdd;color:#900}
+  /* A model its provider no longer has is left out of the tree until the
+     reader asks for it. The selected one is never marked, so it stays. */
+  ul.tree li.pp-deleted{display:none}
+  ul.tree.pp-show-deleted li.pp-deleted{display:list-item}
+  .pp-deleted-picker{display:block;font-size:85%;color:#555;margin-top:0.4em;
+    cursor:pointer;-webkit-user-select:none;user-select:none}
   .pp-provider-badge{display:inline-block;font-size:75%;padding:0 0.4em;
     border-radius:0.4em;margin-right:0.3em;background:#dbeafe;color:#1e40af;
     vertical-align:0.05em}
@@ -158,10 +164,17 @@ MODELS_TEMPLATE: str = """
           <option value="model_name" {% if sort_by == 'model_name' %}selected{% endif %}>model name</option>
         </select>
       </label>
+      <label class="pp-deleted-picker"
+             title="Also list the models that were deleted at their provider. They are marked unavailable and cannot be used until they are added there again.">
+        <input type="checkbox" id="pp-show-deleted" onchange="ppShowDeleted(this.checked)">
+        show deleted models
+      </label>
     </div>
-    <ul class="tree">
+    <ul class="tree" id="pp-tree">
       {% for cfg, overrides in tree %}
-      <li>
+      {% set in_view = selected_uuid == cfg.uuid
+                       or overrides | selectattr('uuid', 'equalto', selected_uuid) | list %}
+      <li{% if not cfg.available and not in_view %} class="pp-deleted"{% endif %}>
         <a href="{{ url_for('models_page', id=cfg.uuid) }}" class="{% if selected_kind == 'config' and selected_uuid == cfg.uuid %}selected{% endif %}">
           <span class="pp-provider-badge">{% if cfg.provider == 'ollama' %}Ollama{% elif cfg.provider == 'jan' %}Jan{% elif cfg.provider == 'lm_studio' %}LM Studio{% elif cfg.provider == 'openrouter' %}OpenRouter{% else %}{{ cfg.provider }}{% endif %}</span>
           <b>{{ cfg.effective_display_name }}</b>
@@ -187,6 +200,22 @@ MODELS_TEMPLATE: str = """
       <li class="empty">no model configs yet</li>
       {% endfor %}
     </ul>
+    <script>
+      // Runs before the tree is painted, so a remembered choice never flickers.
+      var PP_SHOW_DELETED_KEY = 'models.show-deleted';
+      function ppShowDeleted(on){
+        document.getElementById('pp-tree').classList.toggle('pp-show-deleted', on);
+        document.getElementById('pp-show-deleted').checked = on;
+        try { localStorage.setItem(PP_SHOW_DELETED_KEY, on ? '1' : '0'); }
+        catch (e) {}  // it still switches; it will not be remembered
+      }
+      (function(){
+        var on = false;
+        try { on = localStorage.getItem(PP_SHOW_DELETED_KEY) === '1'; }
+        catch (e) {}  // storage unavailable: deleted models stay hidden
+        if (on) { ppShowDeleted(true); }
+      })();
+    </script>
   </div>
 
   <div class="pane right">
