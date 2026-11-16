@@ -141,6 +141,7 @@ class TestCallDetail:
         """The provider's name says which weights answered. The configured
         model says which settings, and is the thing an operator can open."""
         config = db.create_model_config("served-name", {})
+        config.display_name = "short name"
         override = db.create_model_config_override(
             config.uuid, {"temperature": 0.2}, display_name="careful summarizer")
         call_uuid = uuid4()
@@ -149,7 +150,7 @@ class TestCallDetail:
             body = client.get(f"/activity/call/{call_uuid}").get_data(as_text=True)
             heading = body[body.index("<h1>"):body.index("</h1>")]
             assert f'href="/model?id={override.uuid}"' in heading
-            assert "served-name · careful summarizer" in heading
+            assert "short name · careful summarizer" in heading
         finally:
             db.session.delete(override)
             db.session.delete(config)
@@ -157,13 +158,14 @@ class TestCallDetail:
 
     def test_the_recent_list_names_the_configured_model(self, client, model):
         config = db.create_model_config("served-name", {})
+        config.display_name = "short name"
         override = db.create_model_config_override(
             config.uuid, {"temperature": 0.2}, display_name="careful summarizer")
         add_call(model, model_uuid=override.uuid)
         try:
             body = client.get("/activity?range=24h").get_data(as_text=True)
             recent = body[body.index("Recent calls"):]
-            assert "served-name · careful summarizer" in recent
+            assert "short name · careful summarizer" in recent
             assert f'title="The provider knows it as {model}."' in recent
         finally:
             db.session.delete(override)
