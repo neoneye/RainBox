@@ -129,3 +129,60 @@ def test_the_follow_up_state_tags_each_message_and_cannot_be_closed_from_inside(
     # Asking again is the two ways of it together, against "different".
     assert follow_up_again({"duplicate": 0.3, "same": 0.25, "different": 0.45}) == (True, 0.55, "duplicate")
     assert follow_up_again({"duplicate": 0.1, "same": 0.3, "different": 0.6})[::2] == (False, "same")
+
+
+def _recorded(monkeypatch):
+    """Stands in for the two records `ask` writes. Returns what each was given."""
+    import db
+    from llm import activity
+
+    rows, calls = [], []
+    monkeypatch.setattr(db, "record_decision_call", lambda **values: rows.append(values))
+
+    def record_direct_call(**values):
+        calls.append(values)
+        return True
+
+    monkeypatch.setattr(activity, "record_direct_call", record_direct_call)
+    return rows, calls
+
+
+def test_a_request_that_reached_the_model_is_a_row_on_activity(monkeypatch):
+    from uuid import uuid4
+
+    _server(monkeypatch, {"again": {"p": 0.9}})
+    rows, calls = _recorded(monkeypatch)
+    member = uuid4()
+    systemone.ask(uuid4(), "the state", [NOUL], deadline_s=5, max_state_chars=100,
+                  bound=systemone.Bound(URL, "decider", member, "ollama"))
+    (call,), (row,) = calls, rows
+    # The decision's own record names the row, and the row is what was sent
+    # and what came back.
+    assert row["llm_call_uuid"] == call["uuid"]
+    assert (call["model"], call["model_uuid"], call["provider"]) == ("decider", member, "ollama")
+    assert call["messages"][0] == {"role": "state", "content": "the state"}
+    assert call["messages"][1]["role"] == "question"
+    assert "It asks again." in call["messages"][1]["content"]
+    assert '"p": 0.9' in call["response"] and call["error"] is None
+
+
+def test_a_request_that_failed_on_the_way_is_a_failed_row_on_activity(monkeypatch):
+    from uuid import uuid4
+
+    _server(monkeypatch, fail=TimeoutError())
+    rows, calls = _recorded(monkeypatch)
+    systemone.ask(uuid4(), "the state", [NOUL], deadline_s=5, max_state_chars=100,
+                  bound=systemone.Bound(URL, "decider"))
+    assert calls[0]["error"] == "timeout" and calls[0]["response"] is None
+    assert rows[0]["llm_call_uuid"] == calls[0]["uuid"]
+
+
+def test_a_request_that_was_never_sent_has_no_row_on_activity(monkeypatch):
+    from uuid import uuid4
+
+    _server(monkeypatch, {"again": {"p": 0.9}})
+    rows, calls = _recorded(monkeypatch)
+    systemone.ask(uuid4(), "x" * 200, [NOUL], deadline_s=5, max_state_chars=100,
+                  bound=systemone.Bound(URL, "decider"))
+    assert calls == [] and rows[0]["llm_call_uuid"] is None
+    assert rows[0]["reason"] == "oversized"

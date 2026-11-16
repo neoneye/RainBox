@@ -607,6 +607,8 @@ def init_db(app: Flask) -> None:
             db.session.execute(sa.text(
                 "ALTER TABLE model_group DROP COLUMN IF EXISTS requires_structured_output"
             ))
+        _add_column_if_missing("decision_call", "llm_call_uuid",
+                               "llm_call_uuid UUID")
         _add_column_if_missing("assistant_step", "reasoning",
                                "reasoning TEXT")
         _add_column_if_missing("eval_run", "is_baseline",

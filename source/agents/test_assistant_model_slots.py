@@ -122,7 +122,11 @@ def test_a_decision_slot_does_not_fall_back_to_the_default(monkeypatch):
     _bind(monkeypatch, {ASSISTANT_DEFAULT_UUID: default_group, ASSISTANT_REPEAT_CHECK_UUID: own})
     monkeypatch.setattr(mg, "model_base_url", lambda member: "http://127.0.0.1:11434")
     monkeypatch.setattr(mg.db, "resolved_model_kwargs", lambda member: ("ollama", "decider", {}))
-    assert systemone.slot_model(ASSISTANT_REPEAT_CHECK_UUID) == ("http://127.0.0.1:11434", "decider")
+    bound = systemone.slot_model(ASSISTANT_REPEAT_CHECK_UUID)
+    assert bound[:2] == ("http://127.0.0.1:11434", "decider")
+    # The configured model and its provider ride along, for the call's row
+    # on /activity.
+    assert bound.model_uuid is not None and bound.provider == "ollama"
 
 
 def test_role_name_maps_a_slot_uuid_back_to_its_name():

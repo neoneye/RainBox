@@ -505,7 +505,11 @@ provider without LlamaIndex — the audio/image demos `/demo_stt_gemma4`
 straight to the backend — which reports its own row through
 `record_direct_call`. Such a row's `messages` describe each clip or image in a
 line instead of carrying its base64, and it has no `prefix_chain` or cache
-estimate: a mostly-media prompt hashes to no meaningful text prefix. Observational only: nothing reads these rows
+estimate: a mostly-media prompt hashes to no meaningful text prefix. A
+request to a decision model (`llm/systemone.py`) reports its row the same
+way: its `messages` are the state (role `state`) and each question (role
+`question`) as they were sent, and its `decision_call` row names it in
+`llm_call_uuid`. Observational only: nothing reads these rows
 back into a decision, so a missing row degrades a chart, never behaviour.
 
 Key fields:

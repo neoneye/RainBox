@@ -15,6 +15,12 @@ state's text. The state is the operator's messages, which have their own
 rows: a page that shows a call rebuilds the state from them and finds the
 call by the digest (`state_digest`).
 
+A request that reached the model is also a row on /activity, like any
+other model call: the state and the questions as they were sent, and the
+reply as it came back. That row does hold the state's text, for as long as
+/activity keeps a prompt, and the `decision_call` row names it
+(`llm_call_uuid`).
+
 A decision slot does not fall back to `assistant.default`: a generative
 model cannot answer this API. Design:
 notes/proposals/2026-11-09-decision-model-foundation.md.
@@ -29,8 +35,9 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from typing import Any, Literal
-from uuid import UUID
+from datetime import UTC, datetime
+from typing import Any, Literal, NamedTuple
+from uuid import UUID, uuid4
 
 logger = logging.getLogger(__name__)
 
@@ -180,14 +187,15 @@ def ask_model(base_url: str, model: str, state: dict[str, Any] | str,
               ) -> tuple[list[Answer], dict[str, Any]]:
     """One request to one model. Returns the answers and what to record
     about the call: `{model_digest, server_version, state_digest,
-    elapsed_ms, reason}`.
+    elapsed_ms, reason, sent, reply}`. `sent` is whether the request went
+    to the model, and `reply` is what came back, unparsed.
 
     The state is never cut to fit. One longer than `max_state_chars` is not
     sent: a judgement on half of it is worse than none."""
     serialized = json.dumps(state, ensure_ascii=False, sort_keys=True)
     meta: dict[str, Any] = {
         "model_digest": None, "server_version": None, "elapsed_ms": None, "reason": None,
-        "state_digest": state_digest(state)}
+        "state_digest": state_digest(state), "sent": False, "reply": None}
 
     def unknown(reason: str) -> tuple[list[Answer], dict[str, Any]]:
         meta["reason"] = reason
@@ -198,9 +206,11 @@ def ask_model(base_url: str, model: str, state: dict[str, Any] | str,
     started = time.monotonic()
     try:
         meta["model_digest"], meta["server_version"] = verify_local(base_url, model)
+        meta["sent"] = True
         out = _http(base_url, "/v1/systemone", {
             "model": model, "state": state,
             "questions": {q.name: _payload(q) for q in questions}}, deadline_s)
+        meta["reply"] = out
     except _NotLocal as e:
         logger.warning("decision model refused: %s", e)
         return unknown("not_local")
@@ -218,35 +228,71 @@ def ask_model(base_url: str, model: str, state: dict[str, Any] | str,
     return [_answer(q, raw[q.name], bands) for q in questions], meta
 
 
-def slot_model(slot_uuid: UUID) -> tuple[str, str] | None:
-    """`(base_url, model_name)` of the one model a decision slot is bound
-    to: the first member of its group. None when the slot is unbound. No
-    fallback to another slot."""
+class Bound(NamedTuple):
+    """The model a decision slot is bound to."""
+    base_url: str
+    model: str
+    # The configured model and its provider, for the call's row on /activity.
+    model_uuid: UUID | None = None
+    provider: str | None = None
+
+
+def slot_model(slot_uuid: UUID) -> Bound | None:
+    """The one model a decision slot is bound to: the first member of its
+    group. None when the slot is unbound. No fallback to another slot."""
     import db
     from agents.model_groups import decision_slot_member_uuids, model_base_url
 
     for member in decision_slot_member_uuids(slot_uuid):
         url = model_base_url(member)
         try:
-            _provider, name, _args = db.resolved_model_kwargs(member)
+            provider, name, _args = db.resolved_model_kwargs(member)
         except LookupError:
             continue
         if url:
-            return url, name
+            return Bound(url, name, member, provider)
     return None
+
+
+def _record_activity(target: tuple, slot: str, started_at: datetime,
+                     state: dict[str, Any] | str, questions: list[Question],
+                     meta: dict[str, Any]) -> UUID | None:
+    """Write the request's row on /activity and return its uuid, or None
+    when nothing was recorded. The messages are the request's two parts as
+    they were sent: the state, then each question."""
+    from llm import activity
+
+    sent = [{"role": "state", "content": state if isinstance(state, str) else
+             json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True)}]
+    sent += [{"role": "question", "content": json.dumps(
+        {q.name: _payload(q)}, ensure_ascii=False, indent=2)} for q in questions]
+    reply = meta["reply"]
+    call_uuid = uuid4()
+    recorded = activity.record_direct_call(
+        started_at=started_at, provider=target[3] if len(target) > 3 else None,
+        model=target[1], caller=slot, messages=sent, raw=reply,
+        response=(None if reply is None else
+                  json.dumps(reply, ensure_ascii=False, indent=2)),
+        error=meta["reason"], uuid=call_uuid,
+        model_uuid=target[2] if len(target) > 2 else None)
+    return call_uuid if recorded else None
 
 
 def ask(slot_uuid: UUID, state: dict[str, Any] | str, questions: list[Question], *,
         deadline_s: float, max_state_chars: int, bands: Bands = DEFAULT_BANDS,
         question_set_version: int = 1, run_uuid: UUID | None = None,
         job_uuid: UUID | None = None,
-        bound: tuple[str, str] | None = None) -> list[Answer]:
+        bound: tuple | None = None) -> list[Answer]:
     """One request to the model bound to a decision slot, recorded as one
-    `decision_call` row. `bound` is `slot_model(slot_uuid)` resolved earlier
-    by a caller that asks several times in one job."""
+    `decision_call` row, and as a row on /activity when the request reached
+    the model. `bound` is `slot_model(slot_uuid)` resolved earlier by a
+    caller that asks several times in one job."""
     import db
     from agents.config import role_name
 
+    slot = role_name(slot_uuid) or str(slot_uuid)
+    started_at = datetime.now(UTC)
+    llm_call_uuid: UUID | None = None
     target = bound or slot_model(slot_uuid)
     if target is None:
         answers = [Answer(q.name, "unknown", reason="unbound") for q in questions]
@@ -257,10 +303,16 @@ def ask(slot_uuid: UUID, state: dict[str, Any] | str, questions: list[Question],
         answers, meta = ask_model(
             target[0], target[1], state, questions, deadline_s=deadline_s,
             max_state_chars=max_state_chars, bands=bands)
+        if meta["sent"]:
+            try:
+                llm_call_uuid = _record_activity(
+                    target, slot, started_at, state, questions, meta)
+            except Exception:   # noqa: BLE001 - telemetry must not lose the answer
+                logger.exception("decision call was not recorded on /activity")
     try:
         db.record_decision_call(
-            run_uuid=run_uuid, job_uuid=job_uuid,
-            slot=role_name(slot_uuid) or str(slot_uuid),
+            run_uuid=run_uuid, job_uuid=job_uuid, llm_call_uuid=llm_call_uuid,
+            slot=slot,
             model=target[1] if target else None,
             model_digest=meta["model_digest"], server_version=meta["server_version"],
             question_set_version=question_set_version, bands_version=BANDS_VERSION,

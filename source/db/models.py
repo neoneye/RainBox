@@ -1199,6 +1199,10 @@ class DecisionCall(db.Model):
     reason: Mapped[str | None] = mapped_column(Text)
     elapsed_ms: Mapped[int | None] = mapped_column()
     deadline_ms: Mapped[int | None] = mapped_column()
+    # The request's row on /activity, which keeps what was sent and what
+    # came back for as long as /activity keeps a prompt. None when no
+    # request reached the model. Plain column, no FK.
+    llm_call_uuid: Mapped[UUID | None] = mapped_column()
 
 
 class RoomChunk(db.Model):

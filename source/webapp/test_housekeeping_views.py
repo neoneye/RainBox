@@ -224,12 +224,18 @@ def test_a_chunk_jobs_page_shows_what_the_decision_model_was_asked_and_answered(
             status="ok", reason=None, elapsed_ms=120, deadline_ms=20000, **over)
 
     state = follow_up_state(first["request"], first["next_message"])
-    rows = [record(state, 0.91),
+    on_activity = uuid4()
+    rows = [record(state, 0.91, llm_call_uuid=on_activity),
             # Asked of messages that are no longer what the room holds.
             record({"request": "gone", "reply": "gone", "next_message": "gone"}, 0.12)]
     try:
         body = c.get(f"/assistant/housekeeping/{job.uuid}").get_data(as_text=True)
         assert "Decision model" in body and "2 requests to" in body
+        # A request that reached the model links to its row on /activity. One
+        # recorded without such a row has no link.
+        card = body[body.index('id="decisions"'):]
+        assert card.count('href="/activity/call/') == 1
+        assert f'href="/activity/call/{on_activity}"' in card
         # The prompt as it was worded, the input rebuilt from the messages,
         # and the output with the bands that labelled it.
         assert "The next message asks again." in body

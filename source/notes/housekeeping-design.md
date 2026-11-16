@@ -164,7 +164,14 @@ that holds the request:
   SystemOne group is offered to a decision slot and to no other agent.
 - **Every request is a `decision_call` row**: the question, the
   probability, the label and the bands that gave it, the model's digest, and
-  a digest of the state. The state's text is not stored.
+  a digest of the state. The state's text is not stored in that row.
+- **A request that reached the model is also a row on `/activity`**, under
+  the slot's name as its caller: the state and each question as they were
+  sent, and the reply as it came back. That row holds the state's text for
+  as long as `/activity` keeps a prompt. The `decision_call` row names it
+  (`llm_call_uuid`), and the job's page links each request to it. A request
+  that was never sent (no model bound, a state too long, a model that is
+  not local) has no such row.
 - **The job's page shows each request**: the question as it was worded,
   the input, and the output with the bands that labelled it. The input is
   rebuilt from the room's messages, as the worker built it, and matched to

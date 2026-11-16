@@ -488,6 +488,7 @@ _JOB_FRAGMENT = """
         {% else %}<span class="hk-pill failed">no answer: {{ answer.reason or d.row.reason }}</span>{% endif %}
         {% if d.state %} <span style="text-transform:none;letter-spacing:0;font-weight:400">{{ d.state.next_message|truncate(70) }}</span>{% endif %}
         {% if d.row.elapsed_ms is not none %}<span class="hk-num">{{ d.row.elapsed_ms }} ms</span>{% endif %}
+        {% if d.row.llm_call_uuid %}<a class="hk-back" style="float:right;text-transform:none;letter-spacing:0;font-weight:400" href="/activity/call/{{ d.row.llm_call_uuid }}" title="Open this request on the Activity page. It shows the input and the question as they were sent to the decision model, and the reply as it came back.">activity</a>{% endif %}
       </summary>
       <div class="hk-result"><b>Input</b></div>
       {% if d.state %}
