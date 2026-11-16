@@ -475,7 +475,10 @@ _STYLE = """
   .hk-pager{display:flex;gap:10px;align-items:center;margin-top:16px;font-size:0.82rem}
   .hk-pager a{color:#2563eb;text-decoration:none}
   .hk-back{font-size:0.84rem;color:#2563eb;text-decoration:none}
-  .hk-card{border:1px solid #e5e7eb;border-radius:8px;background:#fff;margin-bottom:14px}
+  /* Clipped to its rounded corners: the header's own background is square,
+     and would cover the card's top corners. */
+  .hk-card{border:1px solid #e5e7eb;border-radius:8px;background:#fff;margin-bottom:14px;
+    overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,0.05)}
   .hk-card .hd{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 14px;
     background:#fbfdff;border-bottom:1px solid #e5e7eb;font-size:0.86rem}
   .hk-card .bd{padding:12px 14px}
