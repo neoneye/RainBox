@@ -77,6 +77,14 @@ class TestRendering:
         assert model in body
         assert "Cache hit rate" in body
 
+    def test_the_call_count_is_one_column_when_it_is_also_the_charts_metric(
+        self, client, model
+    ):
+        add_call(model)
+        body = client.get("/activity?range=24h&metric=calls&by=model").get_data(as_text=True)
+        table = body[body.index("<h2>By model</h2>"):body.index("<h2>By caller</h2>")]
+        assert table.count('<th class="num">Calls</th>') == 1
+
     def test_the_chart_is_inline_svg_with_no_external_dependency(self, client, model):
         add_call(model)
         body = client.get("/activity?range=24h").get_data(as_text=True)

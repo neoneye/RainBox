@@ -846,7 +846,9 @@ ACTIVITY_TEMPLATE = """
       <tr>
         <th>{{ dimension_label }}</th>
         <th class="num">Calls</th>
-        <th class="num">{{ metrics[metric][0] }}</th>
+        {# The chart's metric gets a column of its own, unless it is the
+           call count, which the table always shows. #}
+        {% if metric != 'calls' %}<th class="num">{{ metrics[metric][0] }}</th>{% endif %}
         <th class="num">Hit rate</th>
         <th class="num">Reusable</th>
         <th class="num">Prompt tokens</th>
@@ -858,8 +860,8 @@ ACTIVITY_TEMPLATE = """
       <tr>
         <td class="name">{{ row.key }}</td>
         <td class="num">{{ row.calls }}</td>
-        <td class="num">{{ format_metric(row[metric], metric_kind)
-                           if metric in row else '—' }}</td>
+        {% if metric != 'calls' %}<td class="num">{{ format_metric(row[metric], metric_kind)
+                           if metric in row else '—' }}</td>{% endif %}
         <td class="num {{ 'warn' if hit_rate_cell(row) == 'unjudged' }}" title="{{ hit_rate_hover(row) }}">{{ hit_rate_cell(row) }}</td>
         <td class="num">{{ pct(row.reusable_rate) }}</td>
         <td class="num" title="{{ exact(row.prompt_tokens, 'tokens') }}">{{ si(row.prompt_tokens) }}</td>
