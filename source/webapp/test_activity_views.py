@@ -170,6 +170,18 @@ class TestCallDetail:
         heading = body[body.index("<h1>"):body.index("</h1>")]
         assert model in heading and "/model?id=" not in heading
 
+    def test_a_tile_with_no_figure_is_a_dash_and_says_nothing_more(
+        self, client, model
+    ):
+        call_uuid = uuid4()
+        add_call(model, uuid=call_uuid, prompt_tokens=None, completion_tokens=None,
+                 reusable_prefix_tokens=None, prefill_ms=None,
+                 cached_tokens_reported=None, cached_tokens_estimated=None)
+        body = client.get(f"/activity/call/{call_uuid}").get_data(as_text=True)
+        facts = body[body.index('<div class="facts">'):body.index('<div class="k">Total</div>')]
+        assert "not recorded" not in facts
+        assert facts.count('<div class="v">—</div>') == 5
+
     def test_a_row_with_no_stored_text_says_so_rather_than_showing_nothing(
         self, client, model
     ):

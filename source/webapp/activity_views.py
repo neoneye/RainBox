@@ -1012,14 +1012,14 @@ CALL_TEMPLATE = """
 
   <div class="facts">
     <div class="fact"><div class="k">Prompt</div>
-      <div class="v">{{ exact(call.prompt_tokens, 'tokens') }}</div></div>
+      <div class="v">{{ fact(call.prompt_tokens, 'tokens') }}</div></div>
     <div class="fact"><div class="k">Cached</div>
       <div class="v">{{ cache_text }}</div>
-      <div class="n">{{ cache_hover }}</div></div>
+      {% if cache_text != '—' %}<div class="n">{{ cache_hover }}</div>{% endif %}</div>
     <div class="fact"><div class="k">Reusable</div>
-      <div class="v">{{ exact(call.reusable_prefix_tokens, 'tokens') }}</div></div>
+      <div class="v">{{ fact(call.reusable_prefix_tokens, 'tokens') }}</div></div>
     <div class="fact"><div class="k">Output</div>
-      <div class="v">{{ exact(call.completion_tokens, 'tokens') }}</div></div>
+      <div class="v">{{ fact(call.completion_tokens, 'tokens') }}</div></div>
     <div class="fact"><div class="k">Prefill</div>
       <div class="v">{{ ms(call.prefill_ms) }}</div></div>
     <div class="fact"><div class="k">Total</div>
@@ -1105,5 +1105,8 @@ def activity_call_page(call_uuid: UUID) -> str:
         cache_hover=cache_hover,
         prompt_retention_days=db.PROMPT_RETENTION_DAYS,
         exact=exact,
+        # A tile with no figure is a dash, the same in every tile. A decision
+        # model, for one, reports no token counts, and that is not a fault.
+        fact=lambda value, unit="": "—" if value is None else exact(value, unit),
         ms=ms,
     )
