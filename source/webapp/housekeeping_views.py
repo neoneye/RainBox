@@ -40,7 +40,9 @@ def _job_label(job_type: str) -> str:
 
 
 def _outcome(job) -> tuple[str, str]:
-    """What the log prints for a job, and the class that colours it."""
+    """What a page says of a job's outcome, and the class that colours it.
+    A page prints nothing for a plain `done`: a pill is for what is still
+    going or went wrong."""
     if job.state == "final":
         text = job.outcome or "done"
         kind = "failed" if text.startswith("failed") else "done"
@@ -336,7 +338,7 @@ _LOG_FRAGMENT = _NOW_FRAGMENT + """
         {% elif r.job.subject %} &middot; {{ r.job.subject }}{% endif %}
       </td>
       <td class="hk-num hk-right">{{ seconds(r.model_ms) }}{% if r.attempts > 1 %} &middot; {{ r.attempts }} attempts{% endif %}</td>
-      <td><span class="hk-pill {{ kind }}">{{ text }}</span></td>
+      <td>{% if text != 'done' %}<span class="hk-pill {{ kind }}">{{ text }}</span>{% endif %}</td>
     </tr>
   {% endfor %}
   </tbody>
@@ -402,7 +404,7 @@ _LOG_PAGE = """
 _JOB_FRAGMENT = """
 {% set text, kind = outcome(job) %}
 <div class="hk-card">
-  <div class="hd"><h3>{{ label(job.job_type) }}</h3><span class="hk-pill {{ kind }}">{{ text }}</span></div>
+  <div class="hd"><h3>{{ label(job.job_type) }}</h3>{% if text != 'done' %}<span class="hk-pill {{ kind }}">{{ text }}</span>{% endif %}</div>
   <div class="bd">
     <dl class="hk-kv">
       <dt>For</dt>
@@ -432,7 +434,8 @@ _JOB_FRAGMENT = """
 <div class="hk-card">
   <div class="hd">
     <h3>Attempt {{ loop.index }}</h3>
-    {% if a.row.result %}
+    {% if a.row.result == 'done' %}
+    {% elif a.row.result %}
       <span class="hk-pill {{ 'killed' if a.row.result.startswith('killed') else ('done' if a.row.result in ('done', 'skipped') else 'failed') }}">{{ a.row.result }}</span>
     {% else %}
       <span class="hk-pill running">running for {{ elapsed(a.row.started_at) }}</span>

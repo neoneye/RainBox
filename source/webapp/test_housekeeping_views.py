@@ -78,7 +78,10 @@ def test_the_log_lists_a_job_with_its_room_run_and_outcome(client):
     page = c.get(f"/assistant/housekeeping/{job.uuid}").get_data(as_text=True)
     assert f'/assistant?id={run.uuid}' in page and f'/chat?id={run.room_uuid}' in page
     assert f'/assistant/housekeeping/room/{run.room_uuid}' in page
-    assert '<span class="hk-pill done">done</span>' in body
+    # A job that is done carries no pill, here or on its own page. A pill
+    # is for what is still going or went wrong.
+    assert 'class="hk-pill done"' not in body
+    assert 'class="hk-pill done"' not in page
     # The fragment is the live part alone: no page chrome to swap in twice.
     fragment = c.get("/assistant/housekeeping?fragment=1").get_data(as_text=True)
     assert "hk-log" in fragment and "<title>" not in fragment
