@@ -151,6 +151,8 @@ def test_a_job_page_shows_each_attempt_with_its_prompt_and_reply(client):
     # The run's page links the summarizer's step to this job.
     run_page = c.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
     assert f'<a href="/assistant/housekeeping/{job.uuid}">housekeeping ↗</a>' in run_page
+    kpis = run_page[run_page.index(f'<a href="/assistant/housekeeping/{job.uuid}">housekeeping ↗</a>'):]
+    assert "housekeeping ↗" in kpis and kpis.index("housekeeping ↗") < kpis.index("model-a")
     assert c.get(f"/assistant/housekeeping/{uuid4()}").status_code == 404
 
 

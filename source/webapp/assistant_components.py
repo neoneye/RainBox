@@ -194,9 +194,11 @@ def event_kpis(event: dict) -> list[dict]:
     elif name:
         fields.append(_kpi("model", name, f"The model that answered: {name}"))
 
+    # The job comes first, ahead of the model: it is the way out of this
+    # page, where the rest of the line is about the call.
     job_uuid = kpis.get("housekeeping_job_uuid")
     if job_uuid:
-        fields.append(_kpi(
+        fields.insert(0, _kpi(
             "housekeeping", f"housekeeping job {job_uuid}",
             "Open the housekeeping job that made this call. It shows each "
             "attempt, and whether a new message stopped one.",
