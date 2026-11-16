@@ -245,6 +245,8 @@ def test_a_chunk_jobs_page_shows_what_the_decision_model_was_asked_and_answered(
         subject=db.chunk_subject(4, 2, room_chunks.PROMPT_VERSION, 0,
                                  messages[0]["id"], messages[3]["id"]))
     first, second = room_chunks.follow_ups(messages[:4], messages[4:6], 0)
+    # The requests are made inside an attempt, at its start.
+    attempt = db.start_housekeeping_attempt(job)
 
     def record(state, p, **over):
         return db.record_decision_call(
@@ -266,9 +268,12 @@ def test_a_chunk_jobs_page_shows_what_the_decision_model_was_asked_and_answered(
     try:
         body = c.get(f"/assistant/housekeeping/{job.uuid}").get_data(as_text=True)
         assert "Decision model" in body and "2 requests to" in body
+        # In the order things happened: the decision model is asked before
+        # the attempt's own model call.
+        assert body.index('id="decisions"') < body.index("<h3>Attempt 1</h3>")
         # A request that reached the model links to its row on /activity. One
         # recorded without such a row has no link.
-        card = body[body.index('id="decisions"'):]
+        card = body[body.index('id="decisions"'):body.index("<h3>Attempt 1</h3>")]
         assert card.count('href="/activity/call/') == 1
         assert f'href="/activity/call/{on_activity}"' in card
         # The prompt as it was worded, the input rebuilt from the messages,
@@ -291,6 +296,7 @@ def test_a_chunk_jobs_page_shows_what_the_decision_model_was_asked_and_answered(
     finally:
         for r in rows:
             db.session.delete(r)
+        db.session.query(HousekeepingAttempt).filter_by(uuid=attempt.uuid).delete()
         db.session.delete(job)
         db.session.commit()
 

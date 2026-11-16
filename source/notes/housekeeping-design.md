@@ -565,6 +565,10 @@ attempt's `llm_call` row: for a chunk, the summary that was kept.
   of (`webapp/text_blocks.py`): a prompt is folded under its character
   count, every block has a copy button, a long one is cut to a few lines
   with a toggle, and a reply that is JSON has the raw and pretty switch.
+- The sections are in the order things happened. A chunk job asks the
+  decision model at the start of an attempt, before its own model call, so
+  an attempt's requests to the decision model are a card above that
+  attempt's card.
 - For a final failure, an Enqueue again button.
 
 **A room's chunks** (`/assistant/housekeeping/room/<uuid>`), reached from

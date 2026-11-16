@@ -537,9 +537,51 @@ _JOB_FRAGMENT = """
 </div>
 
 {% for a in attempts %}
+{% set attempt_no = loop.index %}{% set attempt_first = loop.first %}
+{% if a.decisions %}
+{% set decisions = a.decisions %}
+<div class="hk-card" {% if attempt_first %}id="decisions"{% endif %}>
+  <div class="hd">
+    <h3>Decision model</h3>
+    <span>{{ decisions|length }} request{{ '' if decisions|length == 1 else 's' }} to <span class="hk-mono">{{ decisions[0].row.model or decisions[0].row.slot }}</span>{% if attempts|length > 1 %}, in attempt {{ attempt_no }}{% endif %}</span>
+    <span class="hk-mono">{{ when(decisions[0].row.created_at) }}</span>
+  </div>
+  <div class="bd">
+    <p class="hk-lede" style="margin:0 0 10px">Asked first, before the summary is written: once for each follow-up in the chunk. The model generates no text: it is given the input and the question, and returns a probability.</p>
+    {% for d in decisions %}
+    {% set answer = (d.row.answers or [{}])[0] %}
+    <details class="hk-text" id="d{{ d.row.uuid }}">
+      <summary>
+        {% if d.state %}<span class="hk-mono">m{{ d.state.message }}</span>{% endif %}
+        {% if d.verdict %}<span class="hk-pill {{ 'done' if d.verdict.yes else '' }}">{{ d.verdict.text }}</span> <span class="hk-mono">{{ '%.2f'|format(d.verdict.p) }}</span>
+        {% else %}<span class="hk-pill failed">no answer: {{ answer.reason or d.row.reason }}</span>{% endif %}
+        {% if d.state %} <span style="text-transform:none;letter-spacing:0;font-weight:400">{{ d.state.next_message|truncate(70) }}</span>{% endif %}
+        {% if d.row.elapsed_ms is not none %}<span class="hk-num">{{ d.row.elapsed_ms }} ms</span>{% endif %}
+        {% if d.row.llm_call_uuid %}<a class="hk-back" style="float:right;text-transform:none;letter-spacing:0;font-weight:400" href="/activity/call/{{ d.row.llm_call_uuid }}" title="Open this request on the Activity page. It shows the input and the question as they were sent to the decision model, and the reply as it came back.">activity</a>{% endif %}
+      </summary>
+      <div class="hk-result"><b>Input</b></div>
+      {% if d.state %}
+      <pre class="hk-pre">{{ d.state.text }}</pre>
+      {% else %}
+      <p class="hk-lede" style="margin:4px 0 8px">The input is not kept with the call. It is rebuilt from the room's messages, and they no longer match what was asked (digest <span class="hk-mono">{{ d.row.state_digest[:12] }}</span>).</p>
+      {% endif %}
+      <div class="hk-result"><b>Question{{ '' if d.row.questions|length == 1 else 's' }}</b></div>
+      <pre class="hk-pre">{% for q in d.row.questions %}{{ q.name }} ({{ q.kind }}, version {{ q.version }}):
+{{ q.instructions or 'This call was recorded without its wording.' }}{% for name, text in (q.options or {}).items() %}
+  {{ name }}: {{ text }}{% endfor %}{{ '' if loop.last else '\n\n' }}{% endfor %}</pre>
+      <div class="hk-result"><b>Answer{{ '' if d.row.answers|length == 1 else 's' }}</b></div>
+      <pre class="hk-pre">{% for a in d.row.answers %}{{ a.name }}: {% if a.status != 'ok' %}no answer: {{ a.reason or d.row.reason }}{% elif a.probabilities %}{{ a.label or 'none above ' ~ a.bands.choice }}{% for name, p in a.probabilities.items() %}
+  P({{ name }}) = {{ p }}{% endfor %}{% else %}{{ a.label }}
+  P(yes) = {{ a.p }}  (yes at {{ a.bands.yes }} or above, no at {{ a.bands.no }} or below){% endif %}
+{% endfor %}model: {{ d.row.model }}{% if d.row.model_digest %} ({{ d.row.model_digest[:12] }}){% endif %}{% if d.row.server_version %}, server {{ d.row.server_version }}{% endif %}</pre>
+    </details>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
 <div class="hk-card">
   <div class="hd">
-    <h3>Attempt {{ loop.index }}</h3>
+    <h3>Attempt {{ attempt_no }}</h3>
     {% if a.row.result == 'done' %}
     {% elif a.row.result %}
       <span class="hk-pill {{ 'killed' if a.row.result.startswith('killed') else ('done' if a.row.result in ('done', 'skipped') else 'failed') }}">{{ a.row.result }}</span>
@@ -573,45 +615,6 @@ _JOB_FRAGMENT = """
   <div class="s">The job is waiting for its turn in the queue.</div></div>
 {% endfor %}
 
-{% if decisions %}
-<div class="hk-card" id="decisions">
-  <div class="hd">
-    <h3>Decision model</h3>
-    <span>{{ decisions|length }} request{{ '' if decisions|length == 1 else 's' }} to <span class="hk-mono">{{ decisions[0].row.model or decisions[0].row.slot }}</span></span>
-  </div>
-  <div class="bd">
-    <p class="hk-lede" style="margin:0 0 10px">Asked before the summary, once for each follow-up in the chunk. The model generates no text: it is given the input and the question, and returns a probability.</p>
-    {% for d in decisions %}
-    {% set answer = (d.row.answers or [{}])[0] %}
-    <details class="hk-text" id="d{{ d.row.uuid }}">
-      <summary>
-        {% if d.state %}<span class="hk-mono">m{{ d.state.message }}</span>{% endif %}
-        {% if d.verdict %}<span class="hk-pill {{ 'done' if d.verdict.yes else '' }}">{{ d.verdict.text }}</span> <span class="hk-mono">{{ '%.2f'|format(d.verdict.p) }}</span>
-        {% else %}<span class="hk-pill failed">no answer: {{ answer.reason or d.row.reason }}</span>{% endif %}
-        {% if d.state %} <span style="text-transform:none;letter-spacing:0;font-weight:400">{{ d.state.next_message|truncate(70) }}</span>{% endif %}
-        {% if d.row.elapsed_ms is not none %}<span class="hk-num">{{ d.row.elapsed_ms }} ms</span>{% endif %}
-        {% if d.row.llm_call_uuid %}<a class="hk-back" style="float:right;text-transform:none;letter-spacing:0;font-weight:400" href="/activity/call/{{ d.row.llm_call_uuid }}" title="Open this request on the Activity page. It shows the input and the question as they were sent to the decision model, and the reply as it came back.">activity</a>{% endif %}
-      </summary>
-      <div class="hk-result"><b>Input</b></div>
-      {% if d.state %}
-      <pre class="hk-pre">{{ d.state.text }}</pre>
-      {% else %}
-      <p class="hk-lede" style="margin:4px 0 8px">The input is not kept with the call. It is rebuilt from the room's messages, and they no longer match what was asked (digest <span class="hk-mono">{{ d.row.state_digest[:12] }}</span>).</p>
-      {% endif %}
-      <div class="hk-result"><b>Question{{ '' if d.row.questions|length == 1 else 's' }}</b></div>
-      <pre class="hk-pre">{% for q in d.row.questions %}{{ q.name }} ({{ q.kind }}, version {{ q.version }}):
-{{ q.instructions or 'This call was recorded without its wording.' }}{% for name, text in (q.options or {}).items() %}
-  {{ name }}: {{ text }}{% endfor %}{{ '' if loop.last else '\n\n' }}{% endfor %}</pre>
-      <div class="hk-result"><b>Answer{{ '' if d.row.answers|length == 1 else 's' }}</b></div>
-      <pre class="hk-pre">{% for a in d.row.answers %}{{ a.name }}: {% if a.status != 'ok' %}no answer: {{ a.reason or d.row.reason }}{% elif a.probabilities %}{{ a.label or 'none above ' ~ a.bands.choice }}{% for name, p in a.probabilities.items() %}
-  P({{ name }}) = {{ p }}{% endfor %}{% else %}{{ a.label }}
-  P(yes) = {{ a.p }}  (yes at {{ a.bands.yes }} or above, no at {{ a.bands.no }} or below){% endif %}
-{% endfor %}model: {{ d.row.model }}{% if d.row.model_digest %} ({{ d.row.model_digest[:12] }}){% endif %}{% if d.row.server_version %}, server {{ d.row.server_version }}{% endif %}</pre>
-    </details>
-    {% endfor %}
-  </div>
-</div>
-{% endif %}
 """
 
 _JOB_PAGE = """
@@ -708,12 +711,20 @@ def housekeeping_job_page(job_uuid: UUID) -> str:
         abort(404, "housekeeping job not found")
     attempts = [{"row": a, "call": db.housekeeping_attempt_call(job, a)}
                 for a in db.list_housekeeping_attempts(job.uuid)]
-    for attempt in attempts:
+    # The decision model is asked at the start of an attempt, before its
+    # model call, so each attempt's requests are drawn above its card.
+    decisions = _decision_calls(job)
+    for i, attempt in enumerate(attempts):
         attempt["kpis"] = _call_kpis(attempt["call"])
         attempt.update(_attempt_blocks(attempt["row"], attempt["call"]))
+        until = attempts[i + 1]["row"].started_at if i + 1 < len(attempts) else None
+        attempt["decisions"] = [
+            d for d in decisions
+            if (i == 0 or d["row"].created_at >= attempt["row"].started_at)
+            and (until is None or d["row"].created_at < until)]
     run = db.get_assistant_run(job.run_uuid) if job.run_uuid else None
     ctx = dict(
-        job=job, attempts=attempts, decisions=_decision_calls(job),
+        job=job, attempts=attempts,
         request_message=(run.metadata_ or {}).get("request_message") if run else None,
         rooms=db.housekeeping_room_names([job.room_uuid] if job.room_uuid else []),
         revision=db.housekeeping_revision(job.uuid), **_helpers())
