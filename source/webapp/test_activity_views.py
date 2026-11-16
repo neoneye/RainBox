@@ -121,6 +121,10 @@ class TestCallDetail:
         assert "assistant.decide" in body
         assert model in body
         assert "4000 tokens" in body   # prompt_tokens, exact
+        # The time is year-month-day, with no month name.
+        import re
+        sub = body[body.index('<p class="sub">'):]
+        assert re.match(r'<p class="sub">\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}', sub)
 
     def test_the_heading_names_the_configured_model_and_links_to_it(
         self, client, model

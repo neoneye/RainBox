@@ -695,7 +695,7 @@ ACTIVITY_TEMPLATE = """
       <div class="head">
         <span class="cat">{{ err.error_category or 'failed' }}</span>
         <span class="meta">
-          {{ err.started_at.strftime('%b %-d %H:%M:%S') if err.started_at else '—' }}
+          {{ err.started_at.strftime('%Y-%m-%d %H:%M:%S') if err.started_at else '—' }}
           &middot; {{ err.model or 'unknown model' }}
           &middot; {{ err.caller }}
           {% if err.origin %}&middot; <code>{{ err.origin }}</code>{% endif %}
@@ -905,7 +905,7 @@ ACTIVITY_TEMPLATE = """
       {% for call in recent %}
       {% set call_url = url_for('activity_call_page', call_uuid=call.uuid) %}
       <tr class="call" data-href="{{ call_url }}">
-        <td class="muted"><a class="rowlink" href="{{ call_url }}">{{ call.started_at.strftime('%b %-d %H:%M:%S')
+        <td class="muted"><a class="rowlink" href="{{ call_url }}">{{ call.started_at.strftime('%Y-%m-%d %H:%M:%S')
                              if call.started_at else '—' }}</a></td>
         {% set label = model_labels.get(call.model_uuid) %}
         <td class="name"{% if label and call.model %} title="The provider knows it as {{ call.model }}."{% endif %}>{{ label or call.model or '—' }}</td>
@@ -992,7 +992,7 @@ CALL_TEMPLATE = """
   <h1>{{ call.caller }} &middot;
     {% if model_label %}<a href="/model?id={{ call.model_uuid }}" title="The configured model this call ran on{% if call.model %}. The provider knows it as {{ call.model }}{% endif %}.">{{ model_label }}</a>
     {% else %}{{ call.model or 'unknown model' }}{% endif %}</h1>
-  <p class="sub">{{ call.started_at.strftime('%b %-d %Y, %H:%M:%S')
+  <p class="sub">{{ call.started_at.strftime('%Y-%m-%d %H:%M:%S')
                     if call.started_at else 'unknown time' }}</p>
 
   {% if not call.ok %}
