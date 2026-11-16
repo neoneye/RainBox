@@ -246,7 +246,6 @@ _STYLE = """
   .hk-pill.hk-cal-uncontested{color:#4b5563;background:#f3f4f6}
   .hk-pill.hk-cal-overconfident{color:#b91c1c;background:#fee2e2}
   .hk-pill.hk-cal-underconfident{color:#92400e;background:#fef3c7}
-  a.hk-inspect{padding:3px 10px;font-size:0.8rem;text-decoration:none}
   .hk-btn{padding:7px 14px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;
     font:inherit;font-size:0.86rem;cursor:pointer;color:#374151}
   .hk-btn:hover{border-color:#9aa3af;color:#1a1a2e}
@@ -665,7 +664,7 @@ _ROOM_FRAGMENT = """
     <h3><a class="hk-anchor" title="Link to this chunk, in this series" href="?size={{ size }}&amp;overlap={{ overlap }}&amp;prompt={{ version }}#chunk-{{ c.row.seq }}">Messages {{ c.first_index }}&ndash;{{ c.last_index }}</a></h3>
     <span class="hk-mono">{{ c.dates }}</span>
     {% if c.stale %}<span class="hk-pill deferred" title="A message in this chunk was edited or deleted after the summary was written">messages changed since</span>{% endif %}
-    {% if c.row.job_uuid %}<a class="hk-btn hk-inspect" style="margin-left:auto" href="/assistant/housekeeping/{{ c.row.job_uuid }}" title="The job that wrote this: its models, prompts and replies, and what the decision model was asked">Inspect</a>{% endif %}
+    {% if c.row.job_uuid %}<a class="hk-back" style="margin-left:auto" href="/assistant/housekeeping/{{ c.row.job_uuid }}" title="Open the job that wrote this summary. It shows its models, prompts and replies, and what the decision model was asked.">inspect</a>{% endif %}
   </div>
   <div class="bd">
     <dl class="hk-kv">

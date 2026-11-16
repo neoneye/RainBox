@@ -304,7 +304,7 @@ def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
         # behind the button in the card's corner.
         chunk_card = body[body.index('id="chunk-0"'):body.index('id="chunk-0-messages"')]
         assert "model-a" not in chunk_card and "decider" not in chunk_card
-        assert f'href="/assistant/housekeeping/{job.uuid}"' in chunk_card and ">Inspect</a>" in chunk_card
+        assert f'href="/assistant/housekeeping/{job.uuid}"' in chunk_card and ">inspect</a>" in chunk_card
         # The heading links to its own chunk in this series.
         assert 'href="?size=10&amp;overlap=2&amp;prompt=16#chunk-0">Messages 0&ndash;9</a>' in body
         assert '<span class="hk-chip">numbers</span>' in body
