@@ -261,7 +261,14 @@ def test_a_chunk_jobs_page_shows_what_the_decision_model_was_asked_and_answered(
             status="ok", reason=None, elapsed_ms=120, deadline_ms=20000, **over)
 
     state = follow_up_state(first["request"], first["next_message"])
-    on_activity = uuid4()
+    sent = LlmCall(caller="assistant.repeat_check", model="decider", messages=[
+        {"role": "state", "content": state},
+        {"role": "question", "content": '{"retry": {"instructions": "The next message asks again."}}'}],
+        response_text='{"retry": {"p": 0.91}}')
+    db.session.add(sent)
+    db.session.commit()
+    made["calls"].append(sent.uuid)
+    on_activity = sent.uuid
     rows = [record(state, 0.91, llm_call_uuid=on_activity),
             # The chunk's last request, against the message after the chunk.
             record(follow_up_state(second["request"], second["next_message"]), 0.2),
@@ -280,22 +287,18 @@ def test_a_chunk_jobs_page_shows_what_the_decision_model_was_asked_and_answered(
         card = body[body.index('id="decisions"'):body.index("<h3>Attempt 1</h3>")]
         assert card.count('href="/activity/call/') == 1
         assert f'href="/activity/call/{on_activity}"' in card
-        # The prompt as it was worded, the input rebuilt from the messages,
-        # and the output with the bands that labelled it.
-        assert "The next message asks again." in body
+        # A call shows what its page on /activity shows: each message that
+        # was sent under its role, then the response.
+        assert card.index(">state<") < card.index(">question<") < card.index(">response<")
+        assert "The next message asks again." in card and "0.91}" in card
         # Two human messages, and no reply between them.
         assert ("&lt;message1&gt;how tall is the lighthouse&lt;/message1&gt;\n"
-                "&lt;message2&gt;look up the height of the lighthouse&lt;/message2&gt;") in body
-        # The input is what the model was given: the message's number is the
-        # page's, and stands in the line above it.
+                "&lt;message2&gt;look up the height of the lighthouse&lt;/message2&gt;") in card
+        # The message's number is the page's, and stands in the call's line.
         assert "(m2)" not in body and '<span class="hk-mono">m2</span>' in body
-        assert "P(yes) = 0.91" in body and "yes at 0.5 or above" in body
-        # A request can hold several questions: the input they share comes
-        # first, then every question, then every answer.
-        assert body.index("<b>Input</b>") < body.index("<b>Question</b>") < body.index("<b>Answer</b>")
-        assert "retry (noul, version 1):\nThe next message asks again." in body
-        assert "retry: yes\n  P(yes) = 0.91" in body
-        assert "they no longer match what was asked" in body
+        assert "<b>Question</b>" not in body and "<b>Answer</b>" not in body
+        # A call with no row on /activity says so.
+        assert card.count("has no row on the Activity page") == 2
         assert second["message"] == 4       # the message after the chunk is a follow-up too
     finally:
         for r in rows:

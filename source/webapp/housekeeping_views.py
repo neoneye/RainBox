@@ -185,13 +185,18 @@ def _reaction_texts(part: dict) -> list[str]:
 
 def _decision_calls(job) -> list[dict]:
     """A room-chunk job's requests to the decision model, in the order they
-    were made: `{row, state, verdict}`. The state is not stored with the
+    were made: `{row, state, verdict, blocks}`. `blocks` is what the call's
+    page on /activity shows, as text blocks: each message that was sent
+    under its role, then the response. It is empty for a call with no row
+    there. The state is not stored with the
     call. It is rebuilt here from the chunk's messages, as the worker built
     it, and matched to its call by digest: `{message, next_message, after_chunk,
     text}`, `text` being what the model was given and `after_chunk` whether
     the message comes after the chunk's last one. It is None for a call whose
     messages have changed since, or whose job is not a chunk's. `verdict` is
     the first answer in a line: `{text, p, yes}`, or None without an answer."""
+    from markupsafe import Markup
+
     from agents import room_chunks
     from llm.systemone import state_digest
     from llm.systemone_questions import FOLLOW_UP_DIFFERENT, follow_up_state
@@ -238,8 +243,18 @@ def _decision_calls(job) -> list[dict]:
         return {"text": answer.get("label"), "p": answer.get("p"),
                 "yes": answer.get("label") == "yes"}
 
-    return [{"row": r, "state": states.get(r.state_digest), "verdict": verdict(r)}
-            for r in rows]
+    def blocks(row) -> Markup:
+        call = db.get_llm_call(row.llm_call_uuid) if row.llm_call_uuid else None
+        if call is None:
+            return Markup("")
+        sent = [m for m in (call.messages or []) if isinstance(m, dict)]
+        return Markup("").join([
+            *(text_block(str(m.get("role") or "?"), str(m.get("content") or ""), whole=True)
+              for m in sent),
+            text_block("response", call.response_text, whole=True)])
+
+    return [{"row": r, "state": states.get(r.state_digest), "verdict": verdict(r),
+             "blocks": blocks(r)} for r in rows]
 
 
 def _signal_texts(signals: dict | None) -> list[str]:
@@ -570,7 +585,7 @@ _JOB_FRAGMENT = """
     <span class="hk-mono">{{ when(decisions[0].row.created_at) }}</span>
     <span>{{ decisions|length }} model call{{ '' if decisions|length == 1 else 's' }}{% if attempts|length > 1 %}, in attempt {{ attempt_no }}{% endif %}</span>
   </div>
-  <div class="bd">
+  <div class="bd tb-scope">
     {% for d in decisions %}
     {% set answer = (d.row.answers or [{}])[0] %}
     <details class="hk-text" id="d{{ d.row.uuid }}">
@@ -582,21 +597,14 @@ _JOB_FRAGMENT = """
         {% if d.row.elapsed_ms is not none %}<span class="hk-num">{{ d.row.elapsed_ms }} ms</span>{% endif %}
         {% if d.row.llm_call_uuid %}<a class="hk-back" style="float:right;text-transform:none;letter-spacing:0;font-weight:400" href="/activity/call/{{ d.row.llm_call_uuid }}" title="Open this request on the Activity page. It shows the input and the question as they were sent to the decision model, and the reply as it came back.">activity</a>{% endif %}
       </summary>
-      <div class="hk-result"><b>Input</b></div>
-      {% if d.state %}
+      {% if d.blocks %}
+      {{ d.blocks }}
+      {% elif d.state %}
+      <p class="hk-lede" style="margin:4px 0 8px">This call has no row on the Activity page, so what was sent and what came back are not kept. The input below is rebuilt from the room's messages.</p>
       <pre class="hk-pre">{{ d.state.text }}</pre>
       {% else %}
-      <p class="hk-lede" style="margin:4px 0 8px">The input is not kept with the call. It is rebuilt from the room's messages, and they no longer match what was asked (digest <span class="hk-mono">{{ d.row.state_digest[:12] }}</span>).</p>
+      <p class="hk-lede" style="margin:4px 0 8px">This call has no row on the Activity page, so what was sent and what came back are not kept (digest <span class="hk-mono">{{ d.row.state_digest[:12] }}</span>).</p>
       {% endif %}
-      <div class="hk-result"><b>Question{{ '' if d.row.questions|length == 1 else 's' }}</b></div>
-      <pre class="hk-pre">{% for q in d.row.questions %}{{ q.name }} ({{ q.kind }}, version {{ q.version }}):
-{{ q.instructions or 'This call was recorded without its wording.' }}{% for name, text in (q.options or {}).items() %}
-  {{ name }}: {{ text }}{% endfor %}{{ '' if loop.last else '\n\n' }}{% endfor %}</pre>
-      <div class="hk-result"><b>Answer{{ '' if d.row.answers|length == 1 else 's' }}</b></div>
-      <pre class="hk-pre">{% for a in d.row.answers %}{{ a.name }}: {% if a.status != 'ok' %}no answer: {{ a.reason or d.row.reason }}{% elif a.probabilities %}{{ a.label or 'none above ' ~ a.bands.choice }}{% for name, p in a.probabilities.items() %}
-  P({{ name }}) = {{ p }}{% endfor %}{% else %}{{ a.label }}
-  P(yes) = {{ a.p }}  (yes at {{ a.bands.yes }} or above, no at {{ a.bands.no }} or below){% endif %}
-{% endfor %}model: {{ d.row.model }}{% if d.row.model_digest %} ({{ d.row.model_digest[:12] }}){% endif %}{% if d.row.server_version %}, server {{ d.row.server_version }}{% endif %}</pre>
     </details>
     {% endfor %}
   </div>

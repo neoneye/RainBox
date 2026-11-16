@@ -176,11 +176,14 @@ that holds the request:
   (`llm_call_uuid`), and the job's page links each request to it. A request
   that was never sent (no model bound, a state too long, a model that is
   not local) has no such row.
-- **The job's page shows each request**: the question as it was worded,
-  the input, and the output with the bands that labelled it. The input is
-  rebuilt from the room's messages, as the worker built it, and matched to
-  its call by the digest. When the messages have changed since, the page
-  says the input can no longer be shown.
+- **The job's page shows each request as its row on `/activity` shows
+  it**: each message that was sent under its role (the state, then each
+  question), and the response as it came back. The line above them carries
+  the message's number, the verdict and its probability; these come from
+  the `decision_call` row, and the number from the state rebuilt from the
+  room's messages and matched to the call by the digest. A request with no
+  row on `/activity` says so, and shows the rebuilt state when the
+  messages still match.
 - **These calls do not count toward the rest.** Each is a fraction of a
   second of scoring, and no text is generated.
 
