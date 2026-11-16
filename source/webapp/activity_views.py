@@ -594,6 +594,8 @@ ACTIVITY_TEMPLATE = """
                           line-height: 1.45; }
   .pp-act a.inspect { color: #0653a8; text-decoration: none; font-size: 0.85rem; }
   .pp-act a.inspect:hover { text-decoration: underline; }
+  .pp-act tr.call { cursor: pointer; }
+  .pp-act a.rowlink, .pp-act a.rowlink:hover { color: inherit; text-decoration: none; }
   /* Failures. Bordered in red and placed above the charts because a call
      that never reached the model is not a data point about caching — it is
      the thing to go and look at. */
@@ -899,12 +901,12 @@ ACTIVITY_TEMPLATE = """
         <th class="num" title="Time spent processing the prompt before the first output token.">Prefill</th>
         <th class="num" title="Wall-clock time for the whole call.">Total</th>
         <th></th>
-        <th></th>
       </tr>
       {% for call in recent %}
-      <tr>
-        <td class="muted">{{ call.started_at.strftime('%b %-d %H:%M:%S')
-                             if call.started_at else '—' }}</td>
+      {% set call_url = url_for('activity_call_page', call_uuid=call.uuid) %}
+      <tr class="call" data-href="{{ call_url }}">
+        <td class="muted"><a class="rowlink" href="{{ call_url }}">{{ call.started_at.strftime('%b %-d %H:%M:%S')
+                             if call.started_at else '—' }}</a></td>
         {% set label = model_labels.get(call.model_uuid) %}
         <td class="name"{% if label and call.model %} title="The provider knows it as {{ call.model }}."{% endif %}>{{ label or call.model or '—' }}</td>
         <td class="muted wrap">{{ dotted_breaks(call.caller) }}</td>
@@ -919,8 +921,6 @@ ACTIVITY_TEMPLATE = """
         <td class="num" title="{{ exact(call.total_ms, 'ms') }}">{{ ms(call.total_ms) }}</td>
         <td class="wrap">{% if not call.ok %}<span class="bad">{{
             dotted_breaks(call.error_category or 'failed') }}</span>{% endif %}</td>
-        <td><a class="inspect" href="{{ url_for('activity_call_page',
-               call_uuid=call.uuid) }}">inspect</a></td>
       </tr>
       {% endfor %}
     </table>
@@ -928,6 +928,15 @@ ACTIVITY_TEMPLATE = """
 
   {% endif %}
 </main>
+<script>
+// A recent call's whole row opens the call. The one anchor in it is there
+// for the keyboard and for opening in a new tab.
+document.addEventListener('click', function (e) {
+  if (e.target.closest('a, button, summary')) { return; }
+  var row = e.target.closest('tr[data-href]');
+  if (row) { window.location.href = row.getAttribute('data-href'); }
+});
+</script>
 """
 
 

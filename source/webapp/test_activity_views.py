@@ -92,7 +92,10 @@ class TestCallDetail:
         call_uuid = uuid4()
         add_call(model, uuid=call_uuid)
         body = client.get("/activity?range=24h").get_data(as_text=True)
-        assert f"/activity/call/{call_uuid}" in body
+        # The row is the link: no separate "inspect" beside it.
+        assert f'<tr class="call" data-href="/activity/call/{call_uuid}">' in body
+        recent = body[body.index("Recent calls"):]
+        assert ">inspect</a>" not in recent
 
     def test_the_detail_page_shows_every_message_with_its_role(
         self, client, model
