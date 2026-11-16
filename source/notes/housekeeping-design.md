@@ -591,8 +591,8 @@ the `chunks` link beside the room's name on a job's page.
   `agents/room_chunks.render_room_earlier` writes it from the stored rows.
   The page gives the block's number of characters and a copy button. A
   table above it gives the size of the messages the chunks cover (the
-  human's, the replies, both together) and the block's size as a share of
-  that. It is
+  human's, the replies, both together), then the summaries' sentences
+  alone and the whole block, each as a share of that. It is
   how a prompt is going to hold the summaries; no prompt holds them yet.
 
 The room's page is reached from the room itself: the chat sidebar's

@@ -379,9 +379,14 @@ def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
         # human's and five replies, "message number 0" to "message number 9".
         assert "<td>Your messages</td>" in as_prompt
         cells = [row.split("</td>")[:-1] for row in
-                 as_prompt[as_prompt.index("hk-sizes"):].split("<tr>")[2:6]]
+                 as_prompt[as_prompt.index("hk-sizes"):].split("<tr>")[2:7]]
         numbers = [[re.sub("<[^>]+>", "", cell) for cell in row[1:]] for row in cells]
+        # The sentences alone: the chunk's phrase, and each part's two.
+        written = sum(map(len, (
+            "questions about numbers", "which number comes next",
+            "the wrong number was given twice", "how numbers are written")))
         assert numbers == [["5", "80", ""], ["5", "80", ""], ["10", "160", "100%"],
+                           ["", str(written), f"{100 * written / 160:.0f}%"],
                            ["", f"{len(text):,}", f"{100 * len(text) / 160:.0f}%"]]
 
         # An edit after the summary is shown, and the summary is left alone.

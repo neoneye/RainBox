@@ -752,7 +752,8 @@ _ROOM_FRAGMENT = """
     <tr><td>Your messages</td><td class="hk-num hk-right">{{ sizes.human_count }}</td><td class="hk-num hk-right">{{ '{:,}'.format(sizes.human) }}</td><td></td></tr>
     <tr><td>The assistant's replies</td><td class="hk-num hk-right">{{ sizes.reply_count }}</td><td class="hk-num hk-right">{{ '{:,}'.format(sizes.replies) }}</td><td></td></tr>
     <tr><td title="The text of every message inside the summarized chunks. Messages not summarized yet are not counted.">Original, in total</td><td class="hk-num hk-right">{{ sizes.human_count + sizes.reply_count }}</td><td class="hk-num hk-right">{{ '{:,}'.format(sizes.total) }}</td><td class="hk-num hk-right">100%</td></tr>
-    <tr><td title="The block below."><b>Summarized</b></td><td></td><td class="hk-num hk-right"><b>{{ '{:,}'.format(prompt_chars) }}</b></td><td class="hk-num hk-right"><b>{{ sizes.percent }}</b></td></tr>
+    <tr><td title="Only the sentences the model wrote: each chunk's summary, and for each part what was wanted and what came of it. No tags, message numbers, dates, topics or labels.">Summary text only</td><td></td><td class="hk-num hk-right">{{ '{:,}'.format(sizes.written) }}</td><td class="hk-num hk-right">{{ sizes.written_percent }}</td></tr>
+    <tr><td title="The block below: the summary text with its tags, message numbers, dates, topics and labels."><b>Summarized, as the block</b></td><td></td><td class="hk-num hk-right"><b>{{ '{:,}'.format(prompt_chars) }}</b></td><td class="hk-num hk-right"><b>{{ sizes.percent }}</b></td></tr>
   </tbody>
 </table>
 <div class="tb-scope">{{ prompt_block }}</div>
@@ -946,6 +947,16 @@ def housekeeping_room_page(room_uuid: UUID) -> str:
     inside_all = [m for c in chunks for m in c["messages"]]
     human = [len(m["text"] or "") for m in inside_all if m["sender"] == "human"]
     replies = [len(m["text"] or "") for m in inside_all if m["sender"] != "human"]
+    original = sum(human) + sum(replies)
+    # The sentences alone, without the block's markup around them.
+    written = sum(
+        len(c["row"].summary or "") + sum(
+            len(p.get("summary") or "") + len(p.get("result") or "")
+            for p in c["row"].parts or [])
+        for c in chunks)
+
+    def share(n: int) -> str:
+        return f"{100 * n / original:.0f}%" if original else ""
     prompt_text = render_room_earlier([
         {"first": c["first_index"], "last": c["last_index"],
          "date_from": c["date_from"], "date_to": c["date_to"],
@@ -956,9 +967,9 @@ def housekeeping_room_page(room_uuid: UUID) -> str:
         sizes={
             "human": sum(human), "human_count": len(human),
             "replies": sum(replies), "reply_count": len(replies),
-            "total": sum(human) + sum(replies),
-            "percent": (f"{100 * len(prompt_text) / (sum(human) + sum(replies)):.0f}%"
-                        if human or replies else "")},
+            "total": original, "written": written,
+            "written_percent": share(written),
+            "percent": share(len(prompt_text))},
         prompt_block=text_block(
             f"room_earlier ({len(prompt_text):,} chars)", prompt_text, whole=True),
         room_uuid=room_uuid, room_name=names[room_uuid], chunks=chunks,
