@@ -408,7 +408,7 @@ def build_chart(buckets: list[dict], metric: str, bucket_seconds: int) -> dict:
 
 def _time_label(moment: datetime, bucket_seconds: int) -> str:
     if bucket_seconds >= 86400:
-        return moment.strftime("%b %-d")
+        return moment.strftime("%m-%d")
     if bucket_seconds >= 3600:
         return moment.strftime("%-Hh")
     return moment.strftime("%H:%M")
