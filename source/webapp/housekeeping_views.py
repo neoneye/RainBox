@@ -750,7 +750,6 @@ _ROOM_PAGE = """
 {% include "_nav.html" %}
 <style>.pp-nav{margin-bottom:0}</style>
 <div class="hk-wrap">
-  <p style="margin:0 0 12px"><a class="hk-back" href="/assistant/housekeeping">&larr; Housekeeping</a></p>
   <h1 class="hk-head">{{ room_name }}</h1>
   <p class="hk-lede">This room's messages in chunks, each summarized by a
     local model: the chunk split into parts, each with what was wanted, what
