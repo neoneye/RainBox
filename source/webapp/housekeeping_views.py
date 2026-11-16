@@ -411,6 +411,9 @@ _STYLE = """
 <style>
   body{font-family:system-ui,sans-serif;margin:0;background:#fbfbfb;color:#374151}
   .hk-wrap{max-width:1320px;margin:0 auto;padding:24px 28px 56px}
+  /* A job's page has a timeline, so it takes the window's width, with the
+     padding a run's page on /assistant has. */
+  .hk-wrap.hk-full{max-width:none;padding:12px 18px 56px}
   .hk-head{margin:0 0 4px;font-size:1.35rem;color:#1a1a2e}
   .hk-lede{margin:0 0 20px;font-size:0.86rem;color:#6b7280;max-width:74ch}
   .hk-now{display:flex;flex-wrap:wrap;gap:10px 28px;align-items:baseline;
@@ -974,7 +977,7 @@ _JOB_PAGE = """
 """ + _STYLE + BLOCKS_STYLE + """
 {% include "_nav.html" %}
 <style>.pp-nav{margin-bottom:0}</style>
-<div class="hk-wrap">
+<div class="hk-wrap hk-full">
   <div id="hk-live" data-revision="{{ revision }}" data-revision-url="/assistant/housekeeping/api/revision?job={{ job.uuid }}">""" + _JOB_FRAGMENT + """</div>
 </div>
 """ + BLOCKS_SCRIPT + _LIVE_SCRIPT

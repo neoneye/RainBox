@@ -142,6 +142,8 @@ def test_a_job_page_shows_each_attempt_with_its_prompt_and_reply(client):
     rows = re.findall(r'<button type="button" class="wf-row( on)?" data-key="(.)[^"]*"', body)
     assert rows == [("", "a"), ("", "a"), (" on", "c")]
     assert f'<div class="ev-pane on" data-key="c{call.uuid}">' in body
+    # The page takes the window's width, as a run's page does.
+    assert '<div class="hk-wrap hk-full">' in body
     assert body.count('class="ev-pane') == 3
     assert "Run status: finished" in body and "resolved" in body
     assert f"/activity/call/{call.uuid}" in body
