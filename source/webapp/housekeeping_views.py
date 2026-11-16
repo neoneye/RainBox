@@ -2,8 +2,7 @@
 
 `/assistant/housekeeping` is the log, one line per job, newest first, under a
 line that says what the worker is doing at this moment. A line opens the job:
-every attempt it took, the prompt each sent and the reply each got, and what
-the job wrote.
+every attempt it took, and the prompt each sent and the reply each got.
 
 Server-rendered with GET filters, like /second-opinion. The pages stay
 current by polling one small value (`…/api/revision`) and reloading their own
@@ -78,6 +77,24 @@ def _call_kpis(call) -> list[dict]:
 
 def _job_label(job_type: str) -> str:
     return db.HOUSEKEEPING_JOB_TYPES.get(job_type, (2, job_type))[1]
+
+
+#: What each job is for and where its result is read, as the hover on a job
+#: page's heading.
+_JOB_PURPOSES: dict[str, str] = {
+    db.RUN_SUMMARY_JOB: (
+        "Summarizes one run of the personal assistant: what triggered it, "
+        "what got in its way, and how it ended. The summary is shown on the "
+        "run's page."),
+    db.ROOM_CHUNK_JOB: (
+        "Summarizes one stretch of a chatroom's messages: what was asked "
+        "for in each part, what came of it, and how well calibrated the "
+        "assistant was. The summary is shown on the chatroom's chunks page."),
+}
+
+
+def _job_purpose(job_type: str) -> str:
+    return _JOB_PURPOSES.get(job_type, "")
 
 
 def _outcome(job) -> tuple[str, str]:
@@ -457,7 +474,7 @@ _LOG_PAGE = """
 _JOB_FRAGMENT = """
 {% set text, kind = outcome(job) %}
 <div class="hk-card">
-  <div class="hd"><h3>{{ label(job.job_type) }}</h3>{% if text != 'done' %}<span class="hk-pill {{ kind }}">{{ text }}</span>{% endif %}</div>
+  <div class="hd"><h3 title="{{ purpose(job.job_type) }}">{{ label(job.job_type) }}</h3>{% if text != 'done' %}<span class="hk-pill {{ kind }}">{{ text }}</span>{% endif %}</div>
   <div class="bd">
     <dl class="hk-kv">
       <dt>For</dt>
@@ -473,7 +490,6 @@ _JOB_FRAGMENT = """
       <dt>Created</dt><dd class="hk-mono">{{ when(job.created_at) }}</dd>
       {% if job.finished_at %}<dt>Finished</dt><dd class="hk-mono">{{ when(job.finished_at) }}</dd>{% endif %}
       <dt>Attempts</dt><dd>{{ attempts|length }}{% if job.retries %} &middot; {{ job.retries }} retried after a failure{% endif %}</dd>
-      {% if wrote %}<dt>Wrote</dt><dd>{{ wrote }}</dd>{% endif %}
     </dl>
     {% if job.state == 'final' and kind == 'failed' %}
     <form method="post" action="/assistant/housekeeping/{{ job.uuid }}/requeue" style="margin-top:12px">
@@ -590,7 +606,7 @@ def run_housekeeping_lines(run_uuid: UUID) -> list[dict]:
 
 
 def _helpers() -> dict:
-    return {"when": _when, "seconds": _seconds, "label": _job_label,
+    return {"when": _when, "seconds": _seconds, "label": _job_label, "purpose": _job_purpose,
             "outcome": _outcome, "elapsed": _elapsed, "chunk_link": _chunk_link,
             "signal_texts": _signal_texts,
             "reaction_texts": _reaction_texts}
@@ -648,17 +664,6 @@ def housekeeping_page() -> str:
     return render_template_string(template, **ctx)
 
 
-def _wrote(job) -> str:
-    """What a finished job left behind, in words. The link to it is the run."""
-    if job.state != "final" or (job.outcome or "") != "done":
-        return ""
-    if job.job_type == db.RUN_SUMMARY_JOB:
-        return "the summary on its run"
-    if job.job_type == db.ROOM_CHUNK_JOB:
-        return "the chunk's summary, on the room's page"
-    return ""
-
-
 @app.route("/assistant/housekeeping/<uuid:job_uuid>")
 def housekeeping_job_page(job_uuid: UUID) -> str:
     job = db.get_housekeeping_job(job_uuid)
@@ -671,7 +676,7 @@ def housekeeping_job_page(job_uuid: UUID) -> str:
         attempt.update(_attempt_blocks(attempt["row"], attempt["call"]))
     run = db.get_assistant_run(job.run_uuid) if job.run_uuid else None
     ctx = dict(
-        job=job, attempts=attempts, wrote=_wrote(job), decisions=_decision_calls(job),
+        job=job, attempts=attempts, decisions=_decision_calls(job),
         request_message=(run.metadata_ or {}).get("request_message") if run else None,
         rooms=db.housekeeping_room_names([job.room_uuid] if job.room_uuid else []),
         revision=db.housekeeping_revision(job.uuid), **_helpers())

@@ -154,7 +154,10 @@ def test_a_job_page_shows_each_attempt_with_its_prompt_and_reply(client):
     for text in ("in 1193", "out 37", "cached 0", "prefill 0.8s", "decode 0.7s",
                  "769 tok/s", "took 1.6s"):
         assert text in kpis
-    assert "the summary on its run" in body
+    # The heading says on hover what the job is for. No line repeats where
+    # its result went.
+    assert '<h3 title="Summarizes one run of the personal assistant' in body
+    assert "<dt>Wrote</dt>" not in body
     assert "Enqueue again" not in body
     # The run's page links the summarizer's step to this job.
     run_page = c.get(f"/assistant?id={run.uuid}").get_data(as_text=True)

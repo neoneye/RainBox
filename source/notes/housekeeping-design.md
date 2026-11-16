@@ -549,7 +549,8 @@ attempt's `llm_call` row: for a chunk, the summary that was kept.
 
 **A job** (`/assistant/housekeeping/<uuid>`).
 - What it is for, with links to the room, its chunks, the run and the
-  request.
+  request. Its heading says on hover what that kind of job does and where
+  its result is read.
 - Every attempt in order: how it ended, a link to its call on `/activity`,
   the call's figures as a call's meta line reads on `/assistant` (model,
   tokens in and out, cached, prefill, decode, throughput, duration), its
