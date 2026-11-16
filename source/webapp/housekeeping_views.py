@@ -35,6 +35,26 @@ def _seconds(ms: int | None) -> str:
     return f"{ms / 1000:.1f} s"
 
 
+def _call_kpis(call) -> list[dict]:
+    """A stored model call's figures as the fields of the meta line a call
+    has on /assistant: the model as a link, tokens in and out, cached,
+    prefill, decode, throughput and duration. Empty without a call."""
+    if call is None:
+        return []
+    from webapp.assistant_components import event_kpis
+
+    cached = (call.cached_tokens_reported if call.cached_tokens_reported is not None
+              else call.cached_tokens_estimated)
+    label = db.model_label(call.model_uuid) if call.model_uuid else ""
+    return event_kpis({
+        "kpis": {
+            "model_uuid": call.model_uuid, "model": label or call.model,
+            "input_tokens": call.prompt_tokens, "output_tokens": call.completion_tokens,
+            "cached_tokens": cached, "prefill_ms": call.prefill_ms,
+            "decode_ms": call.decode_ms},
+        "duration_ms": call.total_ms})
+
+
 def _job_label(job_type: str) -> str:
     return db.HOUSEKEEPING_JOB_TYPES.get(job_type, (2, job_type))[1]
 
@@ -202,6 +222,13 @@ _STYLE = """
   .hk-mono{font-family:ui-monospace,Menlo,monospace;font-size:0.78rem;color:#6b7280;
     white-space:nowrap}
   .hk-num{font-variant-numeric:tabular-nums;white-space:nowrap}
+  /* A call's figures, as its meta line reads on /assistant. */
+  .hk-card .ev-kpis{margin-left:auto;display:flex;gap:1rem;align-items:center;
+    flex-wrap:wrap;justify-content:flex-end;font-size:0.72rem;color:#98a2b3;
+    font-variant-numeric:tabular-nums}
+  .hk-card .ev-kpi{white-space:nowrap}
+  .hk-card .ev-kpi a{color:#2563eb;text-decoration:none}
+  .hk-card .ev-kpi a:hover{text-decoration:underline}
   .hk-log th.hk-right,.hk-log td.hk-right{text-align:right}
   .hk-pill{display:inline-block;font-size:0.75rem;font-weight:700;padding:3px 10px;
     border-radius:999px;color:#6b7280;background:#eef0f4}
@@ -441,9 +468,13 @@ _JOB_FRAGMENT = """
       <span class="hk-pill running">running for {{ elapsed(a.row.started_at) }}</span>
     {% endif %}
     <span class="hk-mono">{{ when(a.row.started_at) }}</span>
+    {% if a.kpis %}
+    <div class="ev-kpis">{% for f in a.kpis %}<span class="ev-kpi" title="{{ f.title }}">{% if f.href %}<a href="{{ f.href }}">{{ f.html }}</a>{% else %}{{ f.html }}{% endif %}</span>{% endfor %}</div>
+    {% else %}
     {% if a.row.model %}<span>{{ a.row.model }}</span>{% endif %}
     {% if a.row.model_ms %}<span class="hk-num">{{ seconds(a.row.model_ms) }}</span>{% endif %}
-    {% if a.call %}<a class="hk-back" style="margin-left:auto" href="/activity/call/{{ a.call.uuid }}" title="Open this model call on the Activity page. It shows everything that was sent to the model, message by message, and the full reply.">activity</a>{% endif %}
+    {% endif %}
+    {% if a.call %}<a class="hk-back" {% if not a.kpis %}style="margin-left:auto" {% endif %}href="/activity/call/{{ a.call.uuid }}" title="Open this model call on the Activity page. It shows everything that was sent to the model, message by message, and the full reply.">activity</a>{% endif %}
   </div>
   <div class="bd">
     {% if a.row.error %}<p class="hk-err">{{ a.row.error }}</p>{% endif %}
@@ -619,6 +650,8 @@ def housekeeping_job_page(job_uuid: UUID) -> str:
         abort(404, "housekeeping job not found")
     attempts = [{"row": a, "call": db.housekeeping_attempt_call(job, a)}
                 for a in db.list_housekeeping_attempts(job.uuid)]
+    for attempt in attempts:
+        attempt["kpis"] = _call_kpis(attempt["call"])
     run = db.get_assistant_run(job.run_uuid) if job.run_uuid else None
     ctx = dict(
         job=job, attempts=attempts, wrote=_wrote(job), decisions=_decision_calls(job),

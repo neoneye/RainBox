@@ -123,7 +123,9 @@ def test_a_job_page_shows_each_attempt_with_its_prompt_and_reply(client):
     call = LlmCall(caller=db.SUMMARIZER_CALLER, run_uuid=run.uuid, model="model-a",
                    messages=[{"role": "system", "content": "You summarize a run."},
                              {"role": "user", "content": "Run status: finished"}],
-                   response_text='{"outcome": "resolved"}')
+                   response_text='{"outcome": "resolved"}',
+                   prompt_tokens=1193, completion_tokens=37, prefill_ms=848,
+                   decode_ms=700, total_ms=1600, cached_tokens_reported=0)
     db.session.add(call)
     db.session.commit()
     made["calls"].append(call.uuid)
@@ -135,6 +137,13 @@ def test_a_job_page_shows_each_attempt_with_its_prompt_and_reply(client):
     assert "Attempt 2" in body and "You summarize a run." in body
     assert "Run status: finished" in body and "resolved" in body
     assert f"/activity/call/{call.uuid}" in body
+    # The attempt's header carries its call's figures, as a call's meta line
+    # reads on /assistant.
+    kpis = body[body.index('<div class="ev-kpis">'):]
+    kpis = kpis[:kpis.index("</div>")]
+    for text in ("in 1193", "out 37", "cached 0", "prefill 0.8s", "decode 0.7s",
+                 "769 tok/s", "took 1.6s"):
+        assert text in kpis
     assert "the summary on its run" in body
     assert "Enqueue again" not in body
     assert c.get(f"/assistant/housekeeping/{uuid4()}").status_code == 404
