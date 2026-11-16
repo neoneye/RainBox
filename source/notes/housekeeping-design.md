@@ -153,6 +153,10 @@ that holds the request:
 - **Each part lists the messages the model called asking again**, with the
   probability and which of the two ways it was, as `asked_again_at`. The chunk's `audit.repeat_check` says
   which model was asked, of how many follow-ups, and how many it answered.
+- **A follow-up that is the request word for word is not put to the model.**
+  It asks again, with probability 1 and the way `duplicate`, and
+  `audit.repeat_check.identical` counts these. `asked` and `answered` count
+  only the follow-ups the model was given.
 - **Unbound, timed out or refused, a follow-up is read by rule alone.** The
   slot has no fallback to `assistant.default`: a generative model cannot
   answer this API. The model must have its weights on this machine.

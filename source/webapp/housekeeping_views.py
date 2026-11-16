@@ -898,6 +898,7 @@ _ROOM_FRAGMENT = """
       <dd>
         {% if c.row.audit.repeat_check.model %}
         Each of {{ c.row.audit.repeat_check.asked }} follow-up{{ '' if c.row.audit.repeat_check.asked == 1 else 's' }} was put to the decision model, whether it repeats the request before it. {{ 'All were' if c.row.audit.repeat_check.answered == c.row.audit.repeat_check.asked else c.row.audit.repeat_check.answered ~ ' were' }} answered.
+        {% if c.row.audit.repeat_check.identical %}{{ c.row.audit.repeat_check.identical }} more {{ 'was' if c.row.audit.repeat_check.identical == 1 else 'were' }} the request word for word, and {{ 'was' if c.row.audit.repeat_check.identical == 1 else 'were' }} not put to the model.{% endif %}
         {% else %}
         No decision model is bound to <span class="hk-mono">assistant.repeat_check</span>, so a request asked again in other words is not seen.
         {% endif %}

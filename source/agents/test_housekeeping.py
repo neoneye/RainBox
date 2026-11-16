@@ -985,3 +985,41 @@ def test_a_paused_queue_gives_out_assistant_summaries_and_holds_the_rest(app_ctx
     finally:
         db.set_setting("housekeeping.paused", None)
     assert db.next_housekeeping_job().uuid == held.uuid
+
+
+def test_a_follow_up_that_is_the_request_word_for_word_is_not_put_to_the_model(
+        app_ctx, monkeypatch):
+    from llm import systemone
+
+    human = db.get_human_user()
+    room = db.create_chatroom(f"hkc-{uuid4().hex[:8]}", human.uuid, [ASSISTANT_UUID])
+    app_ctx["rooms"].append(room.uuid)
+    for i in range(12):
+        sender = human.uuid if i % 2 == 0 else ASSISTANT_UUID
+        # The human's second message is the first one again.
+        text = ("message number 0 about the weather " if i == 2
+                else f"message number {i} about the weather")
+        db.post_chat_message(room.uuid, sender, text)
+    _fake_chunk_model(monkeypatch)
+    asked = []
+
+    def ask(slot, state, questions, **kw):
+        asked.append(state)
+        return [systemone.Answer("repeat", "ok", p=0.9, label=None, probabilities={
+            "duplicate": 0.05, "same": 0.05, "different": 0.9})]
+
+    monkeypatch.setattr(systemone, "slot_model", lambda slot: ("http://127.0.0.1:1", "decider"))
+    monkeypatch.setattr(systemone, "ask", ask)
+    agent = _agent(monkeypatch)
+    assert agent.handle(uuid4(), {"room_uuid": str(room.uuid), "room_chunks": True})[
+        "jobs"] == {"done": 1}
+    (chunk,) = db.list_room_chunks(room.uuid, 10, 2, V)
+    try:
+        assert len(asked) == 4 and not any("<message2>message number 0 " in state for state in asked)
+        assert chunk.audit["repeat_check"] == {
+            "model": "decider", "asked": 4, "answered": 4, "identical": 1}
+        assert chunk.parts[0]["asked_again_at"] == [
+            {"message": 2, "p": 1.0, "kind": "duplicate"}]
+    finally:
+        db.session.query(db.RoomChunk).filter_by(room_uuid=room.uuid).delete()
+        db.session.commit()

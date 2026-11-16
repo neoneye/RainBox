@@ -502,8 +502,9 @@ class HousekeepingAgent(Agent):
         it repeats the request before it. Returns what it said by message
         number, as `{yes, p, kind}`, and a line for the chunk's record: the model,
         how many follow-ups were asked and how many it answered; or why none
-        was asked. An unanswered follow-up is simply absent, and is read by
-        rule. These calls are not counted toward the rest: each is a
+        was asked. A follow-up that is the request word for word is not put
+        to the model: it asks again, and the record counts it as `identical`.
+        An unanswered follow-up is simply absent, and is read by rule. These calls are not counted toward the rest: each is a
         fraction of a second of scoring, with no text generated."""
         from agents import room_chunks
         from agents.config import ASSISTANT_REPEAT_CHECK_UUID
@@ -516,7 +517,12 @@ class HousekeepingAgent(Agent):
             return {}, {"reason": "unbound"}
         asked = room_chunks.follow_ups(chunk, after, first)
         said: dict[int, dict[str, Any]] = {}
+        identical = 0
         for item in asked:
+            if item["request"].strip() == item["next_message"].strip():
+                said[item["message"]] = {"yes": True, "p": 1.0, "kind": "duplicate"}
+                identical += 1
+                continue
             state = follow_up_state(item["request"], item["next_message"])
             with watch.interruptible():
                 (answer,) = systemone.ask(
@@ -528,7 +534,11 @@ class HousekeepingAgent(Agent):
             if answer.status == "ok" and answer.probabilities:
                 yes, p, kind = follow_up_again(answer.probabilities)
                 said[item["message"]] = {"yes": yes, "p": p, "kind": kind}
-        return said, {"model": bound[1], "asked": len(asked), "answered": len(said)}
+        record = {"model": bound[1], "asked": len(asked) - identical,
+                  "answered": len(said) - identical}
+        if identical:
+            record["identical"] = identical
+        return said, record
 
     _RUNNERS: dict[str, Callable[..., str]] = {
         db.RUN_SUMMARY_JOB: _summarize_run,

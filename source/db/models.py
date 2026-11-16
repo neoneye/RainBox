@@ -1251,7 +1251,9 @@ class RoomChunk(db.Model):
     # each with its message numbers, `summary`, `result` and the check's
     # `reasoning`. `error` says when a check or a rewrite could not be made.
     # `repeat_check` is what the decision model was asked about the chunk's
-    # follow-ups: `{model, asked, answered}`, or `{reason}` when none was.
+    # follow-ups: `{model, asked, answered}`, or `{reason}` when none was;
+    # `identical` counts the follow-ups that were the request word for word,
+    # which are not put to the model.
     # Each stored part carries the check of itself as `audit`: `{request,
     # result, reasoning}`, and before prompt 7 also `reaction`. NULL for a chunk written before the
     # check existed.
