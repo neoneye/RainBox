@@ -965,3 +965,23 @@ def test_chunk_summaries_render_as_one_block_for_a_prompt():
         '  <chunk messages="10-19" summary="a later stretch"/>',
         '</room_earlier>',
     ]
+
+
+def test_a_paused_queue_gives_out_assistant_summaries_and_holds_the_rest(app_ctx):
+    held, _ = db.ensure_housekeeping_job(
+        db.ROOM_CHUNK_JOB, room_uuid=uuid4(), subject="10/2/v16/0")
+    held.created_at = datetime.now(UTC) - timedelta(minutes=5)
+    db.session.commit()
+    assert db.next_housekeeping_job().uuid == held.uuid
+
+    db.set_setting("housekeeping.paused", True)
+    try:
+        assert db.housekeeping_now()["paused"] is True
+        assert db.next_housekeeping_job() is None       # held, and still pending
+        assert db.housekeeping_now()["waiting"][held.tier] == 1
+        summary, _ = db.ensure_housekeeping_job(
+            db.RUN_SUMMARY_JOB, run_uuid=_run(app_ctx).uuid)
+        assert db.next_housekeeping_job().uuid == summary.uuid
+    finally:
+        db.set_setting("housekeeping.paused", None)
+    assert db.next_housekeeping_job().uuid == held.uuid

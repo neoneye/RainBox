@@ -427,3 +427,27 @@ def test_a_log_row_shows_its_start_and_says_the_rest_on_hover():
     ]
     still_open = SimpleNamespace(created_at=start, finished_at=None)
     assert _job_times(still_open) == "Started: 1999-11-13 13:59:03"
+
+
+def test_the_log_has_a_button_that_pauses_the_queue_and_one_that_resumes_it(client):
+    from agents.config import HOUSEKEEPING_UUID
+
+    c, _made = client
+    try:
+        body = c.get("/assistant/housekeeping").get_data(as_text=True)
+        assert 'name="paused" value="1"' in body and ">Pause</button>" in body
+        assert c.post("/assistant/housekeeping/pause", data={"paused": "1"}).status_code == 302
+        assert db.get_setting("housekeeping.paused") is True
+        body = c.get("/assistant/housekeeping").get_data(as_text=True)
+        assert 'name="paused" value="0"' in body and ">Resume</button>" in body
+        assert '<span class="v">paused</span>' in body
+        # Pausing wakes nobody. Resuming wakes the worker.
+        woken = db.session.query(Inbox).filter(Inbox.agent_uuid == HOUSEKEEPING_UUID)
+        assert woken.count() == 0
+        assert c.post("/assistant/housekeeping/pause", data={"paused": "0"}).status_code == 302
+        assert db.get_setting("housekeeping.paused") is False
+        assert woken.count() == 1
+    finally:
+        db.set_setting("housekeeping.paused", None)
+        db.session.query(Inbox).filter(Inbox.agent_uuid == HOUSEKEEPING_UUID).delete()
+        db.session.commit()

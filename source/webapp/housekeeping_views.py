@@ -407,12 +407,24 @@ _NOW_FRAGMENT = """
         for {{ elapsed(now.attempt.started_at) }}{% if now.attempt.model %} on {{ now.attempt.model }}{% endif %}{% endif %}</span>
     {% elif now.turn_active and (now.waiting[1] or now.waiting[2]) %}
       <span class="v">giving way to a turn</span>
+    {% elif now.paused %}
+      <span class="v">paused</span>
     {% else %}
       <span class="v">idle</span>
     {% endif %}
   </span>
   <span><span class="k">Pending</span><span class="v">{{ now.waiting[1] + now.waiting[2] }}</span></span>
   <span><span class="k">Failed</span><span class="v">{% if now.failed %}<a href="/assistant/housekeeping?outcome=failed">{{ now.failed }}</a>{% else %}0{% endif %}</span></span>
+  <form method="post" action="/assistant/housekeeping/pause" style="margin-left:auto">
+    {% if now.paused %}
+    <input type="hidden" name="paused" value="0">
+    <span class="hk-pill deferred" title="Pending jobs are held. Only the assistant summary of a run that has ended still runs.">paused</span>
+    <button class="hk-btn" type="submit" title="Start working through the pending jobs again.">Resume</button>
+    {% else %}
+    <input type="hidden" name="paused" value="1">
+    <button class="hk-btn" type="submit" title="Hold the pending jobs. The job that is running finishes. After that, only the assistant summary of a run that has ended still runs. Nothing is removed: Resume carries on from here.">Pause</button>
+    {% endif %}
+  </form>
 </div>
 """
 
@@ -707,6 +719,19 @@ def housekeeping_job_page(job_uuid: UUID) -> str:
         revision=db.housekeeping_revision(job.uuid), **_helpers())
     template = _JOB_FRAGMENT if request.args.get("fragment") else _JOB_PAGE
     return render_template_string(template, **ctx)
+
+
+@app.route("/assistant/housekeeping/pause", methods=["POST"])
+def housekeeping_pause() -> Response:
+    """Hold the queue, or let it go on. `paused` is `1` or `0`."""
+    paused = request.form.get("paused") == "1"
+    db.set_setting("housekeeping.paused", paused)
+    if not paused:
+        from agents.config import HOUSEKEEPING_UUID
+
+        # Wakes the worker; the held jobs are already waiting in their table.
+        db.enqueue(HOUSEKEEPING_UUID, {"sweep": True})
+    return redirect("/assistant/housekeeping")
 
 
 @app.route("/assistant/housekeeping/<uuid:job_uuid>/requeue", methods=["POST"])

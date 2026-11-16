@@ -305,6 +305,14 @@ def _validate_chunk_overlap(value: object) -> None:
 
 
 SETTINGS.update({
+    "housekeeping.paused": Setting(
+        "housekeeping.paused", None, "bool", False,
+        description="Hold the housekeeping queue. While it is on, the only "
+                    "job that still runs is the assistant summary of a run "
+                    "that has ended. Every other job stays pending until "
+                    "it is turned off. The Housekeeping page has a button "
+                    "for it.",
+    ),
     "housekeeping.room_summaries": Setting(
         "housekeeping.room_summaries", None, "bool", True,
         description="After a turn, summarize the room's messages in chunks "

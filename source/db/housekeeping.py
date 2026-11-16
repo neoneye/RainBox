@@ -50,6 +50,7 @@ __all__ = [
     "get_housekeeping_job",
     "housekeeping_attempt_call",
     "housekeeping_now",
+    "housekeeping_paused",
     "housekeeping_revision",
     "housekeeping_room_names",
     "list_housekeeping_attempts",
@@ -196,11 +197,25 @@ def requeue_housekeeping_job(job: HousekeepingJob) -> HousekeepingJob:
     return job
 
 
+def housekeeping_paused() -> bool:
+    """Whether the operator has put the queue on hold."""
+    from db.settings import get_setting
+
+    return bool(get_setting("housekeeping.paused"))
+
+
 def next_housekeeping_job() -> HousekeepingJob | None:
     """The job to run next: every tier 1 job before any tier 2 job; within a
-    tier, a job whose run's page was opened first, then the oldest."""
-    return (db.session.query(HousekeepingJob)
-            .filter(HousekeepingJob.state.in_(("waiting", "deferred")))
+    tier, a job whose run's page was opened first, then the oldest.
+
+    While the queue is paused, only an assistant summary is given out: it is
+    the last step of a run, and the run's page waits for it. Every other job
+    stays where it is until the pause ends."""
+    query = (db.session.query(HousekeepingJob)
+             .filter(HousekeepingJob.state.in_(("waiting", "deferred"))))
+    if housekeeping_paused():
+        query = query.filter(HousekeepingJob.job_type == RUN_SUMMARY_JOB)
+    return (query
             .order_by(HousekeepingJob.tier.asc(),
                       HousekeepingJob.bumped_at.desc().nulls_last(),
                       HousekeepingJob.created_at.asc())
@@ -435,8 +450,8 @@ def housekeeping_room_names(room_uuids: list[UUID]) -> dict[UUID, str]:
 
 def housekeeping_now() -> dict[str, Any]:
     """The state at this moment, for the top of the page: the running job and
-    its attempt, how many jobs wait per tier, and whether a turn is holding
-    housekeeping back."""
+    its attempt, how many jobs wait per tier, whether a turn is holding
+    housekeeping back, and whether the queue is paused."""
     running = (db.session.query(HousekeepingJob)
                .filter(HousekeepingJob.state == "running")
                .order_by(HousekeepingJob.created_at.asc()).first())
@@ -461,6 +476,7 @@ def housekeeping_now() -> dict[str, Any]:
         "waiting": {1: waiting.get(1, 0), 2: waiting.get(2, 0)},
         "failed": failed or 0,
         "turn_active": turn_activity(),
+        "paused": housekeeping_paused(),
     }
 
 
@@ -488,7 +504,7 @@ def housekeeping_revision(job_uuid: UUID | None = None) -> str:
     values = [*job_q.one(), sorted(states), *attempt_q.one()]
     if job_uuid is None:
         values += [db.session.query(sa.func.count()).select_from(RoomChunk).scalar(),
-                   int(turn_activity())]
+                   int(turn_activity()), int(housekeeping_paused())]
     return "|".join(str(v) for v in values)
 
 

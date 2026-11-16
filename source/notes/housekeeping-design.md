@@ -546,6 +546,12 @@ attempt's `llm_call` row: for a chunk, the summary that was kept.
   and holds no links: the whole line opens the job. A job that is done has
   no outcome pill. A pill is for what is still going or went wrong.
 - It filters by outcome, job type and room.
+- **Pause** and **Resume**, at the end of the top line. Pause sets
+  `housekeeping.paused`. The job that is running finishes. After that the
+  queue gives out one kind of job only: the assistant summary, which is the
+  last step of a run and what the run's page waits for. Every other job
+  stays pending, and new ones are still queued. Resume clears the setting
+  and wakes the worker, which carries on from where the queue stood.
 
 **A job** (`/assistant/housekeeping/<uuid>`).
 - What it is for, with links to the room, its chunks, the run and the
