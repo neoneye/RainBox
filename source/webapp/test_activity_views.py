@@ -14,6 +14,7 @@ from llm.activity_metrics import MIN_CALIBRATION_CALLS
 from webapp.activity_views import (
     DEFAULT_METRIC,
     _hit_rate_cell,
+    _hit_rate_hover,
     build_chart,
     cache_reading,
     exact,
@@ -277,9 +278,25 @@ class TestCalibratingState:
     """An unjudged model and a model whose cache did nothing are different
     facts, and the page must not render them the same way."""
 
-    def test_an_unjudged_row_reads_as_calibrating(self):
-        cell = _hit_rate_cell({"judged_calls": 0, "hit_rate": None, "calls": 3})
-        assert cell == "calibrating"
+    def test_an_unjudged_row_reads_as_unjudged_and_says_why(self):
+        row = {"judged_calls": 0, "hit_rate": None, "calls": 3, "prompt_tokens": 900}
+        assert _hit_rate_cell(row) == "unjudged"
+        assert "recorded calls" in _hit_rate_hover(row)
+
+    def test_calls_with_nothing_to_judge_from_read_as_a_dash(self):
+        """A decision model reports no prompt tokens. It is not on its way to
+        a hit rate, so the cell does not say it is."""
+        row = {"judged_calls": 0, "hit_rate": None, "calls": 5, "prompt_tokens": 0}
+        assert _hit_rate_cell(row) == "—"
+        assert "no prompt tokens" in _hit_rate_hover(row)
+
+    def test_the_page_does_not_list_such_a_model_as_waiting(self, client, model):
+        add_call(model, prompt_tokens=None, prefill_ms=None,
+                 cached_tokens_estimated=None, cached_tokens_reported=None)
+        body = client.get("/activity?range=24h&by=model").get_data(as_text=True)
+        marker = body.find("Not judged yet")
+        if marker != -1:
+            assert model not in body[marker : marker + 400]
 
     def test_a_genuine_zero_reads_as_zero_percent(self):
         cell = _hit_rate_cell({"judged_calls": 5, "hit_rate": 0.0, "calls": 5})
@@ -292,13 +309,13 @@ class TestCalibratingState:
     def test_the_page_names_the_models_still_calibrating(self, client, model):
         add_call(model, cached_tokens_estimated=None, cached_tokens_reported=None)
         body = client.get("/activity?range=24h").get_data(as_text=True)
-        footnote = body[body.find("Still calibrating"):]
+        footnote = body[body.find("Not judged yet"):]
         assert model in footnote[:400]
 
     def test_a_judged_model_is_not_listed_as_calibrating(self, client, model):
         add_call(model, cached_tokens_estimated=3900)
         body = client.get("/activity?range=24h&by=model").get_data(as_text=True)
-        marker = body.find("Still calibrating")
+        marker = body.find("Not judged yet")
         if marker != -1:
             assert model not in body[marker : marker + 400]
 

@@ -430,11 +430,35 @@ def _bar_title(bucket: dict, metric: str, bucket_seconds: int) -> str:
 # --- Page -------------------------------------------------------------------
 
 
+def _unmeasurable(row: dict) -> bool:
+    """No judged call, and no prompt tokens to judge one from. These calls
+    will never have a hit rate, however many are recorded: a decision model,
+    for one, scores and reports no token counts."""
+    return row["judged_calls"] == 0 and not row.get("prompt_tokens")
+
+
 def _hit_rate_cell(row: dict) -> str:
-    """A model with no judged calls is calibrating, not at zero percent."""
+    """A row with no judged calls is unjudged, not at zero percent. One that
+    cannot be judged at all is a dash."""
+    if _unmeasurable(row):
+        return "—"
     if row["judged_calls"] == 0:
-        return "calibrating"
+        return "unjudged"
     return pct(row["hit_rate"])
+
+
+def _hit_rate_hover(row: dict) -> str:
+    """Why a hit-rate cell holds no number."""
+    if _unmeasurable(row):
+        return ("These calls report no prompt tokens, so there is nothing to "
+                "measure cache use from.")
+    if row["judged_calls"] == 0:
+        return ("Cache use is worked out from how fast a prompt was processed, "
+                "against the model's speed on a prompt it has not seen before. "
+                f"That speed is only known after {MIN_CALIBRATION_CALLS} "
+                "recorded calls of the model. Until then its cache use is left "
+                "unjudged rather than guessed.")
+    return ""
 
 
 def build_context(args: Any, now: datetime) -> dict:
@@ -505,7 +529,8 @@ def build_context(args: Any, now: datetime) -> dict:
             c.cached_tokens_reported is not None for c in recent
         ),
         "calibrating": [
-            r["key"] for r in by_model if r["judged_calls"] == 0 and r["calls"]
+            r["key"] for r in by_model
+            if r["judged_calls"] == 0 and r["calls"] and not _unmeasurable(r)
         ],
         "min_calibration_calls": MIN_CALIBRATION_CALLS,
         "si": si,
@@ -517,6 +542,7 @@ def build_context(args: Any, now: datetime) -> dict:
         "duration": duration,
         "format_metric": format_metric,
         "hit_rate_cell": _hit_rate_cell,
+        "hit_rate_hover": _hit_rate_hover,
     }
 
 
@@ -834,7 +860,7 @@ ACTIVITY_TEMPLATE = """
         <td class="num">{{ row.calls }}</td>
         <td class="num">{{ format_metric(row[metric], metric_kind)
                            if metric in row else '—' }}</td>
-        <td class="num {{ 'warn' if row.judged_calls == 0 }}">{{ hit_rate_cell(row) }}</td>
+        <td class="num {{ 'warn' if hit_rate_cell(row) == 'unjudged' }}" title="{{ hit_rate_hover(row) }}">{{ hit_rate_cell(row) }}</td>
         <td class="num">{{ pct(row.reusable_rate) }}</td>
         <td class="num" title="{{ exact(row.prompt_tokens, 'tokens') }}">{{ si(row.prompt_tokens) }}</td>
         <td class="num">{{ (row.avg_prefill_tps|round|int ~ ' tok/s')
@@ -846,7 +872,7 @@ ACTIVITY_TEMPLATE = """
     </table>
     {% if calibrating %}
     <p class="note" style="margin-top:0.8rem">
-      Still calibrating: {{ calibrating|join(', ') }}. A model needs
+      Not judged yet: {{ calibrating|join(', ') }}. A model needs
       {{ min_calibration_calls }} recorded calls before its cold prefill rate
       means anything, and until then its cache use is left unjudged rather than
       guessed.
@@ -874,7 +900,7 @@ ACTIVITY_TEMPLATE = """
       <tr>
         <td class="name">{{ row.key }}</td>
         <td class="num">{{ row.calls }}</td>
-        <td class="num {{ 'warn' if row.judged_calls == 0 }}">{{ hit_rate_cell(row) }}</td>
+        <td class="num {{ 'warn' if hit_rate_cell(row) == 'unjudged' }}" title="{{ hit_rate_hover(row) }}">{{ hit_rate_cell(row) }}</td>
         <td class="num">{{ pct(row.reusable_rate) }}</td>
         <td class="num" title="{{ exact(row.prompt_tokens, 'tokens') }}">{{ si(row.prompt_tokens) }}</td>
         <td class="num" title="{{ exact(row.p50_latency_ms, 'ms') }}">{{ ms(row.p50_latency_ms) }}</td>
