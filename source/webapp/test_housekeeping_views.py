@@ -202,6 +202,9 @@ def test_the_run_page_lists_its_jobs_after_the_turn_and_moves_them_forward(clien
     assert job.bumped_at is not None        # opening the page asked for it first
     other = _run(made)
     assert "After the turn" not in c.get(f"/assistant?id={other.uuid}").get_data(as_text=True)
+    # A job that is done has no line: its call is a step on the timeline.
+    _job(other)
+    assert "After the turn" not in c.get(f"/assistant?id={other.uuid}").get_data(as_text=True)
 
 
 def test_a_chunk_jobs_page_shows_what_the_decision_model_was_asked_and_answered(client):

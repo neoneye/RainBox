@@ -512,9 +512,10 @@ ASSISTANT_TEMPLATE = """
       </div>
       {% endif %}
 
-      {# What housekeeping did for this run once it had ended. Later events,
-         so they sit below the turn's own rows, dated, and never among its
-         steps. Each line opens the job's page. #}
+      {# What housekeeping still owes this run, or failed to do for it. Later
+         events, so they sit below the turn's own rows, dated, and never
+         among its steps. Each line opens the job's page. A job that is done
+         has no line: its call is a step on the timeline. #}
       {% if housekeeping %}
       <div class="card">
         <div class="card-header">
@@ -1476,7 +1477,8 @@ def assistant_page() -> str:
             # Someone is looking for this run's summary now, so its job goes
             # to the front of the queue.
             db.bump_run_housekeeping(selected.uuid)
-            housekeeping = run_housekeeping_lines(selected.uuid)
+            housekeeping = [h for h in run_housekeeping_lines(selected.uuid)
+                            if h["outcome"] != "done"]
         except Exception:
             # The run's own page must not fail over what came after it.
             db.session.rollback()

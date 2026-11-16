@@ -575,8 +575,10 @@ the `chunks` link beside a room's name in the log.
 - **Summarize the rest**, with the number of chunks it will write.
 
 **A run's page** has an **After the turn** group below its timeline, one line
-per job, each linking to the job's page. The run list says `summary failed`
-for a run whose summary job failed.
+per job that is not done (waiting, running, stopped by a new message, or
+failed), each linking to the job's page. A job that is done has no line: its
+model call is already a step on the timeline. The run list says
+`summary failed` for a run whose summary job failed.
 
 **Staying current.** The housekeeping pages poll
 `/assistant/housekeeping/api/revision` every 2 seconds and reload their own
