@@ -137,12 +137,17 @@ def test_a_job_page_shows_each_attempt_with_its_prompt_and_reply(client):
     body = c.get(f"/assistant/housekeeping/{job.uuid}").get_data(as_text=True)
     assert "Attempt 1" in body and "killed: turn" in body
     assert "Attempt 2" in body and "You summarize a run." in body
+    # The timeline has a row for each attempt and one for the model call,
+    # and the page opens on the call.
+    rows = re.findall(r'<button type="button" class="wf-row( on)?" data-key="(.)[^"]*"', body)
+    assert rows == [("", "a"), ("", "a"), (" on", "c")]
+    assert f'<div class="ev-pane on" data-key="c{call.uuid}">' in body
+    assert body.count('class="ev-pane') == 3
     assert "Run status: finished" in body and "resolved" in body
     assert f"/activity/call/{call.uuid}" in body
-    # The attempt carries its call's figures on a line under its header, as
-    # a call's meta line reads on /assistant.
-    header = body[body.index("Attempt 2"):]
-    assert "ev-kpis" not in header[:header.index('<div class="bd tb-scope">')]
+    # The call carries its figures on a line under its header, as a call's
+    # meta line reads on /assistant.
+    header = body[body.index(f'data-key="c{call.uuid}">'):]
     # Each prompt is a collapsed block with its character count, and every
     # block can be copied. The reply is JSON, so it has the raw | pretty
     # switch.
@@ -276,15 +281,19 @@ def test_a_chunk_jobs_page_shows_what_the_decision_model_was_asked_and_answered(
             record({"request": "gone", "reply": "gone", "next_message": "gone"}, 0.12)]
     try:
         body = c.get(f"/assistant/housekeeping/{job.uuid}").get_data(as_text=True)
-        assert "Identify duplicates" in body and "3 model calls" in body
+        assert body.count("<b>Identify duplicates</b>") == 3
+        # Each request has a row of its own on the timeline, named by the
+        # message it is about.
+        assert body.count('<span class="wf-name kind-decision">duplicate') == 3
+        assert '<span class="wf-name kind-decision">duplicate m2</span>' in body
+        for r in rows:
+            assert f'class="wf-row" data-key="d{r.uuid}"' in body
+            assert f'<div class="ev-pane" data-key="d{r.uuid}">' in body
         # A message past the chunk's range says so, and only that one.
         assert body.count(">after the chunk</span>") == 1
-        # In the order things happened: the decision model is asked before
-        # the attempt's own model call.
-        assert body.index('id="decisions"') < body.index("<h3>Attempt 1</h3>")
         # A request that reached the model links to its row on /activity. One
         # recorded without such a row has no link.
-        card = body[body.index('id="decisions"'):body.index("<h3>Attempt 1</h3>")]
+        card = body[body.index("<h3>Inspect</h3>"):]
         assert card.count('href="/activity/call/') == 1
         assert f'href="/activity/call/{on_activity}"' in card
         # A call shows what its page on /activity shows: each message that
@@ -489,12 +498,17 @@ def test_a_chunk_attempt_lists_every_model_call_it_made_in_order(client):
     made["calls"] += [call.uuid for call in calls]
     try:
         body = c.get(f"/assistant/housekeeping/{job.uuid}").get_data(as_text=True)
-        assert "<span>3 model calls</span>" in body
+        # Each call has a row of its own on the timeline, in the order the
+        # calls were made, and a pane under it.
+        names = re.findall(r'<span class="wf-name kind-[a-z]+">([^<]*)</span>', body)
+        assert names == ["attempt 1", "summary", "check", "summary", "model call"]
         places = [body.index(text) for text in (
-            "<b>Call 1: summary</b>", "reply of call 1",
-            "<b>Call 2: check</b>", "reply of call 2",
-            "<b>Call 3: summary</b>", "reply of call 3")]
+            "<span>call 1 of 3</span>", "reply of call 1",
+            "<span>call 2 of 3</span>", "reply of call 2",
+            "<span>call 3 of 3</span>", "reply of call 3")]
         assert places == sorted(places)
+        # A bar is where its call was in the attempt, and as wide as it took.
+        assert 'class="wf-bar kind-llm" style="left:' in body
         for call in calls:
             assert f'href="/activity/call/{call.uuid}"' in body
         # Each call's prompts fold under a key of their own.

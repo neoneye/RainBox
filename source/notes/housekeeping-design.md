@@ -365,8 +365,8 @@ true or false:
 - **A check or a rewrite that no model delivers** leaves the answer there
   is, and the row's `audit.error` says which of the two it was.
 - **The check has its own caller label**, `assistant.room_auditor`. The
-  job's page shows the attempt's newest call by the summarizer's label,
-  which is the summary that was kept. The checks are on `/activity`.
+  job's page shows each check as a row of its timeline, as it does each
+  summary.
 
 **Why questions per part, and not a score.** Tried on 14 chunks of one
 room, on gemma4:e4b-mlx:
@@ -564,26 +564,35 @@ attempt's `llm_call` row: for a chunk, the summary that was kept.
 - What it is for, with links to the room, its chunks, the run and the
   request. Its heading says on hover what that kind of job does and where
   its result is read.
-- Every attempt in order, and how it ended. Inside it, every model call the
-  attempt made, oldest first (`db.housekeeping_attempt_calls`): a link to
-  the call on `/activity`, the call's figures as a call's meta line reads
-  on `/assistant` (model, tokens in and out, cached, prefill, decode,
-  throughput, duration), its prompts, and its reply. A chunk's attempt
-  makes two to four calls, each under a line that names it: `Call 1:
-  summary`, `Call 2: check`, and a second of each when the check had the
-  summary written again. An attempt with one call shows it without that
-  line. A running attempt shows the reply so far of the call in progress.
+- A timeline, as the one at the top of a run's page on `/assistant`: one
+  row for each thing that happened, in the order they began, with a bar
+  where it took time. The rows are each attempt (a mark at its start: its
+  time is on the timeline as the calls it made), each request to the
+  decision model (`duplicate m<n>`, after the message it is about), each
+  model call the attempt made (`db.housekeeping_attempt_calls`), named
+  `summary` or `check`, and the call still running. A chunk's attempt makes
+  two to four model calls: a second summary and check when the check had
+  the summary written again.
+- Under the timeline, the row that is selected, in full. A click on a row
+  selects it, and the address then names it (`#ev-<key>`), so a row can be
+  linked to. The selection holds across the page's live reload. The page
+  opens on the call still running, else on the first model call.
+  - An attempt: how it ended, when it began, and its error.
+  - A model call: a link to the call on `/activity`, the call's figures as
+    a call's meta line reads on `/assistant` (model, tokens in and out,
+    cached, prefill, decode, throughput, duration), its prompts, and its
+    reply.
+  - A request to the decision model: the verdict, and what its row on
+    `/activity` shows.
+  - The call still running: its reply so far.
 - A prompt and a reply are the text blocks a pane on `/assistant` is made
   of (`webapp/text_blocks.py`): a prompt is folded under its character
   count, every block has a copy button, a long one is cut to a few lines
   with a toggle, and a reply that is JSON has the raw and pretty switch.
-- The sections are in the order things happened. A chunk job asks the
-  decision model at the start of an attempt, before its own model call, so
-  an attempt's requests to the decision model are a card above that
-  attempt's card. The card is titled "Identify duplicates", after what
-  the requests are for. A chunk's last request is compared with the next
-  message from the human, which lies after the chunk's range; that row is
-  marked "after the chunk".
+- A chunk job asks the decision model at the start of an attempt, before
+  its own model call. A chunk's last request is compared with the next
+  message from the human, which lies after the chunk's range; that request
+  is marked "after the chunk".
 - For a final failure, an Enqueue again button.
 
 **A room's chunks** (`/assistant/housekeeping/room/<uuid>`), reached from

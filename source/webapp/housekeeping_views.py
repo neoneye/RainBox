@@ -11,7 +11,7 @@ Design: notes/housekeeping-design.md.
 """
 import html
 import itertools
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from flask import Response, abort, jsonify, redirect, render_template_string, request
@@ -257,6 +257,95 @@ def _decision_calls(job) -> list[dict]:
              "blocks": blocks(r)} for r in rows]
 
 
+#: A bar this narrow would be invisible, and a call of a fraction of a
+#: second still has to be clickable. The figure /assistant uses.
+_MIN_BAR_PCT: float = 0.6
+
+
+def _timeline(attempts: list[dict], now: datetime) -> list[dict]:
+    """A job's page as the rows of its timeline, in the order things began:
+    each attempt, each request to the decision model, each model call, and
+    the call still running when there is one.
+
+    A row is `{key, kind, label, description, attempt_no, attempt, decision,
+    call, failed, offset_pct, width_pct, seconds, clock, selected}`. `kind`
+    is `attempt`, `decision`, `llm` or `live`. `key` names the row across a
+    live reload: the uuid of what it shows. The offset and the width are
+    percentages of the time from the first row's start to the last row's
+    end. An attempt has no bar: its time is on the timeline as the calls it
+    made, so it is a mark at its start. One row is `selected`, the one the
+    page opens on: the call still running, else the first model call, else
+    the first row."""
+    rows: list[dict] = []
+    for n, a in enumerate(attempts, 1):
+        row = a["row"]
+        result = row.result or ""
+        mine: list[dict] = [{
+            "key": f"a{row.uuid}", "kind": "attempt", "label": f"attempt {n}",
+            "description": result or "running", "start": row.started_at,
+            "duration_ms": None,
+            "failed": bool(row.error) or not (
+                result in ("", "done", "skipped") or result.startswith("killed"))}]
+        for d in a.get("decisions", ()):
+            r = d["row"]
+            elapsed = r.elapsed_ms or 0
+            state = d["state"]
+            mine.append({
+                "key": f"d{r.uuid}", "kind": "decision",
+                "label": f"duplicate m{state['message']}" if state else "duplicate",
+                "description": (f"{d['verdict']['text']} {d['verdict']['p']:.2f}"
+                                if d["verdict"] else "no answer"),
+                # The row is written when the answer is in.
+                "start": r.created_at - timedelta(milliseconds=elapsed),
+                "duration_ms": r.elapsed_ms, "failed": d["verdict"] is None,
+                "decision": d})
+        for c in a.get("calls", ()):
+            call = c["call"]
+            mine.append({
+                "key": f"c{call.uuid}", "kind": "llm", "label": c["kind"],
+                "description": call.model or "", "start": call.started_at,
+                "duration_ms": call.total_ms, "failed": call.ok is False, "call": c})
+        if not row.result:
+            # It began when the last thing before it ended.
+            ends = [m["start"] + timedelta(milliseconds=m["duration_ms"] or 0)
+                    for m in mine if m["start"]]
+            began = max(ends) if ends else row.started_at
+            mine.append({
+                "key": f"l{row.uuid}", "kind": "live", "label": "model call",
+                "description": "running", "start": began,
+                "duration_ms": (max(0, int((now - began).total_seconds() * 1000))
+                                if began else None),
+                "failed": False})
+        for m in mine:
+            m.update(attempt_no=n, attempt=a)
+        rows += mine
+    # A stable sort: rows with the same start keep the order they were made in.
+    rows.sort(key=lambda m: (m["start"] is None, m["start"] or now))
+    starts = [m["start"] for m in rows if m["start"]]
+    span, first = 0.0, None
+    if starts:
+        first = min(starts)
+        last = max(m["start"] + timedelta(milliseconds=m["duration_ms"] or 0)
+                   for m in rows if m["start"])
+        span = (last - first).total_seconds()
+    for m in rows:
+        m["offset_pct"] = m["width_pct"] = None
+        if m["start"] and first is not None and span > 0:
+            m["offset_pct"] = round((m["start"] - first).total_seconds() / span * 100, 3)
+            if m["duration_ms"]:
+                m["width_pct"] = round(
+                    max(m["duration_ms"] / 1000 / span * 100, _MIN_BAR_PCT), 3)
+        m["seconds"] = (f"{m['duration_ms'] / 1000:.1f}s"
+                        if m["duration_ms"] is not None else "—")
+        m["clock"] = m["start"].strftime("%H:%M:%S") if m["start"] else "—"
+        m["selected"] = False
+    if rows:
+        pick = ([m for m in rows if m["kind"] == "live"]
+                or [m for m in rows if m["kind"] == "llm"] or rows)
+        pick[0]["selected"] = True
+    return rows
+
+
 def _signal_texts(signals: dict | None) -> list[str]:
     """A part's records as short labels: runs by outcome, replies that did
     not meet their criteria, revisions, votes. Only what is non-zero."""
@@ -377,6 +466,36 @@ _STYLE = """
   .hk-pill.hk-cal-uncontested{color:#4b5563;background:#f3f4f6}
   .hk-pill.hk-cal-overconfident{color:#b91c1c;background:#fee2e2}
   .hk-pill.hk-cal-underconfident{color:#92400e;background:#fef3c7}
+  /* The timeline /assistant draws: one row per thing that happened, a bar
+     where it took time. A row is a button, because it selects the pane
+     below and does not navigate. */
+  .hk-card .wf{display:flex;flex-direction:column}
+  .hk-card .wf-row{display:grid;grid-template-columns:14rem 1fr 4rem;gap:0.8rem;
+    align-items:center;color:inherit;padding:3px 4px;border-radius:4px;width:100%;
+    text-align:left;background:none;border:0;font:inherit;cursor:pointer}
+  .hk-card .wf-row:hover{background:#f3f4f6}
+  .hk-card .wf-row.on{background:#eef4ff}
+  .hk-card .wf-name{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:0.76rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .hk-card .wf-row.on .wf-name{font-weight:600}
+  .hk-card .wf-name.is-failed{color:#c0392b}
+  .hk-card .wf-name.kind-live{color:#1d4ed8;font-weight:600}
+  .hk-card .wf-track{position:relative;height:0.85rem;background:#f1f3f5;
+    border-radius:3px;overflow:hidden}
+  .hk-card .wf-bar{position:absolute;top:0;bottom:0;border-radius:3px;background:#98a2b3}
+  .hk-card .wf-bar.is-failed{background:#e8746f}
+  .hk-card .wf-bar.kind-live{
+    background:repeating-linear-gradient(45deg,#93b4f5,#93b4f5 5px,#c7d9fb 5px,#c7d9fb 10px);
+    background-size:14.2px 14.2px;animation:hk-crawl 0.9s linear infinite}
+  @keyframes hk-crawl{to{background-position:14.2px 0}}
+  @media (prefers-reduced-motion: reduce){.hk-card .wf-bar.kind-live{animation:none}}
+  .hk-card .wf-tick{position:absolute;top:0;bottom:0;width:2px;background:#9aa3af}
+  .hk-card .wf-tick.is-failed{background:#e8746f}
+  .hk-card .wf-undated{position:absolute;left:4px;font-size:0.68rem;color:#98a2b3}
+  .hk-card .wf-secs{font-size:0.76rem;color:#667085;text-align:right;
+    font-variant-numeric:tabular-nums}
+  .hk-card .ev-pane{display:none}
+  .hk-card .ev-pane.on{display:block}
   .hk-btn{padding:7px 14px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;
     font:inherit;font-size:0.86rem;cursor:pointer;color:#374151}
   .hk-btn:hover{border-color:#9aa3af;color:#1a1a2e}
@@ -387,7 +506,8 @@ _STYLE = """
 # whose content is narrower than the whole log names its own revision in
 # `data-revision-url`, so it is not reloaded for changes it does not show. Open
 # <details> blocks are remembered by id across the swap, so reading a prompt
-# is not interrupted by a line being added elsewhere. No backslashes: this
+# is not interrupted by a line being added elsewhere. On a job's page it also
+# selects: a click on a row of the timeline shows that row's pane. No backslashes: this
 # string is not raw, and Python would interpret them before the browser does.
 _LIVE_SCRIPT = """
 <script>
@@ -415,9 +535,46 @@ _LIVE_SCRIPT = """
       box.querySelectorAll('details').forEach(function (d) {
         if (keep.indexOf(nameOf(d)) !== -1) { d.open = true; }
       });
+      select(picked);
       if (window.tbApply) { window.tbApply(box); }
       seen = rev;
     });
+  }
+  // The timeline's rows and the panes under it are the same things, each
+  // named by a key. The row a reader picked stays picked across a reload,
+  // and is in the address as #ev-<key>, so it can be linked to. With no
+  // pick, or one that is gone, the page's own choice stands.
+  var picked = '';
+  function select(key) {
+    if (!key) { return; }
+    var row = null;
+    box.querySelectorAll('.wf-row').forEach(function (r) {
+      if (r.getAttribute('data-key') === key) { row = r; }
+    });
+    if (!row) { return; }
+    box.querySelectorAll('.wf-row').forEach(function (r) {
+      r.classList.toggle('on', r === row);
+    });
+    box.querySelectorAll('.ev-pane').forEach(function (p) {
+      p.classList.toggle('on', p.getAttribute('data-key') === key);
+    });
+    var label = document.getElementById('hk-crumb-label');
+    var desc = document.getElementById('hk-crumb-desc');
+    if (label) { label.textContent = row.getAttribute('data-label') || ''; }
+    if (desc) { desc.textContent = row.getAttribute('data-desc') || ''; }
+    // A block is measured only while it is shown.
+    if (window.tbApply) { window.tbApply(box); }
+  }
+  box.addEventListener('click', function (e) {
+    var row = e.target.closest('.wf-row');
+    if (!row) { return; }
+    picked = row.getAttribute('data-key');
+    select(picked);
+    try { history.replaceState(null, '', '#ev-' + picked); } catch (err) {}
+  });
+  if (window.location.hash.indexOf('#ev-') === 0) {
+    picked = window.location.hash.slice(4);
+    select(picked);
   }
   function tick() {
     if (busy) { return; }
@@ -575,28 +732,77 @@ _JOB_FRAGMENT = """
   </div>
 </div>
 
-{% for a in attempts %}
-{% set attempt_no = loop.index %}{% set attempt_first = loop.first %}
-{% if a.decisions %}
-{% set decisions = a.decisions %}
-<div class="hk-card" {% if attempt_first %}id="decisions"{% endif %}>
+{% if timeline %}
+<div class="hk-card">
+  <div class="hd"><h3>Timeline</h3></div>
+  <div class="bd">
+    <div class="wf">
+      {% for e in timeline %}
+      <button type="button" class="wf-row{% if e.selected %} on{% endif %}" data-key="{{ e.key }}"
+              data-label="{{ e.label }}" data-desc="{{ e.description }}"
+              title="{{ e.label }}: {{ e.seconds }} at {{ e.clock }}">
+        <span class="wf-name kind-{{ e.kind }}{% if e.failed %} is-failed{% endif %}">{{ e.label }}</span>
+        <span class="wf-track">
+          {% if e.width_pct is not none %}
+          <span class="wf-bar kind-{{ e.kind }}{% if e.failed %} is-failed{% endif %}" style="left:{{ e.offset_pct }}%;width:{{ e.width_pct }}%"></span>
+          {% elif e.offset_pct is not none %}
+          <span class="wf-tick{% if e.failed %} is-failed{% endif %}" style="left:{{ e.offset_pct }}%"></span>
+          {% else %}
+          <span class="wf-undated">not timed</span>
+          {% endif %}
+        </span>
+        <span class="wf-secs">{{ e.seconds }}</span>
+      </button>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+{% set shown = timeline|selectattr('selected')|first %}
+<div class="hk-card">
   <div class="hd">
-    <h3>Identify duplicates</h3>
-    <span class="hk-mono">{{ when(decisions[0].row.created_at) }}</span>
-    <span>{{ decisions|length }} model call{{ '' if decisions|length == 1 else 's' }}{% if attempts|length > 1 %}, in attempt {{ attempt_no }}{% endif %}</span>
+    <h3>Inspect</h3>
+    <span class="hk-mono" id="hk-crumb-label">{{ shown.label }}</span>
+    <span id="hk-crumb-desc">{{ shown.description }}</span>
   </div>
   <div class="bd tb-scope">
-    {% for d in decisions %}
-    {% set answer = (d.row.answers or [{}])[0] %}
-    <details class="hk-text" id="d{{ d.row.uuid }}">
-      <summary>
+    {% for e in timeline %}
+    {% set a = e.attempt %}
+    <div class="ev-pane{% if e.selected %} on{% endif %}" data-key="{{ e.key }}">
+      {% if e.kind == 'attempt' %}
+      <div class="hk-call">
+        <b>Attempt {{ e.attempt_no }}</b>
+        {% if a.row.result == 'done' %}
+        {% elif a.row.result %}<span class="hk-pill {{ 'killed' if a.row.result.startswith('killed') else ('done' if a.row.result == 'skipped' else 'failed') }}">{{ a.row.result }}</span>
+        {% else %}<span class="hk-pill running">running for {{ elapsed(a.row.started_at) }}</span>{% endif %}
+        <span class="hk-mono">{{ when(a.row.started_at) }}</span>
+        {% if a.row.model and not a.calls %}<span>{{ a.row.model }}</span>{% endif %}
+        {% if a.row.model_ms %}<span class="hk-num">{{ seconds(a.row.model_ms) }}</span>{% endif %}
+      </div>
+      {% if a.row.error %}<p class="hk-err">{{ a.row.error }}</p>{% endif %}
+      <p class="hk-lede" style="margin:8px 0 0">
+        {% if a.calls or a.decisions %}
+        This attempt made {{ a.decisions|length + a.calls|length }} model call{{ '' if a.decisions|length + a.calls|length == 1 else 's' }}{% if a.decisions %}, {{ a.decisions|length }} of them to identify duplicates{% endif %}. Each has a row of its own on the timeline.
+        {% elif a.row.result %}
+        This attempt made no model call.
+        {% else %}
+        This attempt has made no model call yet.
+        {% endif %}
+      </p>
+      {% if a.so_far and a.row.result %}{{ a.so_far }}{% endif %}
+
+      {% elif e.kind == 'decision' %}
+      {% set d = e.decision %}
+      {% set answer = (d.row.answers or [{}])[0] %}
+      <div class="hk-call">
+        <b>Identify duplicates</b>
         {% if d.state %}<span class="hk-mono">m{{ d.state.message }}</span>{% if d.state.after_chunk %} <span class="hk-pill" title="This message comes after the chunk's last message. The chunk's last request is compared with the next message from you, so a request asked again across the edge of a chunk is seen.">after the chunk</span>{% endif %}{% endif %}
         {% if d.verdict %}<span class="hk-pill {{ 'done' if d.verdict.yes else '' }}">{{ d.verdict.text }}</span> <span class="hk-mono">{{ '%.2f'|format(d.verdict.p) }}</span>
         {% else %}<span class="hk-pill failed">no answer: {{ answer.reason or d.row.reason }}</span>{% endif %}
-        {% if d.state %} <span style="text-transform:none;letter-spacing:0;font-weight:400">{{ d.state.next_message|truncate(70) }}</span>{% endif %}
+        <span class="hk-mono">{{ when(d.row.created_at) }}</span>
         {% if d.row.elapsed_ms is not none %}<span class="hk-num">{{ d.row.elapsed_ms }} ms</span>{% endif %}
-        {% if d.row.llm_call_uuid %}<a class="hk-back" style="float:right;text-transform:none;letter-spacing:0;font-weight:400" href="/activity/call/{{ d.row.llm_call_uuid }}" title="Open this request on the Activity page. It shows the input and the question as they were sent to the decision model, and the reply as it came back.">activity</a>{% endif %}
-      </summary>
+        {% if d.row.llm_call_uuid %}<a class="hk-back" style="margin-left:auto" href="/activity/call/{{ d.row.llm_call_uuid }}" title="Open this request on the Activity page. It shows the input and the question as they were sent to the decision model, and the reply as it came back.">activity</a>{% endif %}
+      </div>
       {% if d.blocks %}
       {{ d.blocks }}
       {% elif d.state %}
@@ -605,57 +811,36 @@ _JOB_FRAGMENT = """
       {% else %}
       <p class="hk-lede" style="margin:4px 0 8px">This call has no row on the Activity page, so what was sent and what came back are not kept (digest <span class="hk-mono">{{ d.row.state_digest[:12] }}</span>).</p>
       {% endif %}
-    </details>
-    {% endfor %}
-  </div>
-</div>
-{% endif %}
-<div class="hk-card">
-  <div class="hd">
-    <h3>Attempt {{ attempt_no }}</h3>
-    {% if a.row.result == 'done' %}
-    {% elif a.row.result %}
-      <span class="hk-pill {{ 'killed' if a.row.result.startswith('killed') else ('done' if a.row.result in ('done', 'skipped') else 'failed') }}">{{ a.row.result }}</span>
-    {% else %}
-      <span class="hk-pill running">running for {{ elapsed(a.row.started_at) }}</span>
-    {% endif %}
-    <span class="hk-mono">{{ when(a.row.started_at) }}</span>
-    {% if not a.calls %}
-    {% if a.row.model %}<span>{{ a.row.model }}</span>{% endif %}
-    {% if a.row.model_ms %}<span class="hk-num">{{ seconds(a.row.model_ms) }}</span>{% endif %}
-    {% elif a.calls|length > 1 %}
-    <span>{{ a.calls|length }} model calls</span>
-    {% if a.row.model_ms %}<span class="hk-num">{{ seconds(a.row.model_ms) }}</span>{% endif %}
-    {% endif %}
-    {% if a.calls|length == 1 %}<a class="hk-back" style="margin-left:auto" href="/activity/call/{{ a.calls[0].call.uuid }}" title="{{ activity_hint }}">activity</a>{% endif %}
-  </div>
-  <div class="bd tb-scope">
-    {% if a.row.error %}<p class="hk-err">{{ a.row.error }}</p>{% endif %}
-    {% for c in a.calls %}
-    {% if a.calls|length > 1 %}
-    <div class="hk-call">
-      <b>Call {{ c.n }}: {{ c.kind }}</b>
-      <span class="hk-mono">{{ when(c.call.started_at) }}</span>
-      <a class="hk-back" style="margin-left:auto" href="/activity/call/{{ c.call.uuid }}" title="{{ activity_hint }}">activity</a>
+
+      {% elif e.kind == 'llm' %}
+      {% set c = e.call %}
+      <div class="hk-call">
+        <b>{{ c.kind|capitalize }}</b>
+        <span class="hk-mono">{{ when(c.call.started_at) }}</span>
+        {% if a.calls|length > 1 %}<span>call {{ c.n }} of {{ a.calls|length }}</span>{% endif %}
+        <a class="hk-back" style="margin-left:auto" href="/activity/call/{{ c.call.uuid }}" title="{{ activity_hint }}">activity</a>
+      </div>
+      <div class="ev-kpis">{% for f in c.kpis %}<span class="ev-kpi" title="{{ f.title }}">{% if f.href %}<a href="{{ f.href }}">{{ f.html }}</a>{% else %}{{ f.html }}{% endif %}</span>{% endfor %}</div>
+      {{ c.prompts }}
+      {{ c.reply }}
+
+      {% else %}
+      <div class="hk-call">
+        <b>Model call</b>
+        <span class="hk-pill running">running for {{ elapsed(a.row.started_at) }}</span>
+        {% if a.row.model %}<span>{{ a.row.model }}</span>{% endif %}
+      </div>
+      {% if a.so_far %}{{ a.so_far }}
+      {% else %}<p class="hk-lede" style="margin:8px 0 0">Waiting for the model's first words.</p>{% endif %}
+      {% endif %}
     </div>
-    {% endif %}
-    <div class="ev-kpis">{% for f in c.kpis %}<span class="ev-kpi" title="{{ f.title }}">{% if f.href %}<a href="{{ f.href }}">{{ f.html }}</a>{% else %}{{ f.html }}{% endif %}</span>{% endfor %}</div>
-    {{ c.prompts }}
-    {{ c.reply }}
     {% endfor %}
-    {% if a.so_far %}
-      {{ a.so_far }}
-    {% elif not a.row.result %}
-      <p class="hk-lede" style="margin:8px 0 0">Waiting for the model's first words.</p>
-    {% elif not a.calls and not a.row.error %}
-      <p class="hk-lede" style="margin:8px 0 0">This attempt made no model call.</p>
-    {% endif %}
   </div>
 </div>
 {% else %}
 <div class="hk-empty"><div class="t">Not started yet</div>
   <div class="s">The job is waiting for its turn in the queue.</div></div>
-{% endfor %}
+{% endif %}
 
 """
 
@@ -760,7 +945,7 @@ def housekeeping_job_page(job_uuid: UUID) -> str:
         claimed.update(c.uuid for c in calls)
         attempt.update(_attempt_calls(job, attempt["row"], calls))
     # The decision model is asked at the start of an attempt, before its
-    # model call, so each attempt's requests are drawn above its card.
+    # model call.
     decisions = _decision_calls(job)
     for i, attempt in enumerate(attempts):
         until = attempts[i + 1]["row"].started_at if i + 1 < len(attempts) else None
@@ -770,7 +955,7 @@ def housekeeping_job_page(job_uuid: UUID) -> str:
             and (until is None or d["row"].created_at < until)]
     run = db.get_assistant_run(job.run_uuid) if job.run_uuid else None
     ctx = dict(
-        job=job, attempts=attempts,
+        job=job, attempts=attempts, timeline=_timeline(attempts, datetime.now(UTC)),
         activity_hint="Open this model call on the Activity page. It shows "
                       "everything that was sent to the model, message by "
                       "message, and the full reply.",
