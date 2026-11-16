@@ -294,6 +294,42 @@ SETTINGS: dict[str, Setting] = {
 }
 
 
+def _validate_chunk_size(value: object) -> None:
+    if not isinstance(value, int) or isinstance(value, bool) or not 2 <= value <= 100:
+        raise ValueError(f"must be an integer from 2 to 100 (got {value!r})")
+
+
+def _validate_chunk_overlap(value: object) -> None:
+    if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= 20:
+        raise ValueError(f"must be an integer from 0 to 20 (got {value!r})")
+
+
+SETTINGS.update({
+    "housekeeping.room_summaries": Setting(
+        "housekeeping.room_summaries", None, "bool", True,
+        description="After a turn, summarize the room's messages in chunks "
+                    "with a local model (the assistant.room_summarizer "
+                    "slot). The summaries are shown on the Housekeeping "
+                    "page and reach no prompt.",
+    ),
+    "housekeeping.room_chunk_size": Setting(
+        "housekeeping.room_chunk_size", None, "int", 10,
+        validate=_validate_chunk_size,
+        description="Messages per chunk when a room is summarized. A new "
+                    "value starts a new series of chunks from the room's "
+                    "first message; the earlier series stays readable.",
+    ),
+    "housekeeping.room_chunk_overlap": Setting(
+        "housekeeping.room_chunk_overlap", None, "int", 2,
+        validate=_validate_chunk_overlap,
+        description="Messages of context the model reads before and after "
+                    "each chunk, so it can tell where a subject began or "
+                    "continues. They are not summarized. A new value starts "
+                    "a new series.",
+    ),
+})
+
+
 def _validate_positive_int(value: object) -> None:
     if not isinstance(value, int) or isinstance(value, bool) or value < 1:
         raise ValueError(f"must be a positive integer (got {value!r})")

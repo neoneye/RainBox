@@ -673,7 +673,8 @@ def record_direct_call(
     exc: BaseException | None = None,
     error: str | None = None,
     model_uuid: UUID | None = None,
-) -> None:
+    uuid: UUID | None = None,
+) -> bool:
     """Record one call that went to a provider without LlamaIndex.
 
     The demo pages that send audio and images (/demo_stt_gemma4,
@@ -690,12 +691,16 @@ def record_direct_call(
     cannot be hashed into a text prefix, and its prefill time includes the
     media encoder, which says nothing about the cache.
 
+    `uuid` names the row, for a caller that keeps a reference to it. The
+    return says whether a row was handed to the sink, so that reference is
+    kept only when there is something for it to name.
+
     A no-op before `install_activity_recorder`, and total like the rest of
     this module: a telemetry bug must not fail the demo request.
     """
     recorder = _installed
     if recorder is None:
-        return
+        return False
     try:
         _derived, origin = call_origin()
         failed = exc is not None or error is not None
@@ -720,10 +725,13 @@ def record_direct_call(
             "messages": messages,
             "response_text": response or None,
         }
+        if uuid is not None:
+            row["uuid"] = uuid
     except Exception:
         recorder._warn_once("could not build the activity row for a direct call")
-        return
+        return False
     recorder._emit(row)
+    return True
 
 
 # Frames from these package roots are plumbing, not a call site. The recorder
@@ -731,6 +739,7 @@ def record_direct_call(
 # back to the instrumentation that recorded it.
 _PLUMBING_PREFIXES: tuple[str, ...] = (
     "llm.activity",
+    "llm.systemone",
     "llama_index",
     "llama_index_instrumentation",
     "workflows",

@@ -17,7 +17,6 @@ from sqlalchemy.exc import IntegrityError
 
 import db
 from agents.config import (
-    ASSISTANT_RUN_SUMMARIZER_UUID,
     ASSISTANT_UUID,
     ASSISTANT_WORKING_NOTICE,
     CHAT_STRUCTURED_UUID,
@@ -886,11 +885,12 @@ def redirect_assistant_run(run_uuid: UUID) -> Response | tuple[Response, int]:
 
 @app.route("/chat/api/assistant/runs/<uuid:run_uuid>/resummarize", methods=["POST"])
 def resummarize_assistant_run(run_uuid: UUID) -> Response:
-    """Re-run the summarizer for a completed run — same enqueue the assistant does
-    at a terminal state — so the operator can regenerate a stale or missing digest."""
-    if db.get_assistant_run(run_uuid) is None:
+    """Re-run the summarizer for a completed run, through housekeeping as at a
+    terminal state, so the operator can regenerate a stale or missing digest."""
+    run = db.get_assistant_run(run_uuid)
+    if run is None:
         abort(404, "assistant run not found")
-    db.enqueue(ASSISTANT_RUN_SUMMARIZER_UUID, {"run_uuid": str(run_uuid)})
+    db.request_run_housekeeping(run_uuid, room_uuid=run.room_uuid, force=True)
     return jsonify({"ok": True, "text": "Summary refresh queued."})
 
 

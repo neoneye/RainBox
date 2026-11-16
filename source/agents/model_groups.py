@@ -473,6 +473,7 @@ def assistant_slot_uuids() -> list[UUID]:
         ASSISTANT_REPLY_AUDIT_UUID,
         ASSISTANT_REQUEST_SUMMARY_UUID,
         ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID,
+        ASSISTANT_ROOM_SUMMARIZER_UUID,
         ASSISTANT_RUN_SUMMARIZER_UUID,
         ASSISTANT_SECOND_OPINION_UUID,
     )
@@ -481,7 +482,7 @@ def assistant_slot_uuids() -> list[UUID]:
             ASSISTANT_REQUEST_SUMMARY_UUID, ASSISTANT_MEMORY_FILTER_UUID,
             ASSISTANT_SECOND_OPINION_UUID, ASSISTANT_REPLY_AUDIT_UUID,
             ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID, ASSISTANT_RUN_SUMMARIZER_UUID,
-            ASSISTANT_PYTHON_PROGRAM_UUID]
+            ASSISTANT_PYTHON_PROGRAM_UUID, ASSISTANT_ROOM_SUMMARIZER_UUID]
 
 
 def model_base_url(member_uuid: UUID) -> str | None:
@@ -517,4 +518,27 @@ def assistant_models_all_local() -> tuple[bool, str | None]:
             url = model_base_url(member)
             if url is None or not is_loopback_url(url):
                 return False, role_name(slot) or str(slot)
+    # The decision slots read the same messages.
+    for slot in decision_slot_uuids():
+        for member in decision_slot_member_uuids(slot):
+            url = model_base_url(member)
+            if url is None or not is_loopback_url(url):
+                return False, role_name(slot) or str(slot)
     return True, None
+
+
+def decision_slot_uuids() -> list[UUID]:
+    """The slots bound to a decision model (llm/systemone.py)."""
+    from agents.config import ASSISTANT_REPEAT_CHECK_UUID
+
+    return [ASSISTANT_REPEAT_CHECK_UUID]
+
+
+def decision_slot_member_uuids(slot_uuid: UUID) -> list[UUID]:
+    """The members of the group a decision slot is bound to, or none. No
+    fallback to `assistant.default`: a generative model cannot answer the
+    decision API."""
+    from agents.config import role_name
+
+    group_uuid, _label = resolve_model_group([(slot_uuid, role_name(slot_uuid) or str(slot_uuid))])
+    return db.get_model_group_member_uuids(group_uuid) if group_uuid else []

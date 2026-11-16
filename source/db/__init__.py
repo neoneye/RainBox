@@ -40,6 +40,8 @@ from db.activity import *  # noqa: F401,F403  re-export llm_call recording + /ac
 from db.benchmark import *  # noqa: F401,F403  re-export benchmark_result recording + retention
 from db.benchmark_vision import *  # noqa: F401,F403  re-export /benchmark_vision trial recording + retention
 from db.assistant_log import *  # noqa: F401,F403  re-export the assistant run read model
+from db.housekeeping import *  # noqa: F401,F403  re-export the after-the-turn job queue and its record
+from db.decisions import *  # noqa: F401,F403  re-export the decision models' call record
 from db.diary import *  # noqa: F401,F403  re-export diary source/publication/retention ops
 
 #: The SQLAlchemy session, re-exported so a caller who has `import db`
@@ -176,6 +178,25 @@ def _add_column_if_missing(table: str, column: str, ddl: str) -> None:
     if not _column_exists(table, column):
         db.session.execute(
             sa.text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {ddl}"))
+
+
+def _migrate_room_chunk_parts() -> None:
+    """Bring a `room_chunk` table from before parts existed up to date: the
+    chunk's phrase is `summary`, there are `parts` and `audit` columns, and a
+    series is keyed by its prompt version too. Each step runs only when it is needed,
+    so a current database takes no lock."""
+    if _column_exists("room_chunk", "asked") and not _column_exists("room_chunk", "summary"):
+        db.session.execute(sa.text("ALTER TABLE room_chunk RENAME COLUMN asked TO summary"))
+    _add_column_if_missing("room_chunk", "parts", "parts JSONB")
+    _add_column_if_missing("room_chunk", "audit", "audit JSONB")
+    old_key = db.session.execute(sa.text(
+        "SELECT 1 FROM pg_constraint WHERE conname = 'room_chunk_key'")).scalar()
+    if old_key:
+        db.session.execute(sa.text(
+            "ALTER TABLE room_chunk DROP CONSTRAINT room_chunk_key"))
+        db.session.execute(sa.text(
+            "ALTER TABLE room_chunk ADD CONSTRAINT room_chunk_series_key "
+            "UNIQUE (room_uuid, chunk_size, overlap, prompt_version, seq)"))
 
 
 def _backfill_chatroom_positions() -> None:
@@ -461,6 +482,7 @@ def init_db(app: Flask) -> None:
         # call banked, so rollups sum a stored figure instead of re-deriving
         # it from a baseline that moves.
         _add_column_if_missing("llm_call", "saved_ms", "saved_ms INTEGER")
+        _migrate_room_chunk_parts()
         # llm_call gained origin: the file:line that made the call, so an
         # odd-looking row can be traced back to code.
         _add_column_if_missing("llm_call", "origin", "origin TEXT")
@@ -557,6 +579,11 @@ def init_db(app: Flask) -> None:
         _add_column_if_missing(
             "model_group", "reasoning_constraint",
             "reasoning_constraint TEXT NOT NULL DEFAULT 'dont_care'")
+        _add_column_if_missing(
+            "model_group", "systemone_constraint",
+            "systemone_constraint TEXT NOT NULL DEFAULT 'dont_care'")
+        _add_column_if_missing(
+            "model_config", "systemone", "systemone BOOLEAN NOT NULL DEFAULT false")
         has_old_caps = _column_exists("model_group", "requires_function_calling")
         if has_old_caps:
             # One-time backfill: a previously-required capability becomes
@@ -580,6 +607,8 @@ def init_db(app: Flask) -> None:
             db.session.execute(sa.text(
                 "ALTER TABLE model_group DROP COLUMN IF EXISTS requires_structured_output"
             ))
+        _add_column_if_missing("decision_call", "llm_call_uuid",
+                               "llm_call_uuid UUID")
         _add_column_if_missing("assistant_step", "reasoning",
                                "reasoning TEXT")
         _add_column_if_missing("eval_run", "is_baseline",

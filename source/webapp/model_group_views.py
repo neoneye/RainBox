@@ -130,7 +130,7 @@ function capabilityField(key, title, help) {
   const radios = Object.keys(CONSTRAINT_LABELS).map((val, i) =>
     `<label style="margin-right:1em"><input type="radio" name="new-${key}" value="${val}"${i === 0 ? ' checked' : ''}> ${escapeHtml(CONSTRAINT_LABELS[val])}</label>`
   ).join('');
-  return `<div style="margin:0.5em 0">
+  return `<div style="margin:0.5em 0" id="new-${key}-field">
     <div>${escapeHtml(title)}</div>
     <div style="margin:0.2em 0">${radios}</div>
     <small class="muted" style="display:block">${escapeHtml(help)}</small>
@@ -185,6 +185,25 @@ function renderLeft() {
     `<li><a class="new-group" id="new-group-btn">+ new group</a></li>`;
 }
 
+// A SystemOne model's output is always structured: with "Must have"
+// chosen for SystemOne, structured output is set to "Must have" and its
+// radios are greyed out. Any other choice gives them back.
+function syncSystemOne() {
+  const chosen = document.querySelector('input[name="new-systemone"]:checked');
+  const field = document.getElementById('new-struct-field');
+  if (!chosen || !field) return;
+  const locked = chosen.value === 'must_have';
+  field.querySelectorAll('input[name="new-struct"]').forEach(r => {
+    if (locked) r.checked = r.value === 'must_have';
+    r.disabled = locked;
+  });
+  field.style.opacity = locked ? '0.5' : '';
+  field.title = locked ? 'SystemOne models always give structured output' : '';
+}
+document.addEventListener('change', (e) => {
+  if (e.target && e.target.name === 'new-systemone') syncSystemOne();
+});
+
 function renderRight() {
   const root = document.getElementById('group-detail');
   if (creating) {
@@ -193,6 +212,8 @@ function renderRight() {
         <h3>New model group</h3>
         <p><label>Name:<br><input type="text" id="new-name" style="width:60%;padding:0.2em 0.3em"></label></p>
         <p style="margin-bottom:0.2em"><b style="color:#555">Capability constraints</b></p>
+        ${capabilityField('systemone', 'SystemOne',
+            'Whether members must be SystemOne (decision) models, such as d1 and d3. They score typed questions and generate no text, so a SystemOne group is for decision slots only. Their output is always structured, so that choice is fixed below.')}
         ${capabilityField('fc', 'Function calling',
             'Whether members must support function calling.')}
         ${capabilityField('struct', 'Structured output',
@@ -203,6 +224,7 @@ function renderRight() {
       </div>`;
     const nm = document.getElementById('new-name');
     if (nm) nm.focus();
+    syncSystemOne();
     return;
   }
   const g = selectedGroup();
@@ -234,6 +256,7 @@ function renderRight() {
       <button id="rename-btn">Rename</button>
     </div>
     <div class="section">
+      <p class="muted">SystemOne: <b>${escapeHtml(CONSTRAINT_LABELS[g.systemone_constraint] || g.systemone_constraint)}</b>${constraintNote(g.systemone_constraint, 'SystemOne')}</p>
       <p class="muted">Function calling: <b>${escapeHtml(CONSTRAINT_LABELS[g.function_calling_constraint] || g.function_calling_constraint)}</b>${constraintNote(g.function_calling_constraint, 'function calling')}</p>
       <p class="muted">Structured output: <b>${escapeHtml(CONSTRAINT_LABELS[g.structured_output_constraint] || g.structured_output_constraint)}</b>${constraintNote(g.structured_output_constraint, 'structured output')}</p>
       <p class="muted">Reasoning: <b>${escapeHtml(CONSTRAINT_LABELS[g.reasoning_constraint] || g.reasoning_constraint)}</b>${constraintNote(g.reasoning_constraint, 'reasoning')}</p>
@@ -279,8 +302,9 @@ async function doCreate() {
   const fc = radioVal('fc');
   const struct = radioVal('struct');
   const reasoning = radioVal('reasoning');
+  const systemone = radioVal('systemone');
   try {
-    const res = await postJson(CREATE_URL, {name, function_calling_constraint: fc, structured_output_constraint: struct, reasoning_constraint: reasoning});
+    const res = await postJson(CREATE_URL, {name, function_calling_constraint: fc, structured_output_constraint: struct, reasoning_constraint: reasoning, systemone_constraint: systemone});
     creating = false;
     setSelected(res.uuid);
     await refresh();
@@ -367,6 +391,7 @@ def modelgroups_data() -> Response:
                 "function_calling_constraint": g.function_calling_constraint,
                 "structured_output_constraint": g.structured_output_constraint,
                 "reasoning_constraint": g.reasoning_constraint,
+                "systemone_constraint": g.systemone_constraint,
                 "members": members,
             }
         )
@@ -382,12 +407,14 @@ def modelgroups_create() -> Response:
     fc = data.get("function_calling_constraint") or "dont_care"
     struct = data.get("structured_output_constraint") or "dont_care"
     reasoning = data.get("reasoning_constraint") or "dont_care"
+    systemone = data.get("systemone_constraint") or "dont_care"
     try:
         g = create_model_group(
             name,
             function_calling_constraint=fc,
             structured_output_constraint=struct,
             reasoning_constraint=reasoning,
+            systemone_constraint=systemone,
         )
     except ValueError as e:
         abort(400, str(e))
@@ -499,14 +526,14 @@ MODELGROUPPRIORITIES_TEMPLATE: str = """
       <li>
         <span class="row">
           <span class="label"><span class="pp-provider-badge">{% if cfg.provider == 'ollama' %}Ollama{% elif cfg.provider == 'jan' %}Jan{% elif cfg.provider == 'lm_studio' %}LM Studio{% elif cfg.provider == 'openrouter' %}OpenRouter{% else %}{{ cfg.provider }}{% endif %}</span><b>{{ cfg.effective_display_name }}</b></span>
-          <button class="select-btn" data-uuid="{{ cfg.uuid }}" data-kind="config" data-provider="{{ cfg.provider }}" data-model-name="{{ cfg.model_name }}" data-model-display-name="{{ cfg.effective_display_name }}" data-display-name="" data-fc="{{ '1' if (cfg.uuid|string) in fc_uuids else '0' }}" data-struct="{{ '1' if (cfg.uuid|string) in struct_uuids else '0' }}" data-reasoning="{{ '1' if (cfg.uuid|string) in reasoning_uuids else '0' }}">Select</button>
+          <button class="select-btn" data-uuid="{{ cfg.uuid }}" data-kind="config" data-provider="{{ cfg.provider }}" data-model-name="{{ cfg.model_name }}" data-model-display-name="{{ cfg.effective_display_name }}" data-display-name="" data-systemone="{{ '1' if cfg.systemone else '0' }}" data-fc="{{ '1' if (cfg.uuid|string) in fc_uuids else '0' }}" data-struct="{{ '1' if (cfg.uuid|string) in struct_uuids else '0' }}" data-reasoning="{{ '1' if (cfg.uuid|string) in reasoning_uuids else '0' }}">Select</button>
         </span>
         <ul>
           {% for ov in overrides %}
           <li>
             <span class="row">
               <span class="label">{% if ov.effective_display_name %}{{ ov.effective_display_name }}{% else %}<span class="empty">(no name)</span>{% endif %}</span>
-              <button class="select-btn" data-uuid="{{ ov.uuid }}" data-kind="override" data-provider="{{ cfg.provider }}" data-model-name="{{ cfg.model_name }}" data-model-display-name="{{ cfg.effective_display_name }}" data-display-name="{{ ov.effective_display_name }}" data-fc="{{ '1' if (ov.uuid|string) in fc_uuids else '0' }}" data-struct="{{ '1' if (ov.uuid|string) in struct_uuids else '0' }}" data-reasoning="{{ '1' if (ov.uuid|string) in reasoning_uuids else '0' }}">Select</button>
+              <button class="select-btn" data-uuid="{{ ov.uuid }}" data-kind="override" data-provider="{{ cfg.provider }}" data-model-name="{{ cfg.model_name }}" data-model-display-name="{{ cfg.effective_display_name }}" data-display-name="{{ ov.effective_display_name }}" data-systemone="{{ '1' if cfg.systemone else '0' }}" data-fc="{{ '1' if (ov.uuid|string) in fc_uuids else '0' }}" data-struct="{{ '1' if (ov.uuid|string) in struct_uuids else '0' }}" data-reasoning="{{ '1' if (ov.uuid|string) in reasoning_uuids else '0' }}">Select</button>
             </span>
           </li>
           {% endfor %}
@@ -521,6 +548,11 @@ MODELGROUPPRIORITIES_TEMPLATE: str = """
   <div class="pane right">
     <h2 class="right-h">Priority list</h2>
     <p class="muted-explain">Fallback order. The top model is tried first; if it fails, the next is tried, and so on until all are exhausted.</p>
+    {% if systemone_constraint == 'must_have' %}
+    <p class="muted-explain"><b>SystemOne — must have:</b> members must be SystemOne (decision) models; other models are disabled.</p>
+    {% elif systemone_constraint == 'must_not_have' %}
+    <p class="muted-explain"><b>SystemOne — must not have:</b> members must not be SystemOne (decision) models; those are disabled.</p>
+    {% endif %}
     {% if function_calling_constraint == 'must_have' %}
     <p class="muted-explain"><b>Function calling — must have:</b> members must support function calling; models that don't are disabled.</p>
     {% elif function_calling_constraint == 'must_not_have' %}
@@ -553,6 +585,7 @@ const GROUP_ID = {{ editing_group_id|tojson }};
 const FC_CONSTRAINT = {{ function_calling_constraint|tojson }};
 const STRUCT_CONSTRAINT = {{ structured_output_constraint|tojson }};
 const REASONING_CONSTRAINT = {{ reasoning_constraint|tojson }};
+const SYSTEMONE_CONSTRAINT = {{ systemone_constraint|tojson }};
 
 let selected = [];  // [{uuid,kind,model_name,display_name}]
 
@@ -623,6 +656,7 @@ function renderSelectButtons() {
   }
   document.querySelectorAll('button.select-btn').forEach(btn => {
     const block =
+      blockReason(SYSTEMONE_CONSTRAINT, btn.dataset.systemone === '1', 'SystemOne', 'Not SystemOne', 'SystemOne') ||
       blockReason(FC_CONSTRAINT, btn.dataset.fc === '1', 'function calling', 'No tools', 'Has tools') ||
       blockReason(STRUCT_CONSTRAINT, btn.dataset.struct === '1', 'structured output', 'No struct', 'Has struct') ||
       blockReason(REASONING_CONSTRAINT, btn.dataset.reasoning === '1', 'reasoning', 'No reasoning', 'Has reasoning');
@@ -771,6 +805,7 @@ def modelgrouppriorities_page() -> str:
     function_calling_constraint = "dont_care"
     structured_output_constraint = "dont_care"
     reasoning_constraint = "dont_care"
+    systemone_constraint = "dont_care"
     if editing_group_id:
         try:
             g = get_model_group(UUID(editing_group_id))
@@ -781,6 +816,7 @@ def modelgrouppriorities_page() -> str:
             function_calling_constraint = g.function_calling_constraint
             structured_output_constraint = g.structured_output_constraint
             reasoning_constraint = g.reasoning_constraint
+            systemone_constraint = g.systemone_constraint
     return render_template_string(
         MODELGROUPPRIORITIES_TEMPLATE,
         tree=tree,
@@ -792,4 +828,5 @@ def modelgrouppriorities_page() -> str:
         function_calling_constraint=function_calling_constraint,
         structured_output_constraint=structured_output_constraint,
         reasoning_constraint=reasoning_constraint,
+        systemone_constraint=systemone_constraint,
     )

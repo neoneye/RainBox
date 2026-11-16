@@ -26,3 +26,31 @@ def test_group_rows_are_real_links():
     body = _body()
     assert 'href="?id=${encodeURIComponent(g.uuid)}"' in body
     assert "if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;" in body
+
+
+def test_the_new_group_form_puts_systemone_first_and_locks_structured_output():
+    # SystemOne decides what the choices under it can be, so it is the first
+    # capability. A SystemOne model's output is always structured: choosing
+    # "Must have" sets structured output to "Must have" and disables it.
+    body = _body()
+    assert body.index("capabilityField('systemone', 'SystemOne'") < body.index(
+        "capabilityField('fc', 'Function calling'")
+    assert "if (locked) r.checked = r.value === 'must_have';" in body
+    assert "r.disabled = locked;" in body
+    assert "if (e.target && e.target.name === 'new-systemone') syncSystemOne();" in body
+    assert "systemone_constraint: systemone" in body
+
+
+def test_only_a_decision_slot_is_offered_a_systemone_group():
+    from webapp.agent_views import _agent_group_options
+
+    groups = [
+        {"uuid": "a", "requires_function_calling": False, "requires_structured_output": True,
+         "structured_output_constraint": "must_have", "requires_systemone": True},
+        {"uuid": "b", "requires_function_calling": False, "requires_structured_output": True,
+         "structured_output_constraint": "must_have", "requires_systemone": False},
+    ]
+    decision = {"requires_systemone": True}
+    generative = {"requires_structured_output": True}
+    assert [o["uuid"] for o in _agent_group_options(decision, groups)] == ["a"]
+    assert [o["uuid"] for o in _agent_group_options(generative, groups)] == ["b"]

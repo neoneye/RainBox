@@ -29,6 +29,8 @@ history); `proposals/` holds design-time intent and reviews.
   registry, acceptance-criteria step 0, write tiers (log-and-undo /
   confirm), undo ledger, controls, trace, worker-failure recovery, chat
   notices, inspector.
+- [housekeeping-design.md](housekeeping-design.md) — the work that follows a
+  turn: one queue, giving way to a new message, the job log and its pages.
 - [second-opinion-design.md](second-opinion-design.md) — the independent LLM
   review that gates `python_run` before execution: verdict, prompts, model
   binding, fail-open policy, inspector rendering.

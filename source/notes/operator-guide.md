@@ -140,7 +140,7 @@ Useful responder agents:
 - `tool_demo`: FunctionAgent demo with a multiply tool.
 - `mcp`: FunctionAgent backed by MCP tools.
 
-(`followup` and `assistant.run_summarizer` also exist but run as internal
+(`followup`, `housekeeping` and `assistant.run_summarizer` also exist but run as internal
 helpers, and `direct_chat` backs one-to-one direct rooms — none of them are
 room responders you add.)
 

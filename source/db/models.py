@@ -81,6 +81,10 @@ class ModelConfig(db.Model):
     arguments: Mapped[dict] = mapped_column(JSONB, default=dict)
     available: Mapped[bool] = mapped_column(default=True)
     size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    # Whether the provider reports this as a SystemOne (decision) model: one
+    # that scores typed questions over /v1/systemone and generates no text.
+    # Observed at every sync, like `size_bytes`, and not part of `arguments`.
+    systemone: Mapped[bool] = mapped_column(default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
@@ -501,6 +505,10 @@ class ModelGroup(db.Model):
         Text, default="dont_care"
     )
     reasoning_constraint: Mapped[str] = mapped_column(Text, default="dont_care")
+    # SystemOne (decision) models answer a different API from generative
+    # ones, so a group is one kind or the other: "must_have" admits only
+    # SystemOne models and is the only kind a decision slot can be bound to.
+    systemone_constraint: Mapped[str] = mapped_column(Text, default="dont_care")
 
     # Back-compat shims: callers that only ask "is this group guaranteed to
     # support capability X?" (agents binding to a group, the agent↔group
@@ -513,6 +521,10 @@ class ModelGroup(db.Model):
     @property
     def requires_structured_output(self) -> bool:
         return self.structured_output_constraint == "must_have"
+
+    @property
+    def requires_systemone(self) -> bool:
+        return self.systemone_constraint == "must_have"
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
@@ -1079,6 +1091,180 @@ class AssistantRun(db.Model):
             name="assistant_run_status_check",
         ),
         Index("assistant_run_by_room", "room_uuid", "started_at"),
+    )
+
+
+class HousekeepingJob(db.Model):
+    """One piece of work done after a turn: a run's summary today, and the
+    detectors and digest jobs that join it later.
+
+    The row is written when the job is created and is the record of what
+    became of it. `state` says where it is now (`waiting`, `running`,
+    `deferred`, `final`); `outcome` says how it ended, in words the
+    Housekeeping page prints as they are. A job is identified by what it is
+    for, so the same work is never queued twice: one row per
+    `(job_type, run_uuid, subject, job_version)`.
+    """
+
+    __tablename__ = "housekeeping_job"
+    uuid: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    job_type: Mapped[str] = mapped_column(Text)
+    # 1: the next turn reads the result. 2: generative, read eventually.
+    tier: Mapped[int] = mapped_column(default=2)
+    run_uuid: Mapped[UUID | None] = mapped_column(index=True)
+    room_uuid: Mapped[UUID | None] = mapped_column()
+    # What the job is about when a run does not say it all (a chunk's range).
+    subject: Mapped[str] = mapped_column(Text, default="")
+    job_version: Mapped[int] = mapped_column(default=1)
+    state: Mapped[str] = mapped_column(Text, default="waiting")
+    outcome: Mapped[str | None] = mapped_column(Text)
+    # Why a deferred job is waiting: `turn` after a new message killed it.
+    deferred_reason: Mapped[str | None] = mapped_column(Text)
+    # Failures already retried. A killed attempt is not a failure.
+    retries: Mapped[int] = mapped_column(default=0)
+    # Set when someone opens the run's page: the job moves to the front of
+    # its tier, because that is the moment its result is being looked for.
+    bumped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('waiting','running','deferred','final')",
+            name="housekeeping_job_state_check",
+        ),
+        UniqueConstraint("job_type", "run_uuid", "subject", "job_version",
+                         name="housekeeping_job_key"),
+        Index("housekeeping_job_by_state", "state", "tier", "created_at"),
+    )
+
+
+class HousekeepingAttempt(db.Model):
+    """One try at a housekeeping job. A job killed twice by new messages and
+    finished on the third try has three rows, each with the model time it
+    used. `result` is NULL while the attempt runs."""
+
+    __tablename__ = "housekeeping_attempt"
+    uuid: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    job_uuid: Mapped[UUID] = mapped_column(index=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    model: Mapped[str | None] = mapped_column(Text)
+    # 'done' | 'killed: turn' | 'failed' | 'skipped'
+    result: Mapped[str | None] = mapped_column(Text)
+    model_ms: Mapped[int | None] = mapped_column()
+    # The stored call, which holds the prompt and the reply. Nothing is copied.
+    llm_call_uuid: Mapped[UUID | None] = mapped_column()
+    error: Mapped[str | None] = mapped_column(Text)
+    # The reply so far, while the call streams. Bounded; the stored call has
+    # the whole of it once the attempt ends.
+    response_preview: Mapped[str | None] = mapped_column(Text)
+
+
+class DecisionCall(db.Model):
+    """One request to a decision model (`llm/systemone.py`): which questions
+    were asked, of which model, and what it answered.
+
+    The state the questions were asked of is not stored. It is the
+    operator's messages, which have their own rows; `state_digest` and the
+    run or job say which state it was.
+    """
+    __tablename__ = "decision_call"
+
+    uuid: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), index=True)
+    run_uuid: Mapped[UUID | None] = mapped_column(index=True)
+    # The housekeeping job that asked, for a call made after the turn.
+    job_uuid: Mapped[UUID | None] = mapped_column(index=True)
+    slot: Mapped[str] = mapped_column(Text)
+    model: Mapped[str | None] = mapped_column(Text)
+    model_digest: Mapped[str | None] = mapped_column(Text)
+    server_version: Mapped[str | None] = mapped_column(Text)
+    question_set_version: Mapped[int] = mapped_column()
+    bands_version: Mapped[int] = mapped_column()
+    # sha256 of the serialized state.
+    state_digest: Mapped[str] = mapped_column(Text)
+    # `[{name, kind, version, instructions, options}]`: the questions as
+    # they were worded. Never the state's text.
+    questions: Mapped[list] = mapped_column(JSONB, default=list)
+    # `[{name, status, p, label, probabilities, reason, bands}]`: the raw
+    # probability, the label it was given, and the bands that gave it.
+    answers: Mapped[list] = mapped_column(JSONB, default=list)
+    # `ok` when every question was answered, else `unknown` with a reason.
+    status: Mapped[str] = mapped_column(Text)
+    reason: Mapped[str | None] = mapped_column(Text)
+    elapsed_ms: Mapped[int | None] = mapped_column()
+    deadline_ms: Mapped[int | None] = mapped_column()
+    # The request's row on /activity, which keeps what was sent and what
+    # came back for as long as /activity keeps a prompt. None when no
+    # request reached the model. Plain column, no FK.
+    llm_call_uuid: Mapped[UUID | None] = mapped_column()
+
+
+class RoomChunk(db.Model):
+    """A stretch of one room's messages, summarized once by a local model.
+
+    A room's counted messages are cut into chunks of `chunk_size`, in order
+    from its first message. `seq` is the chunk's place in that series. A
+    series belongs to one `(chunk_size, overlap, prompt_version)`, so a
+    changed setting or a changed prompt starts a new series beside the old
+    one and both can be read.
+
+    The row is written when the summary is, and never rewritten.
+    `content_hash` is over the chunk's messages as they were then, so a page
+    can say when they have changed since.
+    """
+
+    __tablename__ = "room_chunk"
+    uuid: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    room_uuid: Mapped[UUID] = mapped_column(index=True)
+    chunk_size: Mapped[int] = mapped_column()
+    # Counted messages of context the model read on each side of the chunk.
+    overlap: Mapped[int] = mapped_column()
+    seq: Mapped[int] = mapped_column()
+    # The edges, as chat_message ids. Ids only grow, so the next chunk starts
+    # after `last_message_id` even when that message has since been deleted.
+    first_message_id: Mapped[int] = mapped_column(BigInteger)
+    last_message_id: Mapped[int] = mapped_column(BigInteger)
+    message_count: Mapped[int] = mapped_column()
+    content_hash: Mapped[str] = mapped_column(Text)
+    # What the model wrote about the whole chunk: a phrase and broader topics.
+    summary: Mapped[str | None] = mapped_column(Text)
+    topics: Mapped[list] = mapped_column(JSONB, default=list)
+    # The chunk's parts, in order, with message numbers counted from the
+    # room's first message: `{first_message, last_message, summary, topics,
+    # requests}`, and from prompt 3 also `result`, `reactions` (what the human
+    # did after each reply; read by the model before prompt 7, by rule since),
+    # `calibration` and `signals` (what the records say about the part's
+    # replies). From prompt 4 the calibration is decided by rule and carries
+    # its `calibration_basis`. NULL for a chunk written before parts existed.
+    parts: Mapped[list | None] = mapped_column(JSONB)
+    # Where its reply strayed from the asked-for format.
+    problems: Mapped[list] = mapped_column(JSONB, default=list)
+    # The check of the summary by a second call: `{attempts, rewritten,
+    # error}`. `attempts` is 2 when the check had the chunk written again;
+    # `rewritten` then lists the parts of the first answer it found wrong,
+    # each with its message numbers, `summary`, `result` and the check's
+    # `reasoning`. `error` says when a check or a rewrite could not be made.
+    # `repeat_check` is what the decision model was asked about the chunk's
+    # follow-ups: `{model, asked, answered}`, or `{reason}` when none was.
+    # Each stored part carries the check of itself as `audit`: `{request,
+    # result, reasoning}`, and before prompt 7 also `reaction`. NULL for a chunk written before the
+    # check existed.
+    audit: Mapped[dict | None] = mapped_column(JSONB)
+    model: Mapped[str | None] = mapped_column(Text)
+    prompt_version: Mapped[int] = mapped_column(default=1)
+    job_uuid: Mapped[UUID | None] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    __table_args__ = (
+        UniqueConstraint("room_uuid", "chunk_size", "overlap",
+                         "prompt_version", "seq", name="room_chunk_series_key"),
     )
 
 

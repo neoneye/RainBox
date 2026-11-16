@@ -1,6 +1,11 @@
 # Post-turn housekeeping: one queue, in order, never during a turn
 
-**Status:** Proposal. Nothing here is built. The run summarizer exists.
+**Status:** Rollout step 1 is built and described in
+`notes/housekeeping-design.md`: the role with the assistant summary as its one job,
+the gate and the kill, the sweep, the job tables, the Housekeeping page and
+the After the turn group. Also built: the chatroom chunk summary job and the
+rest after ten calls. Not built: the other jobs, the hourly budget and
+thermal pause, and catching up with its /chat lock.
 **Date:** 2026-11-09
 **Related:**
 - [The decision-model foundation](2026-11-09-decision-model-foundation.md):
@@ -19,7 +24,7 @@ process. The proposals in this series add more:
 
 | job | from | model | when it matters |
 |---|---|---|---|
-| run summary | exists | generative | when the inspector is read |
+| assistant summary | exists | generative | when the inspector is read |
 | reply checks on the delivered reply | repeat, decision 6 | `repeat_check` | diagnostics |
 | identity experiment | repeat, decision 1 | `repeat_check` + `repeat_confirm` | diagnostics |
 | verdict detection | verdicts, decision 2 | `repeat_confirm` | before the next turn, ideally |
@@ -70,7 +75,7 @@ call, or none, so seconds in total:
 4. **Digest chunk nodes** that became due. No model call.
 
 **Tier 2, eventually.** Generative calls of up to two minutes:
-1. **Run summary.** The existing summarizer logic, moved behind this role.
+1. **Assistant summary.** The existing summarizer logic, moved behind this role.
    It comes first in its tier, so it waits only for tier 1's seconds.
 2. **Digest `asked` phrases**, when enabled. At most one per run.
 3. **Digest backfill**, when the operator has started it for a room.
@@ -86,9 +91,10 @@ inspector is read, and that is the moment someone is reading it.
 
 **The queue is a hint. The records say what is due.** A job is due when its
 result is missing: a finished run with no summary, a chunk the window has
-passed with no node. When the worker starts, and whenever it has been idle
-for 10 minutes, it derives the due jobs from the records and adds the ones
-the queue does not hold. So an enqueue lost in a crash delays a job and
+passed with no node. Each time the worker handles an item, and when the
+supervisor starts, the due jobs are derived from the records and the ones
+the queue does not hold are added. (Workers are spawned on demand and exit
+when idle, so there is no idle worker to sweep on a timer.) So an enqueue lost in a crash delays a job and
 never loses it, and a feature switched on late finds its own backlog. Only
 work whose feature says so is picked up from before the feature existed.
 Chunk nodes are. Detectors are not: they record what was detected when it
@@ -112,9 +118,9 @@ the same work twice.
 
 ### 2. Never while a turn is in progress
 
-Before starting each job, the worker checks for **turn activity**: any
-`assistant_run` with status `running`, or any pending inbox item for an
-assistant role. If there is activity, it waits, polling every 2 seconds,
+Before starting each job, the worker checks for **turn activity**: an inbox
+item or a `processing` journal row for any role other than housekeeping, or
+an `assistant_run` with status `running` or `stopping`. If there is activity, it waits, polling every 2 seconds,
 and starts the job only once the system is idle.
 
 **Housekeeping starts when the reply has posted.** Tier 1 first, then tier
@@ -210,7 +216,7 @@ caps them at two decision calls per turn.
 
 | job | deadline |
 |---|---|
-| run summary | 120 s (today's behaviour) |
+| assistant summary | 120 s (today's behaviour) |
 | a decision-model request | 4 s, including load and queue |
 | topic naming | 30 s |
 | a digest chunk node | no model; one database write |
@@ -268,7 +274,7 @@ Below it, the log: one line per job, newest first, updated live.
 | column | content |
 |---|---|
 | when | created, and finished or `running` |
-| job | its type: run summary, verdict detection, chunk node, … |
+| job | its type: assistant summary, verdict detection, chunk node, … |
 | for | the room, and the run or the chunk's message range, as links |
 | model | the model of the latest attempt, or `none` |
 | time | model time over all attempts; the number of attempts when more than one |
@@ -328,7 +334,7 @@ is still waiting or failed.
 
 ## Rollout
 
-1. The `housekeeping` role, with the run summary moved into it, unchanged in
+1. The `housekeeping` role, with the assistant summary moved into it, unchanged in
    behaviour apart from being killed when a turn starts. That is the gate,
    the order, the sweep for due jobs, the job tables, the Housekeeping page
    and the after-the-turn view, with one job.

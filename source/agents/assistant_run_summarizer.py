@@ -1,7 +1,7 @@
 """Assistant-run summarizer — a specialized StructuredLLMAgent.
 
-Runs *after* an `AssistantAgent` turn completes (enqueued by the assistant at
-every terminal state), so it never blocks the operator's reply. Given a run uuid,
+Runs *after* an `AssistantAgent` turn completes, as a job of the housekeeping
+role (agents/housekeeping.py), so it never blocks the operator's reply. Given a run uuid,
 it reads the run's trigger, step trace, and delivered reply, then makes one
 structured call producing a compact digest — what triggered the run, the
 obstacles hit across its steps, and a one-word outcome — which it stores on
@@ -10,8 +10,10 @@ obstacles hit across its steps, and a one-word outcome — which it stores on
 (so it can never summarize itself).
 """
 
+import contextlib
 import difflib
 import json
+from collections.abc import Callable
 from typing import Any, Literal
 from uuid import UUID
 
@@ -173,6 +175,28 @@ class AssistantRunSummarizerAgent(StructuredLLMAgent):
     # with the assistant's other calls rather than under a name of its own.
     caller_name = "assistant.run_summarizer"
 
+    # Set by the housekeeping worker that runs this call. `call_guard` wraps
+    # the model call, and only that, in the window a new message may
+    # interrupt. `on_model` and `on_progress` report the model that answers
+    # and the reply so far, for the job's page. Unset, the summarizer runs as
+    # a plain agent.
+    call_guard: Callable[[], Any] = staticmethod(contextlib.nullcontext)
+    on_model: Callable[[str], None] | None = None
+    on_progress: Callable[[str], None] | None = None
+
+    def _model_attempt_started(
+        self, model_uuid: UUID, model_name: str, timeout_seconds: float
+    ) -> None:
+        if self.on_model is not None:
+            self.on_model(model_name)
+
+    def _model_attempt_progress(
+        self, model_uuid: UUID, model_name: str,
+        reasoning: str | None, response_text: str | None,
+    ) -> None:
+        if self.on_progress is not None:
+            self.on_progress(response_text or reasoning or "")
+
     def __init__(self, agent_uuid: UUID, name: str, send: StatusSender) -> None:
         super().__init__(
             agent_uuid, name, send,
@@ -248,9 +272,10 @@ class AssistantRunSummarizerAgent(StructuredLLMAgent):
         # how /assistant puts the digest's own call on the run's timeline,
         # where the prompt behind a digest that reads wrong can be read.
         self._log_run_uuid = run.uuid
-        summary: RunSummary = self._structured_call(  # type: ignore[assignment]
-            self._build_prompt(run, steps, trigger, reply)
-        )
+        prompt = self._build_prompt(run, steps, trigger, reply)
+        with self.call_guard():
+            summary: RunSummary = self._structured_call(  # type: ignore[assignment]
+                prompt)
         db.set_run_summary(run, {
             "trigger": summary.trigger,
             "obstacles": list(summary.obstacles),

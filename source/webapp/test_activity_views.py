@@ -14,6 +14,7 @@ from llm.activity_metrics import MIN_CALIBRATION_CALLS
 from webapp.activity_views import (
     DEFAULT_METRIC,
     _hit_rate_cell,
+    _hit_rate_hover,
     build_chart,
     cache_reading,
     exact,
@@ -76,6 +77,14 @@ class TestRendering:
         assert model in body
         assert "Cache hit rate" in body
 
+    def test_the_call_count_is_one_column_when_it_is_also_the_charts_metric(
+        self, client, model
+    ):
+        add_call(model)
+        body = client.get("/activity?range=24h&metric=calls&by=model").get_data(as_text=True)
+        table = body[body.index("<h2>By model</h2>"):body.index("<h2>By caller</h2>")]
+        assert table.count('<th class="num">Calls</th>') == 1
+
     def test_the_chart_is_inline_svg_with_no_external_dependency(self, client, model):
         add_call(model)
         body = client.get("/activity?range=24h").get_data(as_text=True)
@@ -92,7 +101,10 @@ class TestCallDetail:
         call_uuid = uuid4()
         add_call(model, uuid=call_uuid)
         body = client.get("/activity?range=24h").get_data(as_text=True)
-        assert f"/activity/call/{call_uuid}" in body
+        # The row is the link: no separate "inspect" beside it.
+        assert f'<tr class="call" data-href="/activity/call/{call_uuid}">' in body
+        recent = body[body.index("Recent calls"):]
+        assert ">inspect</a>" not in recent
 
     def test_the_detail_page_shows_every_message_with_its_role(
         self, client, model
@@ -118,6 +130,68 @@ class TestCallDetail:
         assert "assistant.decide" in body
         assert model in body
         assert "4000 tokens" in body   # prompt_tokens, exact
+        # The time is year-month-day, with no month name.
+        import re
+        sub = body[body.index('<p class="sub">'):]
+        assert re.match(r'<p class="sub">\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}', sub)
+
+    def test_the_heading_names_the_configured_model_and_links_to_it(
+        self, client, model
+    ):
+        """The provider's name says which weights answered. The configured
+        model says which settings, and is the thing an operator can open."""
+        config = db.create_model_config("served-name", {})
+        config.display_name = "short name"
+        override = db.create_model_config_override(
+            config.uuid, {"temperature": 0.2}, display_name="careful summarizer")
+        call_uuid = uuid4()
+        add_call(model, uuid=call_uuid, model_uuid=override.uuid)
+        try:
+            body = client.get(f"/activity/call/{call_uuid}").get_data(as_text=True)
+            heading = body[body.index("<h1>"):body.index("</h1>")]
+            assert f'href="/model?id={override.uuid}"' in heading
+            assert "short name · careful summarizer" in heading
+        finally:
+            db.session.delete(override)
+            db.session.delete(config)
+            db.session.commit()
+
+    def test_the_recent_list_names_the_configured_model(self, client, model):
+        config = db.create_model_config("served-name", {})
+        config.display_name = "short name"
+        override = db.create_model_config_override(
+            config.uuid, {"temperature": 0.2}, display_name="careful summarizer")
+        add_call(model, model_uuid=override.uuid)
+        try:
+            body = client.get("/activity?range=24h").get_data(as_text=True)
+            recent = body[body.index("Recent calls"):]
+            assert "short name · careful summarizer" in recent
+            assert f'title="The provider knows it as {model}."' in recent
+        finally:
+            db.session.delete(override)
+            db.session.delete(config)
+            db.session.commit()
+
+    def test_a_call_with_no_configured_model_keeps_the_providers_name(
+        self, client, model
+    ):
+        call_uuid = uuid4()
+        add_call(model, uuid=call_uuid, model_uuid=uuid4())
+        body = client.get(f"/activity/call/{call_uuid}").get_data(as_text=True)
+        heading = body[body.index("<h1>"):body.index("</h1>")]
+        assert model in heading and "/model?id=" not in heading
+
+    def test_a_tile_with_no_figure_is_a_dash_and_says_nothing_more(
+        self, client, model
+    ):
+        call_uuid = uuid4()
+        add_call(model, uuid=call_uuid, prompt_tokens=None, completion_tokens=None,
+                 reusable_prefix_tokens=None, prefill_ms=None,
+                 cached_tokens_reported=None, cached_tokens_estimated=None)
+        body = client.get(f"/activity/call/{call_uuid}").get_data(as_text=True)
+        facts = body[body.index('<div class="facts">'):body.index('<div class="k">Total</div>')]
+        assert "not recorded" not in facts
+        assert facts.count('<div class="v">—</div>') == 5
 
     def test_a_row_with_no_stored_text_says_so_rather_than_showing_nothing(
         self, client, model
@@ -214,9 +288,25 @@ class TestCalibratingState:
     """An unjudged model and a model whose cache did nothing are different
     facts, and the page must not render them the same way."""
 
-    def test_an_unjudged_row_reads_as_calibrating(self):
-        cell = _hit_rate_cell({"judged_calls": 0, "hit_rate": None, "calls": 3})
-        assert cell == "calibrating"
+    def test_an_unjudged_row_reads_as_unjudged_and_says_why(self):
+        row = {"judged_calls": 0, "hit_rate": None, "calls": 3, "prompt_tokens": 900}
+        assert _hit_rate_cell(row) == "unjudged"
+        assert "recorded calls" in _hit_rate_hover(row)
+
+    def test_calls_with_nothing_to_judge_from_read_as_a_dash(self):
+        """A decision model reports no prompt tokens. It is not on its way to
+        a hit rate, so the cell does not say it is."""
+        row = {"judged_calls": 0, "hit_rate": None, "calls": 5, "prompt_tokens": 0}
+        assert _hit_rate_cell(row) == "—"
+        assert "no prompt tokens" in _hit_rate_hover(row)
+
+    def test_the_page_does_not_list_such_a_model_as_waiting(self, client, model):
+        add_call(model, prompt_tokens=None, prefill_ms=None,
+                 cached_tokens_estimated=None, cached_tokens_reported=None)
+        body = client.get("/activity?range=24h&by=model").get_data(as_text=True)
+        marker = body.find("Not judged yet")
+        if marker != -1:
+            assert model not in body[marker : marker + 400]
 
     def test_a_genuine_zero_reads_as_zero_percent(self):
         cell = _hit_rate_cell({"judged_calls": 5, "hit_rate": 0.0, "calls": 5})
@@ -229,13 +319,13 @@ class TestCalibratingState:
     def test_the_page_names_the_models_still_calibrating(self, client, model):
         add_call(model, cached_tokens_estimated=None, cached_tokens_reported=None)
         body = client.get("/activity?range=24h").get_data(as_text=True)
-        footnote = body[body.find("Still calibrating"):]
+        footnote = body[body.find("Not judged yet"):]
         assert model in footnote[:400]
 
     def test_a_judged_model_is_not_listed_as_calibrating(self, client, model):
         add_call(model, cached_tokens_estimated=3900)
         body = client.get("/activity?range=24h&by=model").get_data(as_text=True)
-        marker = body.find("Still calibrating")
+        marker = body.find("Not judged yet")
         if marker != -1:
             assert model not in body[marker : marker + 400]
 

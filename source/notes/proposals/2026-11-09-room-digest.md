@@ -1,6 +1,17 @@
 # The room digest: topics, a compact timeline, and a fading summary
 
-**Status:** Proposal. Nothing here is built.
+**Status:** Proposal. One part is built as an experiment, to see how a local
+model does: a generated two-level breakdown per chunk of a room's messages,
+shown on the Housekeeping page and reaching no prompt
+(`notes/housekeeping-design.md`). The operator decided on 2026-11-10 that
+it should carry more than this proposal allows: each part says what came of
+the request and how well calibrated the assistant was, read from both sides
+of the conversation and from the records (run outcome, acceptance criteria,
+votes). That sets aside the first principle below for the experiment. What
+replaces it there: a result is always stored and shown beside those
+records. There the chunk size and the context on each
+side are settings, a chunk is summarized once that context exists, and
+nothing waits for the window.
 **Date:** 2026-11-09
 **Related:**
 - [Noticing a repeated request](2026-11-09-noticing-a-repeated-request.md):

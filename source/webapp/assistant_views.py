@@ -128,6 +128,17 @@ ASSISTANT_TEMPLATE = """
   .as-main .summary .grp { margin:0 0 0.25rem; }
   .as-main .obstacles { margin:0.2rem 0 0; padding-left:1.2rem; }
   .as-main .obstacles li { margin:0.1rem 0; }
+  .as-main .hk-line { display:flex; flex-wrap:wrap; gap:6px 14px; align-items:baseline;
+    font-size:0.88rem; padding:3px 0; }
+  .as-main .hk-line .dts { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size:0.8rem; color:#667085; }
+  .as-main .hk-line a { color:#2563eb; text-decoration:none; }
+  .as-main .hk-out { font-size:0.75rem; font-weight:700; padding:2px 9px; border-radius:999px;
+    color:#6b7280; background:#eef0f4; }
+  .as-main .hk-out.hk-done { color:#166534; background:#dcfce7; }
+  .as-main .hk-out.hk-failed { color:#b91c1c; background:#fee2e2; }
+  .as-main .hk-out.hk-running { color:#1d4ed8; background:#dbeafe; }
+  .as-main .hk-out.hk-deferred, .as-main .hk-out.hk-waiting { color:#92400e; background:#fef3c7; }
   .as-main .card-body pre { margin:0; }
   .as-main .pending { background:#fff4e5; color:#92400e; border:1px solid #fde68a;
                       border-radius:6px; padding:0.4rem 0.6rem; margin:0.4rem 0; }
@@ -496,6 +507,28 @@ ASSISTANT_TEMPLATE = """
         <div class="log-detail">
           {% for e in log.events %}
           <div class="ev-pane{% if loop.first %} on{% endif %}" id="{{ e.row_id }}">{{ e.detail_html|safe }}</div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      {# What housekeeping did for this run once it had ended. Later events,
+         so they sit below the turn's own rows, dated, and never among its
+         steps. Each line opens the job's page. #}
+      {% if housekeeping %}
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">After the turn</div>
+        </div>
+        <div class="card-body">
+          {% for h in housekeeping %}
+          <div class="hk-line">
+            <span class="dts">{{ h.at }}</span>
+            <a href="/assistant/housekeeping/{{ h.uuid }}">{{ h.label }}</a>
+            {% if h.model %}<span class="muted">{{ h.model }}</span>{% endif %}
+            {% if h.time %}<span class="muted">{{ h.time }}{% if h.attempts > 1 %}, {{ h.attempts }} attempts{% endif %}</span>{% endif %}
+            <span class="hk-out hk-{{ h.kind }}">{{ h.outcome }}</span>
+          </div>
           {% endfor %}
         </div>
       </div>
@@ -1435,6 +1468,18 @@ def _selected_run():
 def assistant_page() -> str:
     selected = _selected_run()
     ctx = _load_run_detail(selected) if selected is not None else {}
+    housekeeping: list[dict] = []
+    if selected is not None:
+        from .housekeeping_views import run_housekeeping_lines
+
+        try:
+            # Someone is looking for this run's summary now, so its job goes
+            # to the front of the queue.
+            db.bump_run_housekeeping(selected.uuid)
+            housekeeping = run_housekeeping_lines(selected.uuid)
+        except Exception:
+            # The run's own page must not fail over what came after it.
+            db.session.rollback()
     duration = _format_duration(
         selected.started_at, selected.finished_at) if selected else None
 
@@ -1446,6 +1491,7 @@ def assistant_page() -> str:
         pending_controls=ctx.get("pending_controls", []),
         duration=duration,
         dash=ctx.get("dash"),
+        housekeeping=housekeeping,
     )
 
 

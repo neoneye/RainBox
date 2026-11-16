@@ -408,7 +408,7 @@ def build_chart(buckets: list[dict], metric: str, bucket_seconds: int) -> dict:
 
 def _time_label(moment: datetime, bucket_seconds: int) -> str:
     if bucket_seconds >= 86400:
-        return moment.strftime("%b %-d")
+        return moment.strftime("%m-%d")
     if bucket_seconds >= 3600:
         return moment.strftime("%-Hh")
     return moment.strftime("%H:%M")
@@ -430,11 +430,35 @@ def _bar_title(bucket: dict, metric: str, bucket_seconds: int) -> str:
 # --- Page -------------------------------------------------------------------
 
 
+def _unmeasurable(row: dict) -> bool:
+    """No judged call, and no prompt tokens to judge one from. These calls
+    will never have a hit rate, however many are recorded: a decision model,
+    for one, scores and reports no token counts."""
+    return row["judged_calls"] == 0 and not row.get("prompt_tokens")
+
+
 def _hit_rate_cell(row: dict) -> str:
-    """A model with no judged calls is calibrating, not at zero percent."""
+    """A row with no judged calls is unjudged, not at zero percent. One that
+    cannot be judged at all is a dash."""
+    if _unmeasurable(row):
+        return "—"
     if row["judged_calls"] == 0:
-        return "calibrating"
+        return "unjudged"
     return pct(row["hit_rate"])
+
+
+def _hit_rate_hover(row: dict) -> str:
+    """Why a hit-rate cell holds no number."""
+    if _unmeasurable(row):
+        return ("These calls report no prompt tokens, so there is nothing to "
+                "measure cache use from.")
+    if row["judged_calls"] == 0:
+        return ("Cache use is worked out from how fast a prompt was processed, "
+                "against the model's speed on a prompt it has not seen before. "
+                f"That speed is only known after {MIN_CALIBRATION_CALLS} "
+                "recorded calls of the model. Until then its cache use is left "
+                "unjudged rather than guessed.")
+    return ""
 
 
 def build_context(args: Any, now: datetime) -> dict:
@@ -496,12 +520,17 @@ def build_context(args: Any, now: datetime) -> dict:
         "by_caller": by_caller,
         "grouped": grouped,
         "recent": recent,
+        # One lookup per distinct configured model, not one per row.
+        "model_labels": {
+            u: db.model_label(u)
+            for u in {c.model_uuid for c in recent if c.model_uuid}},
         "errors": errors,
         "any_reported": any(
             c.cached_tokens_reported is not None for c in recent
         ),
         "calibrating": [
-            r["key"] for r in by_model if r["judged_calls"] == 0 and r["calls"]
+            r["key"] for r in by_model
+            if r["judged_calls"] == 0 and r["calls"] and not _unmeasurable(r)
         ],
         "min_calibration_calls": MIN_CALIBRATION_CALLS,
         "si": si,
@@ -513,6 +542,7 @@ def build_context(args: Any, now: datetime) -> dict:
         "duration": duration,
         "format_metric": format_metric,
         "hit_rate_cell": _hit_rate_cell,
+        "hit_rate_hover": _hit_rate_hover,
     }
 
 
@@ -590,6 +620,8 @@ ACTIVITY_TEMPLATE = """
                           line-height: 1.45; }
   .pp-act a.inspect { color: #0653a8; text-decoration: none; font-size: 0.85rem; }
   .pp-act a.inspect:hover { text-decoration: underline; }
+  .pp-act tr.call { cursor: pointer; }
+  .pp-act a.rowlink, .pp-act a.rowlink:hover { color: inherit; text-decoration: none; }
   /* Failures. Bordered in red and placed above the charts because a call
      that never reached the model is not a data point about caching — it is
      the thing to go and look at. */
@@ -689,7 +721,7 @@ ACTIVITY_TEMPLATE = """
       <div class="head">
         <span class="cat">{{ err.error_category or 'failed' }}</span>
         <span class="meta">
-          {{ err.started_at.strftime('%b %-d %H:%M:%S') if err.started_at else '—' }}
+          {{ err.started_at.strftime('%Y-%m-%d %H:%M:%S') if err.started_at else '—' }}
           &middot; {{ err.model or 'unknown model' }}
           &middot; {{ err.caller }}
           {% if err.origin %}&middot; <code>{{ err.origin }}</code>{% endif %}
@@ -814,7 +846,9 @@ ACTIVITY_TEMPLATE = """
       <tr>
         <th>{{ dimension_label }}</th>
         <th class="num">Calls</th>
-        <th class="num">{{ metrics[metric][0] }}</th>
+        {# The chart's metric gets a column of its own, unless it is the
+           call count, which the table always shows. #}
+        {% if metric != 'calls' %}<th class="num">{{ metrics[metric][0] }}</th>{% endif %}
         <th class="num">Hit rate</th>
         <th class="num">Reusable</th>
         <th class="num">Prompt tokens</th>
@@ -826,9 +860,9 @@ ACTIVITY_TEMPLATE = """
       <tr>
         <td class="name">{{ row.key }}</td>
         <td class="num">{{ row.calls }}</td>
-        <td class="num">{{ format_metric(row[metric], metric_kind)
-                           if metric in row else '—' }}</td>
-        <td class="num {{ 'warn' if row.judged_calls == 0 }}">{{ hit_rate_cell(row) }}</td>
+        {% if metric != 'calls' %}<td class="num">{{ format_metric(row[metric], metric_kind)
+                           if metric in row else '—' }}</td>{% endif %}
+        <td class="num {{ 'warn' if hit_rate_cell(row) == 'unjudged' }}" title="{{ hit_rate_hover(row) }}">{{ hit_rate_cell(row) }}</td>
         <td class="num">{{ pct(row.reusable_rate) }}</td>
         <td class="num" title="{{ exact(row.prompt_tokens, 'tokens') }}">{{ si(row.prompt_tokens) }}</td>
         <td class="num">{{ (row.avg_prefill_tps|round|int ~ ' tok/s')
@@ -840,7 +874,7 @@ ACTIVITY_TEMPLATE = """
     </table>
     {% if calibrating %}
     <p class="note" style="margin-top:0.8rem">
-      Still calibrating: {{ calibrating|join(', ') }}. A model needs
+      Not judged yet: {{ calibrating|join(', ') }}. A model needs
       {{ min_calibration_calls }} recorded calls before its cold prefill rate
       means anything, and until then its cache use is left unjudged rather than
       guessed.
@@ -868,7 +902,7 @@ ACTIVITY_TEMPLATE = """
       <tr>
         <td class="name">{{ row.key }}</td>
         <td class="num">{{ row.calls }}</td>
-        <td class="num {{ 'warn' if row.judged_calls == 0 }}">{{ hit_rate_cell(row) }}</td>
+        <td class="num {{ 'warn' if hit_rate_cell(row) == 'unjudged' }}" title="{{ hit_rate_hover(row) }}">{{ hit_rate_cell(row) }}</td>
         <td class="num">{{ pct(row.reusable_rate) }}</td>
         <td class="num" title="{{ exact(row.prompt_tokens, 'tokens') }}">{{ si(row.prompt_tokens) }}</td>
         <td class="num" title="{{ exact(row.p50_latency_ms, 'ms') }}">{{ ms(row.p50_latency_ms) }}</td>
@@ -895,13 +929,14 @@ ACTIVITY_TEMPLATE = """
         <th class="num" title="Time spent processing the prompt before the first output token.">Prefill</th>
         <th class="num" title="Wall-clock time for the whole call.">Total</th>
         <th></th>
-        <th></th>
       </tr>
       {% for call in recent %}
-      <tr>
-        <td class="muted">{{ call.started_at.strftime('%b %-d %H:%M:%S')
-                             if call.started_at else '—' }}</td>
-        <td class="name">{{ call.model or '—' }}</td>
+      {% set call_url = url_for('activity_call_page', call_uuid=call.uuid) %}
+      <tr class="call" data-href="{{ call_url }}">
+        <td class="muted"><a class="rowlink" href="{{ call_url }}">{{ call.started_at.strftime('%Y-%m-%d %H:%M:%S')
+                             if call.started_at else '—' }}</a></td>
+        {% set label = model_labels.get(call.model_uuid) %}
+        <td class="name"{% if label and call.model %} title="The provider knows it as {{ call.model }}."{% endif %}>{{ label or call.model or '—' }}</td>
         <td class="muted wrap">{{ dotted_breaks(call.caller) }}</td>
         {% set where, _, fn = (call.origin or '—').partition(' in ') %}
         <td class="muted origin wrap">{{ where }}{% if fn %} <span class="whole">in {{ fn }}</span>{% endif %}</td>
@@ -914,8 +949,6 @@ ACTIVITY_TEMPLATE = """
         <td class="num" title="{{ exact(call.total_ms, 'ms') }}">{{ ms(call.total_ms) }}</td>
         <td class="wrap">{% if not call.ok %}<span class="bad">{{
             dotted_breaks(call.error_category or 'failed') }}</span>{% endif %}</td>
-        <td><a class="inspect" href="{{ url_for('activity_call_page',
-               call_uuid=call.uuid) }}">inspect</a></td>
       </tr>
       {% endfor %}
     </table>
@@ -923,6 +956,15 @@ ACTIVITY_TEMPLATE = """
 
   {% endif %}
 </main>
+<script>
+// A recent call's whole row opens the call. The one anchor in it is there
+// for the keyboard and for opening in a new tab.
+document.addEventListener('click', function (e) {
+  if (e.target.closest('a, button, summary')) { return; }
+  var row = e.target.closest('tr[data-href]');
+  if (row) { window.location.href = row.getAttribute('data-href'); }
+});
+</script>
 """
 
 
@@ -975,10 +1017,11 @@ CALL_TEMPLATE = """
                                overflow-wrap: normal; }
 </style>
 <main class="pp-call">
-  <h1>{{ call.caller }} &middot; {{ call.model or 'unknown model' }}</h1>
-  <p class="sub">{{ call.started_at.strftime('%b %-d %Y, %H:%M:%S')
-                    if call.started_at else 'unknown time' }}
-     &middot; <a href="{{ url_for('activity_page') }}">back to Activity</a></p>
+  <h1>{{ call.caller }} &middot;
+    {% if model_label %}<a href="/model?id={{ call.model_uuid }}" title="The configured model this call ran on{% if call.model %}. The provider knows it as {{ call.model }}{% endif %}.">{{ model_label }}</a>
+    {% else %}{{ call.model or 'unknown model' }}{% endif %}</h1>
+  <p class="sub">{{ call.started_at.strftime('%Y-%m-%d %H:%M:%S')
+                    if call.started_at else 'unknown time' }}</p>
 
   {% if not call.ok %}
   <div class="panel failed">
@@ -997,14 +1040,14 @@ CALL_TEMPLATE = """
 
   <div class="facts">
     <div class="fact"><div class="k">Prompt</div>
-      <div class="v">{{ exact(call.prompt_tokens, 'tokens') }}</div></div>
+      <div class="v">{{ fact(call.prompt_tokens, 'tokens') }}</div></div>
     <div class="fact"><div class="k">Cached</div>
       <div class="v">{{ cache_text }}</div>
-      <div class="n">{{ cache_hover }}</div></div>
+      {% if cache_text != '—' %}<div class="n">{{ cache_hover }}</div>{% endif %}</div>
     <div class="fact"><div class="k">Reusable</div>
-      <div class="v">{{ exact(call.reusable_prefix_tokens, 'tokens') }}</div></div>
+      <div class="v">{{ fact(call.reusable_prefix_tokens, 'tokens') }}</div></div>
     <div class="fact"><div class="k">Output</div>
-      <div class="v">{{ exact(call.completion_tokens, 'tokens') }}</div></div>
+      <div class="v">{{ fact(call.completion_tokens, 'tokens') }}</div></div>
     <div class="fact"><div class="k">Prefill</div>
       <div class="v">{{ ms(call.prefill_ms) }}</div></div>
     <div class="fact"><div class="k">Total</div>
@@ -1078,13 +1121,20 @@ def activity_call_page(call_uuid: UUID) -> str:
         if isinstance(m, dict)
     ]
     cache_text, cache_hover, _cls = cache_reading(call)
+    # The configured model's own name, when the call recorded which one it ran
+    # on and that config still exists. Otherwise the provider's name stands.
+    model_label = db.model_label(call.model_uuid) if call.model_uuid else ""
     return render_template_string(
         CALL_TEMPLATE,
         call=call,
+        model_label=model_label,
         messages=messages,
         cache_text=cache_text,
         cache_hover=cache_hover,
         prompt_retention_days=db.PROMPT_RETENTION_DAYS,
         exact=exact,
+        # A tile with no figure is a dash, the same in every tile. A decision
+        # model, for one, reports no token counts, and that is not a fault.
+        fact=lambda value, unit="": "—" if value is None else exact(value, unit),
         ms=ms,
     )

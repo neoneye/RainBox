@@ -37,6 +37,7 @@ class AgentConfigEntry(TypedDict):
 AGENT_CLASS_PATHS: dict[str, str] = {
     "assistant": "agents.assistant:AssistantAgent",
     "assistant.run_summarizer": "agents.assistant_run_summarizer:AssistantRunSummarizerAgent",
+    "housekeeping": "agents.housekeeping:HousekeepingAgent",
     "chat_structured": "agents.chat_structured:StructuredChatAgent",
     "chat_unstructured": "agents.chat_unstructured:UnstructuredChatAgent",
     "direct_chat": "agents.direct_chat:DirectChatAgent",
@@ -84,6 +85,8 @@ EDIT_DOCUMENT_V6_UUID: UUID = UUID("4bf3271f-a58f-4dd0-a07f-b85dac906cd0")
 MCP_UUID: UUID = UUID("828ae65d-a902-4b4e-bcd3-f761afe23d29")
 DIRECT_CHAT_UUID: UUID = UUID("7c2f0d5e-8b4a-4c3d-9e6f-1a2b3c4d5e6f")
 ASSISTANT_UUID: UUID = UUID("cad11db6-a8e6-4cdd-a37e-a98bbc53e74d")
+# The one worker for everything that runs after a turn (notes/housekeeping-design.md).
+HOUSEKEEPING_UUID: UUID = UUID("b7e3f1c2-4a5d-4e86-9f0b-6c2d8a1e7f34")
 
 # One model slot per model call the assistant makes, named exactly as that call
 # labels itself on /activity (agents.base.Agent._caller_tag). /agentmodel and
@@ -108,6 +111,10 @@ ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID: UUID = UUID(
 ASSISTANT_REPLY_AUDIT_UUID: UUID = UUID("5c8e3a17-4d92-4b6f-8a30-1e7c9f2b45d8")
 ASSISTANT_RUN_SUMMARIZER_UUID: UUID = UUID("5d9a8c74-1e2b-4f3a-bc6d-7a0e9f481c25")
 ASSISTANT_PYTHON_PROGRAM_UUID: UUID = UUID("6fa4ebf0-9975-4349-b9ef-f7f0855acf6e")
+ASSISTANT_ROOM_SUMMARIZER_UUID: UUID = UUID("2f6c1d8e-7b3a-4c59-a1e4-9d0b5f3c8a67")
+# A decision slot: bound to one decision model (llm/systemone.py), and never
+# falling back to assistant.default, which cannot answer that API.
+ASSISTANT_REPEAT_CHECK_UUID: UUID = UUID("9b2e4f70-3c1a-4d86-b5e9-6a7f0c2d1e38")
 
 # The in-flight progress bubble, posted at enqueue time (the moment a human
 # message triggers a turn) so it appears immediately — before the agent process
@@ -241,6 +248,17 @@ agent_config: dict[str, AgentConfigEntry] = {
         "requires_structured_output": False,
         "description": "binding-only: the model that WRITES the program a python_run step runs, as plain Python source, from the request and the description the deciding call gave. Plain text rather than structured output: code written inside a JSON string lost its closing brackets. Unbound or failing, the step reports that no program was written.",
     },
+    "assistant.room_summarizer": {
+        "uuid": ASSISTANT_ROOM_SUMMARIZER_UUID,
+        "requires_structured_output": True,
+        "description": "binding-only: the model that SUMMARIZES a chunk of a room's messages for the housekeeping role, after a turn, as one structured call. Must be a local model: it reads the room's own messages. Unbound, it falls back to assistant.default.",
+    },
+    "assistant.repeat_check": {
+        "uuid": ASSISTANT_REPEAT_CHECK_UUID,
+        "requires_structured_output": False,
+        "requires_systemone": True,
+        "description": "binding-only: the DECISION model (Ollama's /v1/systemone, e.g. d1:3b) that scores fast yes-or-no questions. The housekeeping role asks it whether a follow-up message asks for the same thing again. Takes only a model group that requires SystemOne, and the model must be local; only the group's first member is used. Does NOT fall back to assistant.default: unbound, the questions go unanswered and the callers use their rules alone.",
+    },
     "assistant.response_language_classifier": {
         "uuid": ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID,
         "requires_structured_output": True,
@@ -249,7 +267,11 @@ agent_config: dict[str, AgentConfigEntry] = {
     "assistant.run_summarizer": {
         "uuid": ASSISTANT_RUN_SUMMARIZER_UUID,
         "requires_structured_output": True,
-        "description": "summarizes a completed assistant run (trigger + obstacles + outcome) via one structured call; enqueued by the assistant at every terminal state. The one assistant.* slot that is also a real agent — it runs off the critical path, so a slow model here costs the operator nothing.",
+        "description": "the model that SUMMARIZES a completed assistant run (trigger + obstacles + outcome) via one structured call. The housekeeping role makes the call after the reply has posted, so a slow model here costs the operator nothing.",
+    },
+    "housekeeping": {
+        "uuid": HOUSEKEEPING_UUID,
+        "description": "runs the work that follows a turn (the assistant summary), one job at a time, starting when the reply has posted and giving way the moment a new message arrives. Binds no model of its own: each job uses its own slot.",
     },
 }
 

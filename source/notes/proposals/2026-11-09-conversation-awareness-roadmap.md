@@ -1,6 +1,8 @@
 # Roadmap: conversation awareness
 
-**Status:** Roadmap over proposals. Nothing on it is built except the probe.
+**Status:** Roadmap over proposals. Built: the probe, step 0, and from step 7
+the generated chunk summary as an experiment shown on the Housekeeping page
+(`notes/housekeeping-design.md`).
 **Date:** 2026-11-09
 
 ## Where this started
@@ -37,7 +39,7 @@ Each step is buildable and useful on its own, and each unblocks the next.
 Sizes are rough: S is a day or two of focused work, M is several, and L is
 more.
 
-### Step 0. Two small foundations that need no model (S)
+### Step 0. Two small foundations that need no model (S), built
 
 1. **Record `metadata_["request_message"]` on every run.** This is the
    exact link from a run to the human message it answers. Today it is only
@@ -311,6 +313,29 @@ These cost little, collect data, and change nothing.
    costs nothing today. It becomes a real trade only if step 1's aligned
    window is measured to give prefix reuse across turns. Decide it then,
    with both numbers.
+
+9. **Chunk size and context, by comparison.** Ten messages per chunk and two
+   of context on each side are starting values, and the operator doubts both.
+   They are settings, and each pair of values is its own series of chunks, so
+   two sizes can be read side by side on a room's Housekeeping page before
+   one is chosen.
+10. **A decision model over the messages.** The operator's idea for later: a
+    System One model (`d1` or `d3`) marks which messages carry little, and
+    where a decision was made. That would give a chunk two things a generated
+    phrase does not: what can be left out, and what was settled. It needs
+    its questions added to the probe first, and its marks would be records
+    per message, shown before anything is dropped.
+
+11. **Results and calibration in the digest.** The operator wants the
+    compaction to carry what the assistant found, whether the reply met its
+    acceptance criteria, how it was voted, and how well calibrated the
+    assistant was: a human who keeps probing one thing is a sign of a wrong
+    or overconfident answer. The chunk summary experiment does this now, for
+    display. The room digest proposal says the opposite ("topics and
+    outcomes, never answers"), because a shortened old answer reaches a
+    small model as a fact. Before any of it reaches a prompt, one of the two
+    has to give: either results stay out of the prompt and only calibration
+    and the records go in, or results go in marked with their records.
 
 ## What the probes taught, for whoever builds this
 

@@ -19,6 +19,7 @@ from agents.config import (
     ASSISTANT_DEFAULT_UUID,
     ASSISTANT_MEMORY_FILTER_UUID,
     ASSISTANT_PYTHON_PROGRAM_UUID,
+    ASSISTANT_ROOM_SUMMARIZER_UUID,
     ASSISTANT_REPLY_AUDIT_UUID,
     ASSISTANT_REQUEST_SUMMARY_UUID,
     ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID,
@@ -40,6 +41,7 @@ STEP_SLOTS = [
     ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID,
     ASSISTANT_RUN_SUMMARIZER_UUID,
     ASSISTANT_PYTHON_PROGRAM_UUID,
+    ASSISTANT_ROOM_SUMMARIZER_UUID,
 ]
 
 
@@ -73,6 +75,8 @@ def test_the_slot_roster_is_exactly_the_assistants_calls():
         "assistant.response_language_classifier",
         "assistant.run_summarizer",
         "assistant.python_program",
+        "assistant.room_summarizer",
+        "assistant.repeat_check",
     }
 
 
@@ -96,11 +100,33 @@ def test_every_structured_slot_requires_structured_output():
     """Every other call behind these slots parses into a Pydantic model, so a
     group that does not promise structured output must not be offerable for
     one. The program writer answers in plain source — the point of its own
-    call — so any group may run it."""
+    call — so any group may run it. A decision slot returns probabilities
+    and no text at all."""
+    unstructured = PLAIN_TEXT_SLOTS | {"assistant.repeat_check"}
+    assert agent_config["assistant.repeat_check"]["requires_systemone"] is True
     for name, entry in agent_config.items():
         if name.startswith("assistant."):
             assert (entry.get("requires_structured_output") is True) is (
-                name not in PLAIN_TEXT_SLOTS), name
+                name not in unstructured), name
+
+
+def test_a_decision_slot_does_not_fall_back_to_the_default(monkeypatch):
+    """A generative model cannot answer the decision API, so binding only the
+    default must leave the decision slot unbound."""
+    from agents.config import ASSISTANT_REPEAT_CHECK_UUID
+    from llm import systemone
+
+    default_group, own = uuid4(), uuid4()
+    _bind(monkeypatch, {ASSISTANT_DEFAULT_UUID: default_group})
+    assert systemone.slot_model(ASSISTANT_REPEAT_CHECK_UUID) is None
+    _bind(monkeypatch, {ASSISTANT_DEFAULT_UUID: default_group, ASSISTANT_REPEAT_CHECK_UUID: own})
+    monkeypatch.setattr(mg, "model_base_url", lambda member: "http://127.0.0.1:11434")
+    monkeypatch.setattr(mg.db, "resolved_model_kwargs", lambda member: ("ollama", "decider", {}))
+    bound = systemone.slot_model(ASSISTANT_REPEAT_CHECK_UUID)
+    assert bound[:2] == ("http://127.0.0.1:11434", "decider")
+    # The configured model and its provider ride along, for the call's row
+    # on /activity.
+    assert bound.model_uuid is not None and bound.provider == "ollama"
 
 
 def test_role_name_maps_a_slot_uuid_back_to_its_name():

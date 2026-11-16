@@ -52,7 +52,6 @@ from agents.config import (
     ASSISTANT_REPLY_AUDIT_UUID,
     ASSISTANT_REQUEST_SUMMARY_UUID,
     ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID,
-    ASSISTANT_RUN_SUMMARIZER_UUID,
     ASSISTANT_SECOND_OPINION_UUID,
     ASSISTANT_WORKING_NOTICE,
 )
@@ -4457,6 +4456,7 @@ class AssistantAgent(ModelGroupAgent):
             room_uuid=room_uuid,
             agent_uuid=self.agent_uuid,
             step_limit=self.step_limit,
+            request_message=message_uuid,
         )
         run = self._run
         # The room's own tool switches narrow the set first, so a family
@@ -5093,12 +5093,14 @@ class AssistantAgent(ModelGroupAgent):
         }
 
     def _request_summary(self, run: Any) -> None:
-        """Enqueue the assistant_run_summarizer for a now-terminal run — off the critical
-        path (a non-blocking inbox insert the supervisor drains in its own
+        """Hand a now-terminal run to housekeeping, which summarizes it — off the
+        critical path (a non-blocking inbox insert the supervisor drains in its own
         process). Best-effort: a failure to enqueue must never break the turn or
         mask the operator's reply."""
         try:
-            db.enqueue(ASSISTANT_RUN_SUMMARIZER_UUID, {"run_uuid": str(run.uuid)})
+            db.request_run_housekeeping(
+                run.uuid, room_uuid=run.room_uuid,
+                request_message=(run.metadata_ or {}).get("request_message"))
         except Exception:
             logger.exception("assistant: failed to enqueue summary for run %s", run.uuid)
 

@@ -177,7 +177,9 @@ Key fields:
 - `step_limit`
 - `started_at`, `finished_at`
 - `final_summary`
-- `metadata` (run/model diagnostics). While a decide call is in flight,
+- `metadata` (run/model diagnostics). `metadata.request_message` is the uuid
+  of the chat message the run answers, written when the run starts; a run
+  started with no message has no such key. While a decide call is in flight,
   `metadata.active_call` checkpoints `{step_index, system_prompt, user_prompt,
   followup_turns, requested_at, model_group_uuid, attempts[]}`. Attempt entries retain the
   resolved model UUID/name, configured timeout, timestamps, and any error so a
@@ -187,6 +189,13 @@ Key fields:
   summarized_at}`); failures receive a deterministic digest immediately, while
   the off-path `assistant.run_summarizer` may later replace it with a
   model-produced digest
+
+### `housekeeping_job`, `housekeeping_attempt`, `room_chunk`
+
+The work that follows a turn, and each try at it. One job row per piece of
+work (a run's summary, a room chunk's summary), one attempt row per try.
+`room_chunk` holds each summarized stretch of a room's messages. Columns and
+states are in `housekeeping-design.md`.
 
 ### `assistant_step`
 
@@ -496,7 +505,11 @@ provider without LlamaIndex — the audio/image demos `/demo_stt_gemma4`
 straight to the backend — which reports its own row through
 `record_direct_call`. Such a row's `messages` describe each clip or image in a
 line instead of carrying its base64, and it has no `prefix_chain` or cache
-estimate: a mostly-media prompt hashes to no meaningful text prefix. Observational only: nothing reads these rows
+estimate: a mostly-media prompt hashes to no meaningful text prefix. A
+request to a decision model (`llm/systemone.py`) reports its row the same
+way: its `messages` are the state (role `state`) and each question (role
+`question`) as they were sent, and its `decision_call` row names it in
+`llm_call_uuid`. Observational only: nothing reads these rows
 back into a decision, so a missing row degrades a chart, never behaviour.
 
 Key fields:

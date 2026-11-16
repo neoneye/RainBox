@@ -1122,14 +1122,16 @@ def _ref_by_time(when, spans: list) -> str:
     return ""
 
 
-def _model_label(model_uuid) -> str:
+def model_label(model_uuid) -> str:
     """What to call the model behind a uuid.
 
     A step records the OVERRIDE it ran on, not the base config, so looking the
     uuid up as a config alone finds nothing and the reader is left with eight
     hex characters. An override is named by the model it tunes plus the tuning
     itself — "gemma4:e4b · t0.15 c100k struct" — since neither half identifies
-    the call on its own.
+    the call on its own. Each half is the name the operator gave it, when
+    they gave one: the provider's model name and the summary of the settings
+    are only what stands in until then.
     """
     config = get_model_config(model_uuid)
     if config is not None:
@@ -1141,7 +1143,8 @@ def _model_label(model_uuid) -> str:
     tuning = override.effective_display_name or ""
     if base is None:
         return tuning
-    return f"{base.model_name} · {tuning}" if tuning else base.model_name
+    name = base.effective_display_name
+    return f"{name} · {tuning}" if tuning else name
 
 
 #: The code-driven call that can bounce a reply back to the decide loop.
@@ -1193,7 +1196,7 @@ def _attach_model_names(events: list[dict]) -> None:
     names: dict[str, str] = {}
     for model_uuid in wanted:
         try:
-            name = _model_label(UUID(str(model_uuid)))
+            name = model_label(UUID(str(model_uuid)))
         except Exception:
             continue
         if name:

@@ -76,8 +76,8 @@ def test_stop_unknown_run_404(client):
     assert flask_client.post("/chat/api/assistant/runs/999999999/stop").status_code == 404
 
 
-def test_resummarize_endpoint_enqueues_summarizer(client, monkeypatch):
-    from agents.config import ASSISTANT_RUN_SUMMARIZER_UUID
+def test_resummarize_endpoint_asks_housekeeping_to_run_the_summary_again(client, monkeypatch):
+    from agents.config import HOUSEKEEPING_UUID
     flask_client, app = client
     run_id = _run(app)
     captured: dict = {}
@@ -89,8 +89,9 @@ def test_resummarize_endpoint_enqueues_summarizer(client, monkeypatch):
         resp = flask_client.post(f"/chat/api/assistant/runs/{run_id}/resummarize")
         assert resp.status_code == 200
         assert resp.get_json()["ok"] is True
-        assert captured["agent"] == ASSISTANT_RUN_SUMMARIZER_UUID
+        assert captured["agent"] == HOUSEKEEPING_UUID
         assert captured["payload"]["run_uuid"] == str(run_id)
+        assert captured["payload"]["force"] is True
     finally:
         _cleanup(app, run_id)
 

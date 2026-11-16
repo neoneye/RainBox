@@ -69,7 +69,8 @@ function aoRow(run) {
   const s = document.createElement('div');
   const live = run.status_kind === 'running';
   s.className = 'ao-sum' + (run.summary || live ? '' : ' pending');
-  s.textContent = live ? 'Step ' + run.steps : (run.summary || 'summarizing…');
+  s.textContent = live ? 'Step ' + run.steps
+    : (run.summary || (run.housekeeping === 'failed' ? 'summary failed' : 'summarizing…'));
   sumA.appendChild(s);
 
   const [steps, stepsA] = cell('ao-mono');
