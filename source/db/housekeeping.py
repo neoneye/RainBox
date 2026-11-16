@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "HOUSEKEEPING_JOB_TYPES",
     "JOB_CALLERS",
+    "JOB_CHECK_CALLERS",
     "ROOM_CHUNK_JOB",
     "RUN_SUMMARY_JOB",
     "attach_reply_signals",
@@ -49,6 +50,7 @@ __all__ = [
     "finish_housekeeping_attempt",
     "get_housekeeping_job",
     "housekeeping_attempt_call",
+    "housekeeping_attempt_calls",
     "housekeeping_now",
     "housekeeping_paused",
     "housekeeping_revision",
@@ -82,6 +84,13 @@ HOUSEKEEPING_JOB_TYPES: dict[str, tuple[int, str]] = {
 JOB_CALLERS: dict[str, str] = {
     RUN_SUMMARY_JOB: "assistant.run_summarizer",
     ROOM_CHUNK_JOB: "assistant.room_summarizer",
+}
+
+#: The caller tags of the further calls a job type makes inside one attempt:
+#: a chunk's summary is checked by a second call (`AUDIT_CALLER` in
+#: agents/room_chunks.py).
+JOB_CHECK_CALLERS: dict[str, tuple[str, ...]] = {
+    ROOM_CHUNK_JOB: ("assistant.room_auditor",),
 }
 
 #: How far back a `running` run or a `processing` journal row still counts as
@@ -332,6 +341,37 @@ def housekeeping_attempt_call(
     if attempt.ended_at is not None:
         q = q.filter(LlmCall.started_at <= attempt.ended_at + slack)
     return q.order_by(LlmCall.started_at.desc()).first()
+
+
+def housekeeping_attempt_calls(
+    job: HousekeepingJob, attempt: HousekeepingAttempt,
+) -> list[LlmCall]:
+    """Every stored model call made while an attempt ran, oldest first: the
+    job type's own call and its check calls. A chunk's attempt makes two to
+    four (summary, check, and once more of each when the check finds a part
+    wrong). One worker runs one job at a time, so a call by these callers
+    inside the attempt's own seconds is the attempt's. An attempt next to
+    this one can claim the same call when they are seconds apart; the page
+    gives such a call to the later attempt."""
+    callers = [c for c in (JOB_CALLERS.get(job.job_type),
+                           *JOB_CHECK_CALLERS.get(job.job_type, ())) if c]
+    if not callers:
+        return []
+    slack = timedelta(seconds=2)
+    q = (db.session.query(LlmCall)
+         .filter(LlmCall.caller.in_(callers),
+                 LlmCall.started_at >= attempt.started_at - slack))
+    if job.run_uuid is not None:
+        q = q.filter(LlmCall.run_uuid == job.run_uuid)
+    if attempt.ended_at is not None:
+        q = q.filter(LlmCall.started_at <= attempt.ended_at + slack)
+    calls = q.order_by(LlmCall.started_at.asc()).all()
+    if attempt.llm_call_uuid is not None and all(
+            c.uuid != attempt.llm_call_uuid for c in calls):
+        linked = db.session.get(LlmCall, attempt.llm_call_uuid)
+        if linked is not None:
+            calls = sorted([*calls, linked], key=lambda c: c.started_at)
+    return calls
 
 
 def finish_housekeeping_attempt(

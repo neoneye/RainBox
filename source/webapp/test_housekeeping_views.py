@@ -457,3 +457,43 @@ def test_the_log_has_a_button_that_pauses_the_queue_and_one_that_resumes_it(clie
         db.set_setting("housekeeping.paused", None)
         db.session.query(Inbox).filter(Inbox.agent_uuid == HOUSEKEEPING_UUID).delete()
         db.session.commit()
+
+
+def test_a_chunk_attempt_lists_every_model_call_it_made_in_order(client):
+    from datetime import timedelta
+
+    from agents import room_chunks
+
+    assert db.JOB_CHECK_CALLERS[db.ROOM_CHUNK_JOB] == (room_chunks.AUDIT_CALLER,)
+    c, made = client
+    job, _ = db.ensure_housekeeping_job(
+        db.ROOM_CHUNK_JOB, room_uuid=uuid4(), subject="10/2/v16/0/1/10")
+    attempt = db.start_housekeeping_attempt(job)
+    start = attempt.started_at
+    calls = [
+        LlmCall(caller=caller, model="model-a", started_at=start + timedelta(seconds=n),
+                messages=[{"role": "user", "content": f"prompt of call {n}"}],
+                response_text=f"reply of call {n}", total_ms=1000)
+        for n, caller in enumerate(
+            (db.JOB_CALLERS[db.ROOM_CHUNK_JOB], room_chunks.AUDIT_CALLER,
+             db.JOB_CALLERS[db.ROOM_CHUNK_JOB]), 1)]
+    db.session.add_all(calls)
+    db.session.commit()
+    made["calls"] += [call.uuid for call in calls]
+    try:
+        body = c.get(f"/assistant/housekeeping/{job.uuid}").get_data(as_text=True)
+        assert "<span>3 model calls</span>" in body
+        places = [body.index(text) for text in (
+            "<b>Call 1: summary</b>", "reply of call 1",
+            "<b>Call 2: check</b>", "reply of call 2",
+            "<b>Call 3: summary</b>", "reply of call 3")]
+        assert places == sorted(places)
+        for call in calls:
+            assert f'href="/activity/call/{call.uuid}"' in body
+        # Each call's prompts fold under a key of their own.
+        assert f'data-k="a{attempt.uuid}-m1"' in body
+        assert f'data-k="a{attempt.uuid}-c2-m1"' in body
+    finally:
+        db.session.query(HousekeepingAttempt).filter_by(uuid=attempt.uuid).delete()
+        db.session.delete(job)
+        db.session.commit()

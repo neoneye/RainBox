@@ -59,24 +59,40 @@ def _seconds(ms: int | None) -> str:
     return f"{ms / 1000:.1f} s"
 
 
-def _attempt_blocks(row, call) -> dict:
-    """An attempt's prompts and its reply as the blocks a pane on /assistant
-    draws: `{prompts, reply}`. Each prompt is collapsed, with its character
-    count, and every block can be copied. The reply is the stored call's,
-    or what has come back so far while the attempt runs."""
+def _attempt_calls(job, row, calls) -> dict:
+    """An attempt's model calls in the order they were made, each as a
+    section of its card: `{calls, so_far}`.
+
+    A call is `{n, kind, call, kpis, prompts, reply}`. `kind` says which of
+    the job's calls it is: the summary, or the check of one. The prompts and
+    the reply are the blocks a pane on /assistant draws: each prompt
+    collapsed with its character count, every block with a copy button.
+
+    `so_far` is what has come back of a call that is still running, which
+    has no stored row yet. It is empty once the attempt has ended."""
     from markupsafe import Markup
 
-    from webapp.text_blocks import text_block
-
-    prompts = Markup("").join(
-        text_block(f"{m.get('role') or '?'} prompt", str(m.get("content") or ""),
-                   collapsed=True, key=f"a{row.uuid}-m{i}")
-        for i, m in enumerate((call.messages if call else None) or [], 1)
-        if isinstance(m, dict))
-    text = (call.response_text if call and call.response_text
-            else row.response_preview)
-    return {"prompts": prompts,
-            "reply": text_block("reply" if row.result else "reply so far", text)}
+    check = set(db.JOB_CHECK_CALLERS.get(job.job_type, ()))
+    out = []
+    for n, call in enumerate(calls, 1):
+        # The first call keeps the key an attempt's only call has always had.
+        key = f"a{row.uuid}" if n == 1 else f"a{row.uuid}-c{n}"
+        prompts = Markup("").join(
+            text_block(f"{m.get('role') or '?'} prompt", str(m.get("content") or ""),
+                       collapsed=True, key=f"{key}-m{i}")
+            for i, m in enumerate(call.messages or [], 1) if isinstance(m, dict))
+        out.append({
+            "n": n, "kind": "check" if call.caller in check else "summary",
+            "call": call, "kpis": _call_kpis(call), "prompts": prompts,
+            "reply": text_block("reply", call.response_text)})
+    so_far = ""
+    if not row.result and row.response_preview and not any(
+            c.response_text == row.response_preview for c in calls):
+        so_far = text_block("reply so far", row.response_preview)
+    elif not calls and row.response_preview:
+        so_far = text_block("reply" if row.result else "reply so far",
+                            row.response_preview)
+    return {"calls": out, "so_far": so_far}
 
 
 def _call_kpis(call) -> list[dict]:
@@ -276,6 +292,10 @@ _STYLE = """
     border-bottom:1px solid #e5e7eb}
   .hk-log td{padding:9px 12px;border-bottom:1px solid #f1f3f5;vertical-align:top}
   .hk-log tr:last-child td{border-bottom:0}
+  /* One model call of an attempt that made several. */
+  .hk-call{display:flex;align-items:baseline;gap:10px;margin:14px 0 6px;
+    padding-top:10px;border-top:1px solid #eef0f4;font-size:0.84rem;color:#1a1a2e}
+  .hk-call:first-child{margin-top:0;padding-top:0;border-top:0}
   table.hk-sizes{width:auto;min-width:32rem;margin:0 0 1.1rem}
   .hk-log tr.row{cursor:pointer}
   .hk-log tr.row:hover td{background:#f8fafc}
@@ -589,23 +609,34 @@ _JOB_FRAGMENT = """
       <span class="hk-pill running">running for {{ elapsed(a.row.started_at) }}</span>
     {% endif %}
     <span class="hk-mono">{{ when(a.row.started_at) }}</span>
-    {% if not a.kpis %}
+    {% if not a.calls %}
     {% if a.row.model %}<span>{{ a.row.model }}</span>{% endif %}
     {% if a.row.model_ms %}<span class="hk-num">{{ seconds(a.row.model_ms) }}</span>{% endif %}
+    {% elif a.calls|length > 1 %}
+    <span>{{ a.calls|length }} model calls</span>
+    {% if a.row.model_ms %}<span class="hk-num">{{ seconds(a.row.model_ms) }}</span>{% endif %}
     {% endif %}
-    {% if a.call %}<a class="hk-back" style="margin-left:auto" href="/activity/call/{{ a.call.uuid }}" title="Open this model call on the Activity page. It shows everything that was sent to the model, message by message, and the full reply.">activity</a>{% endif %}
+    {% if a.calls|length == 1 %}<a class="hk-back" style="margin-left:auto" href="/activity/call/{{ a.calls[0].call.uuid }}" title="{{ activity_hint }}">activity</a>{% endif %}
   </div>
   <div class="bd tb-scope">
-    {% if a.kpis %}
-    <div class="ev-kpis">{% for f in a.kpis %}<span class="ev-kpi" title="{{ f.title }}">{% if f.href %}<a href="{{ f.href }}">{{ f.html }}</a>{% else %}{{ f.html }}{% endif %}</span>{% endfor %}</div>
-    {% endif %}
     {% if a.row.error %}<p class="hk-err">{{ a.row.error }}</p>{% endif %}
-    {{ a.prompts }}
-    {% if a.reply %}
-      {{ a.reply }}
+    {% for c in a.calls %}
+    {% if a.calls|length > 1 %}
+    <div class="hk-call">
+      <b>Call {{ c.n }}: {{ c.kind }}</b>
+      <span class="hk-mono">{{ when(c.call.started_at) }}</span>
+      <a class="hk-back" style="margin-left:auto" href="/activity/call/{{ c.call.uuid }}" title="{{ activity_hint }}">activity</a>
+    </div>
+    {% endif %}
+    <div class="ev-kpis">{% for f in c.kpis %}<span class="ev-kpi" title="{{ f.title }}">{% if f.href %}<a href="{{ f.href }}">{{ f.html }}</a>{% else %}{{ f.html }}{% endif %}</span>{% endfor %}</div>
+    {{ c.prompts }}
+    {{ c.reply }}
+    {% endfor %}
+    {% if a.so_far %}
+      {{ a.so_far }}
     {% elif not a.row.result %}
       <p class="hk-lede" style="margin:8px 0 0">Waiting for the model's first words.</p>
-    {% elif not a.call and not a.row.error %}
+    {% elif not a.calls and not a.row.error %}
       <p class="hk-lede" style="margin:8px 0 0">This attempt made no model call.</p>
     {% endif %}
   </div>
@@ -709,14 +740,18 @@ def housekeeping_job_page(job_uuid: UUID) -> str:
     job = db.get_housekeeping_job(job_uuid)
     if job is None:
         abort(404, "housekeeping job not found")
-    attempts = [{"row": a, "call": db.housekeeping_attempt_call(job, a)}
-                for a in db.list_housekeeping_attempts(job.uuid)]
+    attempts = [{"row": a} for a in db.list_housekeeping_attempts(job.uuid)]
+    # Two attempts seconds apart can both claim a call. The later one has it.
+    claimed: set[UUID] = set()
+    for attempt in reversed(attempts):
+        calls = [c for c in db.housekeeping_attempt_calls(job, attempt["row"])
+                 if c.uuid not in claimed]
+        claimed.update(c.uuid for c in calls)
+        attempt.update(_attempt_calls(job, attempt["row"], calls))
     # The decision model is asked at the start of an attempt, before its
     # model call, so each attempt's requests are drawn above its card.
     decisions = _decision_calls(job)
     for i, attempt in enumerate(attempts):
-        attempt["kpis"] = _call_kpis(attempt["call"])
-        attempt.update(_attempt_blocks(attempt["row"], attempt["call"]))
         until = attempts[i + 1]["row"].started_at if i + 1 < len(attempts) else None
         attempt["decisions"] = [
             d for d in decisions
@@ -725,6 +760,9 @@ def housekeeping_job_page(job_uuid: UUID) -> str:
     run = db.get_assistant_run(job.run_uuid) if job.run_uuid else None
     ctx = dict(
         job=job, attempts=attempts,
+        activity_hint="Open this model call on the Activity page. It shows "
+                      "everything that was sent to the model, message by "
+                      "message, and the full reply.",
         request_message=(run.metadata_ or {}).get("request_message") if run else None,
         rooms=db.housekeeping_room_names([job.room_uuid] if job.room_uuid else []),
         revision=db.housekeeping_revision(job.uuid), **_helpers())

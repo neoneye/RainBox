@@ -557,10 +557,15 @@ attempt's `llm_call` row: for a chunk, the summary that was kept.
 - What it is for, with links to the room, its chunks, the run and the
   request. Its heading says on hover what that kind of job does and where
   its result is read.
-- Every attempt in order: how it ended, a link to its call on `/activity`,
-  the call's figures as a call's meta line reads on `/assistant` (model,
-  tokens in and out, cached, prefill, decode, throughput, duration), its
-  prompts, and its reply. A running attempt shows the reply so far.
+- Every attempt in order, and how it ended. Inside it, every model call the
+  attempt made, oldest first (`db.housekeeping_attempt_calls`): a link to
+  the call on `/activity`, the call's figures as a call's meta line reads
+  on `/assistant` (model, tokens in and out, cached, prefill, decode,
+  throughput, duration), its prompts, and its reply. A chunk's attempt
+  makes two to four calls, each under a line that names it: `Call 1:
+  summary`, `Call 2: check`, and a second of each when the check had the
+  summary written again. An attempt with one call shows it without that
+  line. A running attempt shows the reply so far of the call in progress.
 - A prompt and a reply are the text blocks a pane on `/assistant` is made
   of (`webapp/text_blocks.py`): a prompt is folded under its character
   count, every block has a copy button, a long one is cut to a few lines
