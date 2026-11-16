@@ -99,7 +99,7 @@ MODELS_TEMPLATE: str = """
      reader asks for it. The selected one is never marked, so it stays. */
   ul.tree li.pp-deleted{display:none}
   ul.tree.pp-show-deleted li.pp-deleted{display:list-item}
-  .pp-deleted-picker{display:block;font-size:85%;color:#555;margin-top:0.4em;
+  .pp-deleted-picker{font-size:85%;color:#555;
     cursor:pointer;-webkit-user-select:none;user-select:none}
   .pp-provider-badge{display:inline-block;font-size:75%;padding:0 0.4em;
     border-radius:0.4em;margin-right:0.3em;background:#dbeafe;color:#1e40af;
@@ -117,7 +117,11 @@ MODELS_TEMPLATE: str = """
   table.test-table td{vertical-align:top;padding:0.5em 0.8em;border:1px solid #e3e3e3}
   table.test-table td.test-actions{white-space:nowrap}
   table.test-table td.test-output{min-width:20em}
-  .reload-bar{display:flex;align-items:center;gap:0.6em;margin:0 0 0.6em 0}
+  /* The tree's controls, one under the other: the pane is too narrow to
+     hold them side by side. */
+  .reload-bar{display:flex;flex-direction:column;align-items:flex-start;
+    gap:0.45em;margin:0 0 0.8em 0}
+  #pp-reload-status:empty{display:none}
   .pp-sort-picker{font-size:85%;color:#555}
   .pp-sort-picker select{font-size:inherit;margin-left:0.2em}
   /* Click-to-rename name display: doubles as the detail heading; clicking
