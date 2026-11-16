@@ -187,8 +187,9 @@ def _decision_calls(job) -> list[dict]:
     """A room-chunk job's requests to the decision model, in the order they
     were made: `{row, state, verdict}`. The state is not stored with the
     call. It is rebuilt here from the chunk's messages, as the worker built
-    it, and matched to its call by digest: `{message, next_message, text}`,
-    `text` being what the model was given. It is None for a call whose
+    it, and matched to its call by digest: `{message, next_message, after_chunk,
+    text}`, `text` being what the model was given and `after_chunk` whether
+    the message comes after the chunk's last one. It is None for a call whose
     messages have changed since, or whose job is not a chunk's. `verdict` is
     the first answer in a line: `{text, p, yes}`, or None without an answer."""
     from agents import room_chunks
@@ -209,7 +210,10 @@ def _decision_calls(job) -> list[dict]:
             for item in room_chunks.follow_ups(
                     messages[first:last + 1],
                     messages[last + 1:last + 1 + spec["overlap"]], first):
-                shown = {"message": item["message"], "next_message": item["next_message"]}
+                # The last request of a chunk can be asked again after the
+                # chunk's edge: that message is past the chunk's range.
+                shown = {"message": item["message"], "next_message": item["next_message"],
+                         "after_chunk": item["message"] > last}
                 text = follow_up_state(item["request"], item["next_message"])
                 states[state_digest(text)] = {**shown, "text": text}
                 # Earlier calls were given the reply as well: between the
@@ -571,7 +575,7 @@ _JOB_FRAGMENT = """
     {% set answer = (d.row.answers or [{}])[0] %}
     <details class="hk-text" id="d{{ d.row.uuid }}">
       <summary>
-        {% if d.state %}<span class="hk-mono">m{{ d.state.message }}</span>{% endif %}
+        {% if d.state %}<span class="hk-mono">m{{ d.state.message }}</span>{% if d.state.after_chunk %} <span class="hk-pill" title="This message comes after the chunk's last message. The chunk's last request is compared with the next message from you, so a request asked again across the edge of a chunk is seen.">after the chunk</span>{% endif %}{% endif %}
         {% if d.verdict %}<span class="hk-pill {{ 'done' if d.verdict.yes else '' }}">{{ d.verdict.text }}</span> <span class="hk-mono">{{ '%.2f'|format(d.verdict.p) }}</span>
         {% else %}<span class="hk-pill failed">no answer: {{ answer.reason or d.row.reason }}</span>{% endif %}
         {% if d.state %} <span style="text-transform:none;letter-spacing:0;font-weight:400">{{ d.state.next_message|truncate(70) }}</span>{% endif %}

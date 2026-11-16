@@ -574,7 +574,9 @@ attempt's `llm_call` row: for a chunk, the summary that was kept.
   decision model at the start of an attempt, before its own model call, so
   an attempt's requests to the decision model are a card above that
   attempt's card. The card is titled "Identify duplicates", after what
-  the requests are for.
+  the requests are for. A chunk's last request is compared with the next
+  message from the human, which lies after the chunk's range; that row is
+  marked "after the chunk".
 - For a final failure, an Enqueue again button.
 
 **A room's chunks** (`/assistant/housekeeping/room/<uuid>`), reached from

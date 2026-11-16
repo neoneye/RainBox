@@ -263,11 +263,15 @@ def test_a_chunk_jobs_page_shows_what_the_decision_model_was_asked_and_answered(
     state = follow_up_state(first["request"], first["next_message"])
     on_activity = uuid4()
     rows = [record(state, 0.91, llm_call_uuid=on_activity),
+            # The chunk's last request, against the message after the chunk.
+            record(follow_up_state(second["request"], second["next_message"]), 0.2),
             # Asked of messages that are no longer what the room holds.
             record({"request": "gone", "reply": "gone", "next_message": "gone"}, 0.12)]
     try:
         body = c.get(f"/assistant/housekeeping/{job.uuid}").get_data(as_text=True)
-        assert "Identify duplicates" in body and "2 model calls" in body
+        assert "Identify duplicates" in body and "3 model calls" in body
+        # A message past the chunk's range says so, and only that one.
+        assert body.count(">after the chunk</span>") == 1
         # In the order things happened: the decision model is asked before
         # the attempt's own model call.
         assert body.index('id="decisions"') < body.index("<h3>Attempt 1</h3>")
