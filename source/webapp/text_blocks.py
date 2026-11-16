@@ -26,14 +26,22 @@ from markupsafe import Markup
 
 
 def text_block(title: str, body: Any, *, collapsed: bool = False,
-               key: str = "") -> Markup:
+               key: str = "", whole: bool = False) -> Markup:
     """One block, or nothing when there is no text. `key` names a collapsed
-    block across a page's live reload, so one that was open stays open."""
+    block across a page's live reload, so one that was open stays open.
+    `whole` shows a long text in full, where the script would cut it to a
+    few lines: for a page that exists to read that one text."""
     # Imported here so a page can take the style and the script from this
     # module without loading the assistant page's components to do it.
     from webapp.assistant_components import _block, _block_html
 
-    return _block_html(_block(title, body, collapsed=collapsed, key=key))
+    html = _block_html(_block(title, body, collapsed=collapsed, key=key))
+    if whole:
+        # The script measures a block once and marks it; one that arrives
+        # marked is left as it is.
+        html = Markup(str(html).replace(
+            '<pre class="ev-pre"', '<pre class="ev-pre" data-clamped="1"', 1))
+    return html
 
 
 BLOCKS_STYLE = """

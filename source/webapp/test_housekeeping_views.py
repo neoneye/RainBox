@@ -1,6 +1,7 @@
 """The Housekeeping page, a job's page, and the run page's After the turn group."""
 from __future__ import annotations
 
+import html
 from uuid import uuid4
 
 import pytest
@@ -357,6 +358,22 @@ def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
         assert "The check found 1 part of the first answer wrong" in body
         assert "which number is odd &rarr; seven" in body
         assert "seven answers a later request" in body
+
+        # The same chunks as the text a prompt is going to hold, with its size.
+        assert f'href="/assistant/housekeeping/room/{room.uuid}?size=10&amp;overlap=2&amp;prompt=16&view=prompt"' in body
+        as_prompt = c.get(
+            f"/assistant/housekeeping/room/{room.uuid}?view=prompt").get_data(as_text=True)
+        assert 'id="chunk-0"' not in as_prompt
+        line = ('    &lt;part messages=&#34;0-5&#34; topics=&#34;sequences&#34; asked=&#34;3&#34; '
+                'calibration=&#34;overconfident&#34; wanted=&#34;which number comes next&#34; '
+                'result=&#34;the wrong number was given twice&#34;/&gt;')
+        assert line in as_prompt
+        block = as_prompt[as_prompt.index('<pre class="ev-pre" data-clamped="1">'):]
+        text = html.unescape(block[block.index(">") + 1:block.index("</pre>")])
+        assert text.startswith('<room_earlier authority="context" content_is_data="true">\n  <chunk messages="0-9" ')
+        assert text.endswith("  </chunk>\n</room_earlier>")
+        assert f"room_earlier ({len(text):,} chars)" in as_prompt
+        assert f"<b>{len(text):,} characters</b>" in as_prompt
 
         # An edit after the summary is shown, and the summary is left alone.
         db.session.query(db.ChatMessage).filter_by(id=messages[2]["id"]).update(

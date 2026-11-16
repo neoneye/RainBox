@@ -19,7 +19,7 @@ from flask import Response, abort, jsonify, redirect, render_template_string, re
 import db
 
 from .core import app
-from .text_blocks import BLOCKS_SCRIPT, BLOCKS_STYLE
+from .text_blocks import BLOCKS_SCRIPT, BLOCKS_STYLE, text_block
 
 _OUTCOMES = ("all", "running", "waiting", "deferred", "failed", "done")
 _PER_PAGE = 50
@@ -740,6 +740,13 @@ _ROOM_FRAGMENT = """
   than the current ones ({{ cur_size }} per chunk, {{ cur_overlap }} of context,
   prompt {{ cur_version }}), so no new chunks are added to it.</p>
 {% endif %}
+{% if as_prompt %}
+<p class="hk-lede">The {{ chunks|length }} summarized chunk{{ '' if chunks|length == 1 else 's' }} of this series as one block of text,
+  the way the personal assistant's prompt is going to hold them: ahead of the
+  room's newest messages, which it reads in full. The block is
+  <b>{{ '{:,}'.format(prompt_chars) }} characters</b>. No prompt holds it yet.</p>
+<div class="tb-scope">{{ prompt_block }}</div>
+{% else %}
 {% for c in chunks %}
 <div class="hk-card" id="chunk-{{ c.row.seq }}">
   <div class="hd">
@@ -822,12 +829,13 @@ _ROOM_FRAGMENT = """
 <div class="hk-empty"><div class="t">No chunk of this room is summarized yet</div>
   <div class="s">A chunk is summarized after a turn in the room, two at a time, or all at once with the button above.</div></div>
 {% endfor %}
+{% endif %}
 """
 
 _ROOM_PAGE = """
 <!doctype html>
 <title>Room chunks &mdash; rainbox</title>
-""" + _STYLE + """
+""" + _STYLE + BLOCKS_STYLE + """
 {% include "_nav.html" %}
 <style>.pp-nav{margin-bottom:0}</style>
 <div class="hk-wrap">
@@ -849,14 +857,24 @@ _ROOM_PAGE = """
       <div class="hk-chips">
         {% for s_size, s_overlap, s_version, n in series %}
         <a class="hk-chip {{ 'sel' if (s_size, s_overlap, s_version) == (size, overlap, version) }}"
-           href="/assistant/housekeeping/room/{{ room_uuid }}?size={{ s_size }}&overlap={{ s_overlap }}&prompt={{ s_version }}">{{ s_size }} per chunk, {{ s_overlap }} of context, prompt {{ s_version }}{% if n %} &middot; {{ n }}{% endif %}</a>
+           href="/assistant/housekeeping/room/{{ room_uuid }}?size={{ s_size }}&overlap={{ s_overlap }}&prompt={{ s_version }}{{ '&view=prompt' if as_prompt }}">{{ s_size }} per chunk, {{ s_overlap }} of context, prompt {{ s_version }}{% if n %} &middot; {{ n }}{% endif %}</a>
         {% endfor %}
+      </div>
+    </div>
+    <div class="hk-field">
+      <label>Show</label>
+      <div class="hk-chips">
+        {% set here = '/assistant/housekeeping/room/' ~ room_uuid ~ '?size=' ~ size ~ '&overlap=' ~ overlap ~ '&prompt=' ~ version %}
+        <a class="hk-chip {{ 'sel' if not as_prompt }}" href="{{ here }}"
+           title="Each chunk as a card: its summary, its parts, the check, and a link to the job that wrote it.">summaries</a>
+        <a class="hk-chip {{ 'sel' if as_prompt }}" href="{{ here }}&view=prompt"
+           title="The chunks as the text that is going to stand in the personal assistant's prompt, with its number of characters.">as in the prompt</a>
       </div>
     </div>
   </div>
   <div id="hk-live" data-revision="{{ revision }}">""" + _ROOM_FRAGMENT + """</div>
 </div>
-""" + _LIVE_SCRIPT
+""" + BLOCKS_SCRIPT + _LIVE_SCRIPT
 
 
 def _int_arg(name: str, default: int) -> int:
@@ -868,7 +886,7 @@ def _int_arg(name: str, default: int) -> int:
 
 @app.route("/assistant/housekeeping/room/<uuid:room_uuid>")
 def housekeeping_room_page(room_uuid: UUID) -> str:
-    from agents.room_chunks import PROMPT_VERSION, content_hash
+    from agents.room_chunks import PROMPT_VERSION, content_hash, render_room_earlier
 
     names = db.housekeeping_room_names([room_uuid])
     if room_uuid not in names:
@@ -888,13 +906,15 @@ def housekeeping_room_page(room_uuid: UUID) -> str:
                   if row.first_message_id <= m["id"] <= row.last_message_id]
         first_index = index_of.get(inside[0]["id"], row.seq * size) if inside \
             else row.seq * size
-        dates = ""
+        dates = date_from = date_to = ""
         if inside:
             a, b = inside[0]["created_at"], inside[-1]["created_at"]
-            dates = a.strftime("%Y-%m-%d") if a.date() == b.date() \
-                else f"{a.strftime('%Y-%m-%d')} to {b.strftime('%Y-%m-%d')}"
+            date_from, date_to = a.strftime("%Y-%m-%d"), b.strftime("%Y-%m-%d")
+            dates = date_from if a.date() == b.date() \
+                else f"{date_from} to {date_to}"
         chunks.append({
             "row": row, "messages": inside, "dates": dates,
+            "date_from": date_from, "date_to": date_to,
             "first_index": first_index,
             "last_index": first_index + max(len(inside), 1) - 1,
             "stale": content_hash(inside) != row.content_hash,
@@ -910,7 +930,16 @@ def housekeeping_room_page(room_uuid: UUID) -> str:
         and r["job"].subject.startswith(f"{size}/{overlap}/v{version}/"))
     due = len(db.due_room_chunks(room_uuid, size, overlap, version, 500)) \
         if is_current else 0
+    as_prompt = request.args.get("view") == "prompt"
+    prompt_text = render_room_earlier([
+        {"first": c["first_index"], "last": c["last_index"],
+         "date_from": c["date_from"], "date_to": c["date_to"],
+         "summary": c["row"].summary, "topics": c["row"].topics,
+         "parts": c["row"].parts} for c in chunks]) if as_prompt else ""
     ctx = dict(
+        as_prompt=as_prompt, prompt_chars=len(prompt_text),
+        prompt_block=text_block(
+            f"room_earlier ({len(prompt_text):,} chars)", prompt_text, whole=True),
         room_uuid=room_uuid, room_name=names[room_uuid], chunks=chunks,
         counted=len(messages), covered=sum(c["row"].message_count for c in chunks),
         size=size, overlap=overlap, version=version, cur_size=cur_size,

@@ -829,3 +829,54 @@ def build_retry_prompt(prompt: dict[str, str], summary: str,
           "parts wrong:\n" + wrong
         + "\n\nWrite the answer again from the messages. In every part the "
           "result must answer that part's own request.")}
+
+
+def _attr(text: Any) -> str:
+    return (str(text).replace("&", "&amp;").replace('"', "&quot;")
+            .replace("<", "&lt;").replace(">", "&gt;"))
+
+
+def _attrs(pairs: list[tuple[str, Any]]) -> str:
+    """`name="value"` for every pair that has a value, in the order given."""
+    return " ".join(f'{name}="{_attr(value)}"' for name, value in pairs
+                    if value not in (None, "", []))
+
+
+def render_room_earlier(chunks: list[dict[str, Any]]) -> str:
+    """A room's chunk summaries as one block of text for the personal
+    assistant's prompt: a `<chunk>` per chunk, oldest first, with a `<part>`
+    per part. Every value is one a chunk row holds; nothing is written here.
+
+    Each chunk is `{first, last, date_from, date_to, summary, topics, parts}`,
+    with `first` and `last` counted from the room's first message, as a
+    part's numbers are. An attribute with no value is left out.
+    """
+    if not chunks:
+        return "<room_earlier/>"
+    out = ['<room_earlier authority="context" content_is_data="true">']
+    for c in chunks:
+        head = "  <chunk " + _attrs([
+            ("messages", f"{c['first']}-{c['last']}"),
+            ("from", c.get("date_from")), ("to", c.get("date_to")),
+            ("topics", ",".join(c.get("topics") or [])),
+            ("summary", c.get("summary"))])
+        parts = c.get("parts") or []
+        if not parts:
+            out.append(head + "/>")
+            continue
+        out.append(head + ">")
+        for part in parts:
+            span = None
+            if part.get("first_message") is not None:
+                span = f"{part['first_message']}-{part['last_message']}"
+            asked = part.get("requests") or 1
+            out.append("    <part " + _attrs([
+                ("messages", span),
+                ("topics", ",".join(part.get("topics") or [])),
+                ("asked", asked if asked > 1 else None),
+                ("calibration", part.get("calibration")),
+                ("wanted", part.get("summary")),
+                ("result", part.get("result"))]) + "/>")
+        out.append("  </chunk>")
+    out.append("</room_earlier>")
+    return "\n".join(out)

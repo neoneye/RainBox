@@ -160,6 +160,9 @@ CHAT_TEMPLATE: str = """
   .room-sidebar .ds-trouble-row button:hover{background:#f1f5f9}
   .room-sidebar .ds-trouble-row button:disabled{background:#f8fafc;color:#9ca3af;cursor:default}
   .room-sidebar .ds-note{color:#888;font-size:0.85rem}
+  .room-sidebar .ctx-link{display:block;margin-top:1em;color:#2563eb;text-decoration:none;font-size:0.92rem}
+  .room-sidebar .ctx-link:hover{text-decoration:underline}
+  .room-sidebar .ctx-note{margin:0.2em 0 0}
   .room-sidebar .ds-tools{font-size:0.85rem;margin:0 0 0.4em}
   .room-sidebar .ds-label.ds-tools-label{margin-top:1.8em}
   .room-sidebar .ds-tool-row{position:relative}
@@ -526,6 +529,7 @@ CHAT_TEMPLATE: str = """
         <option value="bridge">Bridge</option>
         <option value="history">History</option>
         <option value="sources">Sources</option>
+        <option value="context">Context</option>
         <option value="export">Export</option>
       </select>
     </div>
@@ -735,7 +739,7 @@ let agentsLoaded = false;
 // panel doesn't apply — never loses the panel choice.
 const SIDEBAR_MODE_KEY = 'chat.sidebarMode';
 const SIDEBAR_VISIBLE_KEY = 'chat.sidebarVisible';
-let sidebarMode = 'members';    // 'members' | 'stats' | 'settings' | 'bridge' | 'history' | 'sources' | 'export'
+let sidebarMode = 'members';    // 'members' | 'stats' | 'settings' | 'bridge' | 'history' | 'sources' | 'context' | 'export'
 let sidebarVisible = false;
 // The reply the Sources panel lists, by message uuid: set by its pill, cleared
 // on a room switch. null lists the newest reply in view that has sources.
@@ -751,7 +755,7 @@ try {
   const saved = localStorage.getItem(SIDEBAR_MODE_KEY);
   if (saved === 'members' || saved === 'stats' || saved === 'settings'
       || saved === 'bridge' || saved === 'history' || saved === 'sources'
-      || saved === 'export'){
+      || saved === 'context' || saved === 'export'){
     sidebarMode = saved;
     sidebarVisible = true;  // single-key era stored 'hidden' for off; a panel meant shown
   }
@@ -3187,7 +3191,7 @@ function syncSidebarModeOptions(){
   sidebarModeSel.value = activeSidebarMode();
 }
 
-// Right sidebar: hidden / members / stats / settings / bridge / history / sources / export.
+// Right sidebar: hidden / members / stats / settings / bridge / history / sources / context / export.
 async function renderSidebar(){
   const mode = activeSidebarMode();
   // Only the Sources panel marks a pill as the one it lists.
@@ -3204,7 +3208,44 @@ async function renderSidebar(){
   else if (mode === 'bridge') renderBridgePanel();
   else if (mode === 'history') renderHistory();
   else if (mode === 'sources') renderSources();
+  else if (mode === 'context') renderContext();
   else if (mode === 'export') renderExport();
+}
+
+// The Context panel: links to the pages that show what the assistant is, or
+// is going to be, given about this room. One entry per kind of context: a
+// link, and under it a line saying what the page holds.
+const CONTEXT_PAGES = [
+  {
+    label: 'Chatroom chunk summaries',
+    href: room => '/assistant/housekeeping/room/' + encodeURIComponent(room),
+    note: 'The room’s messages in chunks, each summarized after a turn. '
+      + 'The page also shows the summaries as text for the assistant’s prompt, '
+      + 'with the number of characters. No prompt holds them yet.',
+  },
+];
+function renderContext(){
+  const room = currentRoom;
+  sidebarEl.innerHTML = '';
+  const h = document.createElement('h3');
+  h.className = 'sidebar-title';
+  h.textContent = 'Context';
+  sidebarEl.appendChild(h);
+  const lede = document.createElement('p');
+  lede.className = 'ds-note';
+  lede.textContent = 'What the assistant knows about this room besides its newest messages.';
+  sidebarEl.appendChild(lede);
+  CONTEXT_PAGES.forEach(page => {
+    const a = document.createElement('a');
+    a.className = 'ctx-link';
+    a.href = page.href(room);
+    a.textContent = page.label;
+    sidebarEl.appendChild(a);
+    const note = document.createElement('p');
+    note.className = 'ds-note ctx-note';
+    note.textContent = page.note;
+    sidebarEl.appendChild(note);
+  });
 }
 
 // Open the Sources panel on one reply; its pill again closes it.

@@ -583,6 +583,18 @@ the `chunks` link beside the room's name on a job's page.
   what the first answer had in the parts the check found wrong.
 - A chip per series the room has chunks in, earlier prompts included.
 - **Summarize the rest**, with the number of chunks it will write.
+- **Show: summaries | as in the prompt.** The second (`&view=prompt`) puts
+  the series' chunks into one `<room_earlier>` block of text, in place of the
+  cards: a `<chunk>` per chunk with its message range, dates, topics and
+  phrase, and inside it a `<part>` per part with its range, topics, how many
+  times it was asked, its calibration, what was wanted and what came of it.
+  `agents/room_chunks.render_room_earlier` writes it from the stored rows.
+  The page gives the block's number of characters and a copy button. It is
+  how a prompt is going to hold the summaries; no prompt holds them yet.
+
+The room's page is reached from the room itself: the chat sidebar's
+**Context** panel lists the pages that show what the assistant is given
+about the room, and **Chatroom chunk summaries** is its first entry.
 
 **A run's page** has an **After the turn** group below its timeline, one line
 per job that is not done (waiting, running, stopped by a new message, or

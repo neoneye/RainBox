@@ -769,3 +769,12 @@ def test_a_reply_s_sources_open_in_the_sidebar():
     # A room switch forgets the chosen reply; an unpinned panel follows new ones.
     assert "currentRoom = uuid;\n  sourcesMessageUuid = null;" in body
     assert "if (activeSidebarMode() === 'sources' && !sourcesMessageUuid) renderSources();" in body
+
+
+def test_the_sidebar_has_a_context_panel_that_links_to_the_chunk_summaries():
+    body = _body()
+    assert '<option value="context">Context</option>' in body
+    assert "|| saved === 'context'" in body
+    assert "else if (mode === 'context') renderContext();" in body
+    assert "label: 'Chatroom chunk summaries'," in body
+    assert "href: room => '/assistant/housekeeping/room/' + encodeURIComponent(room)," in body
