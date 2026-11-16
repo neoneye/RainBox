@@ -378,3 +378,21 @@ def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
         db.session.query(Inbox).filter(Inbox.agent_uuid == HOUSEKEEPING_UUID).delete()
         db.session.query(db.RoomChunk).filter_by(uuid=chunk.uuid).delete()
         db.session.commit()
+
+
+def test_a_log_row_shows_its_start_and_says_the_rest_on_hover():
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    from webapp.housekeeping_views import _job_times
+
+    start = datetime(1999, 11, 13, 13, 59, 3)
+    done = SimpleNamespace(created_at=start,
+                           finished_at=datetime(1999, 11, 13, 14, 4, 57))
+    assert _job_times(done).split("\n") == [
+        "Started: 1999-11-13 13:59:03",
+        "Stopped: 1999-11-13 14:04:57",
+        "Duration: 5 min 54 s",
+    ]
+    still_open = SimpleNamespace(created_at=start, finished_at=None)
+    assert _job_times(still_open) == "Started: 1999-11-13 13:59:03"

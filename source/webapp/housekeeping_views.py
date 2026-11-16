@@ -29,6 +29,30 @@ def _when(dt: datetime | None) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S") if dt else ""
 
 
+def _span(start: datetime | None, stop: datetime | None) -> str:
+    """How long it was from `start` to `stop`, in words."""
+    if not start or not stop:
+        return ""
+    total = max(0, round((stop - start).total_seconds()))
+    hours, rest = divmod(total, 3600)
+    minutes, secs = divmod(rest, 60)
+    if hours:
+        return f"{hours} h {minutes} min"
+    if minutes:
+        return f"{minutes} min {secs} s"
+    return f"{secs} s"
+
+
+def _job_times(job) -> str:
+    """The log row's hover text: when the job started and stopped, and how
+    long that was. One line each. A job still open has only its start."""
+    lines = [f"Started: {_when(job.created_at)}"]
+    if job.finished_at:
+        lines.append(f"Stopped: {_when(job.finished_at)}")
+        lines.append(f"Duration: {_span(job.created_at, job.finished_at)}")
+    return "\n".join(lines)
+
+
 def _seconds(ms: int | None) -> str:
     if not ms:
         return ""
@@ -399,7 +423,7 @@ _LOG_FRAGMENT = _NOW_FRAGMENT + """
   {% for r in rows %}
     {% set text, kind = outcome(r.job) %}
     <tr class="row" data-href="/assistant/housekeeping/{{ r.job.uuid }}">
-      <td class="hk-mono">{{ when(r.job.created_at) }}{% if r.job.finished_at %}<br>{{ when(r.job.finished_at) }}{% endif %}</td>
+      <td class="hk-mono" title="{{ job_times(r.job) }}">{{ when(r.job.created_at) }}</td>
       <td><a class="hk-rowlink" href="/assistant/housekeeping/{{ r.job.uuid }}">{{ label(r.job.job_type) }}</a></td>
       <td>
         {% if r.job.room_uuid %}{{ rooms.get(r.job.room_uuid, 'room') }}{% endif %}
@@ -606,7 +630,7 @@ def run_housekeeping_lines(run_uuid: UUID) -> list[dict]:
 
 
 def _helpers() -> dict:
-    return {"when": _when, "seconds": _seconds, "label": _job_label, "purpose": _job_purpose,
+    return {"when": _when, "job_times": _job_times, "seconds": _seconds, "label": _job_label, "purpose": _job_purpose,
             "outcome": _outcome, "elapsed": _elapsed, "chunk_link": _chunk_link,
             "signal_texts": _signal_texts,
             "reaction_texts": _reaction_texts}
