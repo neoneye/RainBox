@@ -22,7 +22,7 @@ AGENT_MODELS_TEMPLATE: str = """
 <title>Agent models &mdash; rainbox</title>
 <style>
   body{font-family:system-ui,sans-serif;margin:0;padding:0}
-  table.agents{border-collapse:collapse;width:100%;max-width:900px}
+  table.agents{border-collapse:collapse;width:100%}
   table.agents th,table.agents td{border:1px solid #ddd;padding:6px 10px;text-align:left;vertical-align:top}
   table.agents th{background:#f0f0f0}
   table.agents .role{font-weight:600}
