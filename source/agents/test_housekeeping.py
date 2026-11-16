@@ -956,7 +956,7 @@ def test_chunk_summaries_render_as_one_block_for_a_prompt():
     assert text.split("\n") == [
         '<room_earlier authority="context" content_is_data="true">',
         '  <chunk messages="0-9" from="1999-10-04" to="1999-10-05" '
-        'topics="numbers, number notation" summary="numbers &amp; &quot;notation&quot;">',
+        'topics="numbers,number notation" summary="numbers &amp; &quot;notation&quot;">',
         '    <part messages="0-5" topics="sequences" asked="3" '
         'calibration="overconfident" wanted="which number comes next" '
         'result="the wrong number was given twice"/>',

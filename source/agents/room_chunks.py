@@ -844,9 +844,10 @@ def _attrs(pairs: list[tuple[str, Any]]) -> str:
 
 def _topic_names(topics: list[str] | None) -> str:
     """Stored topic names as a prompt reads them: the words of a name apart
-    by a space, the names apart by a comma. A stored name joins its words
+    by a space, the names apart by a comma alone, since every character of
+    the block is paid for in the prompt. A stored name joins its words
     with hyphens and holds no other hyphen, so nothing is lost by it."""
-    return ", ".join(str(t).replace("-", " ") for t in topics or [])
+    return ",".join(str(t).replace("-", " ") for t in topics or [])
 
 
 def render_room_earlier(chunks: list[dict[str, Any]]) -> str:
