@@ -10,6 +10,7 @@ content when it moves, so nothing is pushed and nothing is diffed in script.
 Design: notes/housekeeping-design.md.
 """
 import html
+import json
 import itertools
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
@@ -293,9 +294,8 @@ def _decision_calls(job) -> list[dict]:
 
     def kpis(row, call) -> list[dict]:
         """The call's figures, as the fields of a model call's meta line.
-        A decision model writes no text and reports no tokens, so the line
-        holds what such a call has: its model, the size of what it was
-        given, and how long it took."""
+        A decision model writes no text, so the line holds what such a call
+        has: its model, its input tokens, and how long it took."""
         out: list[dict] = []
 
         def field(html: str, title: str, href: str = "") -> None:
@@ -311,11 +311,19 @@ def _decision_calls(job) -> list[dict]:
         elif row.model:
             field(row.model, f"The decision model that answered: {row.model}")
         if call is not None:
-            sent = sum(len(str(m.get("content") or "")) for m in (call.messages or [])
-                       if isinstance(m, dict))
-            if sent:
-                field(f"in {sent} chars", "The size of what was sent: the two "
-                      "messages and the question. A decision model reports no tokens.")
+            tokens = call.prompt_tokens
+            if tokens is None:
+                # A call recorded before the count was read off the reply
+                # still has it there, under `usage`.
+                try:
+                    usage = json.loads(call.response_text or "").get("usage") or {}
+                    tokens = usage.get("input_tokens")
+                except (ValueError, AttributeError):
+                    tokens = None
+            if isinstance(tokens, int):
+                field(f"in {tokens}", "Input tokens: the two messages and the "
+                      "question, as the decision model counted them. It writes "
+                      "no text, so it has no output tokens.")
         if row.elapsed_ms is not None:
             field(f"took {row.elapsed_ms} ms", "Duration: how long this took")
         return out

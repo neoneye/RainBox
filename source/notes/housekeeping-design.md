@@ -615,9 +615,9 @@ attempt's `llm_call` row: for a chunk, the summary that was kept.
     cached, prefill, decode, throughput, duration), its prompts, and its
     reply.
   - A request to the decision model: the verdict, a line of figures as a
-    model call has (a link to the call on `/activity`, the model, the size
-    of what was sent in characters, the duration; a decision model reports
-    no tokens), and what its
+    model call has (a link to the call on `/activity`, the model,
+    its input tokens, the duration; a decision model writes no text, so it
+    has no output tokens), and what its
     row on `/activity` shows.
   - The call still running: its reply so far.
   - The result: the chunk the job wrote (`db.job_room_chunk`), as the

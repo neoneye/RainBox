@@ -1147,3 +1147,15 @@ def test_stream_timings_give_a_direct_call_its_prefill_and_decode(monkeypatch):
         messages=[], raw={"usage": {"prompt_tokens": 93, "completion_tokens": 266},
                           "timings": {"prompt_ms": 165.4, "predicted_ms": 3993.0}})
     assert rows[0]["prefill_ms"] == 165 and rows[0]["decode_ms"] == 3993
+
+
+def test_usage_named_input_and_output_tokens_is_read():
+    """The decision model's server names its counts `input_tokens` and
+    `output_tokens`."""
+    from llm.activity import extract_usage
+
+    usage = extract_usage({"usage": {"input_tokens": 131, "output_tokens": 0}})
+    assert (usage["prompt_tokens"], usage["completion_tokens"]) == (131, 0)
+    # The other spelling still wins when both are there.
+    usage = extract_usage({"usage": {"prompt_tokens": 7, "input_tokens": 131}})
+    assert usage["prompt_tokens"] == 7

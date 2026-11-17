@@ -241,10 +241,14 @@ def extract_usage(raw: Any) -> dict[str, int | None]:
 
     usage = _get(raw, "usage")
     if usage is not None:
-        if out["prompt_tokens"] is None:
-            out["prompt_tokens"] = _int_or_none(_get(usage, "prompt_tokens"))
-        if out["completion_tokens"] is None:
-            out["completion_tokens"] = _int_or_none(_get(usage, "completion_tokens"))
+        # Two spellings of the same counts: `prompt_tokens` and
+        # `completion_tokens`, or `input_tokens` and `output_tokens`, which
+        # is how the decision model's server names them.
+        for ours, theirs in (("prompt_tokens", ("prompt_tokens", "input_tokens")),
+                             ("completion_tokens", ("completion_tokens", "output_tokens"))):
+            for name in theirs:
+                if out[ours] is None:
+                    out[ours] = _int_or_none(_get(usage, name))
         out["cached_tokens_reported"] = _extract_reported_cache(usage)
     return out
 

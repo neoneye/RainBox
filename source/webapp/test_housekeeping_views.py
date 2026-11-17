@@ -292,7 +292,7 @@ def test_a_chunk_jobs_page_shows_what_the_decision_model_was_asked_and_answered(
     sent = LlmCall(caller="assistant.repeat_check", model="decider", messages=[
         {"role": "state", "content": state},
         {"role": "question", "content": '{"retry": {"instructions": "The next message asks again."}}'}],
-        response_text='{"retry": {"p": 0.91}}')
+        response_text='{"retry": {"p": 0.91}, "usage": {"input_tokens": 131, "output_tokens": 0}}')
     db.session.add(sent)
     db.session.commit()
     made["calls"].append(sent.uuid)
@@ -327,7 +327,8 @@ def test_a_chunk_jobs_page_shows_what_the_decision_model_was_asked_and_answered(
         assert f'<a href="/activity/call/{on_activity}">activity \u2197</a>' in card
         for text in (">decider</span>", ">took 120 ms</span>"):
             assert card.count(text) == 3
-        assert card.count(" chars</span>") == 1     # only the one with a stored call
+        # The input tokens are read from the stored call's reply.
+        assert card.count(">in 131</span>") == 1 and " chars</span>" not in card
         # A call shows what its page on /activity shows: each message that
         # was sent under its role, then the response.
         assert card.index(">state<") < card.index(">question<") < card.index(">response<")
