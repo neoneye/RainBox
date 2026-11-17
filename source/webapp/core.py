@@ -128,122 +128,149 @@ from llm.activity import install_activity_recorder  # noqa: E402
 
 install_activity_recorder()
 
-# Shared top nav, registered as an includable template so every page can do
-# {% include "_nav.html" %} and stay in sync. Active link is derived from
+# Shared navigation, registered as an includable template so every page can
+# do {% include "_nav.html" %} and stay in sync. It is a sidebar on the left:
+# a rail of icons, which widens over the page while the mouse is on it and
+# shows each item's name. The page is not moved or squeezed by that: it
+# keeps the rail's width as its left padding and nothing more. A group
+# (Memory, Assistant, ...) unfolds its pages on a click, and the group of the
+# page that is shown is unfolded already. The active item is derived from
 # request.endpoint. Flask Admin is not in it: the Home page links to it.
 # /modelgrouppriorities deliberately does NOT include this — it has its own
-# "× Close" button instead.
+# "× Close" button instead. The UI is for a desktop's wide window: there is
+# no narrow layout.
+#
+# The icons are drawn here, in one weight and one colour (currentColor), so
+# an item's icon takes the colour of its text.
 NAV_TEMPLATE = """
 <style>
-  .pp-nav{position:sticky;top:0;z-index:100;display:flex;align-items:center;gap:18px;padding:10px 20px;margin-bottom:1.5em;
-          border-bottom:1px solid #e5e7eb;background:#fff;font-family:system-ui,sans-serif}
-  .pp-nav a{color:#6c757d;text-decoration:none;font-size:0.92rem;font-weight:500}
-  .pp-nav a:hover{color:#1a1a2e}
-  .pp-nav a.pp-active{color:#1a1a2e;font-weight:600}
-  .pp-nav .pp-links{display:flex;align-items:center;gap:18px;flex:1 1 auto;flex-wrap:wrap}
-  .pp-content{padding:0 24px 2em}
-  /* Benchmark dropdown — native <details>, no JS. */
-  .pp-nav details.pp-dd{position:relative}
-  .pp-nav details.pp-dd>summary{list-style:none;cursor:pointer;color:#6c757d;font-size:0.92rem;font-weight:500;
-          -webkit-user-select:none;user-select:none}
+  /* The page keeps clear of the rail, whatever padding it set for itself. */
+  html body{padding-left:52px}
+  .pp-nav{position:fixed;top:0;left:0;bottom:0;z-index:1000;width:52px;box-sizing:border-box;
+          display:flex;flex-direction:column;gap:2px;padding:10px 8px;overflow-x:hidden;overflow-y:auto;
+          border-right:1px solid #e5e7eb;background:#fff;font-family:system-ui,sans-serif;
+          transition:width 0.18s ease,box-shadow 0.18s ease;scrollbar-width:none}
+  .pp-nav::-webkit-scrollbar{display:none}
+  /* Open: wider, and over the page. */
+  .pp-nav.pp-open{width:230px;box-shadow:6px 0 24px rgba(0,0,0,0.12)}
+  .pp-nav .pp-item{display:flex;align-items:center;gap:12px;height:34px;padding:0 8px;border-radius:8px;
+          flex:0 0 auto;color:#6c757d;text-decoration:none;font-size:0.92rem;font-weight:500;
+          white-space:nowrap;cursor:pointer;-webkit-user-select:none;user-select:none}
+  .pp-nav .pp-item:hover{color:#1a1a2e;background:#f1f5f9}
+  .pp-nav a.pp-item.pp-active,.pp-nav details.pp-dd.pp-active>summary{color:#1a1a2e;font-weight:600;background:#eef2ff}
+  .pp-nav svg{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex:0 0 auto}
+  /* A name is there only while the sidebar is open: the rail shows icons. */
+  .pp-nav .pp-label{flex:1 1 auto;opacity:0;transition:opacity 0.12s ease}
+  .pp-nav.pp-open .pp-label{opacity:1}
+  .pp-nav .pp-chev{opacity:0;transition:transform 0.15s ease,opacity 0.12s ease}
+  .pp-nav.pp-open .pp-chev{opacity:0.7}
+  .pp-nav details.pp-dd[open] .pp-chev{transform:rotate(90deg)}
+  .pp-nav details.pp-dd{flex:0 0 auto}
+  .pp-nav details.pp-dd>summary{list-style:none}
   .pp-nav details.pp-dd>summary::-webkit-details-marker{display:none}
-  .pp-nav details.pp-dd>summary:hover{color:#1a1a2e}
-  .pp-nav details.pp-dd[open]>summary,.pp-nav details.pp-dd.pp-active>summary{color:#1a1a2e;font-weight:600}
-  .pp-nav details.pp-dd>.pp-dd-menu{position:absolute;top:100%;left:0;margin-top:8px;background:#fff;border:1px solid #e5e7eb;
-          border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,0.10);padding:6px;min-width:170px;display:flex;flex-direction:column;gap:2px;z-index:200}
-  .pp-nav details.pp-dd>.pp-dd-menu a{padding:7px 10px;border-radius:6px;white-space:nowrap}
-  .pp-nav details.pp-dd>.pp-dd-menu a:hover{background:#f1f5f9}
-  /* Hamburger toggle — hidden on wide screens, collapses the links on narrow. */
-  .pp-nav .pp-burger{display:none;background:none;border:1px solid #e5e7eb;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:1.15rem;line-height:1;color:#374151}
-  @media (max-width:820px){
-    .pp-nav{flex-wrap:wrap}
-    .pp-nav .pp-burger{display:block;margin-left:auto}
-    .pp-nav .pp-links{display:none;flex-direction:column;align-items:flex-start;width:100%;gap:12px;padding-top:10px}
-    .pp-nav.pp-open .pp-links{display:flex}
-    .pp-nav details.pp-dd>.pp-dd-menu{position:static;box-shadow:none;border:none;margin:2px 0 0 14px;padding:0;min-width:0}
+  /* A group's pages, under it. Hidden on the rail, which has no room for them. */
+  .pp-nav details.pp-dd>.pp-dd-menu{display:none;flex-direction:column;gap:1px;margin:2px 0 4px 26px;
+          padding-left:10px;border-left:1px solid #e5e7eb}
+  .pp-nav.pp-open details.pp-dd[open]>.pp-dd-menu{display:flex}
+  .pp-nav .pp-dd-menu a{padding:5px 10px;border-radius:6px;color:#6c757d;text-decoration:none;
+          font-size:0.86rem;font-weight:500;white-space:nowrap}
+  .pp-nav .pp-dd-menu a:hover{color:#1a1a2e;background:#f1f5f9}
+  .pp-nav .pp-dd-menu a.pp-active{color:#1a1a2e;font-weight:600}
+  .pp-content{padding:1.5em 24px 2em}
+  @media (prefers-reduced-motion: reduce){
+    .pp-nav,.pp-nav .pp-label,.pp-nav .pp-chev{transition:none}
   }
 </style>
 <nav class="pp-nav" id="pp-nav">
-  <a href="{{ url_for('index') }}" class="{{ 'pp-active' if request.endpoint == 'index' }}">Home</a>
-  <button type="button" class="pp-burger" aria-label="Toggle navigation"
-          onclick="this.closest('.pp-nav').classList.toggle('pp-open')">&#9776;</button>
-  <div class="pp-links">
-    <a href="{{ url_for('chat_page') }}" class="{{ 'pp-active' if request.endpoint == 'chat_page' }}">Chat</a>
-    <a href="{{ url_for('prompt_page') }}" class="{{ 'pp-active' if request.endpoint == 'prompt_page' }}">Prompt</a>
-    <a href="{{ url_for('cron_page') }}" class="{{ 'pp-active' if request.endpoint == 'cron_page' }}">Cron</a>
-    <a href="{{ url_for('kanban_page') }}" class="{{ 'pp-active' if request.endpoint == 'kanban_page' }}">Kanban</a>
-    <details class="pp-dd {{ 'pp-active' if request.endpoint in ('memory_page', 'memory_developer_page') }}">
-      <summary>Memory &#9662;</summary>
-      <div class="pp-dd-menu">
-        <a href="{{ url_for('memory_page') }}" class="{{ 'pp-active' if request.endpoint == 'memory_page' }}">Memories</a>
-        <a href="{{ url_for('memory_developer_page') }}" class="{{ 'pp-active' if request.endpoint == 'memory_developer_page' }}">Developer</a>
-      </div>
-    </details>
-    <details class="pp-dd {{ 'pp-active' if request.endpoint in ('assistant_page', 'assistant_overview_page', 'housekeeping_page', 'housekeeping_job_page', 'housekeeping_room_page', 'second_opinion_page', 'persona_page') }}">
-      <summary>Assistant &#9662;</summary>
-      <div class="pp-dd-menu">
-        <a href="{{ url_for('assistant_overview_page') }}" class="{{ 'pp-active' if request.endpoint in ('assistant_page', 'assistant_overview_page') }}">Runs</a>
-        <a href="{{ url_for('housekeeping_page') }}" class="{{ 'pp-active' if request.endpoint in ('housekeeping_page', 'housekeeping_job_page', 'housekeeping_room_page') }}">Housekeeping</a>
-        <a href="{{ url_for('second_opinion_page') }}" class="{{ 'pp-active' if request.endpoint == 'second_opinion_page' }}">Second opinion</a>
-        <a href="{{ url_for('persona_page') }}" class="{{ 'pp-active' if request.endpoint == 'persona_page' }}">Persona</a>
-      </div>
-    </details>
-    <a href="{{ url_for('git_page') }}" class="{{ 'pp-active' if request.endpoint == 'git_page' }}">Git</a>
-    <a href="{{ url_for('bridges_page') }}" class="{{ 'pp-active' if request.endpoint == 'bridges_page' }}">Bridges</a>
-    <a href="{{ url_for('profile_page') }}" class="{{ 'pp-active' if request.endpoint == 'profile_page' }}">Profile</a>
-    <a href="{{ url_for('settings_page') }}" class="{{ 'pp-active' if request.endpoint == 'settings_page' }}">Settings</a>
-    <details class="pp-dd {{ 'pp-active' if request.endpoint in ('models_page', 'modelgroups_page', 'agent_models_page') }}">
-      <summary>Models &#9662;</summary>
-      <div class="pp-dd-menu">
-        <a href="{{ url_for('models_page') }}" class="{{ 'pp-active' if request.endpoint == 'models_page' }}">Configs</a>
-        <a href="{{ url_for('modelgroups_page') }}" class="{{ 'pp-active' if request.endpoint == 'modelgroups_page' }}">Groups</a>
-        <a href="{{ url_for('agent_models_page') }}" class="{{ 'pp-active' if request.endpoint == 'agent_models_page' }}">Agent models</a>
-      </div>
-    </details>
-    <details class="pp-dd {{ 'pp-active' if request.endpoint in ('benchmark_basic_page', 'benchmark_editdocument_page', 'benchmark_kanban_page', 'benchmark_story_page', 'benchmark_vision_page') }}">
-      <summary>Benchmark &#9662;</summary>
-      <div class="pp-dd-menu">
-        <a href="{{ url_for('benchmark_basic_page') }}" class="{{ 'pp-active' if request.endpoint == 'benchmark_basic_page' }}">Basic</a>
-        <a href="{{ url_for('benchmark_kanban_page') }}" class="{{ 'pp-active' if request.endpoint == 'benchmark_kanban_page' }}">Kanban</a>
-        <a href="{{ url_for('benchmark_story_page') }}" class="{{ 'pp-active' if request.endpoint == 'benchmark_story_page' }}">Story</a>
-        {# Out of alphabetical order on purpose: Edit document, then Vision, last. #}
-        <a href="{{ url_for('benchmark_editdocument_page') }}" class="{{ 'pp-active' if request.endpoint == 'benchmark_editdocument_page' }}">Edit document</a>
-        <a href="{{ url_for('benchmark_vision_page') }}" class="{{ 'pp-active' if request.endpoint == 'benchmark_vision_page' }}">Vision</a>
-      </div>
-    </details>
-    <details class="pp-dd {{ 'pp-active' if request.endpoint in ('demo_tts_kokoro', 'demo_tts_lfm3', 'demo_tts_dotstts', 'demo_stt_whisper', 'demo_stt_gemma4', 'demo_stt_lfm3', 'demo_voice_echo') }}">
-      <summary>Voice &#9662;</summary>
-      <div class="pp-dd-menu">
-        <a href="{{ url_for('demo_tts_kokoro') }}" class="{{ 'pp-active' if request.endpoint == 'demo_tts_kokoro' }}">TTS kokoro</a>
-        <a href="{{ url_for('demo_tts_lfm3') }}" class="{{ 'pp-active' if request.endpoint == 'demo_tts_lfm3' }}">TTS lfm3</a>
-        <a href="{{ url_for('demo_stt_whisper') }}" class="{{ 'pp-active' if request.endpoint == 'demo_stt_whisper' }}">STT whisper</a>
-        <a href="{{ url_for('demo_stt_gemma4') }}" class="{{ 'pp-active' if request.endpoint == 'demo_stt_gemma4' }}">STT gemma4</a>
-        <a href="{{ url_for('demo_stt_lfm3') }}" class="{{ 'pp-active' if request.endpoint == 'demo_stt_lfm3' }}">STT lfm3</a>
-        <a href="{{ url_for('demo_voice_echo') }}" class="{{ 'pp-active' if request.endpoint == 'demo_voice_echo' }}">Echo</a>
-        <a href="{{ url_for('demo_tts_dotstts') }}" class="{{ 'pp-active' if request.endpoint == 'demo_tts_dotstts' }}">Clone</a>
-      </div>
-    </details>
-    <a href="{{ url_for('find_page') }}" class="{{ 'pp-active' if request.endpoint == 'find_page' }}">Find</a>
-    <a href="{{ url_for('activity_page') }}" class="{{ 'pp-active' if request.endpoint == 'activity_page' }}">Activity</a>
-    <a href="{{ url_for('doctor_page') }}" class="{{ 'pp-active' if request.endpoint == 'doctor_page' }}">Doctor</a>
-    <a href="{{ url_for('demo_multimodal') }}" class="{{ 'pp-active' if request.endpoint == 'demo_multimodal' }}">Multimodal</a>
-  </div>
+  <a href="{{ url_for('index') }}" class="pp-item {{ 'pp-active' if request.endpoint == 'index' }}" title="Home"><svg class="pp-ico" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/></svg><span class="pp-label">Home</span></a>
+  <a href="{{ url_for('chat_page') }}" class="pp-item {{ 'pp-active' if request.endpoint == 'chat_page' }}" title="Chat"><svg class="pp-ico" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg><span class="pp-label">Chat</span></a>
+  <a href="{{ url_for('prompt_page') }}" class="pp-item {{ 'pp-active' if request.endpoint == 'prompt_page' }}" title="Prompt"><svg class="pp-ico" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 10l3 2.5L7 15"/><path d="M12.5 15H17"/></svg><span class="pp-label">Prompt</span></a>
+  <a href="{{ url_for('cron_page') }}" class="pp-item {{ 'pp-active' if request.endpoint == 'cron_page' }}" title="Cron"><svg class="pp-ico" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg><span class="pp-label">Cron</span></a>
+  <a href="{{ url_for('kanban_page') }}" class="pp-item {{ 'pp-active' if request.endpoint == 'kanban_page' }}" title="Kanban"><svg class="pp-ico" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><rect x="3.5" y="5" width="4.5" height="14" rx="1"/><rect x="9.75" y="5" width="4.5" height="8" rx="1"/><rect x="16" y="5" width="4.5" height="11" rx="1"/></svg><span class="pp-label">Kanban</span></a>
+  <details class="pp-dd {{ 'pp-active' if request.endpoint in ('memory_page', 'memory_developer_page') }}" {{ 'open' if request.endpoint in ('memory_page', 'memory_developer_page') }}>
+    <summary class="pp-item" title="Memory"><svg class="pp-ico" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg><span class="pp-label">Memory</span><svg class="pp-chev" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></summary>
+    <div class="pp-dd-menu">
+      <a href="{{ url_for('memory_page') }}" class="{{ 'pp-active' if request.endpoint == 'memory_page' }}">Memories</a>
+      <a href="{{ url_for('memory_developer_page') }}" class="{{ 'pp-active' if request.endpoint == 'memory_developer_page' }}">Developer</a>
+    </div>
+  </details>
+  <details class="pp-dd {{ 'pp-active' if request.endpoint in ('assistant_page', 'assistant_overview_page', 'housekeeping_page', 'housekeeping_job_page', 'housekeeping_room_page', 'second_opinion_page', 'persona_page') }}" {{ 'open' if request.endpoint in ('assistant_page', 'assistant_overview_page', 'housekeeping_page', 'housekeeping_job_page', 'housekeeping_room_page', 'second_opinion_page', 'persona_page') }}>
+    <summary class="pp-item" title="Assistant"><svg class="pp-ico" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><rect x="5" y="8" width="14" height="11" rx="2"/><path d="M12 4v4"/><circle cx="12" cy="3.5" r="0.8"/><path d="M9.5 12.5v2"/><path d="M14.5 12.5v2"/><path d="M2.5 12.5v3"/><path d="M21.5 12.5v3"/></svg><span class="pp-label">Assistant</span><svg class="pp-chev" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></summary>
+    <div class="pp-dd-menu">
+      <a href="{{ url_for('assistant_overview_page') }}" class="{{ 'pp-active' if request.endpoint in ('assistant_page', 'assistant_overview_page') }}">Runs</a>
+      <a href="{{ url_for('housekeeping_page') }}" class="{{ 'pp-active' if request.endpoint in ('housekeeping_page', 'housekeeping_job_page', 'housekeeping_room_page') }}">Housekeeping</a>
+      <a href="{{ url_for('second_opinion_page') }}" class="{{ 'pp-active' if request.endpoint == 'second_opinion_page' }}">Second opinion</a>
+      <a href="{{ url_for('persona_page') }}" class="{{ 'pp-active' if request.endpoint == 'persona_page' }}">Persona</a>
+    </div>
+  </details>
+  <a href="{{ url_for('git_page') }}" class="pp-item {{ 'pp-active' if request.endpoint == 'git_page' }}" title="Git"><svg class="pp-ico" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="8" r="2"/><path d="M6 7v10"/><path d="M18 10v1a4 4 0 0 1-4 4H6"/></svg><span class="pp-label">Git</span></a>
+  <a href="{{ url_for('bridges_page') }}" class="pp-item {{ 'pp-active' if request.endpoint == 'bridges_page' }}" title="Bridges"><svg class="pp-ico" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3A4 4 0 0 0 13 5.3l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3A4 4 0 0 0 11 18.7l1-1"/></svg><span class="pp-label">Bridges</span></a>
+  <a href="{{ url_for('profile_page') }}" class="pp-item {{ 'pp-active' if request.endpoint == 'profile_page' }}" title="Profile"><svg class="pp-ico" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg><span class="pp-label">Profile</span></a>
+  <a href="{{ url_for('settings_page') }}" class="pp-item {{ 'pp-active' if request.endpoint == 'settings_page' }}" title="Settings"><svg class="pp-ico" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 6h9"/><path d="M17 6h3"/><path d="M4 12h3"/><path d="M11 12h9"/><path d="M4 18h11"/><path d="M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></svg><span class="pp-label">Settings</span></a>
+  <details class="pp-dd {{ 'pp-active' if request.endpoint in ('models_page', 'modelgroups_page', 'agent_models_page') }}" {{ 'open' if request.endpoint in ('models_page', 'modelgroups_page', 'agent_models_page') }}>
+    <summary class="pp-item" title="Models"><svg class="pp-ico" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5"/><path d="M12 12v9"/></svg><span class="pp-label">Models</span><svg class="pp-chev" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></summary>
+    <div class="pp-dd-menu">
+      <a href="{{ url_for('models_page') }}" class="{{ 'pp-active' if request.endpoint == 'models_page' }}">Configs</a>
+      <a href="{{ url_for('modelgroups_page') }}" class="{{ 'pp-active' if request.endpoint == 'modelgroups_page' }}">Groups</a>
+      <a href="{{ url_for('agent_models_page') }}" class="{{ 'pp-active' if request.endpoint == 'agent_models_page' }}">Agent models</a>
+    </div>
+  </details>
+  <details class="pp-dd {{ 'pp-active' if request.endpoint in ('benchmark_basic_page', 'benchmark_editdocument_page', 'benchmark_kanban_page', 'benchmark_story_page', 'benchmark_vision_page') }}" {{ 'open' if request.endpoint in ('benchmark_basic_page', 'benchmark_editdocument_page', 'benchmark_kanban_page', 'benchmark_story_page', 'benchmark_vision_page') }}>
+    <summary class="pp-item" title="Benchmark"><svg class="pp-ico" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 20h16"/><path d="M7 20v-6"/><path d="M12 20V5"/><path d="M17 20v-10"/></svg><span class="pp-label">Benchmark</span><svg class="pp-chev" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></summary>
+    <div class="pp-dd-menu">
+      <a href="{{ url_for('benchmark_basic_page') }}" class="{{ 'pp-active' if request.endpoint == 'benchmark_basic_page' }}">Basic</a>
+      <a href="{{ url_for('benchmark_kanban_page') }}" class="{{ 'pp-active' if request.endpoint == 'benchmark_kanban_page' }}">Kanban</a>
+      <a href="{{ url_for('benchmark_story_page') }}" class="{{ 'pp-active' if request.endpoint == 'benchmark_story_page' }}">Story</a>
+      {# Out of alphabetical order on purpose: Edit document, then Vision, last. #}
+      <a href="{{ url_for('benchmark_editdocument_page') }}" class="{{ 'pp-active' if request.endpoint == 'benchmark_editdocument_page' }}">Edit document</a>
+      <a href="{{ url_for('benchmark_vision_page') }}" class="{{ 'pp-active' if request.endpoint == 'benchmark_vision_page' }}">Vision</a>
+    </div>
+  </details>
+  <details class="pp-dd {{ 'pp-active' if request.endpoint in ('demo_tts_kokoro', 'demo_tts_lfm3', 'demo_tts_dotstts', 'demo_stt_whisper', 'demo_stt_gemma4', 'demo_stt_lfm3', 'demo_voice_echo') }}" {{ 'open' if request.endpoint in ('demo_tts_kokoro', 'demo_tts_lfm3', 'demo_tts_dotstts', 'demo_stt_whisper', 'demo_stt_gemma4', 'demo_stt_lfm3', 'demo_voice_echo') }}>
+    <summary class="pp-item" title="Voice"><svg class="pp-ico" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/><path d="M9 21h6"/></svg><span class="pp-label">Voice</span><svg class="pp-chev" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></summary>
+    <div class="pp-dd-menu">
+      <a href="{{ url_for('demo_tts_kokoro') }}" class="{{ 'pp-active' if request.endpoint == 'demo_tts_kokoro' }}">TTS kokoro</a>
+      <a href="{{ url_for('demo_tts_lfm3') }}" class="{{ 'pp-active' if request.endpoint == 'demo_tts_lfm3' }}">TTS lfm3</a>
+      <a href="{{ url_for('demo_stt_whisper') }}" class="{{ 'pp-active' if request.endpoint == 'demo_stt_whisper' }}">STT whisper</a>
+      <a href="{{ url_for('demo_stt_gemma4') }}" class="{{ 'pp-active' if request.endpoint == 'demo_stt_gemma4' }}">STT gemma4</a>
+      <a href="{{ url_for('demo_stt_lfm3') }}" class="{{ 'pp-active' if request.endpoint == 'demo_stt_lfm3' }}">STT lfm3</a>
+      <a href="{{ url_for('demo_voice_echo') }}" class="{{ 'pp-active' if request.endpoint == 'demo_voice_echo' }}">Echo</a>
+      <a href="{{ url_for('demo_tts_dotstts') }}" class="{{ 'pp-active' if request.endpoint == 'demo_tts_dotstts' }}">Clone</a>
+    </div>
+  </details>
+  <a href="{{ url_for('find_page') }}" class="pp-item {{ 'pp-active' if request.endpoint == 'find_page' }}" title="Find"><svg class="pp-ico" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.6-4.6"/></svg><span class="pp-label">Find</span></a>
+  <a href="{{ url_for('activity_page') }}" class="pp-item {{ 'pp-active' if request.endpoint == 'activity_page' }}" title="Activity"><svg class="pp-ico" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg><span class="pp-label">Activity</span></a>
+  <a href="{{ url_for('doctor_page') }}" class="pp-item {{ 'pp-active' if request.endpoint == 'doctor_page' }}" title="Doctor"><svg class="pp-ico" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M12 8v8"/><path d="M8 12h8"/></svg><span class="pp-label">Doctor</span></a>
+  <a href="{{ url_for('demo_multimodal') }}" class="pp-item {{ 'pp-active' if request.endpoint == 'demo_multimodal' }}" title="Multimodal"><svg class="pp-ico" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M21 16l-5-5-8 8"/></svg><span class="pp-label">Multimodal</span></a>
+
 </nav>
 <script>
-  // Native <details> doesn't auto-close, so dismiss any open nav dropdown when
-  // a click (or Escape) lands outside it.
-  document.addEventListener('click', function(e) {
-    document.querySelectorAll('nav.pp-nav details.pp-dd[open]').forEach(function(d) {
-      if (!d.contains(e.target)) d.removeAttribute('open');
-    });
-  });
-  document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') {
-      document.querySelectorAll('nav.pp-nav details.pp-dd[open]').forEach(function(d) {
-        d.removeAttribute('open');
-      });
+  // The sidebar opens once the mouse has rested on the rail for a moment, so
+  // it does not open for a mouse that only passes over it, and closes when
+  // the mouse leaves. A key's focus inside it opens it too.
+  (function () {
+    var nav = document.getElementById('pp-nav');
+    if (!nav) { return; }
+    var OPEN_AFTER_MS = 150;
+    var timer = null;
+    function open() { nav.classList.add('pp-open'); }
+    function close() {
+      if (timer) { clearTimeout(timer); timer = null; }
+      nav.classList.remove('pp-open');
     }
-  });
+    nav.addEventListener('mouseenter', function () {
+      if (timer) { clearTimeout(timer); }
+      timer = setTimeout(open, OPEN_AFTER_MS);
+    });
+    nav.addEventListener('mouseleave', close);
+    nav.addEventListener('focusin', open);
+    nav.addEventListener('focusout', function (e) {
+      if (!nav.contains(e.relatedTarget) && !nav.matches(':hover')) { close(); }
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') { close(); }
+    });
+  })();
 </script>
 """
 

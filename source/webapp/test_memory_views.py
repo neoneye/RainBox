@@ -29,7 +29,7 @@ def test_memory_page_renders_with_nav():
 def test_nav_has_memory_dropdown():
     # "Memory" is a nav dropdown (Memories + Developer), not a bare link.
     body = app.test_client().get("/memory").get_data(as_text=True)
-    assert ">Memory &#9662;<" in body
+    assert '<span class="pp-label">Memory</span>' in body
     assert ">Memories<" in body
     assert ">Developer<" in body
     assert "pp-active" in body
@@ -124,3 +124,25 @@ def test_tree_rows_are_real_links():
     assert "if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;" in body
     assert "STATUS_ORDER.includes(id)" in body  # group deep link restores
     assert "text-decoration:none" in body
+
+
+def test_the_nav_is_a_sidebar_of_icons_with_a_name_each():
+    """Every item has an icon drawn in the text's colour and its name beside
+    it, and a group's pages are under it."""
+    import re
+
+    body = app.test_client().get("/memory").get_data(as_text=True)
+    nav = body[body.index('<nav class="pp-nav"'):body.index("</nav>")]
+    items = re.findall(
+        r'class="pp-item[^"]*" title="[^"]*"><svg class="pp-ico"[^>]*>.*?</svg>'
+        r'<span class="pp-label">([^<]+)</span>', nav)
+    assert items == [
+        "Home", "Chat", "Prompt", "Cron", "Kanban", "Memory", "Assistant", "Git",
+        "Bridges", "Profile", "Settings", "Models", "Benchmark", "Voice", "Find",
+        "Activity", "Doctor", "Multimodal"]
+    # No colour of their own, and no emoji.
+    assert "fill=" not in nav and "stroke=" not in nav
+    # The page's own group is unfolded, and the others are not.
+    assert nav.count('<details class="pp-dd pp-active" open>') == 1
+    assert nav.count(" open>") == 1
+    assert "Admin" not in nav

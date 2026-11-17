@@ -526,7 +526,9 @@ def test_nav_link_present(app_ctx, client):
     body = client.get("/assistant").get_data(as_text=True)
     assert 'href="/assistant-overview"' in body
     assert 'href="/second-opinion"' in body
-    assert "Assistant &#9662;" in body
+    # The Assistant group is the page's own, so it is unfolded.
+    assert '<span class="pp-label">Assistant</span>' in body
+    assert re.search(r'<details class="pp-dd pp-active" open>', body)
 
 
 def test_markdown_export_serializes_the_run(app_ctx, client):
