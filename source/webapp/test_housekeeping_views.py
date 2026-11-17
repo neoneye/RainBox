@@ -159,6 +159,9 @@ def test_a_job_page_shows_each_attempt_with_its_prompt_and_reply(client):
     assert re.search(r'Decision calls</div>\s*<div class="dval-big">0</div>', dash)
     assert "model 1.6s" in dash and "total " in dash and '>decision ' not in dash
     assert re.search(r'Attempts</div>\s*<div class="dval">2', dash)
+    # Finished stands under Created, in one cell, so the two are compared.
+    assert re.search(r'Created</div>\s*<div class="dval">.*?</div>\s*(\{#.*?#\}\s*)?'
+                     r'<div class="dlabel">Finished</div>', dash, re.S)
     assert "if (box.querySelector('[data-final]')) { clearInterval(timer); return; }" in body
     # The page takes the window's width, as a run's page does.
     assert '<div class="hk-wrap hk-full">' in body

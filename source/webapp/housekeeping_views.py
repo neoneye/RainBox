@@ -609,6 +609,7 @@ _STYLE = """
     font-variant-numeric:tabular-nums}
   .hk-dash .dsep{grid-column:1 / -1;margin:0 -18px;border:0;border-top:1px solid #e5e7eb}
   .hk-dash .dfor{grid-column:1 / span 3}
+  .hk-dash .dcell .dval + .dlabel{margin-top:8px}
   .hk-dash .dts{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
   .hk-dash a{color:#2563eb;text-decoration:none}
   .hk-dash .dstatus-done{color:#1e7e34}
@@ -998,13 +999,12 @@ _JOB_FRAGMENT = """
   <div class="dcell">
     <div class="dlabel">Created</div>
     <div class="dval"><span class="dts">{{ when(job.created_at) }}</span></div>
-  </div>
-  {% if job.finished_at %}
-  <div class="dcell">
+    {# Under Created, and under the times above, so the two are compared at a glance. #}
+    {% if job.finished_at %}
     <div class="dlabel">Finished</div>
     <div class="dval"><span class="dts">{{ when(job.finished_at) }}</span></div>
+    {% endif %}
   </div>
-  {% endif %}
 </div>
 
 {% if timeline %}
