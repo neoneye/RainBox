@@ -179,6 +179,12 @@ def _chunk_link(job) -> dict | None:
     }
 
 
+def _sender_name(sender: str) -> str:
+    """Who wrote a message, as the pages and the prompts name them: the
+    user or the assistant. The stored user types are `human` and `agent`."""
+    return {"human": "user", "agent": "assistant"}.get(sender, sender)
+
+
 def _chunk_view(row, messages: list[dict], index_of: dict) -> dict:
     """A stored chunk with what a page shows beside it: `{row, messages,
     dates, date_from, date_to, first_index, last_index, stale}`. `messages`
@@ -882,7 +888,7 @@ _CHUNK_BODY = """  <div class="bd">
     </dl>
     <details class="hk-text" id="chunk-{{ c.row.seq }}-messages">
       <summary>the {{ c.messages|length }} messages</summary>
-      <pre class="hk-pre">{% for m in c.messages %}[m{{ c.first_index + loop.index0 }} {{ 'user' if m.sender == 'human' else m.sender }}] {{ m.text }}
+      <pre class="hk-pre">{% for m in c.messages %}[m{{ c.first_index + loop.index0 }} {{ sender_name(m.sender) }}] {{ m.text }}
 {% endfor %}</pre>
     </details>
   </div>
@@ -993,7 +999,7 @@ _JOB_FRAGMENT = """
         <tr>
           <td class="hk-mono">m{{ m.n }}</td>
           <td class="hk-mono"><a href="/chat?id={{ job.room_uuid }}&msg={{ m.uuid }}" title="Open this message in the chatroom">{{ m.uuid }}</a></td>
-          <td>{{ 'user' if m.sender == 'human' else m.sender }}</td>
+          <td>{{ sender_name(m.sender) }}</td>
           <td>{% if m.text|length > 120 %}<details id="m{{ m.uuid }}"><summary>{{ m.text[:120] }}&hellip;</summary><pre class="hk-pre">{{ m.text }}</pre></details>{% else %}{{ m.text }}{% endif %}</td>
         </tr>
         {% endfor %}
@@ -1085,7 +1091,7 @@ def run_housekeeping_lines(run_uuid: UUID) -> list[dict]:
 def _helpers() -> dict:
     return {"when": _when, "job_times": _job_times, "seconds": _seconds, "label": _job_label, "purpose": _job_purpose,
             "outcome": _outcome, "elapsed": _elapsed, "chunk_link": _chunk_link,
-            "signal_texts": _signal_texts,
+            "signal_texts": _signal_texts, "sender_name": _sender_name,
             "reaction_texts": _reaction_texts}
 
 

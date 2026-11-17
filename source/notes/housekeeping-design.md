@@ -585,7 +585,7 @@ attempt's `llm_call` row: for a chunk, the summary that was kept.
   - An attempt: how it ended, when it began, and its error.
   - The start of a chunk job also lists the chunk's messages in a table:
     each one's number, its uuid as a link to it in the chatroom, who wrote
-    it (`user` or `agent`), and its text. A long text shows its beginning
+    it (`user` or `assistant`), and its text. A long text shows its beginning
     and unfolds.
   - A model call: a link to the call on `/activity`, the call's figures as
     a call's meta line reads on `/assistant` (model, tokens in and out,
