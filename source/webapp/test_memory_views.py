@@ -146,3 +146,8 @@ def test_the_nav_is_a_sidebar_of_icons_with_a_name_each():
     assert nav.count('<details class="pp-dd pp-active" open>') == 1
     assert nav.count(" open>") == 1
     assert "Admin" not in nav
+    # A click on a link leaves a note, and the page it leads to reads the
+    # note and begins with the sidebar open and unanimated.
+    assert "sessionStorage.setItem(CAME_FROM_NAV, '1')" in body
+    assert "nav.classList.add('pp-instant')" in body
+    assert ".pp-nav.pp-instant" in body

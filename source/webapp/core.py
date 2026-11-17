@@ -131,7 +131,8 @@ install_activity_recorder()
 # Shared navigation, registered as an includable template so every page can
 # do {% include "_nav.html" %} and stay in sync. It is a sidebar on the left:
 # a rail of icons, which widens over the page while the mouse is on it and
-# shows each item's name. The page is not moved or squeezed by that: it
+# shows each item's name. A page reached from the sidebar begins with it
+# open. The page is not moved or squeezed by that: it
 # keeps the rail's width as its left padding and nothing more. A group
 # (Memory, Assistant, ...) unfolds its pages on a click, and the group of the
 # page that is shown is unfolded already. The active item is derived from
@@ -177,6 +178,8 @@ NAV_TEMPLATE = """
   .pp-nav .pp-dd-menu a:hover{color:#1a1a2e;background:#f1f5f9}
   .pp-nav .pp-dd-menu a.pp-active{color:#1a1a2e;font-weight:600}
   .pp-content{padding:1.5em 24px 2em}
+  /* Open from the first frame, for a page reached from the sidebar. */
+  .pp-nav.pp-instant,.pp-nav.pp-instant .pp-label,.pp-nav.pp-instant .pp-chev{transition:none}
   @media (prefers-reduced-motion: reduce){
     .pp-nav,.pp-nav .pp-label,.pp-nav .pp-chev{transition:none}
   }
@@ -270,6 +273,33 @@ NAV_TEMPLATE = """
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') { close(); }
     });
+    // A page reached from the sidebar begins with the sidebar open, as it
+    // was when the link was clicked, and with no animation: the mouse is
+    // still on it. The click leaves a note for the next page, which reads it
+    // here, before the page is first drawn.
+    var CAME_FROM_NAV = 'pp-nav.came-from-nav';
+    nav.addEventListener('click', function (e) {
+      if (!e.target.closest('a[href]')) { return; }
+      try { sessionStorage.setItem(CAME_FROM_NAV, '1'); } catch (err) {}
+    });
+    var cameFromNav = false;
+    try {
+      cameFromNav = sessionStorage.getItem(CAME_FROM_NAV) === '1';
+      sessionStorage.removeItem(CAME_FROM_NAV);
+    } catch (err) {}
+    if (cameFromNav) {
+      nav.classList.add('pp-instant');
+      open();
+      // Animations come back once the open sidebar has been drawn.
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () { nav.classList.remove('pp-instant'); });
+      });
+      // The browser reports no mouse position until the mouse moves. If it
+      // then turns out to be off the sidebar, the sidebar closes.
+      document.addEventListener('mousemove', function () {
+        if (!nav.matches(':hover')) { close(); }
+      }, {once: true});
+    }
   })();
 </script>
 """
