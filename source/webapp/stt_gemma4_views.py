@@ -29,6 +29,7 @@ import requests
 from flask import Response, jsonify, render_template_string, request, url_for
 from markupsafe import Markup
 
+from language_tags import canonical_language_tag
 from llm.activity import record_direct_call
 
 from .core import app
@@ -602,6 +603,12 @@ def demo_stt_gemma4_transcribe() -> Response | tuple[Response, int]:
         return jsonify({"error": "the clip must be a WAV file (RIFF/WAVE); "
                                  "Ollama decodes no other audio format"}), 400
     prompt = (request.form.get("prompt") or "").strip() or DEFAULT_PROMPT
+    language = (request.form.get("language") or "").strip()
+    if language:
+        tag = canonical_language_tag(language)
+        if tag is None:
+            return jsonify({"error": f"not a language tag: {language!r}"}), 400
+        prompt = f"{prompt} The spoken language is {tag}."
     url, model = _ollama_url(), _model()
     body = {
         "model": model,

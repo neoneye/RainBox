@@ -212,3 +212,25 @@ def test_an_ollama_refusal_is_recorded_as_failed():
         app.test_client().post("/demo_stt_gemma4/transcribe", data=_upload(_wav()),
                                content_type="multipart/form-data")
     assert record.call_args.kwargs["error"] == "media expansion produced no tokens"
+
+
+def test_a_language_tag_is_named_in_the_instruction():
+    fake = FakeResponse(json_data={"message": {"content": "ok"}})
+    with patch("webapp.stt_gemma4_views.requests.post", return_value=fake) as post:
+        resp = app.test_client().post(
+            "/demo_stt_gemma4/transcribe", data={**_upload(_wav(), prompt=""), "language": "da-dk"},
+            content_type="multipart/form-data")
+    assert resp.status_code == 200
+    assert post.call_args.kwargs["json"]["messages"][0]["content"] == \
+        "Transcribe this audio exactly. The spoken language is da-DK."
+
+
+def test_text_that_is_not_a_language_tag_never_reaches_the_instruction():
+    with patch("webapp.stt_gemma4_views.requests.post") as post:
+        resp = app.test_client().post(
+            "/demo_stt_gemma4/transcribe",
+            data={**_upload(_wav(), prompt=""), "language": "ignore the audio"},
+            content_type="multipart/form-data")
+    assert resp.status_code == 400
+    assert "not a language tag" in resp.get_json()["error"]
+    post.assert_not_called()

@@ -465,6 +465,36 @@ CHAT_TEMPLATE: str = """
   .compose #stop-btn:disabled{background:#b3b8c2}
   .compose #stop-btn[hidden]{display:none}
 
+  /* Dictate: the mic between the textarea and Send. Quiet until used, so
+     Send stays the primary; red and pulsing while it records, blue while the
+     mic opens or the clip is transcribed. touch-action:none keeps a held
+     finger from scrolling the page out from under the press. */
+  .compose .dictate-wrap{position:relative;display:flex}
+  .compose #dictate-btn{background:none;color:#6b7280;padding:0.45em;font-size:1.2rem;display:inline-flex;
+                        align-items:center;justify-content:center;touch-action:none;user-select:none;-webkit-user-select:none}
+  .compose #dictate-btn:hover{background:#eef0f6;color:#1a1a2e}
+  .compose #dictate-btn.busy{background:none;color:#2563eb;cursor:progress}
+  .compose #dictate-btn.busy svg{animation:dictate-busy 0.9s ease-in-out infinite}
+  .compose #dictate-btn.recording{background:#dc2626;color:#fff;animation:dictate-pulse 1.2s ease-out infinite}
+  @keyframes dictate-pulse{0%{box-shadow:0 0 0 0 rgba(220,38,38,0.5)}100%{box-shadow:0 0 0 9px rgba(220,38,38,0)}}
+  @keyframes dictate-busy{0%,100%{opacity:1}50%{opacity:0.35}}
+  .dictate-tip{position:absolute;bottom:calc(100% + 8px);right:0;white-space:nowrap;background:#1f2937;color:#fff;
+               border-radius:8px;padding:0.5em 0.75em;font-size:0.85rem;line-height:1.4;pointer-events:none;
+               opacity:0;transition:opacity 0.12s;z-index:20;box-shadow:0 6px 18px rgba(0,0,0,0.18)}
+  .dictate-tip small{display:block;color:#9ca3af;font-size:0.78rem}
+  .dictate-wrap:hover .dictate-tip,#dictate-btn:focus-visible + .dictate-tip,
+  #dictate-btn.recording + .dictate-tip,#dictate-btn.busy + .dictate-tip{opacity:1}
+  /* The open settings menu sits where the tooltip would. */
+  body:has(.dictate-menu:not([hidden])) .dictate-tip{opacity:0}
+  .dictate-menu{min-width:230px;max-width:340px}
+  .dictate-menu .menu-head{font-size:0.75rem;color:#6b7280;padding:0.45em 0.6em 0.15em}
+  .dictate-menu hr{border:none;border-top:1px solid #e5e7eb;margin:0.25em 0;width:100%}
+  .dictate-menu .item{display:flex;justify-content:space-between;align-items:center;gap:1.2em}
+  .dictate-menu .item .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dictate-menu .item .mark{color:#2563eb;flex:0 0 1em;text-align:right}
+  .dictate-menu .item:disabled{color:#9ca3af;cursor:default;background:none}
+  .dictate-menu .item .note{color:#b45309}
+
   /* Folder-contents table (shown in room-main instead of a chat). The chat-log
      and compose set display:flex at class specificity, which beats the UA
      [hidden]{display:none}, so the hidden attribute needs explicit rules to
@@ -545,6 +575,10 @@ CHAT_TEMPLATE: str = """
     </div>
     <form class="compose" id="compose" onsubmit="return false;">
       <textarea id="msg-input" rows="1" placeholder="Write a message…  (Enter to send, Shift+Enter for newline)"></textarea>
+      <span class="dictate-wrap">
+        <button type="button" id="dictate-btn" aria-label="Dictate" aria-haspopup="menu"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19v3"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><rect x="9" y="2" width="6" height="13" rx="3"/></svg></button>
+        <span class="dictate-tip" role="tooltip"><span id="dictate-tip-main"></span><small>Right-click for microphone and language</small></span>
+      </span>
       <button type="button" id="stop-btn" hidden>⏹ Stop</button>
       <button type="submit">Send</button>
     </form>
@@ -4456,6 +4490,330 @@ document.addEventListener('paste', (e) => {
     input.dispatchEvent(new Event('input', {bubbles: true}));
   }
 });
+
+// ---- dictation ----
+// The mic beside the composer records while it is held (or between two clicks,
+// per its menu), sends the clip to one of the speech-to-text proxies and
+// inserts the transcript at the caret; nothing is sent to the room until the
+// operator presses Send. Right-click opens its settings: microphone, engine,
+// spoken language, hold or click.
+//
+// Idle cost is nil: the mic opens on the press and closes on the release, the
+// animations run only while a clip is recorded or transcribed, and the
+// engines are asked whether they are up only when the menu opens.
+const DICTATE_ENGINES = {{ stt_engines|tojson }};
+// The languages the current profile declares; "Auto" sends none.
+const DICTATE_LANGUAGES = {{ dictate_languages|tojson }};
+const DICTATE_PREFS_KEY = 'chat-dictate';
+const DICTATE_DEVICE_KEY = 'stt_device_id';  // the mic the STT demo pages remember
+const DICTATE_MIN_MS = 300;  // a shorter press is a stray tap, not speech
+{{ to_wav_js|safe }}
+const dictateBtn = document.getElementById('dictate-btn');
+const dictatePrefs = {engine: 'gemma4', language: '', hold: true};
+try { Object.assign(dictatePrefs, JSON.parse(localStorage.getItem(DICTATE_PREFS_KEY) || '{}')); } catch (_) {}
+function dictateSavePrefs(){
+  try { localStorage.setItem(DICTATE_PREFS_KEY, JSON.stringify(dictatePrefs)); } catch (_) {}
+}
+function dictateEngine(){
+  return DICTATE_ENGINES.find(e => e.id === dictatePrefs.engine) || DICTATE_ENGINES[0];
+}
+// The language to name to the engine: '' for Auto, for an engine that takes
+// none, and for a remembered tag the profile no longer declares.
+function dictateLanguage(){
+  if (!dictateEngine().language) return '';
+  return DICTATE_LANGUAGES.includes(dictatePrefs.language) ? dictatePrefs.language : '';
+}
+function dictateDevice(){
+  try { return localStorage.getItem(DICTATE_DEVICE_KEY) || ''; } catch (_) { return ''; }
+}
+
+let dictateState = 'idle';   // 'opening' (the mic) | 'recording' | 'transcribing'
+let dictateWanted = false;   // the press is still down, or the click-toggle is on
+let dictateRecorder = null;
+let dictateStartedAt = 0;
+function dictateSetState(state){
+  dictateState = state;
+  dictateBtn.classList.toggle('recording', state === 'recording');
+  dictateBtn.classList.toggle('busy', state === 'opening' || state === 'transcribing');
+  dictateSyncTip();
+}
+function dictateSyncTip(){
+  const hold = dictatePrefs.hold;
+  document.getElementById('dictate-tip-main').textContent =
+    dictateState === 'recording' ? (hold ? 'Release to transcribe' : 'Click to stop and transcribe')
+    : dictateState === 'transcribing' ? 'Transcribing…'
+    : dictateState === 'opening' ? 'Opening the microphone…'
+    : hold ? 'Press and hold to dictate' : 'Click to dictate';
+}
+dictateSyncTip();
+
+// The remembered mic, or the browser's default when it is unplugged.
+async function dictateOpenMic(){
+  const id = dictateDevice();
+  if (id){
+    try { return await navigator.mediaDevices.getUserMedia({audio: {deviceId: {exact: id}}}); }
+    catch (e) {
+      if (e.name !== 'OverconstrainedError' && e.name !== 'NotFoundError') throw e;
+      chatToast('The chosen microphone is not connected — using the default one.');
+    }
+  }
+  return await navigator.mediaDevices.getUserMedia({audio: true});
+}
+
+async function dictateStart(){
+  if (dictateState !== 'idle') return;
+  const room = currentRoom;
+  if (!room) return;
+  if (!navigator.mediaDevices || !window.MediaRecorder){
+    chatToast('This browser cannot record audio here.');
+    return;
+  }
+  dictateWanted = true;
+  dictateSetState('opening');
+  let stream;
+  try { stream = await dictateOpenMic(); }
+  catch (e) {
+    dictateSetState('idle');
+    chatToast('Microphone unavailable: ' + (e.message || e.name));
+    return;
+  }
+  if (!dictateWanted){  // let go before the mic was open (or while the browser asked permission)
+    stream.getTracks().forEach(t => t.stop());
+    dictateSetState('idle');
+    if (dictatePrefs.hold) chatToast('Hold the button while you speak.');
+    return;
+  }
+  const chunks = [];
+  const recorder = new MediaRecorder(stream);
+  recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  recorder.onstop = () => {
+    stream.getTracks().forEach(t => t.stop());
+    dictateRecorder = null;
+    if (performance.now() - dictateStartedAt < DICTATE_MIN_MS){
+      dictateSetState('idle');
+      chatToast(dictatePrefs.hold ? 'Hold the button while you speak.' : 'That was too short to transcribe.');
+      return;
+    }
+    dictateTranscribe(new Blob(chunks, {type: recorder.mimeType || 'audio/webm'}), room);
+  };
+  recorder.start();
+  dictateRecorder = recorder;
+  dictateStartedAt = performance.now();
+  dictateSetState('recording');
+}
+
+function dictateStop(){
+  dictateWanted = false;
+  if (dictateRecorder && dictateRecorder.state === 'recording') dictateRecorder.stop();
+}
+
+async function dictateTranscribe(blob, room){
+  dictateSetState('transcribing');
+  const engine = dictateEngine();
+  try {
+    const fd = new FormData();
+    // The Ollama engines decode WAV only; Whisper takes the recorder's own format.
+    if (engine.wav) fd.append('audio', await ppToWav(blob), 'clip.wav');
+    else fd.append('audio', blob, blob.type.indexOf('ogg') >= 0 ? 'clip.ogg' : 'clip.webm');
+    const language = dictateLanguage();
+    if (language) fd.append('language', language);
+    const r = await fetch(engine.transcribe, {method: 'POST', body: fd});
+    let j = {};
+    try { j = await r.json(); } catch (_) {}
+    if (!r.ok) throw new Error(j.error || ('the engine answered ' + r.status));
+    const text = (j.text || '').trim();
+    if (text) dictateInsert(text, room);
+    else chatToast('No speech heard.');
+  } catch (e) {
+    chatToast('Dictation failed (' + engine.name + '): ' + e.message);
+  } finally {
+    dictateSetState('idle');
+  }
+}
+
+// Put the transcript at the caret, replacing a selection, with a space on
+// either side where it would otherwise run into a word.
+function dictateInsert(text, room){
+  if (room !== currentRoom){
+    // The room was switched while the clip was transcribed: the words belong
+    // to the draft of the room they were spoken in.
+    try {
+      const old = localStorage.getItem(DRAFT_PREFIX + room) || '';
+      localStorage.setItem(DRAFT_PREFIX + room, old ? old.trimEnd() + ' ' + text : text);
+    } catch (_) {}
+    chatToast('Dictation kept in the draft of the room it was spoken in.');
+    return;
+  }
+  input.focus();
+  const before = input.value.slice(0, input.selectionStart);
+  const after = input.value.slice(input.selectionEnd);
+  if (before && before.slice(-1).trim() !== '') text = ' ' + text;
+  if (after && after.charAt(0).trim() !== '') text += ' ';
+  // insertText goes through the editor: undo works, and the input event
+  // grows the box and saves the draft.
+  if (!document.execCommand('insertText', false, text)){
+    input.setRangeText(text, input.selectionStart, input.selectionEnd, 'end');
+    input.dispatchEvent(new Event('input', {bubbles: true}));
+  }
+}
+
+// The press must not take the caret out of the composer.
+dictateBtn.addEventListener('mousedown', (e) => e.preventDefault());
+dictateBtn.addEventListener('pointerdown', (e) => {
+  // Ctrl+click is the Mac's right-click: it opens the menu, it does not record.
+  if (!dictatePrefs.hold || e.button !== 0 || e.ctrlKey) return;
+  try { dictateBtn.setPointerCapture(e.pointerId); } catch (_) {}
+  dictateStart();
+});
+['pointerup', 'pointercancel'].forEach((name) => {
+  dictateBtn.addEventListener(name, () => { if (dictatePrefs.hold) dictateStop(); });
+});
+dictateBtn.addEventListener('click', () => {
+  if (dictatePrefs.hold) return;  // the press and release already did it
+  if (dictateState === 'idle') dictateStart();
+  else dictateStop();
+});
+// Held from the keyboard: Space or Enter down records, up transcribes.
+dictateBtn.addEventListener('keydown', (e) => {
+  if (!dictatePrefs.hold || (e.key !== ' ' && e.key !== 'Enter')) return;
+  e.preventDefault();
+  if (!e.repeat) dictateStart();
+});
+dictateBtn.addEventListener('keyup', (e) => {
+  if (!dictatePrefs.hold || (e.key !== ' ' && e.key !== 'Enter')) return;
+  e.preventDefault();
+  dictateStop();
+});
+// A release that happens in another window never reaches the button.
+window.addEventListener('blur', () => { if (dictatePrefs.hold) dictateStop(); });
+dictateBtn.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  openDictateMenu();
+});
+
+// A language tag's name in the browser's own language, from the browser.
+function dictateLanguageLabel(tag){
+  try {
+    const name = new Intl.DisplayNames([navigator.language], {type: 'language'}).of(tag);
+    if (name && name !== tag) return name + ' (' + tag + ')';
+  } catch (_) {}
+  return tag;
+}
+
+function dictateMenuHead(menu, text){
+  const head = document.createElement('div');
+  head.className = 'menu-head';
+  head.textContent = text;
+  menu.appendChild(head);
+}
+function dictateMenuItem(menu, label, checked, onPick){
+  const item = document.createElement('button');
+  item.type = 'button';
+  item.className = 'item';
+  item.setAttribute('role', 'menuitemradio');
+  item.setAttribute('aria-checked', checked ? 'true' : 'false');
+  const name = document.createElement('span');
+  name.className = 'name';
+  name.textContent = label;
+  const mark = document.createElement('span');
+  mark.className = 'mark';
+  mark.textContent = checked ? '✓' : '';
+  item.append(name, mark);
+  item.addEventListener('click', onPick);
+  menu.appendChild(item);
+  return item;
+}
+
+// Built afresh on every opening, so it always shows the mics plugged in now.
+// A pick closes it through the page's outside-click handler for .room-menu.
+async function openDictateMenu(){
+  document.querySelectorAll('.room-menu').forEach(m => { m.hidden = true; });
+  document.querySelectorAll('body > .dictate-menu').forEach(m => m.remove());
+  let mics = [];
+  try {
+    mics = (await navigator.mediaDevices.enumerateDevices())
+      .filter(d => d.kind === 'audioinput' && d.label);
+  } catch (_) {}
+  const menu = document.createElement('div');
+  menu.className = 'room-menu dictate-menu';
+  menu.setAttribute('role', 'menu');
+
+  dictateMenuHead(menu, 'Microphone');
+  if (!mics.length){
+    // The browser names its microphones only once the site may use one, so
+    // this asks a single time, closes the stream and lists them.
+    dictateMenuItem(menu, 'Show microphones…', false, async (e) => {
+      e.stopPropagation();
+      try {
+        const s = await navigator.mediaDevices.getUserMedia({audio: true});
+        s.getTracks().forEach(t => t.stop());
+      } catch (err) {
+        menu.hidden = true;
+        chatToast('The browser refused the microphone: ' + (err.message || err.name));
+        return;
+      }
+      openDictateMenu();
+    });
+  } else {
+    // Chrome lists the system default as an entry of its own; elsewhere it is added.
+    const hasDefault = mics.some(d => d.deviceId === 'default');
+    const rows = hasDefault ? mics : [{deviceId: '', label: 'System default'}].concat(mics);
+    const saved = dictateDevice();
+    const active = rows.some(d => d.deviceId === saved) ? saved : (hasDefault ? 'default' : '');
+    rows.forEach((d) => {
+      dictateMenuItem(menu, d.label, d.deviceId === active, () => {
+        try { localStorage.setItem(DICTATE_DEVICE_KEY, d.deviceId); } catch (_) {}
+      });
+    });
+  }
+
+  menu.appendChild(document.createElement('hr'));
+  dictateMenuHead(menu, 'Transcribe with');
+  DICTATE_ENGINES.forEach((engine) => {
+    const item = dictateMenuItem(menu, engine.name, engine.id === dictateEngine().id, () => {
+      dictatePrefs.engine = engine.id;
+      dictateSavePrefs();
+    });
+    // Whether it is up, asked now and written beside the name when it is not.
+    fetch(engine.health).then(r => r.json()).catch(() => ({})).then((j) => {
+      const why = !j.reachable ? 'not running' : (engine.need && !j[engine.need]) ? 'cannot hear' : '';
+      if (!why) return;
+      const note = document.createElement('span');
+      note.className = 'note';
+      note.textContent = ' — ' + why;
+      item.querySelector('.name').appendChild(note);
+    });
+  });
+
+  menu.appendChild(document.createElement('hr'));
+  const takesLanguage = dictateEngine().language;
+  dictateMenuHead(menu, takesLanguage ? 'Language' : 'Language — ' + dictateEngine().name + ' decides itself');
+  const language = dictateLanguage();
+  [''].concat(DICTATE_LANGUAGES).forEach((tag) => {
+    const item = dictateMenuItem(menu, tag ? dictateLanguageLabel(tag) : 'Auto', tag === language, () => {
+      dictatePrefs.language = tag;
+      dictateSavePrefs();
+    });
+    item.disabled = !takesLanguage;
+  });
+  if (!DICTATE_LANGUAGES.length){
+    const link = document.createElement('a');
+    link.className = 'item';
+    link.href = '/profile';
+    link.textContent = 'Declare languages on the profile…';
+    menu.appendChild(link);
+  }
+
+  menu.appendChild(document.createElement('hr'));
+  dictateMenuItem(menu, 'Hold to record', dictatePrefs.hold, () => {
+    dictatePrefs.hold = !dictatePrefs.hold;
+    dictateSavePrefs();
+    dictateSyncTip();
+  });
+
+  document.body.appendChild(menu);
+  placeMenu(menu, dictateBtn.getBoundingClientRect(), true);
+}
 
 async function loadAgents(){
   const agents = await getJSON('/chat/api/agents');

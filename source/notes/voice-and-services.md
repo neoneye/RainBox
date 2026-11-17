@@ -244,6 +244,48 @@ same-origin through the web app:
   capability for the Ollama engines. The picks and the voice per engine are
   remembered in localStorage.
 
+## Dictation on `/chat`
+
+The composer has a mic button between the textarea and Send
+(`webapp/chat_template.py`, the `dictate…` functions). Held down it records;
+on release the clip goes to one of the three STT proxies above and the
+transcript is inserted at the caret, with a space on either side where it
+would run into a word. Nothing is posted to the room: the operator reads the
+text and presses Send. Space or Enter holds it from the keyboard.
+
+Right-click (Ctrl+click on a Mac) opens its menu:
+
+- **Microphone** — the mics the browser reports, the choice kept under the
+  STT demo pages' localStorage key (`stt_device_id`), so one pick serves all
+  of them. Before the site may use a mic the browser names none, so the
+  section is a single "Show microphones…" row that asks once. A remembered
+  mic that is unplugged falls back to the default with a toast.
+- **Transcribe with** — Whisper, gemma4 or LFM3 (the echo page's
+  `_stt_engines()` table; gemma4 unless picked otherwise). Each engine's
+  `…/health` is asked when the menu opens and an engine that is down says so
+  beside its name. The Ollama engines get the clip re-encoded with
+  `TO_WAV_JS`; Whisper gets the recorder's webm/ogg.
+- **Language** — "Auto", then the tags the current profile declares
+  (`declared_language_candidates`), named by the browser's
+  `Intl.DisplayNames`. A picked tag is sent as the proxy's `language` form
+  field: Whisper's proxy forwards its primary subtag, gemma4's proxy adds
+  "The spoken language is <tag>." to the instruction. Both refuse text that
+  is not a language tag. LFM3's transcription route takes no language (a
+  `language` field changes nothing there), so the rows are greyed while LFM3
+  is picked. gemma4 on a Danish clip: German words on Auto, the Danish
+  sentence with `da`.
+- **Hold to record** — off makes the button a toggle: click to start, click
+  to stop.
+
+The engine, language and hold choices live in localStorage under
+`chat-dictate`. A press shorter than 0.3s, or let go before the mic opened,
+records nothing and says to hold the button. A room switched while a clip is
+transcribed gets the words in its stored draft instead of the open composer.
+The button costs nothing while idle (rule 3 of `chat-frontend-rules.md`): the
+mic opens on the press and closes on the release, and no timer runs.
+Transcriptions are recorded on `/activity` under the proxy's own caller
+(`demo_stt_gemma4`, `demo_stt_lfm3`).
+
 ## Multimodal demo (`/demo/multimodal`)
 
 `webapp/multimodal_demo_views.py` — a deliberately thin page for probing

@@ -107,3 +107,26 @@ def test_nav_has_stt_link():
     # The shared nav links to the STT page and marks it active on this page.
     assert ">STT whisper<" in body
     assert "pp-active" in body
+
+
+def test_transcribe_proxy_names_the_language_by_its_primary_subtag():
+    """Whisper knows `da`, not `da-DK`: a tag with a region goes on without it."""
+    client = app.test_client()
+    fake = FakeResponse(json_data={"text": "hej", "language": "da", "duration": 1.0})
+    with patch("webapp.stt_whisper_views.requests.post", return_value=fake) as post:
+        resp = client.post("/demo_stt_whisper/transcribe",
+                           data={**_audio_upload(), "language": "da-DK"},
+                           content_type="multipart/form-data")
+    assert resp.status_code == 200
+    assert post.call_args.kwargs["data"] == {"language": "da"}
+
+
+def test_transcribe_proxy_refuses_text_that_is_not_a_language_tag():
+    client = app.test_client()
+    with patch("webapp.stt_whisper_views.requests.post") as post:
+        resp = client.post("/demo_stt_whisper/transcribe",
+                           data={**_audio_upload(), "language": "the one I speak"},
+                           content_type="multipart/form-data")
+    assert resp.status_code == 400
+    assert "not a language tag" in resp.get_json()["error"]
+    post.assert_not_called()

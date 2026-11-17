@@ -778,3 +778,36 @@ def test_the_sidebar_has_a_context_panel_that_links_to_the_chunk_summaries():
     assert "else if (mode === 'context') renderContext();" in body
     assert "label: 'Chatroom chunk summaries'," in body
     assert "href: room => '/assistant/housekeeping/room/' + encodeURIComponent(room)," in body
+
+
+def test_the_composer_has_a_dictate_button():
+    """A mic between the textarea and Send: held (or clicked, per its menu) it
+    records, sends the clip to one of the speech-to-text proxies and inserts
+    the transcript at the caret. Right-click opens microphone, engine and
+    language settings. The Ollama engines get the clip re-encoded to WAV."""
+    body = _body()
+    assert '<button type="button" id="dictate-btn" aria-label="Dictate"' in body
+    assert body.index('id="msg-input"') < body.index('id="dictate-btn"') < body.index('id="stop-btn"')
+    assert "Right-click for microphone and language" in body
+    assert "'Press and hold to dictate'" in body
+    for engine in ("whisper", "gemma4", "lfm3"):
+        assert f"/demo_stt_{engine}/transcribe" in body
+        assert f"/demo_stt_{engine}/health" in body
+    assert "async function ppToWav" in body
+    assert "function dictateStart" in body and "function dictateInsert" in body
+    assert "function openDictateMenu" in body
+    assert "dictateBtn.addEventListener('contextmenu'" in body
+    # the mic is the one the STT demo pages remember
+    assert "const DICTATE_DEVICE_KEY = 'stt_device_id';" in body
+
+
+def test_the_dictate_menu_offers_the_current_profile_s_languages():
+    from unittest.mock import patch
+
+    profile = {"data": {"languages": {"rows": [
+        {"tag": "da"}, {"tag": "not a tag"}, {"tag": "en-us"}]}}}
+    with patch("webapp.chat_views.current_profile", return_value=profile):
+        body = _body()
+    assert 'const DICTATE_LANGUAGES = ["da", "en-US"];' in body
+    with patch("webapp.chat_views.current_profile", return_value=None):
+        assert "const DICTATE_LANGUAGES = [];" in _body()

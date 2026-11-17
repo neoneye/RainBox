@@ -12,6 +12,8 @@ import os
 import requests
 from flask import Response, jsonify, render_template_string, request
 
+from language_tags import canonical_language_tag
+
 from .core import app
 
 DEFAULT_WHISPER_STT_URL = "http://127.0.0.1:5006"
@@ -398,9 +400,13 @@ def demo_stt_whisper_transcribe() -> Response | tuple[Response, int]:
         return jsonify({"error": "missing 'audio' file field"}), 400
     files = {"audio": (audio.filename or "clip.webm", audio.stream, audio.mimetype)}
     data = {}
-    language = request.form.get("language")
+    language = (request.form.get("language") or "").strip()
     if language:
-        data["language"] = language
+        tag = canonical_language_tag(language)
+        if tag is None:
+            return jsonify({"error": f"not a language tag: {language!r}"}), 400
+        # Whisper names a language by its primary subtag alone.
+        data["language"] = tag.split("-")[0]
     try:
         r = requests.post(
             f"{url}/transcribe", files=files, data=data, timeout=PROXY_TIMEOUT
