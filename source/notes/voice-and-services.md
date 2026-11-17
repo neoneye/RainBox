@@ -248,7 +248,7 @@ same-origin through the web app:
 
 The composer has a mic button between the textarea and Send
 (`webapp/chat_template.py`, the `dictate…` functions). Held down it records;
-on release the clip goes to one of the three STT proxies above and the
+on release the clip goes to one of the three STT engines above and the
 transcript is inserted at the caret, with a space on either side where it
 would run into a word. Nothing is posted to the room: the operator reads the
 text and presses Send. Space or Enter holds it from the keyboard.
@@ -287,8 +287,14 @@ records nothing and says to hold the button. A room switched while a clip is
 transcribed gets the words in its stored draft instead of the open composer.
 The button costs nothing while idle (rule 3 of `chat-frontend-rules.md`): the
 mic opens on the press and closes on the release, and no timer runs.
-Transcriptions are recorded on `/activity` under the proxy's own caller
-(`demo_stt_gemma4`, `demo_stt_lfm3`).
+The clip is posted to `POST /chat/api/dictate/<engine>`
+(`webapp/chat_views.py`), which hands the request to the engine module's
+`transcribe`, the function behind the demo page's proxy, so request and
+answer are the same as there. What differs is the name on `/activity`: a
+dictated clip is recorded under caller `chat.dictate` (gemma4 and LFM3;
+Whisper is a side service and records nothing), the demo pages under
+`demo_stt_gemma4` and `demo_stt_lfm3`. The menu's health check is the demo
+pages' `…/health`.
 
 **How these calls read on `/activity`.** The Ollama pages name their model
 by an env var, not a config, so `record_direct_call` looks up the config for

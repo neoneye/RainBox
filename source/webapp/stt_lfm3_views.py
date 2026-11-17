@@ -101,6 +101,13 @@ def demo_stt_lfm3_health() -> Response | tuple[Response, int]:
 
 @app.route("/demo_stt_lfm3/transcribe", methods=["POST"])
 def demo_stt_lfm3_transcribe() -> Response | tuple[Response, int]:
+    return transcribe("demo_stt_lfm3")
+
+
+def transcribe(caller: str) -> Response | tuple[Response, int]:
+    """Answer the current request's clip. `caller` is the name the call is
+    recorded under on /activity: this page's own, or the /chat dictate
+    button's, which posts to its own route and shares everything else."""
     audio = request.files.get("audio")
     if audio is None:
         return jsonify({"error": "missing 'audio' file field"}), 400
@@ -114,7 +121,7 @@ def demo_stt_lfm3_transcribe() -> Response | tuple[Response, int]:
     clip = f"[audio: {duration if duration is not None else '?'}s WAV, {len(raw)} bytes]"
     activity = {
         "started_at": datetime.now(UTC), "provider": "ollama", "model": model,
-        "caller": "demo_stt_lfm3",
+        "caller": caller,
         "messages": [{"role": "user",
                       "content": f"{prompt}\n\n{clip}" if prompt else f"[transcription]\n\n{clip}"}],
     }

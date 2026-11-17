@@ -394,6 +394,13 @@ def demo_stt_whisper_health() -> Response | tuple[Response, int]:
 
 @app.route("/demo_stt_whisper/transcribe", methods=["POST"])
 def demo_stt_whisper_transcribe() -> Response | tuple[Response, int]:
+    return transcribe()
+
+
+def transcribe() -> Response | tuple[Response, int]:
+    """Forward the current request's clip to the Whisper service. Shared
+    with the /chat dictate button's route. The service is not an LLM
+    provider, so nothing is recorded on /activity."""
     url = _service_url()
     audio = request.files.get("audio")
     if audio is None:
