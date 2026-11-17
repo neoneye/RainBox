@@ -136,7 +136,7 @@ def test_a_job_page_shows_each_attempt_with_its_prompt_and_reply(client):
     db.settle_housekeeping_job(job, "final", outcome="done")
 
     body = c.get(f"/assistant/housekeeping/{job.uuid}").get_data(as_text=True)
-    assert "Attempt 1" in body and "killed: turn" in body
+    assert "<b>Start</b>" in body and "killed: turn" in body
     assert "Attempt 2" in body and "You summarize a run." in body
     # The timeline has a row for each attempt and one for the model call,
     # and the page opens on the call.
@@ -315,6 +315,15 @@ def test_a_chunk_jobs_page_shows_what_the_decision_model_was_asked_and_answered(
         # A call with no row on /activity says so.
         assert card.count("has no row on the Activity page") == 2
         assert second["message"] == 4       # the message after the chunk is a follow-up too
+        # The first row is the start. It lists the chunk's messages: each
+        # one's number, its uuid as a link into the room, who wrote it, and
+        # its text. A message after the chunk is not listed.
+        pane = body[body.index(f'data-key="a{attempt.uuid}">'):]
+        pane = pane[:pane.index('<div class="ev-pane')]
+        assert "<b>Start</b>" in pane and pane.count('<td class="hk-mono">m') == 4
+        assert f'msg={messages[2]["uuid"]}' in pane and f'{messages[4]["uuid"]}' not in pane
+        assert "<td>user</td>" in pane and "<td>agent</td>" in pane
+        assert "look up the height of the lighthouse" in pane
         # No chunk is written yet, so the timeline has no result row.
         assert 'kind-result' not in body
         chunk = db.RoomChunk(
@@ -531,7 +540,7 @@ def test_a_chunk_attempt_lists_every_model_call_it_made_in_order(client):
         # Each call has a row of its own on the timeline, in the order the
         # calls were made, and a pane under it.
         names = re.findall(r'<span class="wf-name kind-[a-z]+">([^<]*)</span>', body)
-        assert names == ["attempt 1", "summary", "check", "summary", "model call"]
+        assert names == ["start", "summary", "check", "summary", "model call"]
         places = [body.index(text) for text in (
             "<span>call 1 of 3</span>", "reply of call 1",
             "<span>call 2 of 3</span>", "reply of call 2",

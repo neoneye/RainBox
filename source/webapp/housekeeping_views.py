@@ -291,7 +291,8 @@ def _timeline(attempts: list[dict], now: datetime, job=None,
               wrote: dict | None = None) -> list[dict]:
     """A job's page as the rows of its timeline, in the order things began:
     each attempt, each request to the decision model, each model call, and
-    the call still running when there is one.
+    the call still running when there is one. The first attempt is the row
+    `start`; a later one is `attempt 2` and so on.
 
     A row is `{key, kind, label, description, attempt_no, attempt, decision,
     call, failed, offset_pct, width_pct, seconds, clock, selected}`. `kind`
@@ -310,7 +311,8 @@ def _timeline(attempts: list[dict], now: datetime, job=None,
         row = a["row"]
         result = row.result or ""
         mine: list[dict] = [{
-            "key": f"a{row.uuid}", "kind": "attempt", "label": f"attempt {n}",
+            "key": f"a{row.uuid}", "kind": "attempt",
+            "label": "start" if n == 1 else f"attempt {n}",
             "description": result or "running", "start": row.started_at,
             "duration_ms": None,
             "failed": bool(row.error) or not (
@@ -537,6 +539,14 @@ _STYLE = """
   .hk-card .wf-undated{position:absolute;left:4px;font-size:0.68rem;color:#98a2b3}
   .hk-card .wf-secs{font-size:0.76rem;color:#667085;text-align:right;
     font-variant-numeric:tabular-nums}
+  table.hk-msgs{border-collapse:collapse;margin-top:12px;width:100%}
+  .hk-msgs th{text-align:left;font-size:0.68rem;font-weight:700;text-transform:uppercase;
+    letter-spacing:0.05em;color:#9ca3af;padding:0 16px 4px 0}
+  .hk-msgs td{padding:4px 16px 4px 0;vertical-align:top;font-size:0.84rem;
+    border-top:1px solid #f1f3f5}
+  .hk-msgs td:nth-child(-n+3){white-space:nowrap}
+  .hk-msgs a{color:#2563eb;text-decoration:none}
+  .hk-msgs summary{cursor:pointer}
   /* A chunk's body brings a card's padding; inside a pane it has the pane's. */
   .hk-result-body > .bd{padding:0}
   .hk-card .ev-pane{display:none}
@@ -905,7 +915,7 @@ _JOB_FRAGMENT = """
 
       {% elif e.kind == 'attempt' %}
       <div class="hk-call">
-        <b>Attempt {{ e.attempt_no }}</b>
+        <b>{{ 'Start' if e.attempt_no == 1 else 'Attempt ' ~ e.attempt_no }}</b>
         {% if a.row.result == 'done' %}
         {% elif a.row.result %}<span class="hk-pill {{ 'killed' if a.row.result.startswith('killed') else ('done' if a.row.result == 'skipped' else 'failed') }}">{{ a.row.result }}</span>
         {% else %}<span class="hk-pill running">running for {{ elapsed(a.row.started_at) }}</span>{% endif %}
@@ -924,6 +934,19 @@ _JOB_FRAGMENT = """
         {% endif %}
       </p>
       {% if a.so_far and a.row.result %}{{ a.so_far }}{% endif %}
+      {% if e.attempt_no == 1 and start_messages %}
+      <table class="hk-msgs">
+        <tr><th>No.</th><th>Message</th><th>From</th><th>Text</th></tr>
+        {% for m in start_messages %}
+        <tr>
+          <td class="hk-mono">m{{ m.n }}</td>
+          <td class="hk-mono"><a href="/chat?id={{ job.room_uuid }}&msg={{ m.uuid }}" title="Open this message in the chatroom">{{ m.uuid }}</a></td>
+          <td>{{ 'user' if m.sender == 'human' else m.sender }}</td>
+          <td>{% if m.text|length > 120 %}<details id="m{{ m.uuid }}"><summary>{{ m.text[:120] }}&hellip;</summary><pre class="hk-pre">{{ m.text }}</pre></details>{% else %}{{ m.text }}{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </table>
+      {% endif %}
 
       {% elif e.kind == 'decision' %}
       {% set d = e.decision %}
@@ -1093,9 +1116,18 @@ def housekeeping_job_page(job_uuid: UUID) -> str:
     if chunk is not None:
         messages = db.counted_room_messages(chunk.room_uuid)
         result = _chunk_view(chunk, messages, {m["id"]: i for i, m in enumerate(messages)})
+    # The messages a chunk's job was started on, each with its number in
+    # the room.
+    start_messages = []
+    spec = (db.parse_chunk_subject(job.subject)
+            if job.job_type == db.ROOM_CHUNK_JOB and job.subject and job.room_uuid else None)
+    if spec is not None:
+        start_messages = [
+            {**m, "n": i} for i, m in enumerate(db.counted_room_messages(job.room_uuid))
+            if spec["first_id"] <= m["id"] <= spec["last_id"]]
     run = db.get_assistant_run(job.run_uuid) if job.run_uuid else None
     ctx = dict(
-        job=job, attempts=attempts,
+        job=job, attempts=attempts, start_messages=start_messages,
         timeline=_timeline(attempts, datetime.now(UTC), job, result),
         activity_hint="Open this model call on the Activity page. It shows "
                       "everything that was sent to the model, message by "

@@ -567,7 +567,8 @@ attempt's `llm_call` row: for a chunk, the summary that was kept.
 - A timeline, as the one at the top of a run's page on `/assistant`: one
   row for each thing that happened, in the order they began, with a bar
   where it took time. The rows are each attempt (a mark at its start: its
-  time is on the timeline as the calls it made), each request to the
+  time is on the timeline as the calls it made; the first is named `start`,
+  a later one `attempt 2` and so on), each request to the
   decision model (`duplicate m<n>`, after the message it is about), each
   model call the attempt made (`db.housekeeping_attempt_calls`), named
   `summary` or `check`, and the call still running. A chunk job that wrote
@@ -579,6 +580,10 @@ attempt's `llm_call` row: for a chunk, the summary that was kept.
   linked to. The selection holds across the page's live reload. The page
   opens on the call still running, else on the first model call.
   - An attempt: how it ended, when it began, and its error.
+  - The start of a chunk job also lists the chunk's messages in a table:
+    each one's number, its uuid as a link to it in the chatroom, who wrote
+    it (`user` or `agent`), and its text. A long text shows its beginning
+    and unfolds.
   - A model call: a link to the call on `/activity`, the call's figures as
     a call's meta line reads on `/assistant` (model, tokens in and out,
     cached, prefill, decode, throughput, duration), its prompts, and its
