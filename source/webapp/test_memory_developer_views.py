@@ -124,5 +124,5 @@ def test_page_has_per_signal_budget_knobs_persisted_in_localstorage():
 
 def test_nav_memory_dropdown_links_here():
     body = app.test_client().get("/memory/developer").get_data(as_text=True)
-    assert ">Memory &#9662;<" in body
+    assert '<span class="pp-label">Memory</span>' in body
     assert "/memory/developer" in body
