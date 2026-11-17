@@ -290,6 +290,13 @@ mic opens on the press and closes on the release, and no timer runs.
 Transcriptions are recorded on `/activity` under the proxy's own caller
 (`demo_stt_gemma4`, `demo_stt_lfm3`).
 
+**How these calls read on `/activity`.** The Ollama pages name their model
+by an env var, not a config, so `record_direct_call` looks up the config for
+(provider, model name) — `db.model_config_uuid_by_name` — and stores its uuid
+on the row. The row then shows the name the operator gave that model, like
+every other call on it, and links to its `/model` page. A model with no
+config shows the provider's name for it.
+
 ## Multimodal demo (`/demo/multimodal`)
 
 `webapp/multimodal_demo_views.py` — a deliberately thin page for probing

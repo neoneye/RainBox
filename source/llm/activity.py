@@ -665,6 +665,26 @@ def install_activity_recorder() -> ActivityRecorder | None:
     return recorder
 
 
+def _configured_model_uuid(provider: str | None, model: str | None) -> UUID | None:
+    """The config the operator keeps for this provider's model, if any.
+
+    A direct caller often knows its model only by the provider's name for it
+    (an env var names it, not a config), and a row recorded that way shows the
+    raw name on /activity while every other call on the same model shows the
+    name the operator gave it. Looked up here, the row carries the config's
+    uuid and reads like the rest. None when there is no such config, and when
+    the lookup cannot run (no app context, no database).
+    """
+    if not provider or not model:
+        return None
+    try:
+        import db
+
+        return db.model_config_uuid_by_name(provider, model)
+    except Exception:
+        return None
+
+
 def record_direct_call(
     *,
     started_at: datetime,
@@ -695,6 +715,10 @@ def record_direct_call(
     cannot be hashed into a text prefix, and its prefill time includes the
     media encoder, which says nothing about the cache.
 
+    A caller that ran on a config passes its `model_uuid`; one that only
+    knows the provider's model name leaves it out, and the config for that
+    name is looked up, so the row shows the operator's name for the model.
+
     `uuid` names the row, for a caller that keeps a reference to it. The
     return says whether a row was handed to the sink, so that reference is
     kept only when there is something for it to name.
@@ -714,7 +738,7 @@ def record_direct_call(
             "finished_at": datetime.now(UTC),
             "provider": provider,
             "model": model,
-            "model_uuid": model_uuid,
+            "model_uuid": model_uuid or _configured_model_uuid(provider, model),
             "caller": caller,
             "origin": origin,
             "ok": not failed,

@@ -118,3 +118,18 @@ def test_duplicate_provider_plus_model_name_rejected(app_ctx):
     finally:
         db.session.delete(a)
         db.session.commit()
+
+
+def test_a_config_is_found_by_the_provider_s_name_for_its_model(app_ctx):
+    from db import model_config_uuid_by_name
+
+    row = ModelConfig(model_name="pp3-test-by-name", provider="ollama", arguments={})
+    db.session.add(row)
+    db.session.commit()
+    try:
+        assert model_config_uuid_by_name("ollama", "pp3-test-by-name") == row.uuid
+        assert model_config_uuid_by_name("jan", "pp3-test-by-name") is None
+        assert model_config_uuid_by_name("ollama", "pp3-test-no-such-model") is None
+    finally:
+        db.session.delete(row)
+        db.session.commit()

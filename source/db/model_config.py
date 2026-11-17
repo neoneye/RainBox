@@ -35,6 +35,18 @@ def get_model_config(model_config_uuid: UUID) -> ModelConfig | None:
     )
 
 
+def model_config_uuid_by_name(provider: str, model_name: str) -> UUID | None:
+    """The uuid of the config for a provider's model, by the provider's own
+    name for it — what a caller holds when it reached the model without
+    going through a config. (provider, model_name) is unique."""
+    return (
+        db.session.query(ModelConfig.uuid)
+        .filter(ModelConfig.provider == provider,
+                ModelConfig.model_name == model_name)
+        .scalar()
+    )
+
+
 def create_model_config(
     model_name: str,
     arguments: dict[str, Any],
