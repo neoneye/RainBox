@@ -322,6 +322,9 @@ def test_a_chunk_jobs_page_shows_what_the_decision_model_was_asked_and_answered(
         pane = pane[:pane.index('<div class="ev-pane')]
         assert "Start</b>" in pane and pane.count('<td class="hk-mono">m') == 4
         assert f'msg={messages[2]["uuid"]}' in pane and f'{messages[4]["uuid"]}' not in pane
+        # The uuid's first 8 characters are shown, and the whole of it on hover.
+        full = str(messages[2]["uuid"])
+        assert f'title="{full}">{full[:8]}</a>' in pane
         assert "<td>user</td>" in pane and "<td>assistant</td>" in pane
         assert "look up the height of the lighthouse" in pane
         # No chunk is written yet, so the timeline has no result row.

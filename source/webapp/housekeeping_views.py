@@ -994,11 +994,11 @@ _JOB_FRAGMENT = """
       {% if a.so_far and a.row.result %}{{ a.so_far }}{% endif %}
       {% if e.attempt_no == 1 and start_messages %}
       <table class="hk-msgs">
-        <tr><th>No.</th><th>ID</th><th>Role</th><th>Text</th></tr>
+        <tr><th>No.</th><th>UUID</th><th>Role</th><th>Text</th></tr>
         {% for m in start_messages %}
         <tr>
           <td class="hk-mono">m{{ m.n }}</td>
-          <td class="hk-mono"><a href="/chat?id={{ job.room_uuid }}&msg={{ m.uuid }}" title="Open this message in the chatroom">{{ m.uuid }}</a></td>
+          <td class="hk-mono"><a href="/chat?id={{ job.room_uuid }}&msg={{ m.uuid }}" title="{{ m.uuid }}">{{ (m.uuid|string)[:8] }}</a></td>
           <td>{{ sender_name(m.sender) }}</td>
           <td>{% if m.text|length > 120 %}<details id="m{{ m.uuid }}"><summary>{{ m.text[:120] }}&hellip;</summary><pre class="hk-pre">{{ m.text }}</pre></details>{% else %}{{ m.text }}{% endif %}</td>
         </tr>
