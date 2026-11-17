@@ -138,17 +138,23 @@ def test_a_job_page_shows_each_attempt_with_its_prompt_and_reply(client):
     body = c.get(f"/assistant/housekeeping/{job.uuid}").get_data(as_text=True)
     assert "Start</b>" in body and "killed: turn" in body
     assert "Attempt 2" in body and "You summarize a run." in body
-    # The timeline has a row for each attempt and one for the model call,
-    # and the page opens on the call.
+    # The timeline is in the order things happened: the first attempt, where
+    # it was killed, the second attempt, and its model call. The page opens
+    # on the call.
     rows = re.findall(r'<button type="button" class="wf-row( on)?" data-key="(.)[^"]*"', body)
-    assert rows == [("", "a"), ("", "a"), (" on", "c")]
+    assert rows == [("", "a"), ("", "e"), ("", "a"), (" on", "c")]
+    assert '<span class="wf-name kind-end">killed</span>' in body
+    # A start holds what was known when it began: not how the attempt ended.
+    start = body[body.index(f'data-key="a{killed.uuid}">'):]
+    start = start[:start.index('<div class="ev-pane')]
+    assert "killed: turn" not in start and "model call" not in start
     assert f'<div class="ev-pane on" data-key="c{call.uuid}">' in body
     # A final job's page says so, and its script stops asking for changes.
     assert '<div class="hk-card" data-final="1">' in body
     assert "if (box.querySelector('[data-final]')) { clearInterval(timer); return; }" in body
     # The page takes the window's width, as a run's page does.
     assert '<div class="hk-wrap hk-full">' in body
-    assert body.count('class="ev-pane') == 3
+    assert body.count('class="ev-pane') == 4
     assert "Run status: finished" in body and "resolved" in body
     assert f"/activity/call/{call.uuid}" in body
     # The call carries its figures on a line under its header, as a call's

@@ -328,6 +328,10 @@ _ROW_PURPOSES: dict[str, str] = {
         "the messages. When a part does not match, the summary is written "
         "once more."),
     "live": "The model call that is running now, with its reply so far.",
+    "end": (
+        "How this run of the job ended when it did not finish its work: it "
+        "was killed, skipped or failed. A job that is killed or fails is "
+        "run again later."),
     "result": "What the job wrote: the chunk's summary, as the room's page shows it.",
 }
 
@@ -352,12 +356,14 @@ def _timeline(attempts: list[dict], now: datetime, job=None,
     """A job's page as the rows of its timeline, in the order things began:
     each attempt, each request to the decision model, each model call, and
     the call still running when there is one. The first attempt is the row
-    `start`; a later one is `attempt 2` and so on.
+    `start`; a later one is `attempt 2` and so on. An attempt's row holds
+    what was known when it began. An attempt that was killed, skipped or
+    failed has a row of kind `end` where it ended, named after how.
 
     A row is `{key, kind, label, description, purpose, attempt_no, attempt,
     decision, call, failed, offset_pct, width_pct, seconds, clock, selected}`.
     `purpose` says what a row of its kind is for. `kind`
-    is `attempt`, `decision`, `llm` or `live`. `key` names the row across a
+    is `attempt`, `decision`, `llm`, `live` or `end`. `key` names the row across a
     live reload: the uuid of what it shows. The offset and the width are
     percentages of the time from the first row's start to the last row's
     end. An attempt has no bar: its time is on the timeline as the calls it
@@ -371,13 +377,13 @@ def _timeline(attempts: list[dict], now: datetime, job=None,
     for n, a in enumerate(attempts, 1):
         row = a["row"]
         result = row.result or ""
+        # What was known when the attempt began. How it ended is a row of
+        # its own, where it ended.
         mine: list[dict] = [{
             "key": f"a{row.uuid}", "kind": "attempt",
             "label": "start" if n == 1 else f"attempt {n}",
-            "description": result or "running", "start": row.started_at,
-            "duration_ms": None,
-            "failed": bool(row.error) or not (
-                result in ("", "done", "skipped") or result.startswith("killed"))}]
+            "description": "", "start": row.started_at,
+            "duration_ms": None, "failed": False}]
         for d in a.get("decisions", ()):
             r = d["row"]
             elapsed = r.elapsed_ms or 0
@@ -415,6 +421,16 @@ def _timeline(attempts: list[dict], now: datetime, job=None,
                 "duration_ms": (max(0, int((now - began).total_seconds() * 1000))
                                 if began else None),
                 "failed": False})
+        # An attempt that ended in anything but `done` says so where it
+        # ended, and so does one with an error or a reply and no stored call.
+        if result and (result != "done" or row.error
+                       or (a.get("so_far") and not a.get("calls"))):
+            mine.append({
+                "key": f"e{row.uuid}", "kind": "end",
+                "label": result.split(":")[0].strip(), "description": result,
+                "start": row.ended_at or row.started_at, "duration_ms": None,
+                "failed": bool(row.error) or not (
+                    result in ("done", "skipped") or result.startswith("killed"))})
         for m in mine:
             m.update(attempt_no=n, attempt=a)
         rows += mine
@@ -992,27 +1008,23 @@ _JOB_FRAGMENT = """
       </div>
       <div class="hk-result-body">""" + _CHUNK_BODY + """</div>
 
-      {% elif e.kind == 'attempt' %}
+      {% elif e.kind == 'end' %}
       <div class="hk-call">
-        <b title="{{ e.purpose }}">{{ 'Start' if e.attempt_no == 1 else 'Attempt ' ~ e.attempt_no }}</b>
-        {% if a.row.result == 'done' %}
-        {% elif a.row.result %}<span class="hk-pill {{ 'killed' if a.row.result.startswith('killed') else ('done' if a.row.result == 'skipped' else 'failed') }}">{{ a.row.result }}</span>
-        {% else %}<span class="hk-pill running">running for {{ elapsed(a.row.started_at) }}</span>{% endif %}
-        <span class="hk-mono">{{ when(a.row.started_at) }}</span>
+        <b title="{{ e.purpose }}">{{ 'Start' if e.attempt_no == 1 else 'Attempt ' ~ e.attempt_no }} ended</b>
+        {% if a.row.result != 'done' %}<span class="hk-pill {{ 'killed' if a.row.result.startswith('killed') else ('done' if a.row.result == 'skipped' else 'failed') }}">{{ a.row.result }}</span>{% endif %}
+        {% if a.row.ended_at %}<span class="hk-mono">{{ when(a.row.ended_at) }}</span>{% endif %}
         {% if a.row.model and not a.calls %}<span>{{ a.row.model }}</span>{% endif %}
         {% if a.row.model_ms %}<span class="hk-num">{{ seconds(a.row.model_ms) }}</span>{% endif %}
       </div>
       {% if a.row.error %}<p class="hk-err">{{ a.row.error }}</p>{% endif %}
-      <p class="hk-lede" style="margin:8px 0 0">
-        {% if a.calls or a.decisions %}
-        This attempt made {{ a.decisions|length + a.calls|length }} model call{{ '' if a.decisions|length + a.calls|length == 1 else 's' }}{% if a.decisions %}, {{ a.decisions|length }} of them to identify duplicates{% endif %}. Each has a row of its own on the timeline.
-        {% elif a.row.result %}
-        This attempt made no model call.
-        {% else %}
-        This attempt has made no model call yet.
-        {% endif %}
-      </p>
-      {% if a.so_far and a.row.result %}{{ a.so_far }}{% endif %}
+      {% if a.so_far %}{{ a.so_far }}{% endif %}
+      {% if not a.calls and not a.decisions and not a.so_far %}<p class="hk-lede" style="margin:8px 0 0">This attempt made no model call.</p>{% endif %}
+
+      {% elif e.kind == 'attempt' %}
+      <div class="hk-call">
+        <b title="{{ e.purpose }}">{{ 'Start' if e.attempt_no == 1 else 'Attempt ' ~ e.attempt_no }}</b>
+        <span class="hk-mono">{{ when(a.row.started_at) }}</span>
+      </div>
       {% if e.attempt_no == 1 and start_messages %}
       <table class="hk-msgs">
         <tr><th>No.</th><th>UUID</th><th>Role</th><th>Text</th></tr>

@@ -584,7 +584,12 @@ attempt's `llm_call` row: for a chunk, the summary that was kept.
   selects it, and the address then names it (`#ev-<key>`), so a row can be
   linked to. The selection holds across the page's live reload. The page
   opens on the call still running, else on the first model call.
-  - An attempt: how it ended, when it began, and its error.
+  - An attempt: when it began. The rows are in the order things happened,
+    so a row holds what was known at its own time, and how an attempt ended
+    is not on the row where it began.
+  - An attempt that was killed, skipped or failed has a row where it ended,
+    named after how (`killed`, `failed`): the result, the time, and its
+    error.
   - The start of a chunk job also lists the chunk's messages in a table:
     each one's number in the chunk, from m1 as the summary's prompt counts
     (its number in the room on hover), the first 8 characters of its uuid as a link to it
