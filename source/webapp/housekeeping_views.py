@@ -994,7 +994,7 @@ _JOB_FRAGMENT = """
       {% if a.so_far and a.row.result %}{{ a.so_far }}{% endif %}
       {% if e.attempt_no == 1 and start_messages %}
       <table class="hk-msgs">
-        <tr><th>No.</th><th>Message</th><th>From</th><th>Text</th></tr>
+        <tr><th>No.</th><th>ID</th><th>Role</th><th>Text</th></tr>
         {% for m in start_messages %}
         <tr>
           <td class="hk-mono">m{{ m.n }}</td>
