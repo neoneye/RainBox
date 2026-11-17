@@ -585,6 +585,13 @@ def test_a_chunk_attempt_lists_every_model_call_it_made_in_order(client):
                      "A summary the check found wrong.", "A second model call that compares",
                      "The model call that is running now"):
             assert f'data-purpose="{text}' in body
+        # The Inspect header says what is going on in the selected row, in a
+        # few words, and every row carries its own for when it is selected.
+        assert '<div class="hk-card hk-inspect">' in body
+        for text in ("the job begins", "write the summary of the messages",
+                     "compare the summary with the messages",
+                     "a summary the check found wrong; it was written again"):
+            assert f'data-desc="{text}"' in body
         # A call's pane has no heading line: its figures lead.
         assert "call 1 of 3" not in body and "<b>Summary</b>" not in body
         places = [body.index(text) for text in (

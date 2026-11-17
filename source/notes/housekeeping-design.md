@@ -583,9 +583,11 @@ attempt's `llm_call` row: for a chunk, the summary that was kept.
   two to four model calls: a second summary and check when the check had
   the summary written again. The summary the check rejected is then named
   `summary (rejected)` and drawn red.
-- A row says on hover its name, how long it took and when it began. Its
-  name in the Inspect header says on hover what a row of its kind is for
-  (`_ROW_PURPOSES`).
+- A row says on hover its name, how long it took and when it began. The
+  Inspect header names the selected row and says in a few words what is
+  going on in it (`_ROW_SAYS`), its parts separated by rules as on
+  `/assistant`. The row's name there says on hover, at more length, what a
+  row of its kind is for (`_ROW_PURPOSES`).
 - Under the timeline, the row that is selected, in full. A click on a row
   selects it, and the address then names it (`#ev-<key>`), so a row can be
   linked to. The selection holds across the page's live reload. The page

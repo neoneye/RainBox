@@ -337,14 +337,29 @@ _ROW_PURPOSES: dict[str, str] = {
 }
 
 
-def _row_purpose(row: dict) -> str:
-    """The purpose of a timeline row, by what it is."""
+#: What is going on in each kind of row, in a few words: the text beside
+#: the row's name in the Inspect header.
+_ROW_SAYS: dict[str, str] = {
+    "start": "the job begins",
+    "attempt": "the job is run again from the beginning",
+    "decision": "ask the decision model whether the user asked for the same thing again",
+    "summary": "write the summary of the messages",
+    "rejected": "a summary the check found wrong; it was written again",
+    "check": "compare the summary with the messages",
+    "live": "the model call that is running now",
+    "end": "this run of the job ended before its work was done",
+    "result": "the summary the job wrote",
+}
+
+
+def _row_what(row: dict) -> str:
+    """Which entry of `_ROW_PURPOSES` and `_ROW_SAYS` a timeline row is."""
     if row["kind"] == "attempt":
-        return _ROW_PURPOSES["start" if row.get("attempt_no") == 1 else "attempt"]
+        return "start" if row.get("attempt_no") == 1 else "attempt"
     if row["kind"] == "llm":
         call = row["call"]
-        return _ROW_PURPOSES["rejected" if call["rejected"] else call["kind"]]
-    return _ROW_PURPOSES.get(row["kind"], "")
+        return "rejected" if call["rejected"] else call["kind"]
+    return row["kind"]
 
 
 #: A bar this narrow would be invisible, and a call of a fraction of a
@@ -363,7 +378,8 @@ def _timeline(attempts: list[dict], now: datetime, job=None,
 
     A row is `{key, kind, label, description, purpose, attempt_no, attempt,
     decision, call, failed, offset_pct, width_pct, seconds, clock, selected}`.
-    `purpose` says what a row of its kind is for. `kind`
+    `purpose` says what a row of its kind is for, and `description` what is
+    going on in it, in a few words. `kind`
     is `attempt`, `decision`, `llm`, `live` or `end`. `key` names the row across a
     live reload: the uuid of what it shows. The offset and the width are
     percentages of the time from the first row's start to the last row's
@@ -383,8 +399,7 @@ def _timeline(attempts: list[dict], now: datetime, job=None,
         mine: list[dict] = [{
             "key": f"a{row.uuid}", "kind": "attempt",
             "label": "start" if n == 1 else f"attempt {n}",
-            "description": "", "start": row.started_at,
-            "duration_ms": None, "failed": False}]
+            "start": row.started_at, "duration_ms": None, "failed": False}]
         for d in a.get("decisions", ()):
             r = d["row"]
             elapsed = r.elapsed_ms or 0
@@ -395,8 +410,6 @@ def _timeline(attempts: list[dict], now: datetime, job=None,
                 # user's next message.
                 "label": (f"duplicate m{state['request_local']} \u2194 m{state['local']}"
                           if state else "duplicate"),
-                "description": (f"{d['verdict']['text']} {d['verdict']['p']:.2f}"
-                                if d["verdict"] else "no answer"),
                 # The row is written when the answer is in.
                 "start": r.created_at - timedelta(milliseconds=elapsed),
                 "duration_ms": r.elapsed_ms, "failed": d["verdict"] is None,
@@ -406,8 +419,7 @@ def _timeline(attempts: list[dict], now: datetime, job=None,
             mine.append({
                 "key": f"c{call.uuid}", "kind": "llm",
                 "label": c["kind"] + (" (rejected)" if c["rejected"] else ""),
-                # The model is on the call's line of figures.
-                "description": "", "start": call.started_at,
+                "start": call.started_at,
                 # A summary the check rejected is drawn red, as a call whose
                 # answer was thrown away is on /assistant.
                 "duration_ms": call.total_ms,
@@ -419,7 +431,7 @@ def _timeline(attempts: list[dict], now: datetime, job=None,
             began = max(ends) if ends else row.started_at
             mine.append({
                 "key": f"l{row.uuid}", "kind": "live", "label": "model call",
-                "description": "running", "start": began,
+                "start": began,
                 "duration_ms": (max(0, int((now - began).total_seconds() * 1000))
                                 if began else None),
                 "failed": False})
@@ -429,7 +441,7 @@ def _timeline(attempts: list[dict], now: datetime, job=None,
                        or (a.get("so_far") and not a.get("calls"))):
             mine.append({
                 "key": f"e{row.uuid}", "kind": "end",
-                "label": result.split(":")[0].strip(), "description": result,
+                "label": result.split(":")[0].strip(),
                 "start": row.ended_at or row.started_at, "duration_ms": None,
                 "failed": bool(row.error) or not (
                     result in ("done", "skipped") or result.startswith("killed"))})
@@ -441,7 +453,6 @@ def _timeline(attempts: list[dict], now: datetime, job=None,
     if wrote is not None:
         rows.append({
             "key": f"r{wrote['row'].uuid}", "kind": "result", "label": "result",
-            "description": f"messages {wrote['first_index']}\u2013{wrote['last_index']}",
             "start": (job.finished_at if job is not None else None)
             or wrote["row"].created_at,
             "duration_ms": None, "failed": False, "result": wrote,
@@ -463,7 +474,9 @@ def _timeline(attempts: list[dict], now: datetime, job=None,
         m["seconds"] = (f"{m['duration_ms'] / 1000:.1f}s"
                         if m["duration_ms"] is not None else "—")
         m["clock"] = m["start"].strftime("%H:%M:%S") if m["start"] else "—"
-        m["purpose"] = _row_purpose(m)
+        what = _row_what(m)
+        m["purpose"] = _ROW_PURPOSES.get(what, "")
+        m["description"] = _ROW_SAYS.get(what, "")
         m["selected"] = False
     if rows:
         pick = ([m for m in rows if m["kind"] == "live"]
@@ -660,6 +673,16 @@ _STYLE = """
   .hk-msgs summary{cursor:pointer}
   /* A chunk's body brings a card's padding; inside a pane it has the pane's. */
   .hk-result-body > .bd{padding:0}
+  /* The Inspect header's parts, as on /assistant: the row's name, then what
+     is going on in it, each behind a rule the box draws. */
+  .hk-inspect .hd > span{align-self:stretch;display:flex;align-items:center;
+    margin:-10px 0;padding:10px 0 10px 12px;border-left:1px solid #e5e7eb}
+  .hk-inspect .hd > span:empty{display:none}
+  .hk-inspect h3{font-weight:400}
+  #hk-crumb-label{font-family:ui-monospace,monospace;font-weight:600;white-space:nowrap;
+    color:#1a1a2e}
+  #hk-crumb-desc{color:#6b7280;min-width:0;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap}
   .hk-card .ev-pane{display:none}
   .hk-card .ev-pane.on{display:block}
   .hk-btn{padding:7px 14px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;
@@ -1041,10 +1064,10 @@ _JOB_FRAGMENT = """
 </div>
 
 {% set shown = timeline|selectattr('selected')|first %}
-<div class="hk-card">
+<div class="hk-card hk-inspect">
   <div class="hd">
     <h3>Inspect</h3>
-    <span class="hk-mono" id="hk-crumb-label" title="{{ shown.purpose }}">{{ shown.label }}</span>
+    <span id="hk-crumb-label" title="{{ shown.purpose }}">{{ shown.label }}</span>
     <span id="hk-crumb-desc">{{ shown.description }}</span>
   </div>
   <div class="bd tb-scope">
