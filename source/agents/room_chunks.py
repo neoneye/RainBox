@@ -35,12 +35,12 @@ from pydantic import BaseModel, Field
 #: Bumped when the prompt, the schema or the parsing changes. A chunk belongs
 #: to the series of the version that wrote it, so a new version summarizes a
 #: room again beside the old series, and the two can be compared.
-PROMPT_VERSION = 17
+PROMPT_VERSION = 18
 
 SUMMARY_MAX_CHARS = 120
 RESULT_MAX_CHARS = 160
 TOPIC_MAX_CHARS = 32
-SUBJECT_MAX_CHARS = 48
+SUBJECT_MAX_CHARS = 64
 MAX_PARTS = 5
 MAX_PART_TOPICS = 2
 MAX_CHUNK_TOPICS = 3
@@ -83,7 +83,7 @@ class ChunkSummary(BaseModel):
     "calibrated"."""
 
     parts: list[ChunkPart] = Field(description="The chunk's parts, in order.")
-    subjects: list[str] = Field(description="The name of each part's subject, in order.")
+    subjects: list[str] = Field(description="A phrase for each part's subject, in order.")
     topics: list[str] = Field(description="Broader names that group the parts' subjects.")
 
 
@@ -120,11 +120,14 @@ SYSTEM_PROMPT = (
     "A reply voted up after a hard request is worth naming in the result. A "
     "reply voted down had something wrong with it: say what the user "
     "objected to when the messages show it.\n\n"
-    "Then describe the whole chunk: subjects, the name of each part's "
+    "Then describe the whole chunk: subjects, a phrase for each part's "
     "subject in order, and one to three broader topic names that group "
-    "them. A subject is the name of the thing itself, in the user's own "
-    "words and at most five words. It is a name and not a sentence: it "
-    "does not say that something was asked, wanted or discussed.\n\n"
+    "them. A subject is a phrase of three to eight words that tells its "
+    "part from every other part of the conversation: the thing, under the "
+    "name the user gave it, and what about it. One word is too little, and "
+    "the user's whole request is too much. It is a phrase and not a "
+    "sentence: it has no speaker, and it does not say that something was "
+    "asked, wanted or discussed.\n\n"
     "Rules:\n"
     "- A phrase is at most fourteen words unless said otherwise. It does "
     "not begin by naming who spoke, and it does not announce itself.\n"
@@ -257,10 +260,12 @@ def _topics(raw: list[str], limit: int, where: str,
 
 
 def _subjects(raw: list[str], problems: list[str]) -> str:
-    """The chunk's phrase: its subjects' names, joined. Asked for a phrase,
-    the model wrapped the names in words that said nothing (that details
-    were requested, that questions were asked). A list leaves it nowhere to
-    put them."""
+    """The chunk's summary: its parts' subjects, joined. Asked for one
+    sentence over the chunk, the model wrapped the subjects in words that
+    said nothing (that details were requested, that questions were asked).
+    A list of phrases leaves it nowhere to put them. Each is a phrase of a
+    few words and not a bare name: joined names read as a second list of
+    topics."""
     out: list[str] = []
     for name in raw:
         name = " ".join(str(name).split()).strip(".,;:")

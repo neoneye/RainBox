@@ -89,7 +89,7 @@ in two levels:
 | level | fields |
 |---|---|
 | each part | `first_message`, `last_message`, `summary`, `result`, `follow_up`, `topics` (one or two) |
-| the chunk | `subjects` (the name of each part's subject), `topics` (one to three, broader) |
+| the chunk | `subjects` (a phrase for each part's subject), `topics` (one to three, broader) |
 
 **Every prompt numbers its chunk from m1.** A chunk's messages are m1 to
 m10 wherever the chunk stands in its room, and the context on each side has
@@ -108,11 +108,23 @@ another thing or another value is a part of its own, because it has an
 answer of its own. The parts come first in the schema, so the chunk's subjects
 are named with them in view.
 
-- **`subjects`** are names, at most five words each, and not sentences.
-  Code joins them with commas into the chunk's stored `summary`. Asked for
-  a phrase over the chunk, the model wrapped the names in words that said
-  nothing: that details were requested, that questions were asked. A list
-  leaves it nowhere to put them.
+- **`subjects`** are phrases of three to eight words, one per part, and
+  not sentences: the thing, under the name the user gave it, and what about
+  it. Code joins them with commas into the chunk's stored `summary`. Two
+  other shapes were tried and dropped:
+  - *Bare names* ("at most five words") came back as one word each where
+    the parts were about ideas and not lookups, and joined they read as a
+    second list of topics.
+  - *One sentence over the chunk* brought words that say nothing: that the
+    user asked, that things were discussed. Framed as a chapter heading or
+    as an entry in a table of contents it lost those words and came back
+    as bare names again, in title case or in capitals.
+
+  A list of phrases leaves the filler nowhere to go and still says what
+  each part was about. Replayed on the stored calls of one room's 15
+  chunks, every summary was made of phrases; one chunk's phrases began
+  with a verb of asking ("asking who the assistant is"), and in about a
+  third of the chunks a short request was kept word for word.
 - **`summary`** is what was wanted.
 - **`result`** is what came of it: the one main thing found or concluded, or
   that nothing was.
@@ -412,8 +424,8 @@ summary call; the check writes more and takes longer:
   user's own sentence or the last reply, and the rest is lost.
 - **A correction in a later chunk is not seen.** The part it corrects stays
   as it was written, because a chunk is summarized once and alone.
-- **The chunk's subjects carry no filler**, in all 14 chunks of one room.
-  Many are the user's request word for word, which is longer than a name.
+- **The chunk's subjects carry almost no filler**: see `subjects` above
+  for the count. A short request is often kept word for word.
 - **A part's phrase sometimes still begins with who spoke**, though the
   prompt asks otherwise.
 

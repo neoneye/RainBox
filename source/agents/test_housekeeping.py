@@ -369,7 +369,7 @@ def _fake_chunk_model(monkeypatch, reply=None, check=None):
     return prompts
 
 
-V = 17   # agents.room_chunks.PROMPT_VERSION
+V = 18   # agents.room_chunks.PROMPT_VERSION
 
 
 def test_chunks_are_cut_in_order_and_wait_for_their_context(app_ctx):
@@ -1023,3 +1023,21 @@ def test_a_follow_up_that_is_the_request_word_for_word_is_not_put_to_the_model(
     finally:
         db.session.query(db.RoomChunk).filter_by(room_uuid=room.uuid).delete()
         db.session.commit()
+
+
+def test_a_chunks_summary_is_a_phrase_per_part_and_not_a_bare_name():
+    """The summary is the parts' subjects joined, so a subject is asked for
+    as a phrase of a few words: one-word names joined read as a second list
+    of topics. A phrase of eight words fits; only a longer one is reported."""
+    from agents import room_chunks
+
+    prompt = room_chunks.SYSTEM_PROMPT
+    assert "A subject is a phrase of three to eight words" in prompt
+    assert "One word is too little, and the user's whole request is too much." in prompt
+    problems: list[str] = []
+    phrase = "converting a length in feet to meters and centimeters"   # eight words
+    assert room_chunks._subjects([phrase, "moving a card on the board"], problems) == (
+        phrase + ", moving a card on the board")
+    assert problems == []
+    room_chunks._subjects(["x" * (room_chunks.SUBJECT_MAX_CHARS + 1)], problems)
+    assert problems == [f"chunk: a subject of {room_chunks.SUBJECT_MAX_CHARS + 1} characters"]
