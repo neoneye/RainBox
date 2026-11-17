@@ -422,7 +422,7 @@ def test_a_run_end_queues_two_chunks_and_each_is_summarized_once(app_ctx, monkey
             # Four more messages inside the part, then the next chunk's first.
             "reactions": ["pushed_for_more"] * 4 + ["moved_on"],
             "calibration": "uncontested",
-            "calibration_basis": "the human went on, and did not say whether it was right",
+            "calibration_basis": "the user went on, and did not say whether it was right",
             "audit": {"request": True, "result": True, "reasoning": "read part 0"},
             "signals": {"replies": 5, "repeats": 0, "bare": 0, "runs": {}, "first_run": None, "last_run": None,
                         "criteria_not_met": 0, "revisions": 0, "up": 0, "down": 0}}]

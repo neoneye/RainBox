@@ -612,22 +612,22 @@ def calibrate(part: dict[str, Any]) -> tuple[Calibration, str]:
     if signals.get("down"):
         return "overconfident", "a reply was voted down"
     if "corrected" in reactions:
-        return "overconfident", "the human corrected a reply"
+        return "overconfident", "the user corrected a reply"
     if "questioned" in reactions:
-        return "overconfident", "the human's next message questioned the reply"
+        return "overconfident", "the user's next message questioned the reply"
     if "asked_again" in reactions:
         if first and first != "resolved" and last == "resolved":
             return "underconfident", "it delivered only after being asked again"
         if runs.get("resolved"):
-            return "overconfident", "it answered, and the human kept asking"
+            return "overconfident", "it answered, and the user kept asking"
         return "unclear", "asked again, and nothing was delivered"
     if signals.get("up"):
         return "calibrated", "a reply was voted up"
     if not reactions or reactions == {"not_shown"}:
         return "unclear", "the room shows no reaction yet"
     if last == "resolved" or not runs:
-        return "uncontested", "the human went on, and did not say whether it was right"
-    return "unclear", f"the human went on, and the last run was {last}"
+        return "uncontested", "the user went on, and did not say whether it was right"
+    return "unclear", f"the user went on, and the last run was {last}"
 
 
 def settle(reply: ChunkSummary, first_index: int, last_index: int,

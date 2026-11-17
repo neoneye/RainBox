@@ -370,7 +370,7 @@ def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
                 "result": "the wrong number was given twice",
                 "reactions": ["asked_again", "asked_again", "moved_on"], "calibration": "overconfident",
                 "asked_again_at": [{"message": 2, "p": 0.91}],
-                "calibration_basis": "it answered, and the human kept asking",
+                "calibration_basis": "it answered, and the user kept asking",
                 "signals": {"replies": 3, "runs": {"resolved": 2, "failed": 1},
                             "criteria_not_met": 1, "revisions": 4, "up": 0, "down": 1}},
                {"first_message": 6, "last_message": 9, "requests": 1,
@@ -399,7 +399,7 @@ def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
         assert "&times;3" in body and '<span class="hk-chip">notation</span>' in body
         assert "&rarr; the wrong number was given twice" in body
         assert 'hk-cal-overconfident' in body and "asked again \u00d72" in body
-        assert "it answered, and the human kept asking" in body
+        assert "it answered, and the user kept asking" in body
         for label in ("2 resolved", "1 failed", "criteria not met ×1", "4 revisions", "▼ 1"):
             assert label in body, label
         assert "[m3 agent] message number 3" in body

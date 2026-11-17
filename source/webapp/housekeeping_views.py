@@ -772,7 +772,7 @@ _CHUNK_BODY = """  <div class="bd">
                 <span class="hk-pill hk-cal-{{ part.calibration }}" title="{{ 'Decided by rule from the reaction and the records' if part.calibration_basis else 'Judged by the model' }}">{{ part.calibration }}</span>
                 {% if part.calibration_basis %}<span>{{ part.calibration_basis }}</span>{% endif %}
                 {% for a in part.asked_again_at or [] %}<span class="hk-chip" title="The decision model's probability that this message asks for the same thing again">m{{ a.message }} asks again {{ '%.2f'|format(a.p) }}{% if a.kind %} ({{ a.kind }}){% endif %}</span>{% endfor %}
-                {% for r in reaction_texts(part) %}<span class="hk-mono" title="What the human did after each reply">{{ r }}</span>{% endfor %}
+                {% for r in reaction_texts(part) %}<span class="hk-mono" title="What the user did after each reply">{{ r }}</span>{% endfor %}
                 {% for text in signal_texts(part.signals) %}<span class="hk-chip" title="From the records">{{ text }}</span>{% endfor %}
               </div>
               {% endif %}
@@ -820,7 +820,7 @@ _CHUNK_BODY = """  <div class="bd">
     </dl>
     <details class="hk-text" id="chunk-{{ c.row.seq }}-messages">
       <summary>the {{ c.messages|length }} messages</summary>
-      <pre class="hk-pre">{% for m in c.messages %}[m{{ c.first_index + loop.index0 }} {{ m.sender }}] {{ m.text }}
+      <pre class="hk-pre">{% for m in c.messages %}[m{{ c.first_index + loop.index0 }} {{ 'user' if m.sender == 'human' else m.sender }}] {{ m.text }}
 {% endfor %}</pre>
     </details>
   </div>
@@ -930,7 +930,7 @@ _JOB_FRAGMENT = """
       {% set answer = (d.row.answers or [{}])[0] %}
       <div class="hk-call">
         <b>Identify duplicates</b>
-        {% if d.state %}<span class="hk-mono">m{{ d.state.message }}</span>{% if d.state.after_chunk %} <span class="hk-pill" title="This message comes after the chunk's last message. The chunk's last request is compared with the next message from you, so a request asked again across the edge of a chunk is seen.">after the chunk</span>{% endif %}{% endif %}
+        {% if d.state %}<span class="hk-mono">m{{ d.state.message }}</span>{% if d.state.after_chunk %} <span class="hk-pill" title="This message comes after the chunk's last message. The chunk's last request is compared with the next message from the user, so a request asked again across the edge of a chunk is seen.">after the chunk</span>{% endif %}{% endif %}
         {% if d.verdict %}<span class="hk-pill {{ 'done' if d.verdict.yes else '' }}">{{ d.verdict.text }}</span> <span class="hk-mono">{{ '%.2f'|format(d.verdict.p) }}</span>
         {% else %}<span class="hk-pill failed">no answer: {{ answer.reason or d.row.reason }}</span>{% endif %}
         <span class="hk-mono">{{ when(d.row.created_at) }}</span>

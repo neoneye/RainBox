@@ -263,15 +263,15 @@ line that applies decides:
 | when | calibration | basis shown |
 |---|---|---|
 | a reply was voted down | overconfident | a reply was voted down |
-| the human corrected a reply | overconfident | the human corrected a reply |
-| the next message quoted the reply back | overconfident | the human's next message questioned the reply |
+| the human corrected a reply | overconfident | the user corrected a reply |
+| the next message quoted the reply back | overconfident | the user's next message questioned the reply |
 | asked again, and the first run did not resolve it but the last did | underconfident | it delivered only after being asked again |
-| asked again, and a run resolved it | overconfident | it answered, and the human kept asking |
+| asked again, and a run resolved it | overconfident | it answered, and the user kept asking |
 | asked again, and nothing was delivered | unclear | asked again, and nothing was delivered |
 | a reply was voted up | calibrated | a reply was voted up |
 | the room ends after the part | unclear | the room shows no reaction yet |
-| the human went on, and the last run resolved it (or no run is recorded) | uncontested | the human went on, and did not say whether it was right |
-| the human went on, and the last run did not resolve it | unclear | the human went on, and the last run was … |
+| the human went on, and the last run resolved it (or no run is recorded) | uncontested | the user went on, and did not say whether it was right |
+| the human went on, and the last run did not resolve it | unclear | the user went on, and the last run was … |
 
 **"Asked again" is read from the text, not taken from the model**
 (`room_chunks.count_repeats`). The model calls a new question on the same
