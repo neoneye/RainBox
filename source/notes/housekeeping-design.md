@@ -74,7 +74,7 @@ signals, when the records have any (`db.attach_reply_signals`):
 |---|---|
 | `run resolved` / `partial` / `failed` | the assistant summary's outcome for the reply's run, else the run's status |
 | `criteria met` / `criteria not met`, and how many revisions | the reply audit's verdicts for that run: met when the last one was to send the reply |
-| `voted up` / `voted down`, with the comment | the human's latest vote on the message |
+| `voted up` / `voted down`, with the comment | the user's latest vote on the message |
 
 The signals are records, and the prompt says so. They are what lets a small
 model say something about reliability without judging an answer from its own
@@ -117,10 +117,10 @@ are named with them in view.
 - **`result`** is what came of it: the one main thing found or concluded, or
   that nothing was.
 - **`follow_up`** is a choice: `corrected`, `retried`, `thanked`, `none`.
-  It is what the human's messages in the part say about the replies, and
-  the only part of the human's reaction left to the model.
+  It is what the user's messages in the part say about the replies, and
+  the only part of the user's reaction left to the model.
 
-**What the human did after each reply is read by rule** (`room_chunks.react`),
+**What the user did after each reply is read by rule** (`room_chunks.react`),
 and stored as the part's `reactions`, in order. Whether a message follows a
 reply, where it stands and whether it repeats a request can all be read off
 the messages. Asked for the reaction, the model answered for the end of the
@@ -130,14 +130,14 @@ chunk, and `moved_on` to a part with a retry inside it.
 **Whether a follow-up asks again is put to a decision model**
 (`llm/systemone.py`, slot `assistant.repeat_check`). The text rule sees a
 request typed again; it does not see one asked again in other words. Before
-the summary call, the worker asks the decision model about every human
+the summary call, the worker asks the decision model about every user
 message that follows a reply to an earlier request of the chunk
-(`room_chunks.follow_ups`), and about the first human message after the
+(`room_chunks.follow_ups`), and about the first user message after the
 chunk, so a request asked again across a chunk's edge is seen by the chunk
 that holds the request:
 
-- **One request per follow-up, of two human messages.** The request and
-  the human's next message are given as a text, each inside a tag of its
+- **One request per follow-up, of two user messages.** The request and
+  the user's next message are given as a text, each inside a tag of its
   own (`<message1>`, `<message2>`), cut as the summary's prompt cuts them,
   with angle brackets escaped so a message cannot close its tag. The
   assistant's reply between them is not given. The question is a choice,
@@ -194,7 +194,7 @@ and called none of the others one, in about a fifth of a second each.
 - **With the reply between the two messages** it caught 15 and called 1.
   One run cannot tell these apart, so the reply is left out: the input is
   smaller, and a reply can carry text from elsewhere.
-- **With the three human messages before it as well**, and one question
+- **With the three user messages before it as well**, and one question
   per earlier message, it found one request asked again across another
   subject, and tied 2 to 4 messages to a request they did not repeat. A
   short nudge or retry is taken to repeat whatever stands a few messages
@@ -211,12 +211,12 @@ and called none of the others one, in about a fifth of a second each.
 and ends. They do not make the model deaf to what a message says: a
 sentence planted in the next message, saying that it repeats the request,
 moved nearly every unrelated follow-up to "asks again", with tags as
-without. That message is the human's own, and the answer is about it. The
+without. That message is the user's own, and the answer is about it. The
 reply, which could carry planted text from elsewhere, is not in the input.
 What a wrong answer costs is one part's reaction and calibration on a page:
 nothing acts on it.
 
-One entry for each human message inside the part after its first request,
+One entry for each user message inside the part after its first request,
 where the decision model did not answer:
 
 | the message | reaction |
@@ -228,7 +228,7 @@ where the decision model did not answer:
 | an earlier request of the part again, by its text | `asked_again` |
 | anything else | `pushed_for_more`: it is in the part, so on its subject |
 
-Then one entry for the first human message after the part, looked for in
+Then one entry for the first user message after the part, looked for in
 the rest of the chunk and in the context after it:
 
 | the message | reaction |
@@ -238,9 +238,9 @@ the rest of the chunk and in the context after it:
 | it puts words of a reply in the part between quotation marks | `questioned` |
 | anything else | `moved_on` |
 
-**A reply quoted back is negative feedback.** A human who quotes the
+**A reply quoted back is negative feedback.** A user who quotes the
 assistant's wording in the next message is not done with the answer: they
-are finding out what it meant or where it went wrong. Words the human used
+are finding out what it meant or where it went wrong. Words the user used
 first are theirs, and quoting them does not count. This is the only doubt
 that is read, and it is read from the quotation marks. Asked whether a part
 opens with doubt about the reply before it, the model said so of three new
@@ -256,22 +256,22 @@ which one, and it says so of a new question on the same subject.
 
 **Calibration is decided by rule, not by the model** (`room_chunks.calibrate`).
 The model supplies what it is good at: the result. Asked for the calibration too, it called an answer that was repeated
-unchanged while the human kept asking "calibrated", with the evidence in its
+unchanged while the user kept asking "calibrated", with the evidence in its
 own prompt. The rule reads the part's reactions and the records. The first
 line that applies decides:
 
 | when | calibration | basis shown |
 |---|---|---|
 | a reply was voted down | overconfident | a reply was voted down |
-| the human corrected a reply | overconfident | the user corrected a reply |
+| the user corrected a reply | overconfident | the user corrected a reply |
 | the next message quoted the reply back | overconfident | the user's next message questioned the reply |
 | asked again, and the first run did not resolve it but the last did | underconfident | it delivered only after being asked again |
 | asked again, and a run resolved it | overconfident | it answered, and the user kept asking |
 | asked again, and nothing was delivered | unclear | asked again, and nothing was delivered |
 | a reply was voted up | calibrated | a reply was voted up |
 | the room ends after the part | unclear | the room shows no reaction yet |
-| the human went on, and the last run resolved it (or no run is recorded) | uncontested | the user went on, and did not say whether it was right |
-| the human went on, and the last run did not resolve it | unclear | the user went on, and the last run was … |
+| the user went on, and the last run resolved it (or no run is recorded) | uncontested | the user went on, and did not say whether it was right |
+| the user went on, and the last run did not resolve it | unclear | the user went on, and the last run was … |
 
 **"Asked again" is read from the text, not taken from the model**
 (`room_chunks.count_repeats`). The model calls a new question on the same
@@ -298,10 +298,10 @@ a request answered only on the retry can come out overconfident.
 
 **A result is stored beside what is known about it.** Each part also gets
 **Uncontested is not calibrated.** A reply can be wrong and get no answer:
-the human reads it, sees it is muddled, and asks about something else. So
+the user reads it, sees it is muddled, and asks about something else. So
 going on in silence is its own label, shown in grey, and "calibrated" is
-kept for the one case where the human said the answer was right: a vote up.
-The human's verdict reaches a part through the vote on the reply. A vote
+kept for the one case where the user said the answer was right: a vote up.
+The user's verdict reaches a part through the vote on the reply. A vote
 down makes it overconfident, a vote up calibrated.
 
 `signals`, counted by code: repeated and bare requests, read from their
@@ -343,7 +343,7 @@ true or false:
 
 | answer | question |
 |---|---|
-| `request_matches` | does the "wanted" line say what the human asked in these messages |
+| `request_matches` | does the "wanted" line say what the user asked in these messages |
 | `result_matches` | does the "came of it" line answer that same request, from a reply in these messages |
 
 - **The reasoning comes first**, so the answers are given with it in view,
@@ -407,13 +407,13 @@ summary call; the check writes more and takes longer:
   follow-up of a word or two that asks for more detail scores above 0.5.
 - **It misses a retry that names something new**, such as a retry with a
   date added.
-- **What the human states is not kept.** A part holds a request and its
-  result. When the human explains something, the part's result is the
-  human's own sentence or the last reply, and the rest is lost.
+- **What the user states is not kept.** A part holds a request and its
+  result. When the user explains something, the part's result is the
+  user's own sentence or the last reply, and the rest is lost.
 - **A correction in a later chunk is not seen.** The part it corrects stays
   as it was written, because a chunk is summarized once and alone.
 - **The chunk's subjects carry no filler**, in all 14 chunks of one room.
-  Many are the human's request word for word, which is longer than a name.
+  Many are the user's request word for word, which is longer than a name.
 - **A part's phrase sometimes still begins with who spoke**, though the
   prompt asks otherwise.
 
@@ -594,7 +594,7 @@ attempt's `llm_call` row: for a chunk, the summary that was kept.
   with a toggle, and a reply that is JSON has the raw and pretty switch.
 - A chunk job asks the decision model at the start of an attempt, before
   its own model call. A chunk's last request is compared with the next
-  message from the human, which lies after the chunk's range; that request
+  message from the user, which lies after the chunk's range; that request
   is marked "after the chunk".
 - For a final failure, an Enqueue again button.
 
@@ -630,7 +630,7 @@ the `chunks` link beside the room's name on a job's page.
   with spaces, the names apart by a comma with no space after it.
   The page gives the block's number of characters and a copy button. A
   table above it gives the size of the messages the chunks cover (the
-  human's, the replies, both together), then the summaries' sentences
+  user's, the replies, both together), then the summaries' sentences
   alone and the whole block, each as a share of that. It is
   how a prompt is going to hold the summaries; no prompt holds them yet.
 

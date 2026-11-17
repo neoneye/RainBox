@@ -381,7 +381,7 @@ def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
                "rewritten": [{
             "first_message": 0, "last_message": 5, "summary": "which number is odd",
             "result": "seven", "reasoning": "seven answers a later request"}]},
-        model="model-a", prompt_version=16, job_uuid=job.uuid)
+        model="model-a", prompt_version=17, job_uuid=job.uuid)
     try:
         body = c.get(f"/assistant/housekeeping/room/{room.uuid}").get_data(as_text=True)
         assert "Messages 0&ndash;9" in body and "questions about numbers" in body
@@ -393,7 +393,7 @@ def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
         assert "model-a" not in chunk_card and "decider" not in chunk_card
         assert f'href="/assistant/housekeeping/{job.uuid}"' in chunk_card and ">inspect</a>" in chunk_card
         # The heading links to its own chunk in this series.
-        assert 'href="?size=10&amp;overlap=2&amp;prompt=16#chunk-0">Messages 0&ndash;9</a>' in body
+        assert 'href="?size=10&amp;overlap=2&amp;prompt=17#chunk-0">Messages 0&ndash;9</a>' in body
         assert '<span class="hk-chip">numbers</span>' in body
         assert "m0&ndash;m5" in body and "which number comes next" in body
         assert "&times;3" in body and '<span class="hk-chip">notation</span>' in body
@@ -413,7 +413,7 @@ def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
         assert "seven answers a later request" in body
 
         # The same chunks as the text a prompt is going to hold, with its size.
-        assert f'href="/assistant/housekeeping/room/{room.uuid}?size=10&amp;overlap=2&amp;prompt=16&view=prompt"' in body
+        assert f'href="/assistant/housekeeping/room/{room.uuid}?size=10&amp;overlap=2&amp;prompt=17&view=prompt"' in body
         as_prompt = c.get(
             f"/assistant/housekeeping/room/{room.uuid}?view=prompt").get_data(as_text=True)
         assert 'id="chunk-0"' not in as_prompt
@@ -513,7 +513,7 @@ def test_a_chunk_attempt_lists_every_model_call_it_made_in_order(client):
     assert db.JOB_CHECK_CALLERS[db.ROOM_CHUNK_JOB] == (room_chunks.AUDIT_CALLER,)
     c, made = client
     job, _ = db.ensure_housekeeping_job(
-        db.ROOM_CHUNK_JOB, room_uuid=uuid4(), subject="10/2/v16/0/1/10")
+        db.ROOM_CHUNK_JOB, room_uuid=uuid4(), subject="10/2/v17/0/1/10")
     attempt = db.start_housekeeping_attempt(job)
     start = attempt.started_at
     calls = [

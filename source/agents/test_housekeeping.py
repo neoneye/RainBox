@@ -369,7 +369,7 @@ def _fake_chunk_model(monkeypatch, reply=None, check=None):
     return prompts
 
 
-V = 16   # agents.room_chunks.PROMPT_VERSION
+V = 17   # agents.room_chunks.PROMPT_VERSION
 
 
 def test_chunks_are_cut_in_order_and_wait_for_their_context(app_ctx):
@@ -428,12 +428,12 @@ def test_a_run_end_queues_two_chunks_and_each_is_summarized_once(app_ctx, monkey
                         "criteria_not_met": 0, "revisions": 0, "up": 0, "down": 0}}]
         # The first chunk has no context before it; the second has two each side.
         assert "not part of it:\n(none)" in prompts[0]
-        assert "[human] message number 8" in prompts[1]
+        assert "[user] message number 8" in prompts[1]
         assert "[assistant] message number 21" in prompts[1] and "message number 22" not in prompts[1]
         # Every prompt numbers its chunk from m1, wherever it stands in the
         # room: the second chunk's first message is the room's tenth. The
         # context has no numbers. What is stored is in the room's numbers.
-        assert "The chunk, m1 to m10:\n[m1 human] message number 10" in prompts[1]
+        assert "The chunk, m1 to m10:\n[m1 user] message number 10" in prompts[1]
         assert "The chunk, m1 to m10:" in prompts[0] and "[m11" not in prompts[1]
         # The model reads both sides.
         assert "[m2 assistant] message number 11" in prompts[1]
@@ -683,7 +683,7 @@ def test_a_parts_signals_are_counted_from_the_records_of_its_replies():
 
     prompt = rc.build_prompt(chunk[4:], chunk[:4], [])["user"]
     assert ("[m2 assistant] two\n    signals for m2: run resolved; "
-            "criteria not met; voted down by the human") in prompt
+            "criteria not met; voted down by the user") in prompt
     assert "signals for m4: run resolved; criteria met after 1 revision; voted up" in prompt
     # Context is not numbered, so its signals name the reply by its place.
     assert "[assistant] two boards\n    signals for the reply above: run partial" in prompt
@@ -969,7 +969,7 @@ def test_chunk_summaries_render_as_one_block_for_a_prompt():
 
 def test_a_paused_queue_gives_out_assistant_summaries_and_holds_the_rest(app_ctx):
     held, _ = db.ensure_housekeeping_job(
-        db.ROOM_CHUNK_JOB, room_uuid=uuid4(), subject="10/2/v16/0")
+        db.ROOM_CHUNK_JOB, room_uuid=uuid4(), subject="10/2/v17/0")
     held.created_at = datetime.now(UTC) - timedelta(minutes=5)
     db.session.commit()
     assert db.next_housekeeping_job().uuid == held.uuid

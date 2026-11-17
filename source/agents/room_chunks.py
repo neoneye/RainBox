@@ -4,7 +4,7 @@ A room's counted messages are cut into chunks (`db.due_room_chunks`). This
 module turns one chunk into a prompt, and the model's structured reply into
 what is stored: the chunk split into parts, each with what was wanted, what
 came of it, and topic names; and the names of its subjects and broader topics over
-the whole chunk. What the human did after each reply is read off the
+the whole chunk. What the user did after each reply is read off the
 messages by rule (`react`), and how well calibrated the assistant was in a
 part is decided by rule from that and the records (`calibrate`), and not by
 the model.
@@ -16,7 +16,7 @@ the prompt (`build_retry_prompt`).
 
 The model reads both sides of the conversation. Under each assistant reply
 it is given what the records say about that reply: how its run ended,
-whether the reply met the acceptance criteria, and how the human voted on
+whether the reply met the acceptance criteria, and how the user voted on
 it. Those records are also stored with each part, as counts, so a part's
 result is always shown beside what is known about its reliability. Design:
 notes/housekeeping-design.md.
@@ -35,7 +35,7 @@ from pydantic import BaseModel, Field
 #: Bumped when the prompt, the schema or the parsing changes. A chunk belongs
 #: to the series of the version that wrote it, so a new version summarizes a
 #: room again beside the old series, and the two can be compared.
-PROMPT_VERSION = 16
+PROMPT_VERSION = 17
 
 SUMMARY_MAX_CHARS = 120
 RESULT_MAX_CHARS = 160
@@ -55,7 +55,7 @@ Calibration = Literal["calibrated", "overconfident", "underconfident",
                       "uncontested", "unclear"]
 Reaction = Literal["moved_on", "asked_again", "corrected", "pushed_for_more",
                    "thanked", "questioned", "not_shown"]
-#: What the model is asked about a part's human messages: the three things a
+#: What the model is asked about a part's user messages: the three things a
 #: rule cannot tell from where a message stands or from its letters.
 FollowUp = Literal["corrected", "retried", "thanked", "none"]
 
@@ -66,20 +66,20 @@ class ChunkPart(BaseModel):
     summary: str = Field(description="A short phrase: what was wanted in this part.")
     result: str = Field(description="A short phrase: what came of it.")
     follow_up: FollowUp = Field(
-        description="What the human's messages in this part say about the replies.")
+        description="What the user's messages in this part say about the replies.")
     topics: list[str] = Field(description="Names for this part's subject.")
 
 
 class ChunkSummary(BaseModel):
     """The parts come first, so the subjects are named with them in
-    view: a breakdown read bottom-up. The model is not asked what the human
+    view: a breakdown read bottom-up. The model is not asked what the user
     did after a part: asked, it answered for the chunk's end and not for
     the part's, and missed a retry inside the part. Whether a message
     follows, where it stands and whether it repeats a request are read by
     rule (`react`). The model is left the one question that takes reading:
     whether a message corrects, retries or acknowledges. Nor is it asked for
     the calibration: given the reaction and the records, it still called an
-    answer that was repeated unchanged while the human kept asking
+    answer that was repeated unchanged while the user kept asking
     "calibrated"."""
 
     parts: list[ChunkPart] = Field(description="The chunk's parts, in order.")
@@ -92,12 +92,12 @@ class ChunkSummary(BaseModel):
 # chunks for reuse, and the model then chose from that list whether or not a
 # name fitted, and returned the list's placeholder word as a topic.
 SYSTEM_PROMPT = (
-    "You index one chunk of a chat between a human and an assistant, so that "
+    "You index one chunk of a chat between a user and an assistant, so that "
     "the conversation can be found again later and its weak spots can be "
     "seen. The chunk's messages are numbered from m1. Under an assistant message "
     "there can be a line of signals. They are records, not opinions: how the "
     "assistant's run ended, whether its reply met the acceptance criteria it "
-    "was checked against, and whether the human voted the reply up or down. "
+    "was checked against, and whether the user voted the reply up or down. "
     "A few messages before and after the chunk are given as context. They "
     "show where a subject began or continues, and they are not part of the "
     "chunk.\n\n"
@@ -108,33 +108,33 @@ SYSTEM_PROMPT = (
     "of its own. A chunk that stays on one subject has one part. For each "
     "part give:\n"
     "- the numbers of its first and last message;\n"
-    "- summary: what the human wanted;\n"
+    "- summary: what the user wanted;\n"
     "- result: what came of it, in at most twenty words: the one main thing "
     "that was found or concluded, or that nothing was. No list of details;\n"
-    "- follow_up: what the human's messages in this part say about the "
+    "- follow_up: what the user's messages in this part say about the "
     "replies. corrected: one says a reply was wrong, or gives the right "
     "answer. retried: one tells the assistant to do the request once more. "
     "thanked: one acknowledges a reply. none: none of these. When several "
     "fit, the first that fits in this order;\n"
     "- one or two topic names.\n\n"
     "A reply voted up after a hard request is worth naming in the result. A "
-    "reply voted down had something wrong with it: say what the human "
+    "reply voted down had something wrong with it: say what the user "
     "objected to when the messages show it.\n\n"
     "Then describe the whole chunk: subjects, the name of each part's "
     "subject in order, and one to three broader topic names that group "
-    "them. A subject is the name of the thing itself, in the human's own "
+    "them. A subject is the name of the thing itself, in the user's own "
     "words and at most five words. It is a name and not a sentence: it "
     "does not say that something was asked, wanted or discussed.\n\n"
     "Rules:\n"
     "- A phrase is at most fourteen words unless said otherwise. It does "
     "not begin by naming who spoke, and it does not announce itself.\n"
-    "- Use the human's own words for the things they named. Never put a "
-    "vague stand-in word where the human gave a name.\n"
+    "- Use the user's own words for the things they named. Never put a "
+    "vague stand-in word where the user gave a name.\n"
     "- Take results from the messages only. Do not judge whether an answer "
     "is true from your own knowledge.\n"
     "- A topic name is lowercase words joined by hyphens. Every topic name "
     "comes from this chunk's own messages.\n"
-    "- Write in the language the human writes in."
+    "- Write in the language the user writes in."
 )
 
 
@@ -157,10 +157,10 @@ def signal_line(signals: dict[str, Any] | None) -> str:
         out.append("criteria not met")
     vote = signals.get("vote")
     if vote:
-        out.append("voted up by the human" if vote == "upvote"
-                   else "voted down by the human")
+        out.append("voted up by the user" if vote == "upvote"
+                   else "voted down by the user")
         if signals.get("vote_comment"):
-            out.append(f"the human's comment on the vote: {_cut(signals['vote_comment'], 200)}")
+            out.append(f"the user's comment on the vote: {_cut(signals['vote_comment'], 200)}")
     return "; ".join(out)
 
 
@@ -190,7 +190,7 @@ def _lines(messages: list[dict[str, Any]], numbered: bool = True) -> str:
     for k, m in enumerate(messages, start=1):
         tag = f"m{k} " if numbered else ""
         if m["sender"] == "human":
-            out.append(f"[{tag}human] {_cut(m['text'])}")
+            out.append(f"[{tag}user] {_cut(m['text'])}")
             continue
         out.append(f"[{tag}assistant] {_cut(m['text'], PROMPT_REPLY_MAX_CHARS)}")
         signals = signal_line(m.get("signals"))
@@ -443,8 +443,8 @@ def _within(span: list[str], words: list[str]) -> bool:
 def _quotes_back(text: str, replies: list[list[str]],
                  requests: list[list[str]]) -> bool:
     """Whether `text` puts between quotation marks words that a reply used
-    and no request did: the human holding the assistant's own wording up to
-    it. Words the human used first are theirs, and quoting them is not."""
+    and no request did: the user holding the assistant's own wording up to
+    it. Words the user used first are theirs, and quoting them is not."""
     for groups in _QUOTED.findall(text):
         span = _tokens(next(g for g in groups if g))
         if (span and any(_within(span, r) for r in replies)
@@ -455,9 +455,9 @@ def _quotes_back(text: str, replies: list[list[str]],
 
 def follow_ups(chunk: list[dict[str, Any]], after: list[dict[str, Any]],
                first_index: int) -> list[dict[str, Any]]:
-    """Every human message that follows a reply to an earlier request of
+    """Every user message that follows a reply to an earlier request of
     the chunk, as `{message, request, reply, next_message}`: the decision
-    model is asked about the request and the next message. The first human message after the chunk
+    model is asked about the request and the next message. The first user message after the chunk
     is one of them, so a request asked again across a chunk's edge is put to
     the model by the chunk that holds the request. Texts are cut as the
     summary's prompt cuts them."""
@@ -480,7 +480,7 @@ def follow_ups(chunk: list[dict[str, Any]], after: list[dict[str, Any]],
 
 def _next_request(part: dict[str, Any], chunk: list[dict[str, Any]],
                   after: list[dict[str, Any]], first_index: int) -> int:
-    """The number of the first human message after the part, or the part's
+    """The number of the first user message after the part, or the part's
     last message when there is none."""
     for k, m in enumerate([*chunk, *after]):
         if m["sender"] == "human" and first_index + k > part["last_message"]:
@@ -491,9 +491,9 @@ def _next_request(part: dict[str, Any], chunk: list[dict[str, Any]],
 def react(part: dict[str, Any], chunk: list[dict[str, Any]],
           after: list[dict[str, Any]], first_index: int,
           retries: dict[int, dict[str, Any]] | None = None) -> list[str]:
-    """What the human did after the replies in one part, in order: one entry
-    for each human message that follows the part's first request inside the
-    part, and one for the first human message after the part.
+    """What the user did after the replies in one part, in order: one entry
+    for each user message that follows the part's first request inside the
+    part, and one for the first user message after the part.
 
     Whether a message asks again is the decision model's to say where it
     answered (`retries`, by message number): it sees a request asked again
@@ -517,10 +517,10 @@ def react(part: dict[str, Any], chunk: list[dict[str, Any]],
 
     After the part, looked for in the rest of the chunk and then in `after`,
     the messages that follow the chunk:
-    - no human message: `not_shown`. The room ends there;
+    - no user message: `not_shown`. The room ends there;
     - a request of the part asked again, by its text: `asked_again`;
     - it quotes words of a reply in the part back (`_quotes_back`):
-      `questioned`. The human is not done with the answer: they are probing
+      `questioned`. The user is not done with the answer: they are probing
       what it said. This is read from the quotation alone. Asked whether a
       part opens with doubt about the reply before it, the model said so of
       three new subjects in one room and not of the one message that did;
@@ -586,10 +586,10 @@ def calibrate(part: dict[str, Any]) -> tuple[Calibration, str]:
     A rule over the part's reactions (`react`) and what the records say
     (runs, acceptance criteria, votes). The first rule that applies decides:
 
-    1. A reply was voted down, or the human corrected one: overconfident.
-    2. The human's next message questioned the reply: overconfident. The
-       reply was given as an answer, and the human took it up as a problem.
-    3. The human asked again (`react` says how that is read). The model's
+    1. A reply was voted down, or the user corrected one: overconfident.
+    2. The user's next message questioned the reply: overconfident. The
+       reply was given as an answer, and the user took it up as a problem.
+    3. The user asked again (`react` says how that is read). The model's
        reading alone is not enough for it: it calls a new question on the
        same subject asking again.
        - the first run did not resolve it and the last did: underconfident.
@@ -600,9 +600,9 @@ def calibrate(part: dict[str, Any]) -> tuple[Calibration, str]:
          matter of confidence.
     4. A reply was voted up: calibrated.
     5. No reaction is shown, because the room ends there: unclear.
-    6. The human moved on, thanked or went deeper, and the last run resolved
+    6. The user moved on, thanked or went deeper, and the last run resolved
        the request: uncontested. Silence is not agreement, so this is not
-       called calibrated: only the human saying so (a vote up) is. If the
+       called calibrated: only the user saying so (a vote up) is. If the
        last run did not resolve it: unclear.
     """
     signals = part.get("signals") or {}
@@ -708,10 +708,10 @@ class PartCheck(BaseModel):
 
     first_message: int = Field(description="Number of the part's first message.")
     reasoning: str = Field(
-        description="What the human asked and was answered in these messages, "
+        description="What the user asked and was answered in these messages, "
                     "against what the part says.")
     request_matches: bool = Field(
-        description="The part's 'wanted' line says what the human asked in these messages.")
+        description="The part's 'wanted' line says what the user asked in these messages.")
     result_matches: bool = Field(
         description="The part's 'came of it' line answers that same request, "
                     "from a reply in these messages.")
@@ -729,18 +729,18 @@ class ChunkCheck(BaseModel):
 # reasoning that confirmed each line against some message without asking
 # whether the two belonged together.
 AUDIT_PROMPT = (
-    "You check an index of one chunk of a chat between a human and an "
+    "You check an index of one chunk of a chat between a user and an "
     "assistant. You are given the chunk's numbered messages, with a few "
     "messages of context before and after, and then the index that was "
     "written for the chunk: its parts, each with the messages it covers, "
-    "what the human wanted and what came of it. "
-    "A part marked as asked several times claims that the human made the "
+    "what the user wanted and what came of it. "
+    "A part marked as asked several times claims that the user made the "
     "same request that many times. For each part, in order, read the "
     "messages it covers and answer two questions with true or false: "
-    "does the 'wanted' line say what the human asked there; does the 'came "
+    "does the 'wanted' line say what the user asked there; does the 'came "
     "of it' line answer that same request from a reply there. "
     "Before the two answers for a part, "
-    "write its reasoning: what the human asked and was answered in the "
+    "write its reasoning: what the user asked and was answered in the "
     "messages it covers, and where the part differs from them."
 )
 
