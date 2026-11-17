@@ -494,6 +494,7 @@ CHAT_TEMPLATE: str = """
   .dictate-menu .item .mark{color:#2563eb;flex:0 0 1em;text-align:right}
   .dictate-menu .item:disabled{color:#9ca3af;cursor:default;background:none}
   .dictate-menu .item .note{color:#b45309}
+  .dictate-menu .item .model{color:#6b7280}
 
   /* Folder-contents table (shown in room-main instead of a chat). The chat-log
      and compose set display:flex at class specificity, which beats the UA
@@ -4774,14 +4775,15 @@ async function openDictateMenu(){
       dictatePrefs.engine = engine.id;
       dictateSavePrefs();
     });
-    // Whether it is up, asked now and written beside the name when it is not.
+    // Asked now: the model the engine runs, written beside its name so it can
+    // be matched against the one the room already holds in memory (a second
+    // model means loading and swapping), or why it cannot be used.
     fetch(engine.health).then(r => r.json()).catch(() => ({})).then((j) => {
       const why = !j.reachable ? 'not running' : (engine.need && !j[engine.need]) ? 'cannot hear' : '';
-      if (!why) return;
       const note = document.createElement('span');
-      note.className = 'note';
-      note.textContent = ' — ' + why;
-      item.querySelector('.name').appendChild(note);
+      note.className = why ? 'note' : 'model';
+      note.textContent = ' — ' + (why || j.model || '');
+      if (why || j.model) item.querySelector('.name').appendChild(note);
     });
   });
 

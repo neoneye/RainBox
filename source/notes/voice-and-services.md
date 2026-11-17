@@ -262,8 +262,12 @@ Right-click (Ctrl+click on a Mac) opens its menu:
   mic that is unplugged falls back to the default with a toast.
 - **Transcribe with** — Whisper, gemma4 or LFM3 (the echo page's
   `_stt_engines()` table; gemma4 unless picked otherwise). Each engine's
-  `…/health` is asked when the menu opens and an engine that is down says so
-  beside its name. The Ollama engines get the clip re-encoded with
+  `…/health` is asked when the menu opens: the row then names the model the
+  engine runs, or says the engine is down. The gemma4 engine's model
+  (`GEMMA4_STT_MODEL`, default `gemma4:e4b-mlx`) is meant to be the one the
+  rooms answer with, so dictating reuses the instance Ollama already holds
+  (a call against the loaded model reports a 1 ms load); LFM3 is a second
+  model in memory beside it, and Whisper a separate service. The Ollama engines get the clip re-encoded with
   `TO_WAV_JS`; Whisper gets the recorder's webm/ogg.
 - **Language** — "Auto", then the tags the current profile declares
   (`declared_language_candidates`), named by the browser's

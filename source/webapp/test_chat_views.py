@@ -797,6 +797,9 @@ def test_the_composer_has_a_dictate_button():
     assert "function dictateStart" in body and "function dictateInsert" in body
     assert "function openDictateMenu" in body
     assert "dictateBtn.addEventListener('contextmenu'" in body
+    # the menu names each engine's model, so it can be matched with the one
+    # already in memory
+    assert "note.textContent = ' — ' + (why || j.model || '');" in body
     # the mic is the one the STT demo pages remember
     assert "const DICTATE_DEVICE_KEY = 'stt_device_id';" in body
 
