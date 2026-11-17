@@ -335,15 +335,21 @@ def test_a_chunk_jobs_page_shows_what_the_decision_model_was_asked_and_answered(
         # A call with no row on /activity says so.
         assert card.count("has no row on the Activity page") == 2
         assert second["message"] == 4       # the message after the chunk is a follow-up too
-        # The first row is the start. It lists the chunk's messages: each
-        # one's number, its uuid as a link into the room, who wrote it, and
-        # its text. A message after the chunk is not listed.
+        # The first row is the start. It lists every message the job reads:
+        # each one's number, its uuid as a link into the room, who wrote it,
+        # and its text. The two after the chunk are listed under their own
+        # line and go on from the chunk's numbers, so a message a duplicate
+        # row names is in the table.
         pane = body[body.index(f'data-key="a{attempt.uuid}">'):]
         pane = pane[:pane.index('<div class="ev-pane')]
         # The pane has no heading of its own: the table leads.
-        assert "<b" not in pane and pane.count('<td class="hk-mono" title="m') == 4
+        assert "<b" not in pane and pane.count('<td class="hk-mono" title="m') == 6
+        assert pane.index("The chunk: the messages that are summarized.") < pane.index(
+            "Context after the chunk.")
+        assert "Context before the chunk." not in pane      # the room begins with the chunk
+        assert '<td class="hk-mono" title="m4 in the room">m5</td>' in pane
         assert '<td class="hk-mono" title="m0 in the room">m1</td>' in pane
-        assert f'msg={messages[2]["uuid"]}' in pane and f'{messages[4]["uuid"]}' not in pane
+        assert f'msg={messages[2]["uuid"]}' in pane and f'msg={messages[4]["uuid"]}' in pane
         # The uuid's first 8 characters are shown, and the whole of it on hover.
         full = str(messages[2]["uuid"])
         assert f'title="{full}">{full[:8]}</a>' in pane
@@ -352,7 +358,7 @@ def test_a_chunk_jobs_page_shows_what_the_decision_model_was_asked_and_answered(
         assert "<th>Date</th>" in pane
         assert f'<td class="hk-mono">{messages[0]["created_at"].strftime("%Y-%m-%d %H:%M:%S")}</td>' in pane
         # A user's row is tinted differently from an assistant's.
-        assert pane.count('<tr class="is-user">') == 2 and pane.count('<tr class="is-assistant">') == 2
+        assert pane.count('<tr class="is-user">') == 3 and pane.count('<tr class="is-assistant">') == 3
         assert "look up the height of the lighthouse" in pane
         # No chunk is written yet, so the timeline has no result row.
         assert 'kind-result' not in body

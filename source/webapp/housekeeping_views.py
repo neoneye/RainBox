@@ -667,6 +667,8 @@ _STYLE = """
   .hk-msgs td:nth-child(-n+4){white-space:nowrap}
   /* Who wrote a message is told by its row's tint: the user's are blue. */
   .hk-msgs td:first-child,.hk-msgs th:first-child{padding-left:8px}
+  .hk-msgs tr.hk-msgs-part td{padding:10px 8px 4px;border-top:0;font-size:0.78rem;
+    color:#6b7280;white-space:normal}
   .hk-msgs tr.is-user td{background:#eef4ff}
   .hk-msgs tr.is-assistant td{background:#f8fafc}
   .hk-msgs a{color:#2563eb;text-decoration:none}
@@ -1108,8 +1110,14 @@ _JOB_FRAGMENT = """
       <table class="hk-msgs">
         <tr><th>No.</th><th>UUID</th><th>Date</th><th>Role</th><th>Text</th></tr>
         {% for m in start_messages %}
+        {% if loop.first or m.where != loop.previtem.where %}
+        <tr class="hk-msgs-part"><td colspan="5">{{ {
+          'before': 'Context before the chunk. The model reads it, and it is not summarized.',
+          'chunk': 'The chunk: the messages that are summarized.',
+          'after': 'Context after the chunk. The model reads it, and it is not summarized. It shows what the user did after the last reply.'}[m.where] }}</td></tr>
+        {% endif %}
         <tr class="{{ 'is-user' if m.sender == 'human' else 'is-assistant' }}">
-          <td class="hk-mono" title="m{{ m.room_n }} in the room">m{{ m.n }}</td>
+          <td class="hk-mono" title="m{{ m.room_n }} in the room">{% if m.n is not none %}m{{ m.n }}{% else %}&mdash;{% endif %}</td>
           <td class="hk-mono"><a href="/chat?id={{ job.room_uuid }}&msg={{ m.uuid }}" title="{{ m.uuid }}">{{ (m.uuid|string)[:8] }}</a></td>
           <td class="hk-mono">{{ when(m.created_at) }}</td>
           <td>{{ sender_name(m.sender) }}</td>
@@ -1290,12 +1298,23 @@ def housekeeping_job_page(job_uuid: UUID) -> str:
     spec = (db.parse_chunk_subject(job.subject)
             if job.job_type == db.ROOM_CHUNK_JOB and job.subject and job.room_uuid else None)
     if spec is not None:
-        inside = [(i, m) for i, m in enumerate(db.counted_room_messages(job.room_uuid))
+        room = db.counted_room_messages(job.room_uuid)
+        inside = [i for i, m in enumerate(room)
                   if spec["first_id"] <= m["id"] <= spec["last_id"]]
-        # Numbered as the summary's prompt numbers them: the chunk's first
-        # message is m1. `room_n` is the message's number in the room.
-        start_messages = [{**m, "n": k, "room_n": i}
-                          for k, (i, m) in enumerate(inside, 1)]
+        if inside:
+            first, last = inside[0], inside[-1]
+            # Everything the job reads, as the worker cuts it: the context
+            # before the chunk, the chunk, and the context after it. Numbered
+            # as the summary's prompt numbers them: the chunk's first message
+            # is m1, so the context after it goes on from there. The context
+            # before has no number: nothing names a message of it. `room_n`
+            # is the message's number in the room.
+            for i in range(max(0, first - spec["overlap"]),
+                           min(len(room), last + 1 + spec["overlap"])):
+                where = "before" if i < first else "after" if i > last else "chunk"
+                start_messages.append({
+                    **room[i], "where": where, "room_n": i,
+                    "n": None if where == "before" else i - first + 1})
     # The job's figures, for the band at the top of the page.
     calls = [c["call"] for a in attempts for c in a.get("calls", ())]
     began = attempts[0]["row"].started_at if attempts else None

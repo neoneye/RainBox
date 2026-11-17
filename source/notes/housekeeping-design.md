@@ -598,12 +598,17 @@ attempt's `llm_call` row: for a chunk, the summary that was kept.
   - An attempt that was killed, skipped or failed has a row where it ended,
     named after how (`killed`, `failed`): the result, the time, and its
     error.
-  - The start of a chunk job also lists the chunk's messages in a table:
-    each one's number in the chunk, from m1 as the summary's prompt counts
-    (its number in the room on hover), the first 8 characters of its uuid as a link to it
-    in the chatroom (the whole uuid on hover), when it was written, who wrote
-    it (`user` or `assistant`), and its text. A long text shows its beginning
-    and unfolds.
+  - The start of a chunk job also lists every message the job reads, in a
+    table, under a line for each group: the context before the chunk, the
+    chunk, and the context after it (`overlap` messages each side, read and
+    not summarized). A row has the message's number, the first 8 characters
+    of its uuid as a link to it in the chatroom (the whole uuid on hover),
+    when it was written, who wrote it (`user` or `assistant`), and its
+    text. The numbers are the prompt's: the chunk's first message is m1 and
+    the context after it goes on from there, so a message a `duplicate` row
+    names is in the table. The context before has no numbers. A long text
+    shows its beginning and unfolds. The table is read from the room as it
+    is now, not kept from when the job ran.
   - A model call, with no heading of its own: a link to the call on
     `/activity`, the call's figures as
     a call's meta line reads on `/assistant` (model, tokens in and out,
