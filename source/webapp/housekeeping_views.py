@@ -614,6 +614,10 @@ _STYLE = """
   .hk-msgs td{padding:4px 16px 4px 0;vertical-align:top;font-size:0.84rem;
     border-top:1px solid #f1f3f5}
   .hk-msgs td:nth-child(-n+3){white-space:nowrap}
+  /* Who wrote a message is told by its row's tint: the user's are blue. */
+  .hk-msgs td:first-child,.hk-msgs th:first-child{padding-left:8px}
+  .hk-msgs tr.is-user td{background:#eef4ff}
+  .hk-msgs tr.is-assistant td{background:#f8fafc}
   .hk-msgs a{color:#2563eb;text-decoration:none}
   .hk-msgs summary{cursor:pointer}
   /* A chunk's body brings a card's padding; inside a pane it has the pane's. */
@@ -1013,7 +1017,7 @@ _JOB_FRAGMENT = """
       <table class="hk-msgs">
         <tr><th>No.</th><th>UUID</th><th>Role</th><th>Text</th></tr>
         {% for m in start_messages %}
-        <tr>
+        <tr class="{{ 'is-user' if m.sender == 'human' else 'is-assistant' }}">
           <td class="hk-mono" title="m{{ m.room_n }} in the room">m{{ m.n }}</td>
           <td class="hk-mono"><a href="/chat?id={{ job.room_uuid }}&msg={{ m.uuid }}" title="{{ m.uuid }}">{{ (m.uuid|string)[:8] }}</a></td>
           <td>{{ sender_name(m.sender) }}</td>
