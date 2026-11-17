@@ -1023,7 +1023,8 @@ _JOB_FRAGMENT = """
           {% if e.width_pct is not none %}
           <span class="wf-bar kind-{{ e.kind }}{% if e.failed %} is-failed{% endif %}" style="left:{{ e.offset_pct }}%;width:{{ e.width_pct }}%"></span>
           {% elif e.offset_pct is not none %}
-          <span class="wf-tick{% if e.failed %} is-failed{% endif %}" style="left:{{ e.offset_pct }}%"></span>
+          {# Held inside the track: a mark at the very end would lie past its edge and not be drawn. #}
+          <span class="wf-tick{% if e.failed %} is-failed{% endif %}" style="left:min({{ e.offset_pct }}%, calc(100% - 2px))"></span>
           {% else %}
           <span class="wf-undated">not timed</span>
           {% endif %}
