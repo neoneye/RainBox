@@ -295,7 +295,7 @@ def _decision_calls(job) -> list[dict]:
         """The call's figures, as the fields of a model call's meta line.
         A decision model writes no text and reports no tokens, so the line
         holds what such a call has: its model, the size of what it was
-        given, how long it took, how long it was allowed, and the server."""
+        given, and how long it took."""
         out: list[dict] = []
 
         def field(html: str, title: str, href: str = "") -> None:
@@ -318,13 +318,6 @@ def _decision_calls(job) -> list[dict]:
                       "messages and the question. A decision model reports no tokens.")
         if row.elapsed_ms is not None:
             field(f"took {row.elapsed_ms} ms", "Duration: how long this took")
-        if row.deadline_ms:
-            field(f"limit {row.deadline_ms / 1000:.0f}s", "How long the call was allowed. "
-                  "One that has not answered by then is given up, and the "
-                  "message is read by rule.")
-        if row.server_version:
-            field(f"server {row.server_version}", "The version of the server the "
-                  "decision model runs on")
         return out
 
     def blocks(call) -> Markup:

@@ -616,8 +616,8 @@ attempt's `llm_call` row: for a chunk, the summary that was kept.
     reply.
   - A request to the decision model: the verdict, a line of figures as a
     model call has (a link to the call on `/activity`, the model, the size
-    of what was sent in characters, the duration, the time it was allowed,
-    the server's version; a decision model reports no tokens), and what its
+    of what was sent in characters, the duration; a decision model reports
+    no tokens), and what its
     row on `/activity` shows.
   - The call still running: its reply so far.
   - The result: the chunk the job wrote (`db.job_room_chunk`), as the
