@@ -342,7 +342,7 @@ _ROW_PURPOSES: dict[str, str] = {
 _ROW_SAYS: dict[str, str] = {
     "start": "the job begins",
     "attempt": "the job is run again from the beginning",
-    "decision": "ask the decision model whether the user asked for the same thing again",
+    "decision": "Identify duplicate user messages",
     "summary": "write the summary of the messages",
     "rejected": "a summary the check found wrong; it was written again",
     "check": "compare the summary with the messages",
@@ -1129,12 +1129,9 @@ _JOB_FRAGMENT = """
       {% set d = e.decision %}
       {% set answer = (d.row.answers or [{}])[0] %}
       <div class="hk-call">
-        <b title="{{ e.purpose }}">Identify duplicate user messages</b>
-        {% if d.state %}<span class="hk-mono" title="m{{ d.state.request_message }} and m{{ d.state.message }} in the room">m{{ d.state.request_local }} &harr; m{{ d.state.local }}</span>{% if d.state.after_chunk %} <span class="hk-pill" title="This message comes after the chunk's last message. The chunk's last request is compared with the next message from the user, so a request asked again across the edge of a chunk is seen.">after the chunk</span>{% endif %}{% endif %}
+        {% if d.state and d.state.after_chunk %}<span class="hk-pill" title="This message comes after the chunk's last message. The chunk's last request is compared with the next message from the user, so a request asked again across the edge of a chunk is seen.">after the chunk</span>{% endif %}
         {% if d.verdict %}<span class="hk-pill {{ 'done' if d.verdict.yes else '' }}">{{ d.verdict.text }}</span> <span class="hk-mono">{{ '%.2f'|format(d.verdict.p) }}</span>
         {% else %}<span class="hk-pill failed">no answer: {{ answer.reason or d.row.reason }}</span>{% endif %}
-        <span class="hk-mono">{{ when(d.row.created_at) }}</span>
-        {% if d.row.elapsed_ms is not none %}<span class="hk-num">{{ d.row.elapsed_ms }} ms</span>{% endif %}
         {% if d.row.llm_call_uuid %}<a class="hk-back" style="margin-left:auto" href="/activity/call/{{ d.row.llm_call_uuid }}" title="Open this request on the Activity page. It shows the input and the question as they were sent to the decision model, and the reply as it came back.">activity</a>{% endif %}
       </div>
       {% if d.blocks %}
