@@ -110,6 +110,7 @@ def test_a_running_job_shows_at_the_top_and_its_reply_so_far_on_its_page(client)
     assert f'running <a href="/assistant/housekeeping/{job.uuid}">assistant summary</a>' in log
     page = c.get(f"/assistant/housekeeping/{job.uuid}").get_data(as_text=True)
     assert "reply so far" in page and "{&#34;trigger&#34;: &#34;a que" in page
+    assert 'data-final="1"' not in page
     assert "running for" in page
 
 
@@ -142,6 +143,9 @@ def test_a_job_page_shows_each_attempt_with_its_prompt_and_reply(client):
     rows = re.findall(r'<button type="button" class="wf-row( on)?" data-key="(.)[^"]*"', body)
     assert rows == [("", "a"), ("", "a"), (" on", "c")]
     assert f'<div class="ev-pane on" data-key="c{call.uuid}">' in body
+    # A final job's page says so, and its script stops asking for changes.
+    assert '<div class="hk-card" data-final="1">' in body
+    assert "if (box.querySelector('[data-final]')) { clearInterval(timer); return; }" in body
     # The page takes the window's width, as a run's page does.
     assert '<div class="hk-wrap hk-full">' in body
     assert body.count('class="ev-pane') == 3

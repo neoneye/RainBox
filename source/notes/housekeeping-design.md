@@ -649,7 +649,9 @@ model call is already a step on the timeline. The run list says
 content when the value moves. Open prompt blocks stay open across a reload.
 The log and a room's page follow the whole log. A job's page polls with
 `?job=<uuid>`, a value over that job and its attempts alone, so it reloads
-when its own job moves and not while another one runs.
+when its own job moves and not while another one runs. It stops polling
+once its job is final: nothing on the page can change then, and a job that
+is enqueued again loads the page anew.
 
 ## Adding a job type
 

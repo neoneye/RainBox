@@ -622,6 +622,9 @@ _LIVE_SCRIPT = """
     select(picked);
   }
   function tick() {
+    // What is shown says it will not change: a job that is final. Enqueued
+    // again, it is a new page load.
+    if (box.querySelector('[data-final]')) { clearInterval(timer); return; }
     if (busy) { return; }
     busy = true;
     fetch(box.getAttribute('data-revision-url') || '/assistant/housekeeping/api/revision')
@@ -635,7 +638,7 @@ _LIVE_SCRIPT = """
     var row = e.target.closest('tr[data-href]');
     if (row) { window.location.href = row.getAttribute('data-href'); }
   });
-  setInterval(tick, 2000);
+  var timer = setInterval(tick, 2000);
 })();
 </script>
 """
@@ -825,7 +828,8 @@ _CHUNK_BODY = """  <div class="bd">
 
 _JOB_FRAGMENT = """
 {% set text, kind = outcome(job) %}
-<div class="hk-card">
+{# A job that is final does not change, so the page stops asking. #}
+<div class="hk-card"{% if job.state == 'final' %} data-final="1"{% endif %}>
   <div class="hd"><h3 title="{{ purpose(job.job_type) }}">{{ label(job.job_type) }}</h3>{% if text != 'done' %}<span class="hk-pill {{ kind }}">{{ text }}</span>{% endif %}</div>
   <div class="bd">
     <dl class="hk-kv">
