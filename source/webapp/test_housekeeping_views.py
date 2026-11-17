@@ -109,7 +109,7 @@ def test_a_running_job_shows_at_the_top_and_its_reply_so_far_on_its_page(client)
     log = c.get("/assistant/housekeeping").get_data(as_text=True)
     assert f'running <a href="/assistant/housekeeping/{job.uuid}">assistant summary</a>' in log
     page = c.get(f"/assistant/housekeeping/{job.uuid}").get_data(as_text=True)
-    assert "reply so far" in page and "{&#34;trigger&#34;: &#34;a que" in page
+    assert "response so far" in page and "{&#34;trigger&#34;: &#34;a que" in page
     assert 'data-final="1"' not in page
     assert "running for" in page
 

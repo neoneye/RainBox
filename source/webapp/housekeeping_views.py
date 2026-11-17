@@ -86,7 +86,7 @@ def _attempt_calls(job, row, calls) -> dict:
         out.append({
             "n": n, "kind": "check" if call.caller in check else "summary",
             "call": call, "kpis": _call_kpis(call), "prompts": prompts,
-            "reply": text_block("reply", call.response_text)})
+            "reply": text_block("response", call.response_text)})
     # The check has a summary written again once. A summary with a check
     # and then another summary after it is the one the check rejected.
     for i, c in enumerate(out):
@@ -96,9 +96,9 @@ def _attempt_calls(job, row, calls) -> dict:
     so_far = ""
     if not row.result and row.response_preview and not any(
             c.response_text == row.response_preview for c in calls):
-        so_far = text_block("reply so far", row.response_preview)
+        so_far = text_block("response so far", row.response_preview)
     elif not calls and row.response_preview:
-        so_far = text_block("reply" if row.result else "reply so far",
+        so_far = text_block("response" if row.result else "response so far",
                             row.response_preview)
     return {"calls": out, "so_far": so_far}
 
@@ -405,7 +405,8 @@ def _timeline(attempts: list[dict], now: datetime, job=None,
             mine.append({
                 "key": f"c{call.uuid}", "kind": "llm",
                 "label": c["kind"] + (" (rejected)" if c["rejected"] else ""),
-                "description": call.model or "", "start": call.started_at,
+                # The model is on the call's line of figures.
+                "description": "", "start": call.started_at,
                 # A summary the check rejected is drawn red, as a call whose
                 # answer was thrown away is on /assistant.
                 "duration_ms": call.total_ms,
