@@ -1159,3 +1159,40 @@ def test_usage_named_input_and_output_tokens_is_read():
     # The other spelling still wins when both are there.
     usage = extract_usage({"usage": {"prompt_tokens": 7, "input_tokens": 131}})
     assert usage["prompt_tokens"] == 7
+
+
+def test_a_direct_call_known_only_by_model_name_gets_its_config(monkeypatch):
+    """A caller that names its model by the provider's name alone still gets
+    the config's uuid on the row, so /activity shows the operator's name for
+    the model; a caller that passes a uuid keeps it."""
+    import llm.activity as activity
+    from datetime import UTC, datetime
+    from uuid import uuid4
+
+    recorder, rows = make_recorder()
+    monkeypatch.setattr(activity, "_installed", recorder)
+    config, own = uuid4(), uuid4()
+    asked = []
+    monkeypatch.setattr(activity, "_configured_model_uuid",
+                        lambda provider, model: asked.append((provider, model)) or config)
+    activity.record_direct_call(
+        started_at=datetime.now(UTC), provider="ollama", model="llama3.2:3b",
+        caller="demo_page", messages=[])
+    activity.record_direct_call(
+        started_at=datetime.now(UTC), provider="ollama", model="llama3.2:3b",
+        caller="demo_page", messages=[], model_uuid=own)
+    assert [r["model_uuid"] for r in rows] == [config, own]
+    assert asked == [("ollama", "llama3.2:3b")]
+
+
+def test_a_model_without_a_config_or_a_database_has_no_uuid(monkeypatch):
+    import db
+    import llm.activity as activity
+
+    assert activity._configured_model_uuid(None, "m") is None
+    assert activity._configured_model_uuid("ollama", None) is None
+
+    def boom(provider, model):
+        raise RuntimeError("no database")
+    monkeypatch.setattr(db, "model_config_uuid_by_name", boom)
+    assert activity._configured_model_uuid("ollama", "m") is None

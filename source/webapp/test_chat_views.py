@@ -778,3 +778,103 @@ def test_the_sidebar_has_a_context_panel_that_links_to_the_chunk_summaries():
     assert "else if (mode === 'context') renderContext();" in body
     assert "label: 'Chatroom chunk summaries'," in body
     assert "href: room => '/assistant/housekeeping/room/' + encodeURIComponent(room)," in body
+
+
+def test_the_composer_has_a_dictate_button():
+    """A mic between the textarea and Send: held (or clicked, per its menu) it
+    records, sends the clip to one of the speech-to-text proxies and inserts
+    the transcript at the caret. Right-click opens microphone, engine and
+    language settings. The Ollama engines get the clip re-encoded to WAV."""
+    body = _body()
+    assert '<button type="button" id="dictate-btn" aria-label="Dictate"' in body
+    assert body.index('id="msg-input"') < body.index('id="dictate-btn"') < body.index('id="stop-btn"')
+    assert "Right-click for microphone and language" in body
+    assert "'Press and hold to dictate'" in body
+    for engine in ("whisper", "gemma4", "lfm3"):
+        # clips go to the page's own route; only the health check is the demo's
+        assert f"/chat/api/dictate/{engine}" in body
+        assert f"/demo_stt_{engine}/transcribe" not in body
+        assert f"/demo_stt_{engine}/health" in body
+    assert "async function ppToWav" in body
+    assert "function dictateStart" in body and "function dictateInsert" in body
+    assert "function openDictateMenu" in body
+    assert "dictateBtn.addEventListener('contextmenu'" in body
+    # the menu names each engine's model, so it can be matched with the one
+    # already in memory
+    assert "note.textContent = ' — ' + (why || j.model || '');" in body
+    # the mic is the one the STT demo pages remember
+    assert "const DICTATE_DEVICE_KEY = 'stt_device_id';" in body
+
+
+def test_the_dictate_menu_offers_the_current_profile_s_languages():
+    from unittest.mock import patch
+
+    profile = {"data": {"languages": {"rows": [
+        {"tag": "da"}, {"tag": "not a tag"}, {"tag": "en-us"}]}}}
+    with patch("webapp.chat_views.current_profile", return_value=profile):
+        body = _body()
+    assert 'const DICTATE_LANGUAGES = ["da", "en-US"];' in body
+    with patch("webapp.chat_views.current_profile", return_value=None):
+        assert "const DICTATE_LANGUAGES = [];" in _body()
+
+
+def _dictate_wav() -> bytes:
+    import io
+    import wave
+
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        w.writeframes(b"\x00\x00" * 8000)
+    return buf.getvalue()
+
+
+class _DictateReply:
+    status_code = 200
+
+    def __init__(self, body):
+        self._body = body
+
+    def json(self):
+        return self._body
+
+
+def test_a_dictated_clip_is_recorded_as_dictation_not_as_a_demo_page():
+    """The dictate button posts to /chat/api/dictate/<engine>: the engine's
+    own module answers, and the call's name on /activity is chat.dictate."""
+    import io
+    from unittest.mock import patch
+
+    for engine, module, reply in (
+            ("gemma4", "webapp.stt_gemma4_views", {"message": {"content": "hello there"}}),
+            ("lfm3", "webapp.stt_lfm3_views", {"text": "hello there"})):
+        with patch(f"{module}.requests.post", return_value=_DictateReply(reply)), \
+                patch(f"{module}.record_direct_call") as record:
+            resp = app.test_client().post(
+                f"/chat/api/dictate/{engine}",
+                data={"audio": (io.BytesIO(_dictate_wav()), "clip.wav")},
+                content_type="multipart/form-data")
+        assert resp.status_code == 200, engine
+        assert resp.get_json()["text"] == "hello there"
+        assert record.call_args.kwargs["caller"] == "chat.dictate"
+
+
+def test_whisper_dictation_forwards_the_clip_and_its_language():
+    import io
+    from unittest.mock import patch
+
+    reply = _DictateReply({"text": "hej", "language": "da", "duration": 1.0})
+    with patch("webapp.stt_whisper_views.requests.post", return_value=reply) as post:
+        resp = app.test_client().post(
+            "/chat/api/dictate/whisper",
+            data={"audio": (io.BytesIO(b"webm"), "clip.webm"), "language": "da"},
+            content_type="multipart/form-data")
+    assert resp.status_code == 200 and resp.get_json()["text"] == "hej"
+    assert post.call_args.kwargs["data"] == {"language": "da"}
+
+
+def test_dictation_with_an_unknown_engine_is_not_found():
+    resp = app.test_client().post("/chat/api/dictate/parrot")
+    assert resp.status_code == 404

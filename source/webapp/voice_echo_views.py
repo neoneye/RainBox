@@ -12,6 +12,9 @@ The engine tables below are what the page knows about each one:
 - STT `wav`: the proxy takes WAV only (Ollama decodes no other format), so the
   browser re-encodes the recording with the STT page's TO_WAV_JS first.
   Whisper takes the recorder's webm/ogg as is.
+- STT `language`: the proxy takes a `language` form field (a language tag)
+  naming what is spoken. LFM3's transcription route decides for itself. The
+  /chat dictate button reads this; the echo page sends no language.
 - `need`: the health field that must be true besides `reachable` — the model
   has the `audio` (hears) or `speech` (speaks) capability.
 - TTS `speed`: whether the engine's proxy takes a speed (both do; LFM3's
@@ -422,13 +425,13 @@ if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
 
 def _stt_engines() -> list[dict]:
     return [
-        {"id": "whisper", "name": "Whisper", "wav": False, "need": None,
+        {"id": "whisper", "name": "Whisper", "wav": False, "need": None, "language": True,
          "page": url_for("demo_stt_whisper"), "health": url_for("demo_stt_whisper_health"),
          "transcribe": url_for("demo_stt_whisper_transcribe")},
-        {"id": "gemma4", "name": "gemma4", "wav": True, "need": "audio",
+        {"id": "gemma4", "name": "gemma4", "wav": True, "need": "audio", "language": True,
          "page": url_for("demo_stt_gemma4"), "health": url_for("demo_stt_gemma4_health"),
          "transcribe": url_for("demo_stt_gemma4_transcribe")},
-        {"id": "lfm3", "name": "LFM3", "wav": True, "need": "audio",
+        {"id": "lfm3", "name": "LFM3", "wav": True, "need": "audio", "language": False,
          "page": url_for("demo_stt_lfm3"), "health": url_for("demo_stt_lfm3_health"),
          "transcribe": url_for("demo_stt_lfm3_transcribe")},
     ]

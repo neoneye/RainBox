@@ -29,6 +29,7 @@ import requests
 from flask import Response, jsonify, render_template_string, request, url_for
 from markupsafe import Markup
 
+from language_tags import canonical_language_tag
 from llm.activity import record_direct_call
 
 from .core import app
@@ -594,6 +595,13 @@ def demo_stt_gemma4_health() -> Response | tuple[Response, int]:
 
 @app.route("/demo_stt_gemma4/transcribe", methods=["POST"])
 def demo_stt_gemma4_transcribe() -> Response | tuple[Response, int]:
+    return transcribe("demo_stt_gemma4")
+
+
+def transcribe(caller: str) -> Response | tuple[Response, int]:
+    """Answer the current request's clip. `caller` is the name the call is
+    recorded under on /activity: this page's own, or the /chat dictate
+    button's, which posts to its own route and shares everything else."""
     audio = request.files.get("audio")
     if audio is None:
         return jsonify({"error": "missing 'audio' file field"}), 400
@@ -602,6 +610,12 @@ def demo_stt_gemma4_transcribe() -> Response | tuple[Response, int]:
         return jsonify({"error": "the clip must be a WAV file (RIFF/WAVE); "
                                  "Ollama decodes no other audio format"}), 400
     prompt = (request.form.get("prompt") or "").strip() or DEFAULT_PROMPT
+    language = (request.form.get("language") or "").strip()
+    if language:
+        tag = canonical_language_tag(language)
+        if tag is None:
+            return jsonify({"error": f"not a language tag: {language!r}"}), 400
+        prompt = f"{prompt} The spoken language is {tag}."
     url, model = _ollama_url(), _model()
     body = {
         "model": model,
@@ -614,7 +628,7 @@ def demo_stt_gemma4_transcribe() -> Response | tuple[Response, int]:
     duration = _wav_seconds(raw)
     activity = {
         "started_at": datetime.now(UTC), "provider": "ollama", "model": model,
-        "caller": "demo_stt_gemma4",
+        "caller": caller,
         "messages": [{"role": "user", "content": f"{prompt}\n\n[audio: "
                       f"{duration if duration is not None else '?'}s WAV, {len(raw)} bytes]"}],
     }
