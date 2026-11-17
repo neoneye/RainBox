@@ -224,7 +224,8 @@ def _reaction_texts(part: dict) -> list[str]:
 
 def _decision_calls(job) -> list[dict]:
     """A room-chunk job's requests to the decision model, in the order they
-    were made: `{row, state, verdict, blocks}`. `blocks` is what the call's
+    were made: `{row, state, verdict, blocks, kpis}`. `kpis` is the call's
+    line of figures. `blocks` is what the call's
     page on /activity shows, as text blocks: each message that was sent
     under its role, then the response. It is empty for a call with no row
     there. The state is not stored with the
@@ -290,8 +291,43 @@ def _decision_calls(job) -> list[dict]:
         return {"text": answer.get("label"), "p": answer.get("p"),
                 "yes": answer.get("label") == "yes"}
 
-    def blocks(row) -> Markup:
-        call = db.get_llm_call(row.llm_call_uuid) if row.llm_call_uuid else None
+    def kpis(row, call) -> list[dict]:
+        """The call's figures, as the fields of a model call's meta line.
+        A decision model writes no text and reports no tokens, so the line
+        holds what such a call has: its model, the size of what it was
+        given, how long it took, how long it was allowed, and the server."""
+        out: list[dict] = []
+
+        def field(html: str, title: str, href: str = "") -> None:
+            out.append({"html": html, "title": title, "href": href})
+
+        if call is not None:
+            field("activity \u2197", "Open this request on the Activity page. It shows "
+                  "the input and the question as they were sent to the decision "
+                  "model, and the reply as it came back.", f"/activity/call/{call.uuid}")
+        if call is not None and call.model_uuid:
+            field("model \u2197", f"The decision model that answered: {row.model}",
+                  f"/model?id={call.model_uuid}")
+        elif row.model:
+            field(row.model, f"The decision model that answered: {row.model}")
+        if call is not None:
+            sent = sum(len(str(m.get("content") or "")) for m in (call.messages or [])
+                       if isinstance(m, dict))
+            if sent:
+                field(f"in {sent} chars", "The size of what was sent: the two "
+                      "messages and the question. A decision model reports no tokens.")
+        if row.elapsed_ms is not None:
+            field(f"took {row.elapsed_ms} ms", "Duration: how long this took")
+        if row.deadline_ms:
+            field(f"limit {row.deadline_ms / 1000:.0f}s", "How long the call was allowed. "
+                  "One that has not answered by then is given up, and the "
+                  "message is read by rule.")
+        if row.server_version:
+            field(f"server {row.server_version}", "The version of the server the "
+                  "decision model runs on")
+        return out
+
+    def blocks(call) -> Markup:
         if call is None:
             return Markup("")
         sent = [m for m in (call.messages or []) if isinstance(m, dict)]
@@ -300,8 +336,12 @@ def _decision_calls(job) -> list[dict]:
               for m in sent),
             text_block("response", call.response_text, whole=True)])
 
-    return [{"row": r, "state": states.get(r.state_digest), "verdict": verdict(r),
-             "blocks": blocks(r)} for r in rows]
+    out = []
+    for r in rows:
+        call = db.get_llm_call(r.llm_call_uuid) if r.llm_call_uuid else None
+        out.append({"row": r, "state": states.get(r.state_digest), "verdict": verdict(r),
+                    "blocks": blocks(call), "kpis": kpis(r, call)})
+    return out
 
 
 #: What each kind of row on a job's timeline is for, as the hover on the
@@ -1128,11 +1168,11 @@ _JOB_FRAGMENT = """
       {% elif e.kind == 'decision' %}
       {% set d = e.decision %}
       {% set answer = (d.row.answers or [{}])[0] %}
-      <div class="hk-call">
+      <div class="ev-kpis">
         {% if d.state and d.state.after_chunk %}<span class="hk-pill" title="This message comes after the chunk's last message. The chunk's last request is compared with the next message from the user, so a request asked again across the edge of a chunk is seen.">after the chunk</span>{% endif %}
-        {% if d.verdict %}<span class="hk-pill {{ 'done' if d.verdict.yes else '' }}">{{ d.verdict.text }}</span> <span class="hk-mono">{{ '%.2f'|format(d.verdict.p) }}</span>
+        {% if d.verdict %}<span><span class="hk-pill {{ 'done' if d.verdict.yes else '' }}">{{ d.verdict.text }}</span> <span class="hk-mono">{{ '%.2f'|format(d.verdict.p) }}</span></span>
         {% else %}<span class="hk-pill failed">no answer: {{ answer.reason or d.row.reason }}</span>{% endif %}
-        {% if d.row.llm_call_uuid %}<a class="hk-back" style="margin-left:auto" href="/activity/call/{{ d.row.llm_call_uuid }}" title="Open this request on the Activity page. It shows the input and the question as they were sent to the decision model, and the reply as it came back.">activity</a>{% endif %}
+        {% for f in d.kpis %}<span class="ev-kpi" title="{{ f.title }}">{% if f.href %}<a href="{{ f.href }}">{{ f.html }}</a>{% else %}{{ f.html }}{% endif %}</span>{% endfor %}
       </div>
       {% if d.blocks %}
       {{ d.blocks }}

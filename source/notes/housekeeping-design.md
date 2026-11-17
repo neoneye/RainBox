@@ -614,8 +614,11 @@ attempt's `llm_call` row: for a chunk, the summary that was kept.
     a call's meta line reads on `/assistant` (model, tokens in and out,
     cached, prefill, decode, throughput, duration), its prompts, and its
     reply.
-  - A request to the decision model: the verdict, and what its row on
-    `/activity` shows.
+  - A request to the decision model: the verdict, a line of figures as a
+    model call has (a link to the call on `/activity`, the model, the size
+    of what was sent in characters, the duration, the time it was allowed,
+    the server's version; a decision model reports no tokens), and what its
+    row on `/activity` shows.
   - The call still running: its reply so far.
   - The result: the chunk the job wrote (`db.job_room_chunk`), as the
     room's page shows a chunk, without its heading and without its list of

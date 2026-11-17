@@ -322,6 +322,13 @@ def test_a_chunk_jobs_page_shows_what_the_decision_model_was_asked_and_answered(
         card = body[body.index("<h3>Inspect</h3>"):]
         assert card.count('href="/activity/call/') == 1
         assert f'href="/activity/call/{on_activity}"' in card
+        # A request has a line of figures, as a model call has: what a
+        # decision model's call has to show, with no tokens.
+        assert f'<a href="/activity/call/{on_activity}">activity \u2197</a>' in card
+        for text in (">decider</span>", ">took 120 ms</span>", ">limit 20s</span>",
+                     ">server 0.40.16</span>"):
+            assert card.count(text) == 3
+        assert card.count(" chars</span>") == 1     # only the one with a stored call
         # A call shows what its page on /activity shows: each message that
         # was sent under its role, then the response.
         assert card.index(">state<") < card.index(">question<") < card.index(">response<")
