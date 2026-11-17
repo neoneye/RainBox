@@ -561,9 +561,14 @@ attempt's `llm_call` row: for a chunk, the summary that was kept.
   and wakes the worker, which carries on from where the queue stood.
 
 **A job** (`/assistant/housekeeping/<uuid>`).
-- What it is for, with links to the room, its chunks, the run and the
-  request. Its heading says on hover what that kind of job does and where
-  its result is read.
+- A band at the top, as a run's page on `/assistant` opens with, for the
+  job as a whole: how it stands, the number of LLM calls and of calls to
+  the decision model, the time (total from the first attempt's start to
+  the job's end, inside the LLM calls, inside the decision calls), and the
+  attempts. Under a rule: what the job is for, with links to the room, its
+  chunks, the run and the request, and when it was created and finished.
+  The job's name says on hover what that kind of job does and where its
+  result is read. For a final failure, an Enqueue again button.
 - A timeline, as the one at the top of a run's page on `/assistant`: one
   row for each thing that happened, in the order they began, with a bar
   where it took time. The rows are each attempt (a mark at its start: its
@@ -615,7 +620,6 @@ attempt's `llm_call` row: for a chunk, the summary that was kept.
   its own model call. A chunk's last request is compared with the next
   message from the user, which lies after the chunk's range; that request
   is marked "after the chunk".
-- For a final failure, an Enqueue again button.
 
 **A room's chunks** (`/assistant/housekeeping/room/<uuid>`), reached from
 the `chunks` link beside the room's name on a job's page.

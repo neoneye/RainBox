@@ -150,7 +150,15 @@ def test_a_job_page_shows_each_attempt_with_its_prompt_and_reply(client):
     assert "killed: turn" not in start and "model call" not in start
     assert f'<div class="ev-pane on" data-key="c{call.uuid}">' in body
     # A final job's page says so, and its script stops asking for changes.
-    assert '<div class="hk-card" data-final="1">' in body
+    assert '<div class="hk-dash" data-final="1">' in body
+    # The band at the top holds the job as a whole: how it stands, its
+    # calls, its time and its attempts.
+    dash = body[body.index('<div class="hk-dash"'):body.index("<h3>Timeline</h3>")]
+    assert '<div class="dval-big dstatus-done">done</div>' in dash
+    assert re.search(r'LLM calls</div>\s*<div class="dval-big">1</div>', dash)
+    assert re.search(r'Decision calls</div>\s*<div class="dval-big">0</div>', dash)
+    assert "model 1.6s" in dash and "total " in dash and '>decision ' not in dash
+    assert re.search(r'Attempts</div>\s*<div class="dval">2', dash)
     assert "if (box.querySelector('[data-final]')) { clearInterval(timer); return; }" in body
     # The page takes the window's width, as a run's page does.
     assert '<div class="hk-wrap hk-full">' in body
@@ -175,7 +183,7 @@ def test_a_job_page_shows_each_attempt_with_its_prompt_and_reply(client):
         assert text in kpis
     # The heading says on hover what the job is for. No line repeats where
     # its result went.
-    assert '<h3 title="Summarizes one run of the personal assistant' in body
+    assert '<div class="dlabel" title="Summarizes one run of the personal assistant' in body
     assert "<dt>Wrote</dt>" not in body
     assert "Enqueue again" not in body
     # The run's page links the summarizer's step to this job.

@@ -596,6 +596,25 @@ _STYLE = """
   .hk-pill.hk-cal-uncontested{color:#4b5563;background:#f3f4f6}
   .hk-pill.hk-cal-overconfident{color:#b91c1c;background:#fee2e2}
   .hk-pill.hk-cal-underconfident{color:#92400e;background:#fef3c7}
+  /* The band a run's page on /assistant opens with: it reaches the page's
+     edges, and has a rule under it and no box. */
+  .hk-dash{display:grid;grid-template-columns:1.1fr 0.6fr 0.6fr 1.2fr 1fr;gap:24px;
+    margin:-12px -18px 1.4rem;padding:18px;border-bottom:1px solid #e5e7eb;background:#fff}
+  .hk-dash .dcell{display:flex;flex-direction:column;min-width:0}
+  .hk-dash .dlabel{font-size:0.66rem;font-weight:700;text-transform:uppercase;
+    letter-spacing:0.05em;color:#9ca3af;margin-bottom:8px}
+  .hk-dash .dval{font-size:0.92rem;color:#374151;line-height:1.5;
+    font-variant-numeric:tabular-nums}
+  .hk-dash .dval-big{font-size:1.3rem;font-weight:700;color:#1a1a2e;
+    font-variant-numeric:tabular-nums}
+  .hk-dash .dsep{grid-column:1 / -1;margin:0 -18px;border:0;border-top:1px solid #e5e7eb}
+  .hk-dash .dfor{grid-column:1 / span 3}
+  .hk-dash .dts{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  .hk-dash a{color:#2563eb;text-decoration:none}
+  .hk-dash .dstatus-done{color:#1e7e34}
+  .hk-dash .dstatus-failed{color:#c0392b}
+  .hk-dash .dstatus-running{color:#1d4ed8}
+  .hk-dash .dstatus-killed,.hk-dash .dstatus-deferred,.hk-dash .dstatus-waiting{color:#92400e}
   /* The timeline /assistant draws: one row per thing that happened, a bar
      where it took time. A row is a button, because it selects the pane
      below and does not navigate. */
@@ -932,31 +951,60 @@ _CHUNK_BODY = """  {# What is taken from a message's number in the room before i
 
 _JOB_FRAGMENT = """
 {% set text, kind = outcome(job) %}
-{# A job that is final does not change, so the page stops asking. #}
-<div class="hk-card"{% if job.state == 'final' %} data-final="1"{% endif %}>
-  <div class="hd"><h3 title="{{ purpose(job.job_type) }}">{{ label(job.job_type) }}</h3>{% if text != 'done' %}<span class="hk-pill {{ kind }}">{{ text }}</span>{% endif %}</div>
-  <div class="bd">
-    <dl class="hk-kv">
-      <dt>For</dt>
-      <dd>
-        {% if job.room_uuid %}<a href="/chat?id={{ job.room_uuid }}">{{ rooms.get(job.room_uuid, 'room') }}</a>
-          (<a href="/assistant/housekeeping/room/{{ job.room_uuid }}">chunks</a>){% endif %}
-        {% if job.run_uuid %}{% if job.room_uuid %} &middot; {% endif %}<a href="/assistant?id={{ job.run_uuid }}">run {{ job.run_uuid }}</a>{% endif %}
-        {% if request_message %} &middot; <a href="/chat?id={{ job.room_uuid }}&msg={{ request_message }}">the request</a>{% endif %}
-        {% set chunk = chunk_link(job) %}
-        {% if chunk %} &middot; <a href="{{ chunk.href }}">{{ chunk.text }}</a>
-        {% elif job.subject %} &middot; {{ job.subject }}{% endif %}
-      </dd>
-      <dt>Created</dt><dd class="hk-mono">{{ when(job.created_at) }}</dd>
-      {% if job.finished_at %}<dt>Finished</dt><dd class="hk-mono">{{ when(job.finished_at) }}</dd>{% endif %}
-      <dt>Attempts</dt><dd>{{ attempts|length }}{% if job.retries %} &middot; {{ job.retries }} retried after a failure{% endif %}</dd>
-    </dl>
+{# The job as a whole, in the band a run's page on /assistant opens with:
+   how it stands, what it cost, and what it is for. A job that is final does
+   not change, so the page stops asking. #}
+<div class="hk-dash"{% if job.state == 'final' %} data-final="1"{% endif %}>
+  <div class="dcell">
+    <div class="dlabel" title="{{ purpose(job.job_type) }}">{{ label(job.job_type) }}</div>
+    <div class="dval-big dstatus-{{ kind }}">{{ text }}</div>
+  </div>
+  <div class="dcell">
+    <div class="dlabel" title="The calls that wrote and checked the summary. A summary the check rejected is counted too.">LLM calls</div>
+    <div class="dval-big">{{ dash.llm_calls }}</div>
+  </div>
+  <div class="dcell">
+    <div class="dlabel" title="The calls to the decision model, which answers with probabilities and writes no text. A chunk job asks it which user messages ask again for the same thing.">Decision calls</div>
+    <div class="dval-big">{{ dash.decision_calls }}</div>
+  </div>
+  <div class="dcell">
+    <div class="dlabel">Time</div>
+    <div class="dval" title="From the first attempt's start to the job's end, or to now while it runs. Waiting between attempts is counted.">total {{ dash.total_time }}</div>
+    <div class="dval" title="Inside the LLM calls">model {{ dash.model_time }}</div>
+    {% if dash.decision_calls %}<div class="dval" title="Inside the calls to the decision model">decision {{ dash.decision_time }}</div>{% endif %}
+  </div>
+  <div class="dcell">
+    <div class="dlabel">Attempts</div>
+    <div class="dval">{{ attempts|length }}{% if job.retries %} &middot; {{ job.retries }} retried after a failure{% endif %}</div>
     {% if job.state == 'final' and kind == 'failed' %}
-    <form method="post" action="/assistant/housekeeping/{{ job.uuid }}/requeue" style="margin-top:12px">
+    <form method="post" action="/assistant/housekeeping/{{ job.uuid }}/requeue" style="margin-top:8px">
       <button class="hk-btn" type="submit">Enqueue again</button>
     </form>
     {% endif %}
   </div>
+  <hr class="dsep">
+  <div class="dcell dfor">
+    <div class="dlabel">For</div>
+    <div class="dval">
+      {% if job.room_uuid %}<a href="/chat?id={{ job.room_uuid }}">{{ rooms.get(job.room_uuid, 'room') }}</a>
+        (<a href="/assistant/housekeeping/room/{{ job.room_uuid }}">chunks</a>){% endif %}
+      {% if job.run_uuid %}{% if job.room_uuid %} &middot; {% endif %}<a href="/assistant?id={{ job.run_uuid }}">run {{ job.run_uuid }}</a>{% endif %}
+      {% if request_message %} &middot; <a href="/chat?id={{ job.room_uuid }}&msg={{ request_message }}">the request</a>{% endif %}
+      {% set chunk = chunk_link(job) %}
+      {% if chunk %} &middot; <a href="{{ chunk.href }}">{{ chunk.text }}</a>
+      {% elif job.subject %} &middot; {{ job.subject }}{% endif %}
+    </div>
+  </div>
+  <div class="dcell">
+    <div class="dlabel">Created</div>
+    <div class="dval"><span class="dts">{{ when(job.created_at) }}</span></div>
+  </div>
+  {% if job.finished_at %}
+  <div class="dcell">
+    <div class="dlabel">Finished</div>
+    <div class="dval"><span class="dts">{{ when(job.finished_at) }}</span></div>
+  </div>
+  {% endif %}
 </div>
 
 {% if timeline %}
@@ -1221,9 +1269,20 @@ def housekeeping_job_page(job_uuid: UUID) -> str:
         # message is m1. `room_n` is the message's number in the room.
         start_messages = [{**m, "n": k, "room_n": i}
                           for k, (i, m) in enumerate(inside, 1)]
+    # The job's figures, for the band at the top of the page.
+    calls = [c["call"] for a in attempts for c in a.get("calls", ())]
+    began = attempts[0]["row"].started_at if attempts else None
+    ended = job.finished_at or (datetime.now(UTC) if job.state != "final" else None)
+    dash = {
+        "llm_calls": len(calls), "decision_calls": len(decisions),
+        "total_time": (f"{max(0.0, (ended - began).total_seconds()):.1f}s"
+                       if began and ended else "\u2014"),
+        "model_time": f"{sum(c.total_ms or 0 for c in calls) / 1000:.1f}s",
+        "decision_time": f"{sum(d['row'].elapsed_ms or 0 for d in decisions) / 1000:.1f}s",
+    }
     run = db.get_assistant_run(job.run_uuid) if job.run_uuid else None
     ctx = dict(
-        job=job, attempts=attempts, start_messages=start_messages,
+        job=job, attempts=attempts, start_messages=start_messages, dash=dash,
         timeline=_timeline(attempts, datetime.now(UTC), job, result),
         activity_hint="Open this model call on the Activity page. It shows "
                       "everything that was sent to the model, message by "
