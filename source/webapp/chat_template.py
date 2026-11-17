@@ -105,13 +105,6 @@ CHAT_TEMPLATE: str = """
   .ui-modal .agents label{font-size:0.85rem;color:#333;display:flex;align-items:center;gap:0.4em}
 
   .room-main{display:flex;flex-direction:column;overflow:hidden;min-height:0}
-  .room-title{padding:0.6em 1em;border-bottom:1px solid #eee;font-weight:600;display:flex;align-items:center;gap:0.6em}
-  /* Click-to-rename room name: doubles as the title; clicking opens the
-     rename modal (notes/ui-modal-rename.md). */
-  .room-title button#room-title-name{font:inherit;font-size:1.05em;font-weight:600;color:#1a1a2e;background:none;
-        text-align:left;border:1px solid transparent;border-radius:6px;padding:0.2em 0.4em;cursor:pointer;
-        margin-right:auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .room-title button#room-title-name:hover{border-color:#cbd5e1;background:#f8fafc}
 
   .room-sidebar{display:none;overflow:auto;min-height:0;border-left:1px solid #ddd;background:#fbfbfb;padding:0.8em 1em}
   .chat-split.sidebar-open .room-sidebar{display:block}
@@ -503,7 +496,6 @@ CHAT_TEMPLATE: str = """
      actually hide them when the folder table takes over the pane. */
   .chat-log[hidden]{display:none}
   .compose[hidden]{display:none}
-  .room-title[hidden]{display:none}
   .folder-detail{flex:1 1 auto;overflow:auto;padding:1em}
   .folder-detail h2{margin:0 0 0.8em;font-size:1.1rem;color:#1a1a2e}
   .folder-detail table{width:100%;border-collapse:collapse;font-size:0.9rem}
@@ -551,9 +543,6 @@ CHAT_TEMPLATE: str = """
     <div class="chat-root-drop" id="chat-root-drop">Move to top level</div>
   </div>
   <div class="room-main">
-    <div class="room-title" id="room-title">
-      <button type="button" id="room-title-name" title="Click to rename"></button>
-    </div>
     <div class="chat-log" id="chat-log"></div>
     <div class="folder-detail" id="folder-detail" hidden>
       <h2 id="folder-detail-title"></h2>
@@ -681,8 +670,6 @@ CHAT_TEMPLATE: str = """
 <script>
 const roomsEl = document.getElementById('rooms');
 const log = document.getElementById('chat-log');
-const titleEl = document.getElementById('room-title');
-const titleNameEl = document.getElementById('room-title-name');
 const sidebarEl = document.getElementById('room-sidebar');
 const sidebarModeSel = document.getElementById('sidebar-mode');
 const splitEl = document.querySelector('.chat-split');
@@ -2235,10 +2222,8 @@ async function showFolderDetail(){
   const detail = document.getElementById('folder-detail');
   document.getElementById('chat-log').hidden = true;
   document.getElementById('compose').hidden = true;
-  // Hide the room title bar + clear the right sidebar so no chatroom info
-  // (name, members, stats) leaks into the folder view — currentRoom is null
-  // here, so renderSidebar() empties it.
-  document.getElementById('room-title').hidden = true;
+  // Clear the right sidebar so no chatroom info (members, stats) leaks into
+  // the folder view — currentRoom is null here, so renderSidebar() empties it.
   renderSidebar();
   detail.hidden = false;
   const f = folderById(selectedFolder);
@@ -2260,7 +2245,6 @@ function hideFolderDetail(){
   document.getElementById('folder-detail').hidden = true;
   document.getElementById('chat-log').hidden = false;
   document.getElementById('compose').hidden = false;
-  document.getElementById('room-title').hidden = false;
 }
 
 // Render the selected folder's recursive subtree as depth-indented rows.
@@ -2699,8 +2683,8 @@ function buildRoomMenu(roomUuid){
   menu.className = 'room-menu';
   menu.setAttribute('role', 'menu');
   menu.hidden = true;
-  // Only wired-up items are shown (Rename/Mute/Archive are not implemented yet).
-  [['Copy room id', ''], ['Delete', 'danger']].forEach(([label, mod]) => {
+  // Only wired-up items are shown (Mute/Archive are not implemented yet).
+  [['Rename', ''], ['Copy room id', ''], ['Delete', 'danger']].forEach(([label, mod]) => {
     const item = document.createElement('button');
     item.type = 'button';
     item.className = 'item' + (mod ? ' ' + mod : '');
@@ -2709,7 +2693,8 @@ function buildRoomMenu(roomUuid){
     item.addEventListener('click', (e) => {
       e.stopPropagation();
       menu.hidden = true;
-      if (label === 'Copy room id') copyIdToast(roomUuid, 'Room');
+      if (label === 'Rename') openChatRenameModal(roomUuid);
+      else if (label === 'Copy room id') copyIdToast(roomUuid, 'Room');
       else if (label === 'Delete') deleteRoom(roomUuid);
     });
     menu.appendChild(item);
@@ -2932,7 +2917,6 @@ async function performConfirmedDelete(){
   // If the open room is gone after re-hydration (room delete, or a folder
   // delete that contained it) and nothing got auto-selected, clear the pane.
   if (hadOpenRoom && !rooms.some(r => r.uuid === hadOpenRoom) && !currentRoom){
-    titleNameEl.textContent = '';
     log.innerHTML = '';
     renderSidebar();
   }
@@ -2980,8 +2964,6 @@ async function selectRoom(uuid, scrollMsgId){
   currentPageNo = 0;
   chatSyncUrl();          // mirror the open room into ?id= so a reload reopens it
   renderRooms();
-  const room = rooms.find(r => r.uuid === uuid);
-  titleNameEl.textContent = room ? room.name : '';
   syncSidebarModeOptions();
   log.innerHTML = '';
   syncStopButton();  // the previous room's button must not survive the switch
@@ -3125,12 +3107,15 @@ async function send(){
 form.addEventListener('submit', send);
 
 // ---- room rename modal (notes/ui-modal-rename.md) ----
-// The title bar shows the room name as a click-to-rename control; all editing
-// happens in the modal, so a typed-but-unconfirmed name can't be silently lost.
+// Opened from the room's ... menu; all editing happens in the modal, so a
+// typed-but-unconfirmed name can't be silently lost. The room's name is shown
+// on its row in the left panel, so the pane itself carries no title bar.
 let chatRenameOriginal = null;   // the stored name at open (null = modal closed)
-function openChatRenameModal(){
-  const room = currentRoomObj();
+let chatRenameRoom = null;       // the uuid of the room being renamed
+function openChatRenameModal(roomUuid){
+  const room = rooms.find(r => r.uuid === roomUuid);
   if (!room) return;
+  chatRenameRoom = roomUuid;
   chatRenameOriginal = room.name;
   const input = document.getElementById('chat-rename-input');
   input.value = room.name;
@@ -3144,6 +3129,7 @@ function closeChatRenameModal(){
   document.getElementById('chat-rename-modal').hidden = true;
   document.getElementById('ui-modal-backdrop').hidden = true;
   chatRenameOriginal = null;
+  chatRenameRoom = null;
 }
 // Rename is enabled only for a non-empty name that actually differs.
 function syncChatRenameConfirm(){
@@ -3152,7 +3138,7 @@ function syncChatRenameConfirm(){
     v === '' || chatRenameOriginal === null || v === chatRenameOriginal;
 }
 async function confirmChatRenameModal(){
-  const room = currentRoomObj();
+  const room = rooms.find(r => r.uuid === chatRenameRoom);
   const v = document.getElementById('chat-rename-input').value.trim();
   if (!room || !v || v === chatRenameOriginal) return;
   try {
@@ -3164,10 +3150,8 @@ async function confirmChatRenameModal(){
   room.name = v;
   closeChatRenameModal();
   renderRooms();  // reflect the new name in the left panel
-  titleNameEl.textContent = v;
   chatToast('Renamed to “' + v + '”');
 }
-titleNameEl.addEventListener('click', openChatRenameModal);
 document.getElementById('chat-rename-cancel').addEventListener('click', closeChatRenameModal);
 document.getElementById('chat-rename-confirm').addEventListener('click', confirmChatRenameModal);
 document.getElementById('chat-rename-input').addEventListener('input', syncChatRenameConfirm);

@@ -133,8 +133,6 @@ def test_the_sidebar_is_always_shown_and_its_picker_is_its_title():
     assert "sidebar-title" not in body
     picker = body.index('<select id="sidebar-mode"')
     assert body.index('<div class="room-sidebar">') < picker < body.index('<div id="room-sidebar"></div>')
-    title_bar = body[body.index('id="room-title"'):body.index('id="chat-log"')]
-    assert "sidebar-mode" not in title_bar
     assert "function persistSidebarPrefs" in body and "chat.sidebarMode" in body
     assert "return currentRoom ? effectiveSidebarMode() : 'hidden';" in body
 
@@ -210,11 +208,16 @@ def test_a_copy_is_reported_from_what_the_browser_did():
 
 
 def test_room_rename_goes_through_confirm_modal():
-    """The room title is a click-to-rename control; renaming happens in a
-    modal (notes/ui-modal-rename.md), so a typed-but-unconfirmed name can't be
-    silently lost."""
+    """A room is renamed from its ... menu; renaming happens in a modal
+    (notes/ui-modal-rename.md), so a typed-but-unconfirmed name can't be
+    silently lost. The pane has no title bar: the log starts at the top, and
+    the room's name is the one on its row in the left panel."""
     body = _body()
-    assert '<button type="button" id="room-title-name" title="Click to rename">' in body
+    assert "[['Rename', ''], ['Copy room id', ''], ['Delete', 'danger']]" in body
+    assert "if (label === 'Rename') openChatRenameModal(roomUuid);" in body
+    assert "room-title" not in body.replace("chat-room-title", "")
+    assert "titleNameEl" not in body
+    assert '<div class="room-main">\n    <div class="chat-log" id="chat-log"></div>' in body
     assert 'id="chat-rename-modal"' in body
     assert 'id="chat-rename-input"' in body
     assert 'id="chat-rename-confirm"' in body
