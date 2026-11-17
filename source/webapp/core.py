@@ -130,7 +130,7 @@ install_activity_recorder()
 
 # Shared top nav, registered as an includable template so every page can do
 # {% include "_nav.html" %} and stay in sync. Active link is derived from
-# request.endpoint. The "Admin Panel" button is pushed right by the spacer.
+# request.endpoint. Flask Admin is not in it: the Home page links to it.
 # /modelgrouppriorities deliberately does NOT include this — it has its own
 # "× Close" button instead.
 NAV_TEMPLATE = """
@@ -141,9 +141,6 @@ NAV_TEMPLATE = """
   .pp-nav a:hover{color:#1a1a2e}
   .pp-nav a.pp-active{color:#1a1a2e;font-weight:600}
   .pp-nav .pp-links{display:flex;align-items:center;gap:18px;flex:1 1 auto;flex-wrap:wrap}
-  .pp-nav .pp-spacer{flex:1 1 auto}
-  .pp-nav a.pp-admin{padding:5px 14px;border:1px solid #cbd5e1;color:#6c757d;border-radius:8px}
-  .pp-nav a.pp-admin:hover{border-color:#9aa3af;color:#1a1a2e}
   .pp-content{padding:0 24px 2em}
   /* Benchmark dropdown — native <details>, no JS. */
   .pp-nav details.pp-dd{position:relative}
@@ -163,7 +160,6 @@ NAV_TEMPLATE = """
     .pp-nav .pp-burger{display:block;margin-left:auto}
     .pp-nav .pp-links{display:none;flex-direction:column;align-items:flex-start;width:100%;gap:12px;padding-top:10px}
     .pp-nav.pp-open .pp-links{display:flex}
-    .pp-nav .pp-spacer{display:none}
     .pp-nav details.pp-dd>.pp-dd-menu{position:static;box-shadow:none;border:none;margin:2px 0 0 14px;padding:0;min-width:0}
   }
 </style>
@@ -231,8 +227,6 @@ NAV_TEMPLATE = """
     <a href="{{ url_for('activity_page') }}" class="{{ 'pp-active' if request.endpoint == 'activity_page' }}">Activity</a>
     <a href="{{ url_for('doctor_page') }}" class="{{ 'pp-active' if request.endpoint == 'doctor_page' }}">Doctor</a>
     <a href="{{ url_for('demo_multimodal') }}" class="{{ 'pp-active' if request.endpoint == 'demo_multimodal' }}">Multimodal</a>
-    <span class="pp-spacer"></span>
-    <a href="{{ url_for('admin.index') }}" class="pp-admin">Admin Panel</a>
   </div>
 </nav>
 <script>

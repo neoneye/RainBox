@@ -24,6 +24,10 @@ INDEX_TEMPLATE: str = """
 <div class="pp-content">
 <h1>rainbox</h1>
 
+<ul>
+  <li><a href="{{ url_for('admin.index') }}"><b>Flask Admin</b></a> &mdash; browse and edit the database's tables</li>
+</ul>
+
 <h2>Try it</h2>
 <ul>
   <li><a href="{{ url_for('demo_multimodal') }}"><b>Multimodal</b></a> &mdash; poke a local vision+audio model with an image or audio file (streamed, nothing saved)</li>
