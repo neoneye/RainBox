@@ -632,3 +632,42 @@ def test_a_chunk_attempt_lists_every_model_call_it_made_in_order(client):
         db.session.query(HousekeepingAttempt).filter_by(uuid=attempt.uuid).delete()
         db.session.delete(job)
         db.session.commit()
+
+
+def test_a_job_does_not_show_the_call_of_the_job_that_ran_right_after_it(client):
+    """The worker starts the next job the moment one ends, so the next
+    job's summary begins within the two seconds of slack a call is matched
+    with. It is the next job's: on the first job's page it would be a call
+    drawn after the result, and it would turn the job's own summary into
+    one the check rejected."""
+    from datetime import timedelta
+
+    from agents import room_chunks
+
+    c, made = client
+    summary, check = db.JOB_CALLERS[db.ROOM_CHUNK_JOB], room_chunks.AUDIT_CALLER
+    room = uuid4()
+    first, _ = db.ensure_housekeeping_job(db.ROOM_CHUNK_JOB, room_uuid=room, subject="10/2/v17/0/1/10")
+    second, _ = db.ensure_housekeeping_job(db.ROOM_CHUNK_JOB, room_uuid=room, subject="10/2/v17/1/9/18")
+    a1 = db.start_housekeeping_attempt(first)
+    a2 = db.start_housekeeping_attempt(second)
+    start = a1.started_at
+    # The first attempt: 0s to 8s. The second begins 30 ms later.
+    for attempt, began, ended in ((a1, 0.0, 8.0), (a2, 8.03, 16.0)):
+        attempt.started_at = start + timedelta(seconds=began)
+        attempt.ended_at = start + timedelta(seconds=ended)
+        attempt.result = "done"
+    calls = [LlmCall(caller=caller, model="model-a", started_at=start + timedelta(seconds=at),
+                     messages=[], response_text=f"reply at {at}", total_ms=3000)
+             for caller, at in ((summary, 0.5), (check, 4.0), (summary, 8.6), (check, 12.0))]
+    db.session.add_all(calls)
+    db.session.commit()
+    made["calls"] += [call.uuid for call in calls]
+
+    assert [call.uuid for call in db.housekeeping_attempt_calls(first, a1)] == [calls[0].uuid, calls[1].uuid]
+    assert [call.uuid for call in db.housekeeping_attempt_calls(second, a2)] == [calls[2].uuid, calls[3].uuid]
+    assert db.housekeeping_attempt_call(first, a1).uuid == calls[0].uuid
+    body = c.get(f"/assistant/housekeeping/{first.uuid}").get_data(as_text=True)
+    names = re.findall(r'<span class="wf-name kind-[a-z]+(?: is-failed)?">([^<]*)</span>', body)
+    assert names == ["start", "summary", "check"]
+    assert "reply at 8.6" not in body and "rejected" not in "".join(names)

@@ -321,6 +321,35 @@ def checkpoint_housekeeping_attempt(
     db.session.commit()
 
 
+def _attempt_call_window(attempt: HousekeepingAttempt) -> list:
+    """The filters on `LlmCall.started_at` that make a call this attempt's.
+
+    A call is matched to an attempt by time: it began inside the attempt's
+    own seconds, give or take two for the clocks. The worker runs one job
+    after another with no pause, so the next attempt, of whatever job, can
+    begin well inside those two seconds, and so can the previous one have
+    ended. The slack therefore stops at the neighbours: a call that began
+    after the next attempt started is that attempt's, and one that began
+    before the previous attempt ended was the previous one's."""
+    slack = timedelta(seconds=2)
+    others = HousekeepingAttempt.uuid != attempt.uuid
+    lower = attempt.started_at - slack
+    before = db.session.scalar(
+        sa.select(sa.func.max(HousekeepingAttempt.ended_at))
+        .where(others, HousekeepingAttempt.ended_at <= attempt.started_at))
+    if before is not None and before > lower:
+        lower = before
+    window = [LlmCall.started_at >= lower]
+    if attempt.ended_at is not None:
+        window.append(LlmCall.started_at <= attempt.ended_at + slack)
+        after = db.session.scalar(
+            sa.select(sa.func.min(HousekeepingAttempt.started_at))
+            .where(others, HousekeepingAttempt.started_at >= attempt.ended_at))
+        if after is not None:
+            window.append(LlmCall.started_at < after)
+    return window
+
+
 def housekeeping_attempt_call(
     job: HousekeepingJob, attempt: HousekeepingAttempt,
 ) -> LlmCall | None:
@@ -333,14 +362,10 @@ def housekeeping_attempt_call(
         return None
     # One worker runs one job at a time, so a call by this job type's caller
     # inside the attempt's own seconds is the attempt's call.
-    slack = timedelta(seconds=2)
     q = (db.session.query(LlmCall)
-         .filter(LlmCall.caller == caller,
-                 LlmCall.started_at >= attempt.started_at - slack))
+         .filter(LlmCall.caller == caller, *_attempt_call_window(attempt)))
     if job.run_uuid is not None:
         q = q.filter(LlmCall.run_uuid == job.run_uuid)
-    if attempt.ended_at is not None:
-        q = q.filter(LlmCall.started_at <= attempt.ended_at + slack)
     return q.order_by(LlmCall.started_at.desc()).first()
 
 
@@ -351,21 +376,17 @@ def housekeeping_attempt_calls(
     job type's own call and its check calls. A chunk's attempt makes two to
     four (summary, check, and once more of each when the check finds a part
     wrong). One worker runs one job at a time, so a call by these callers
-    inside the attempt's own seconds is the attempt's. An attempt next to
-    this one can claim the same call when they are seconds apart; the page
-    gives such a call to the later attempt."""
+    inside the attempt's own seconds is the attempt's
+    (`_attempt_call_window`). A call that began in the gap between two
+    attempts is claimed by both; the page gives it to the later one."""
     callers = [c for c in (JOB_CALLERS.get(job.job_type),
                            *JOB_CHECK_CALLERS.get(job.job_type, ())) if c]
     if not callers:
         return []
-    slack = timedelta(seconds=2)
     q = (db.session.query(LlmCall)
-         .filter(LlmCall.caller.in_(callers),
-                 LlmCall.started_at >= attempt.started_at - slack))
+         .filter(LlmCall.caller.in_(callers), *_attempt_call_window(attempt)))
     if job.run_uuid is not None:
         q = q.filter(LlmCall.run_uuid == job.run_uuid)
-    if attempt.ended_at is not None:
-        q = q.filter(LlmCall.started_at <= attempt.ended_at + slack)
     calls = q.order_by(LlmCall.started_at.asc()).all()
     if attempt.llm_call_uuid is not None and all(
             c.uuid != attempt.llm_call_uuid for c in calls):
