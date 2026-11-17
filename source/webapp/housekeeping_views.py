@@ -304,8 +304,9 @@ def _decision_calls(job) -> list[dict]:
              "blocks": blocks(r)} for r in rows]
 
 
-#: What each kind of row on a job's timeline is for, as the hover on the row
-#: and on the heading of its pane.
+#: What each kind of row on a job's timeline is for, as the hover on the
+#: heading of its pane. A row's own hover is short: its name, how long it
+#: took and when it began.
 _ROW_PURPOSES: dict[str, str] = {
     "start": (
         "The job begins. For a chunk job this lists the messages it "
@@ -1016,7 +1017,7 @@ _JOB_FRAGMENT = """
       {% for e in timeline %}
       <button type="button" class="wf-row{% if e.selected %} on{% endif %}" data-key="{{ e.key }}"
               data-label="{{ e.label }}" data-desc="{{ e.description }}"
-              title="{{ e.purpose }}{{ ' ' if e.purpose }}({{ e.seconds }} at {{ e.clock }})">
+              title="{{ e.label }} &mdash; {{ e.seconds }} at {{ e.clock }}">
         <span class="wf-name kind-{{ e.kind }}{% if e.failed %} is-failed{% endif %}">{{ e.label }}</span>
         <span class="wf-track">
           {% if e.width_pct is not none %}
