@@ -136,7 +136,7 @@ def test_a_job_page_shows_each_attempt_with_its_prompt_and_reply(client):
     db.settle_housekeeping_job(job, "final", outcome="done")
 
     body = c.get(f"/assistant/housekeeping/{job.uuid}").get_data(as_text=True)
-    assert "<b>Start</b>" in body and "killed: turn" in body
+    assert "Start</b>" in body and "killed: turn" in body
     assert "Attempt 2" in body and "You summarize a run." in body
     # The timeline has a row for each attempt and one for the model call,
     # and the page opens on the call.
@@ -287,7 +287,7 @@ def test_a_chunk_jobs_page_shows_what_the_decision_model_was_asked_and_answered(
             record({"request": "gone", "reply": "gone", "next_message": "gone"}, 0.12)]
     try:
         body = c.get(f"/assistant/housekeeping/{job.uuid}").get_data(as_text=True)
-        assert body.count("<b>Identify duplicates</b>") == 3
+        assert body.count(">Identify duplicates</b>") == 3
         # Each request has a row of its own on the timeline, named by the
         # message it is about.
         assert body.count('<span class="wf-name kind-decision">duplicate') == 3
@@ -320,7 +320,7 @@ def test_a_chunk_jobs_page_shows_what_the_decision_model_was_asked_and_answered(
         # its text. A message after the chunk is not listed.
         pane = body[body.index(f'data-key="a{attempt.uuid}">'):]
         pane = pane[:pane.index('<div class="ev-pane')]
-        assert "<b>Start</b>" in pane and pane.count('<td class="hk-mono">m') == 4
+        assert "Start</b>" in pane and pane.count('<td class="hk-mono">m') == 4
         assert f'msg={messages[2]["uuid"]}' in pane and f'{messages[4]["uuid"]}' not in pane
         assert "<td>user</td>" in pane and "<td>agent</td>" in pane
         assert "look up the height of the lighthouse" in pane
@@ -346,7 +346,7 @@ def test_a_chunk_jobs_page_shows_what_the_decision_model_was_asked_and_answered(
         names = re.findall(r'<span class="wf-name kind-[a-z]+">([^<]*)</span>', body)
         assert names[-1] == "result" and names.count("result") == 1
         pane = body[body.index(f'data-key="r{chunk.uuid}">'):]
-        assert "<b>Messages 0&ndash;3</b>" in pane and "&rarr; It was not found." in pane
+        assert ">Messages 0&ndash;3</b>" in pane and "&rarr; It was not found." in pane
         assert "#chunk-0" in pane and "the 4 messages" in pane
     finally:
         for r in rows:
@@ -546,6 +546,11 @@ def test_a_chunk_attempt_lists_every_model_call_it_made_in_order(client):
         assert body.count('<span class="wf-name kind-llm is-failed">') == 1
         assert body.count('class="wf-bar kind-llm is-failed"') == 1
         assert body.count(">rejected by the check</span>") == 1
+        # Each row says on hover what it is for.
+        for text in ("The job begins.", "Asks the model to write the summary",
+                     "A summary the check found wrong.", "A second model call that compares",
+                     "The model call that is running now"):
+            assert f'title="{text}' in body
         places = [body.index(text) for text in (
             "<span>call 1 of 3</span>", "reply of call 1",
             "<span>call 2 of 3</span>", "reply of call 2",

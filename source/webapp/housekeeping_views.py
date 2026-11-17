@@ -290,6 +290,44 @@ def _decision_calls(job) -> list[dict]:
              "blocks": blocks(r)} for r in rows]
 
 
+#: What each kind of row on a job's timeline is for, as the hover on the row
+#: and on the heading of its pane.
+_ROW_PURPOSES: dict[str, str] = {
+    "start": (
+        "The job begins. For a chunk job this lists the messages it "
+        "summarizes."),
+    "attempt": (
+        "The job is run again from the beginning, because the run before "
+        "it was killed or failed."),
+    "decision": (
+        "Asks the decision model whether this message asks again for what "
+        "the request before it asked for. The answer marks a request as "
+        "asked again in the summary."),
+    "summary": (
+        "Asks the model to write the summary: what was asked for in each "
+        "part of the messages, and what came of it."),
+    "rejected": (
+        "A summary the check found wrong. It was thrown away and written "
+        "again, and the later summary is the one that was kept."),
+    "check": (
+        "A second model call that compares each part of the summary with "
+        "the messages. When a part does not match, the summary is written "
+        "once more."),
+    "live": "The model call that is running now, with its reply so far.",
+    "result": "What the job wrote: the chunk's summary, as the room's page shows it.",
+}
+
+
+def _row_purpose(row: dict) -> str:
+    """The purpose of a timeline row, by what it is."""
+    if row["kind"] == "attempt":
+        return _ROW_PURPOSES["start" if row.get("attempt_no") == 1 else "attempt"]
+    if row["kind"] == "llm":
+        call = row["call"]
+        return _ROW_PURPOSES["rejected" if call["rejected"] else call["kind"]]
+    return _ROW_PURPOSES.get(row["kind"], "")
+
+
 #: A bar this narrow would be invisible, and a call of a fraction of a
 #: second still has to be clickable. The figure /assistant uses.
 _MIN_BAR_PCT: float = 0.6
@@ -302,8 +340,9 @@ def _timeline(attempts: list[dict], now: datetime, job=None,
     the call still running when there is one. The first attempt is the row
     `start`; a later one is `attempt 2` and so on.
 
-    A row is `{key, kind, label, description, attempt_no, attempt, decision,
-    call, failed, offset_pct, width_pct, seconds, clock, selected}`. `kind`
+    A row is `{key, kind, label, description, purpose, attempt_no, attempt,
+    decision, call, failed, offset_pct, width_pct, seconds, clock, selected}`.
+    `purpose` says what a row of its kind is for. `kind`
     is `attempt`, `decision`, `llm` or `live`. `key` names the row across a
     live reload: the uuid of what it shows. The offset and the width are
     percentages of the time from the first row's start to the last row's
@@ -389,6 +428,7 @@ def _timeline(attempts: list[dict], now: datetime, job=None,
         m["seconds"] = (f"{m['duration_ms'] / 1000:.1f}s"
                         if m["duration_ms"] is not None else "—")
         m["clock"] = m["start"].strftime("%H:%M:%S") if m["start"] else "—"
+        m["purpose"] = _row_purpose(m)
         m["selected"] = False
     if rows:
         pick = ([m for m in rows if m["kind"] == "live"]
@@ -885,7 +925,7 @@ _JOB_FRAGMENT = """
       {% for e in timeline %}
       <button type="button" class="wf-row{% if e.selected %} on{% endif %}" data-key="{{ e.key }}"
               data-label="{{ e.label }}" data-desc="{{ e.description }}"
-              title="{{ e.label }}: {{ e.seconds }} at {{ e.clock }}">
+              title="{{ e.purpose }}{{ ' ' if e.purpose }}({{ e.seconds }} at {{ e.clock }})">
         <span class="wf-name kind-{{ e.kind }}{% if e.failed %} is-failed{% endif %}">{{ e.label }}</span>
         <span class="wf-track">
           {% if e.width_pct is not none %}
@@ -918,7 +958,7 @@ _JOB_FRAGMENT = """
       {% set c = e.result %}
       {% set chunk = chunk_link(job) %}
       <div class="hk-call">
-        <b>Messages {{ c.first_index }}&ndash;{{ c.last_index }}</b>
+        <b title="{{ e.purpose }}">Messages {{ c.first_index }}&ndash;{{ c.last_index }}</b>
         <span class="hk-mono">{{ c.dates }}</span>
         {% if c.stale %}<span class="hk-pill deferred" title="A message in this chunk was edited or deleted after the summary was written">messages changed since</span>{% endif %}
         {% if chunk %}<a class="hk-back" style="margin-left:auto" href="{{ chunk.href }}" title="Open this chunk on the room's page, among the room's other chunks.">chunks</a>{% endif %}
@@ -927,7 +967,7 @@ _JOB_FRAGMENT = """
 
       {% elif e.kind == 'attempt' %}
       <div class="hk-call">
-        <b>{{ 'Start' if e.attempt_no == 1 else 'Attempt ' ~ e.attempt_no }}</b>
+        <b title="{{ e.purpose }}">{{ 'Start' if e.attempt_no == 1 else 'Attempt ' ~ e.attempt_no }}</b>
         {% if a.row.result == 'done' %}
         {% elif a.row.result %}<span class="hk-pill {{ 'killed' if a.row.result.startswith('killed') else ('done' if a.row.result == 'skipped' else 'failed') }}">{{ a.row.result }}</span>
         {% else %}<span class="hk-pill running">running for {{ elapsed(a.row.started_at) }}</span>{% endif %}
@@ -964,7 +1004,7 @@ _JOB_FRAGMENT = """
       {% set d = e.decision %}
       {% set answer = (d.row.answers or [{}])[0] %}
       <div class="hk-call">
-        <b>Identify duplicates</b>
+        <b title="{{ e.purpose }}">Identify duplicates</b>
         {% if d.state %}<span class="hk-mono">m{{ d.state.message }}</span>{% if d.state.after_chunk %} <span class="hk-pill" title="This message comes after the chunk's last message. The chunk's last request is compared with the next message from the user, so a request asked again across the edge of a chunk is seen.">after the chunk</span>{% endif %}{% endif %}
         {% if d.verdict %}<span class="hk-pill {{ 'done' if d.verdict.yes else '' }}">{{ d.verdict.text }}</span> <span class="hk-mono">{{ '%.2f'|format(d.verdict.p) }}</span>
         {% else %}<span class="hk-pill failed">no answer: {{ answer.reason or d.row.reason }}</span>{% endif %}
@@ -984,7 +1024,7 @@ _JOB_FRAGMENT = """
       {% elif e.kind == 'llm' %}
       {% set c = e.call %}
       <div class="hk-call">
-        <b>{{ c.kind|capitalize }}</b>
+        <b title="{{ e.purpose }}">{{ c.kind|capitalize }}</b>
         {% if c.rejected %}<span class="hk-pill failed" title="The check found a part of this summary wrong, so the summary was written again. The later summary is the one that was kept.">rejected by the check</span>{% endif %}
         <span class="hk-mono">{{ when(c.call.started_at) }}</span>
         {% if a.calls|length > 1 %}<span>call {{ c.n }} of {{ a.calls|length }}</span>{% endif %}
@@ -996,7 +1036,7 @@ _JOB_FRAGMENT = """
 
       {% else %}
       <div class="hk-call">
-        <b>Model call</b>
+        <b title="{{ e.purpose }}">Model call</b>
         <span class="hk-pill running">running for {{ elapsed(a.row.started_at) }}</span>
         {% if a.row.model %}<span>{{ a.row.model }}</span>{% endif %}
       </div>
