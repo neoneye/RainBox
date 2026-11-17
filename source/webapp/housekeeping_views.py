@@ -827,7 +827,12 @@ _LOG_PAGE = """
 
 # What a chunk's summary holds, as the body of a card: on a room's page, and
 # as the result on the page of the job that wrote it. `c` is a `_chunk_view`.
-_CHUNK_BODY = """  <div class="bd">
+# Message numbers are the room's, less `c.shift` when it has one.
+_CHUNK_BODY = """  {# What is taken from a message's number in the room before it is shown.
+     Nothing on a room's page. On a job's page, enough to make the chunk's
+     first message m1, as the summary's prompt numbers it. #}
+  {% set shift = c.shift|default(0) %}
+  <div class="bd">
     <dl class="hk-kv">
       <dt>Summary</dt><dd>{{ c.row.summary or '' }}</dd>
       <dt>Topics</dt><dd>{% for t in c.row.topics %}<span class="hk-chip">{{ t }}</span> {% endfor %}</dd>
@@ -837,14 +842,14 @@ _CHUNK_BODY = """  <div class="bd">
         <table class="hk-parts">
         {% for part in c.row.parts %}
           <tr>
-            <td class="hk-mono">{% if part.first_message is not none %}m{{ part.first_message }}{% if part.last_message != part.first_message %}&ndash;m{{ part.last_message }}{% endif %}{% endif %}</td>
+            <td class="hk-mono">{% if part.first_message is not none %}m{{ part.first_message - shift }}{% if part.last_message != part.first_message %}&ndash;m{{ part.last_message - shift }}{% endif %}{% endif %}</td>
             <td>{{ part.summary }}{% if part.requests and part.requests > 1 %} <span class="hk-mono">&times;{{ part.requests }}</span>{% endif %}
               {% if part.result %}<div class="hk-result">&rarr; {{ part.result }}</div>{% endif %}
               {% if part.calibration %}
               <div class="hk-signals">
                 <span class="hk-pill hk-cal-{{ part.calibration }}" title="{{ 'Decided by rule from the reaction and the records' if part.calibration_basis else 'Judged by the model' }}">{{ part.calibration }}</span>
                 {% if part.calibration_basis %}<span>{{ part.calibration_basis }}</span>{% endif %}
-                {% for a in part.asked_again_at or [] %}<span class="hk-chip" title="The decision model's probability that this message asks for the same thing again">m{{ a.message }} asks again {{ '%.2f'|format(a.p) }}{% if a.kind %} ({{ a.kind }}){% endif %}</span>{% endfor %}
+                {% for a in part.asked_again_at or [] %}<span class="hk-chip" title="The decision model's probability that this message asks for the same thing again">m{{ a.message - shift }} asks again {{ '%.2f'|format(a.p) }}{% if a.kind %} ({{ a.kind }}){% endif %}</span>{% endfor %}
                 {% for r in reaction_texts(part) %}<span class="hk-mono" title="What the user did after each reply">{{ r }}</span>{% endfor %}
                 {% for text in signal_texts(part.signals) %}<span class="hk-chip" title="From the records">{{ text }}</span>{% endfor %}
               </div>
@@ -869,7 +874,7 @@ _CHUNK_BODY = """  <div class="bd">
         Written twice. The check found {{ c.row.audit.rewritten|length }} part{{ '' if c.row.audit.rewritten|length == 1 else 's' }} of the first answer wrong, and what is shown is the second.
         <details class="hk-text"><summary>what the first answer had</summary>
           {% for w in c.row.audit.rewritten %}
-          <div class="hk-result"><span class="hk-mono">m{{ w.first_message }}&ndash;m{{ w.last_message }}</span> {{ w.summary }} &rarr; {{ w.result }}<br>{{ w.reasoning }}</div>
+          <div class="hk-result"><span class="hk-mono">m{{ w.first_message - shift }}&ndash;m{{ w.last_message - shift }}</span> {{ w.summary }} &rarr; {{ w.result }}<br>{{ w.reasoning }}</div>
           {% endfor %}
         </details>
         {% elif not c.row.audit.error %}
@@ -893,7 +898,7 @@ _CHUNK_BODY = """  <div class="bd">
     </dl>
     <details class="hk-text" id="chunk-{{ c.row.seq }}-messages">
       <summary>the {{ c.messages|length }} messages</summary>
-      <pre class="hk-pre">{% for m in c.messages %}[m{{ c.first_index + loop.index0 }} {{ sender_name(m.sender) }}] {{ m.text }}
+      <pre class="hk-pre">{% for m in c.messages %}[m{{ c.first_index + loop.index0 - shift }} {{ sender_name(m.sender) }}] {{ m.text }}
 {% endfor %}</pre>
     </details>
   </div>
@@ -971,6 +976,7 @@ _JOB_FRAGMENT = """
       <div class="hk-call">
         <b title="{{ e.purpose }}">Messages {{ c.first_index }}&ndash;{{ c.last_index }}</b>
         <span class="hk-mono">{{ c.dates }}</span>
+        <span title="This page numbers the chunk's messages as the summary's prompt does, from m1. The room's chunks page uses the numbers in the room.">shown as m1&ndash;m{{ c.last_index - c.shift }}</span>
         {% if c.stale %}<span class="hk-pill deferred" title="A message in this chunk was edited or deleted after the summary was written">messages changed since</span>{% endif %}
         {% if chunk %}<a class="hk-back" style="margin-left:auto" href="{{ chunk.href }}" title="Open this chunk on the room's page, among the room's other chunks.">chunks</a>{% endif %}
       </div>
@@ -1180,6 +1186,8 @@ def housekeeping_job_page(job_uuid: UUID) -> str:
     if chunk is not None:
         messages = db.counted_room_messages(chunk.room_uuid)
         result = _chunk_view(chunk, messages, {m["id"]: i for i, m in enumerate(messages)})
+        # The job's page numbers messages as the summary's prompt does.
+        result["shift"] = result["first_index"] - 1
     # The messages a chunk's job was started on.
     start_messages = []
     spec = (db.parse_chunk_subject(job.subject)

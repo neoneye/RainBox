@@ -598,7 +598,9 @@ attempt's `llm_call` row: for a chunk, the summary that was kept.
     `/activity` shows.
   - The call still running: its reply so far.
   - The result: the chunk the job wrote (`db.job_room_chunk`), as the
-    room's page shows a chunk, with a link to it there.
+    room's page shows a chunk, with a link to it there. Its message
+    numbers are the chunk's, from m1, as on the page's other rows; the
+    room's page keeps the numbers in the room.
 - A prompt and a reply are the text blocks a pane on `/assistant` is made
   of (`webapp/text_blocks.py`): a prompt is folded under its character
   count, every block has a copy button, a long one is cut to a few lines
