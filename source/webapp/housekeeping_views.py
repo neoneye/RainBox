@@ -1147,7 +1147,7 @@ _JOB_FRAGMENT = """
       {% set c = e.call %}
       {# No heading: the row's name is in the Inspect header, and its time on
          the timeline. The line of figures leads, with the link to the call. #}
-      <div class="ev-kpis">{% if c.rejected %}<span class="hk-pill failed" title="The check found a part of this summary wrong, so the summary was written again. The later summary is the one that was kept.">rejected by the check</span>{% endif %}<span class="ev-kpi"><a href="/activity/call/{{ c.call.uuid }}" title="{{ activity_hint }}">activity</a></span>{% for f in c.kpis %}<span class="ev-kpi" title="{{ f.title }}">{% if f.href %}<a href="{{ f.href }}">{{ f.html }}</a>{% else %}{{ f.html }}{% endif %}</span>{% endfor %}</div>
+      <div class="ev-kpis">{% if c.rejected %}<span class="hk-pill failed" title="The check found a part of this summary wrong, so the summary was written again. The later summary is the one that was kept.">rejected by the check</span>{% endif %}<span class="ev-kpi"><a href="/activity/call/{{ c.call.uuid }}" title="{{ activity_hint }}">activity &#8599;</a></span>{% for f in c.kpis %}<span class="ev-kpi" title="{{ f.title }}">{% if f.href %}<a href="{{ f.href }}">{{ f.html }}</a>{% else %}{{ f.html }}{% endif %}</span>{% endfor %}</div>
       {{ c.prompts }}
       {{ c.reply }}
 
