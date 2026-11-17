@@ -411,7 +411,7 @@ def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
         assert "it answered, and the user kept asking" in body
         for label in ("2 resolved", "1 failed", "criteria not met ×1", "4 revisions", "▼ 1"):
             assert label in body, label
-        assert "[m3 agent] message number 3" in body
+        assert "[m3 assistant] message number 3" in body
         assert "messages changed since" not in body
         # 34 messages: chunks 1 and 2 are due (the third needs messages 30-31 after it).
         assert "Summarize the rest: 2 chunks" in body
