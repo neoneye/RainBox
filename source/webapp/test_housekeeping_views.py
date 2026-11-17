@@ -539,8 +539,13 @@ def test_a_chunk_attempt_lists_every_model_call_it_made_in_order(client):
         body = c.get(f"/assistant/housekeeping/{job.uuid}").get_data(as_text=True)
         # Each call has a row of its own on the timeline, in the order the
         # calls were made, and a pane under it.
-        names = re.findall(r'<span class="wf-name kind-[a-z]+">([^<]*)</span>', body)
-        assert names == ["start", "summary", "check", "summary", "model call"]
+        names = re.findall(r'<span class="wf-name kind-[a-z]+(?: is-failed)?">([^<]*)</span>', body)
+        # The first summary has a check and another summary after it: the
+        # check rejected it, and its row is red.
+        assert names == ["start", "summary (rejected)", "check", "summary", "model call"]
+        assert body.count('<span class="wf-name kind-llm is-failed">') == 1
+        assert body.count('class="wf-bar kind-llm is-failed"') == 1
+        assert body.count(">rejected by the check</span>") == 1
         places = [body.index(text) for text in (
             "<span>call 1 of 3</span>", "reply of call 1",
             "<span>call 2 of 3</span>", "reply of call 2",

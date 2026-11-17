@@ -574,7 +574,8 @@ attempt's `llm_call` row: for a chunk, the summary that was kept.
   `summary` or `check`, and the call still running. A chunk job that wrote
   its chunk has `result` as the last row, a mark where the job finished. A chunk's attempt makes
   two to four model calls: a second summary and check when the check had
-  the summary written again.
+  the summary written again. The summary the check rejected is then named
+  `summary (rejected)` and drawn red.
 - Under the timeline, the row that is selected, in full. A click on a row
   selects it, and the address then names it (`#ev-<key>`), so a row can be
   linked to. The selection holds across the page's live reload. The page

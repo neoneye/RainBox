@@ -63,8 +63,10 @@ def _attempt_calls(job, row, calls) -> dict:
     """An attempt's model calls in the order they were made, each as a
     section of its card: `{calls, so_far}`.
 
-    A call is `{n, kind, call, kpis, prompts, reply}`. `kind` says which of
-    the job's calls it is: the summary, or the check of one. The prompts and
+    A call is `{n, kind, call, kpis, prompts, reply, rejected}`. `kind` says
+    which of the job's calls it is: the summary, or the check of one.
+    `rejected` marks a summary the check found wrong, which was written
+    again after it. The prompts and
     the reply are the blocks a pane on /assistant draws: each prompt
     collapsed with its character count, every block with a copy button.
 
@@ -85,6 +87,12 @@ def _attempt_calls(job, row, calls) -> dict:
             "n": n, "kind": "check" if call.caller in check else "summary",
             "call": call, "kpis": _call_kpis(call), "prompts": prompts,
             "reply": text_block("reply", call.response_text)})
+    # The check has a summary written again once. A summary with a check
+    # and then another summary after it is the one the check rejected.
+    for i, c in enumerate(out):
+        later = [o["kind"] for o in out[i + 1:]]
+        c["rejected"] = (c["kind"] == "summary" and "check" in later
+                         and "summary" in later[later.index("check"):])
     so_far = ""
     if not row.result and row.response_preview and not any(
             c.response_text == row.response_preview for c in calls):
@@ -333,9 +341,13 @@ def _timeline(attempts: list[dict], now: datetime, job=None,
         for c in a.get("calls", ()):
             call = c["call"]
             mine.append({
-                "key": f"c{call.uuid}", "kind": "llm", "label": c["kind"],
+                "key": f"c{call.uuid}", "kind": "llm",
+                "label": c["kind"] + (" (rejected)" if c["rejected"] else ""),
                 "description": call.model or "", "start": call.started_at,
-                "duration_ms": call.total_ms, "failed": call.ok is False, "call": c})
+                # A summary the check rejected is drawn red, as a call whose
+                # answer was thrown away is on /assistant.
+                "duration_ms": call.total_ms,
+                "failed": call.ok is False or c["rejected"], "call": c})
         if not row.result:
             # It began when the last thing before it ended.
             ends = [m["start"] + timedelta(milliseconds=m["duration_ms"] or 0)
@@ -973,6 +985,7 @@ _JOB_FRAGMENT = """
       {% set c = e.call %}
       <div class="hk-call">
         <b>{{ c.kind|capitalize }}</b>
+        {% if c.rejected %}<span class="hk-pill failed" title="The check found a part of this summary wrong, so the summary was written again. The later summary is the one that was kept.">rejected by the check</span>{% endif %}
         <span class="hk-mono">{{ when(c.call.started_at) }}</span>
         {% if a.calls|length > 1 %}<span>call {{ c.n }} of {{ a.calls|length }}</span>{% endif %}
         <a class="hk-back" style="margin-left:auto" href="/activity/call/{{ c.call.uuid }}" title="{{ activity_hint }}">activity</a>
