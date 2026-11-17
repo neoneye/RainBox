@@ -121,15 +121,22 @@ def test_sidebar_modes_match_room_type():
     assert "function activeSidebarMode" in body
 
 
-def test_sidebar_visibility_is_separate_from_mode():
-    """The panel choice and the shown/hidden state persist under separate
-    localStorage keys, and Ctrl+1 toggles visibility without touching
-    the panel choice."""
+def test_the_sidebar_is_always_shown_and_its_picker_is_its_title():
+    """An open room always has the right sidebar: there is no off entry, no
+    shown/hidden state and no key to toggle it. The panel picker sits at the
+    top of the sidebar, where a panel's title would be, and the panel choice
+    is what persists."""
     body = _body()
-    assert "chat.sidebarVisible" in body
-    assert "function persistSidebarPrefs" in body
-    assert "sidebarVisible = !sidebarVisible" in body
-    assert "e.key === '1'" in body
+    assert "Sidebar: off" not in body
+    assert "sidebarVisible" not in body and "chat.sidebarVisible" not in body
+    assert "e.key === '1'" not in body
+    assert "sidebar-title" not in body
+    picker = body.index('<select id="sidebar-mode"')
+    assert body.index('<div class="room-sidebar">') < picker < body.index('<div id="room-sidebar"></div>')
+    title_bar = body[body.index('id="room-title"'):body.index('id="chat-log"')]
+    assert "sidebar-mode" not in title_bar
+    assert "function persistSidebarPrefs" in body and "chat.sidebarMode" in body
+    assert "return currentRoom ? effectiveSidebarMode() : 'hidden';" in body
 
 
 def test_direct_room_prompt_picker():

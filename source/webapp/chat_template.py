@@ -107,17 +107,18 @@ CHAT_TEMPLATE: str = """
   .room-main{display:flex;flex-direction:column;overflow:hidden;min-height:0}
   .room-title{padding:0.6em 1em;border-bottom:1px solid #eee;font-weight:600;display:flex;align-items:center;gap:0.6em}
   /* Click-to-rename room name: doubles as the title; clicking opens the
-     rename modal (notes/ui-modal-rename.md). margin-right:auto pushes the
-     sidebar-mode select to the bar's right edge. */
+     rename modal (notes/ui-modal-rename.md). */
   .room-title button#room-title-name{font:inherit;font-size:1.05em;font-weight:600;color:#1a1a2e;background:none;
         text-align:left;border:1px solid transparent;border-radius:6px;padding:0.2em 0.4em;cursor:pointer;
         margin-right:auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .room-title button#room-title-name:hover{border-color:#cbd5e1;background:#f8fafc}
-  .sidebar-mode{font:inherit;font-size:0.8rem;color:#6c757d;border:1px solid #ccc;border-radius:6px;padding:0.2em 0.4em;background:#fff;cursor:pointer}
 
   .room-sidebar{display:none;overflow:auto;min-height:0;border-left:1px solid #ddd;background:#fbfbfb;padding:0.8em 1em}
   .chat-split.sidebar-open .room-sidebar{display:block}
-  .room-sidebar .sidebar-title{margin:0 0 0.7em;font-size:0.95rem;color:#333}
+  /* The panel picker stands where a panel's title would: it names the panel
+     shown, and choosing another one switches to it. */
+  .room-sidebar .sidebar-mode{display:block;margin:0 0 0.7em;font:inherit;font-size:0.95rem;font-weight:600;color:#333;
+                              border:1px solid #ccc;border-radius:6px;padding:0.25em 0.4em;background:#fff;cursor:pointer;max-width:100%}
   .room-sidebar .member-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:0.45em}
   .room-sidebar .member-list li{display:flex;align-items:center;gap:0.5em;font-size:0.9rem;color:#333}
   .room-sidebar .member-name{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -552,17 +553,6 @@ CHAT_TEMPLATE: str = """
   <div class="room-main">
     <div class="room-title" id="room-title">
       <button type="button" id="room-title-name" title="Click to rename"></button>
-      <select id="sidebar-mode" class="sidebar-mode" title="Right sidebar — Ctrl+1 toggles">
-        <option value="hidden">Sidebar: off</option>
-        <option value="members">Members</option>
-        <option value="stats">Stats</option>
-        <option value="settings">Settings</option>
-        <option value="bridge">Bridge</option>
-        <option value="history">History</option>
-        <option value="sources">Sources</option>
-        <option value="context">Context</option>
-        <option value="export">Export</option>
-      </select>
     </div>
     <div class="chat-log" id="chat-log"></div>
     <div class="folder-detail" id="folder-detail" hidden>
@@ -667,7 +657,19 @@ CHAT_TEMPLATE: str = """
     </div>
   </div>
 
-  <div class="room-sidebar" id="room-sidebar"></div>
+  <div class="room-sidebar">
+    <select id="sidebar-mode" class="sidebar-mode" title="Which panel the sidebar shows">
+      <option value="members">Members</option>
+      <option value="stats">Stats</option>
+      <option value="settings">Settings</option>
+      <option value="bridge">Bridge</option>
+      <option value="history">History</option>
+      <option value="sources">Sources</option>
+      <option value="context">Context</option>
+      <option value="export">Export</option>
+    </select>
+    <div id="room-sidebar"></div>
+  </div>
 </div>
 <div id="chat-toast" class="chat-toast"></div>
 
@@ -768,14 +770,11 @@ let collapsedSections = new Set(); // working-bubble ids the user closed (they s
 const unread = {};              // room uuid -> unread count (rooms not open)
 let deferredDeletedMessageIds = new Set();
 let agentsLoaded = false;
-// The sidebar remembers two things separately: WHICH panel was last used
-// (sidebarMode — never 'hidden') and WHETHER it is shown (sidebarVisible).
-// Splitting them means hiding the sidebar — or visiting a room where the
-// panel doesn't apply — never loses the panel choice.
+// The sidebar is always shown beside an open room; what it remembers is WHICH
+// panel was last used. Visiting a room where that panel doesn't apply shows
+// another one (effectiveSidebarMode) without losing the choice.
 const SIDEBAR_MODE_KEY = 'chat.sidebarMode';
-const SIDEBAR_VISIBLE_KEY = 'chat.sidebarVisible';
 let sidebarMode = 'members';    // 'members' | 'stats' | 'settings' | 'bridge' | 'history' | 'sources' | 'context' | 'export'
-let sidebarVisible = false;
 // The reply the Sources panel lists, by message uuid: set by its pill, cleared
 // on a room switch. null lists the newest reply in view that has sources.
 let sourcesMessageUuid = null;
@@ -792,10 +791,7 @@ try {
       || saved === 'bridge' || saved === 'history' || saved === 'sources'
       || saved === 'context' || saved === 'export'){
     sidebarMode = saved;
-    sidebarVisible = true;  // single-key era stored 'hidden' for off; a panel meant shown
   }
-  const vis = localStorage.getItem(SIDEBAR_VISIBLE_KEY);
-  if (vis === '1' || vis === '0') sidebarVisible = vis === '1';
 } catch (e) {}
 syncSidebarModeOptions();
 
@@ -2986,14 +2982,6 @@ async function selectRoom(uuid, scrollMsgId){
   renderRooms();
   const room = rooms.find(r => r.uuid === uuid);
   titleNameEl.textContent = room ? room.name : '';
-  // A direct room with no model — and no global default to fall back to —
-  // can't reply, so surface its Settings panel for this visit (not persisted
-  // to localStorage) so a fresh room is immediately configurable.
-  if (room && room.room_type === 'direct' && !room.model_uuid && !chatDefaultModel
-      && !sidebarVisible){
-    sidebarVisible = true;
-    sidebarMode = 'settings';
-  }
   syncSidebarModeOptions();
   log.innerHTML = '';
   syncStopButton();  // the previous room's button must not survive the switch
@@ -3202,14 +3190,13 @@ function effectiveSidebarMode(){
   return sidebarMode;
 }
 // What the right pane is actually showing: the mapped mode, or 'hidden' when
-// the sidebar is toggled off or no room is open.
+// no room is open (the folder view has nothing for a panel to be about).
 function activeSidebarMode(){
-  return (sidebarVisible && currentRoom) ? effectiveSidebarMode() : 'hidden';
+  return currentRoom ? effectiveSidebarMode() : 'hidden';
 }
 function persistSidebarPrefs(){
   try {
     localStorage.setItem(SIDEBAR_MODE_KEY, sidebarMode);
-    localStorage.setItem(SIDEBAR_VISIBLE_KEY, sidebarVisible ? '1' : '0');
   } catch (e) {}
 }
 // Keep the select honest for the open room: hide the option that doesn't
@@ -3223,10 +3210,10 @@ function syncSidebarModeOptions(){
   membersOpt.hidden = membersOpt.disabled = !currentRoomIsGroup();
   const bridgeOpt = sidebarModeSel.querySelector('option[value="bridge"]');
   bridgeOpt.hidden = bridgeOpt.disabled = !direct;
-  sidebarModeSel.value = activeSidebarMode();
+  if (currentRoom) sidebarModeSel.value = effectiveSidebarMode();
 }
 
-// Right sidebar: hidden / members / stats / settings / bridge / history / sources / context / export.
+// Right sidebar: members / stats / settings / bridge / history / sources / context / export.
 async function renderSidebar(){
   const mode = activeSidebarMode();
   // Only the Sources panel marks a pill as the one it lists.
@@ -3262,10 +3249,6 @@ const CONTEXT_PAGES = [
 function renderContext(){
   const room = currentRoom;
   sidebarEl.innerHTML = '';
-  const h = document.createElement('h3');
-  h.className = 'sidebar-title';
-  h.textContent = 'Context';
-  sidebarEl.appendChild(h);
   const lede = document.createElement('p');
   lede.className = 'ds-note';
   lede.textContent = 'What the assistant knows about this room besides its newest messages.';
@@ -3283,15 +3266,10 @@ function renderContext(){
   });
 }
 
-// Open the Sources panel on one reply; its pill again closes it.
+// Open the Sources panel on one reply.
 function openSources(messageUuid){
-  if (activeSidebarMode() === 'sources' && sourcesMessageUuid === messageUuid){
-    sidebarVisible = false;
-  } else {
-    sourcesMessageUuid = messageUuid;
-    sidebarVisible = true;
-    sidebarMode = 'sources';
-  }
+  sourcesMessageUuid = messageUuid;
+  sidebarMode = 'sources';
   persistSidebarPrefs();
   syncSidebarModeOptions();
   renderSidebar();
@@ -3319,10 +3297,6 @@ function sourcedRow(){
 // each linked to its page when it has one, with its kind and its link to copy.
 function renderSources(){
   sidebarEl.innerHTML = '';
-  const h = document.createElement('h3');
-  h.className = 'sidebar-title';
-  h.textContent = 'Sources';
-  sidebarEl.appendChild(h);
   const row = sourcedRow();
   if (!row){
     const note = document.createElement('p');
@@ -3433,10 +3407,6 @@ async function renderSettingsPanel(){
 async function renderAgentsSettings(){
   const room = currentRoom;
   sidebarEl.innerHTML = '';
-  const h = document.createElement('h3');
-  h.className = 'sidebar-title';
-  h.textContent = 'Settings';
-  sidebarEl.appendChild(h);
   let data;
   try {
     data = await getJSON('/chat/api/rooms/' + room + '/personas');
@@ -3701,10 +3671,6 @@ async function pinMemberPersonaRevision(userUuid, revisionUuid){
 async function renderDirectSettings(){
   const room = currentRoom;
   sidebarEl.innerHTML = '';
-  const h = document.createElement('h3');
-  h.className = 'sidebar-title';
-  h.textContent = 'Settings';
-  sidebarEl.appendChild(h);
   let settings, models;
   try {
     [settings, models] = await Promise.all([
@@ -3879,10 +3845,6 @@ async function renderDirectSettings(){
 function renderBridgePanel(){
   const room = currentRoom;
   sidebarEl.innerHTML = '';
-  const h = document.createElement('h3');
-  h.className = 'sidebar-title';
-  h.textContent = 'Bridge';
-  sidebarEl.appendChild(h);
   // Troubleshooting: post into this room AS the responder, with no
   // model turn. The rows are ordinary progress/message/notice rows, so the
   // bridges (Discord, Telegram) forward them like a real turn — press
@@ -3941,10 +3903,8 @@ async function renderMembers(){
   const memberUuids = new Set(members.map(m => m.uuid));
   const humans = members.filter(m => m.user_type === 'human');
   sidebarEl.innerHTML = '';
-  const h = document.createElement('h3');
-  h.className = 'sidebar-title';
-  h.textContent = 'Members (' + members.length + ')';
-  sidebarEl.appendChild(h);
+  // The picker is the panel's title, so the count goes on its entry.
+  sidebarModeSel.querySelector('option[value="members"]').textContent = 'Members (' + members.length + ')';
   const ul = document.createElement('ul');
   ul.className = 'member-list';
   // Humans: always members, rendered read-only (no toggle).
@@ -4092,7 +4052,6 @@ function syncPageBanner(){
     text.textContent = older.toLocaleString() + ' older messages';
     go.textContent = 'History';
     go.addEventListener('click', () => {
-      sidebarVisible = true;
       sidebarMode = 'history';
       persistSidebarPrefs();
       syncSidebarModeOptions();
@@ -4140,10 +4099,6 @@ function stampLine(text, shared){
 // and size in the same light popover as the tok/s stats.
 function renderHistory(){
   sidebarEl.innerHTML = '';
-  const h = document.createElement('h3');
-  h.className = 'sidebar-title';
-  h.textContent = 'History';
-  sidebarEl.appendChild(h);
   if (!roomPages.length){
     const note = document.createElement('p');
     note.className = 'ds-note';
@@ -4222,10 +4177,6 @@ function renderHistory(){
 function renderStats(){
   const room = rooms.find(r => r.uuid === currentRoom);
   sidebarEl.innerHTML = '';
-  const h = document.createElement('h3');
-  h.className = 'sidebar-title';
-  h.textContent = 'Stats';
-  sidebarEl.appendChild(h);
   // The room's whole history, not the one page in the log; the newest page
   // grows as rows arrive (growNewestPage), so the count stays live.
   sidebarEl.appendChild(statRow('Messages', roomRowCount()));
@@ -4258,10 +4209,6 @@ function renderExport(){
   const roomObj = currentRoomObj();
   const prefs = loadExportPrefs();
   sidebarEl.innerHTML = '';
-  const h = document.createElement('h3');
-  h.className = 'sidebar-title';
-  h.textContent = 'Export';
-  sidebarEl.appendChild(h);
 
   const scopeLabel = document.createElement('span');
   scopeLabel.className = 'ds-label';
@@ -4392,25 +4339,9 @@ function renderExport(){
 }
 
 sidebarModeSel.addEventListener('change', () => {
-  const v = sidebarModeSel.value;
-  if (v === 'hidden') sidebarVisible = false;
-  else { sidebarVisible = true; sidebarMode = v; }
+  sidebarMode = sidebarModeSel.value;
   persistSidebarPrefs();
   renderSidebar();
-});
-
-// Ctrl+1 toggles the sidebar (Cmd+B/Cmd+1 belong to the browser). Only
-// visibility flips — the panel choice is kept, so showing again returns to
-// the last-used panel. A modifier combo, so it also works while typing in
-// the composer.
-document.addEventListener('keydown', (e) => {
-  if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.key === '1'){
-    e.preventDefault();
-    sidebarVisible = !sidebarVisible;
-    persistSidebarPrefs();
-    syncSidebarModeOptions();
-    renderSidebar();
-  }
 });
 
 // Grow the textarea to fit its content (CSS max-height caps it at 10 rows and
@@ -4456,7 +4387,7 @@ function composerTakesStrayInput(target){
   return true;
 }
 document.addEventListener('keydown', (e) => {
-  // A modifier means a command (Ctrl+1, Cmd+R); Shift alone is just a capital.
+  // A modifier means a command (Ctrl+A, Cmd+R); Shift alone is just a capital.
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.isComposing) return;
   // One character wide: letters, digits, punctuation, space. Escape, Tab,

@@ -189,10 +189,10 @@ which abandons every pending turn for the room:
 
 ## Settings sidebar
 
-The right panel remembers which panel is selected and whether it is shown as
-two separate localStorage keys (`chat.sidebarMode`, `chat.sidebarVisible`),
-so hiding the sidebar — or Ctrl+1, which toggles visibility — never
-loses the panel choice. The room-type-specific panels map to each other
+The right panel is always shown beside an open room; the folder view has
+none. Its panel picker is the first thing in it, standing where a panel's
+title would, and the choice is remembered in localStorage
+(`chat.sidebarMode`). The room-type-specific panels map to each other
 when navigating: Members belongs to a group chat (`room_type='agents'`), the
 one type whose members the operator edits, so a direct or assistant room
 shows Settings where a group chat shows Members, and the inapplicable option
