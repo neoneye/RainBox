@@ -291,7 +291,9 @@ def test_a_chunk_jobs_page_shows_what_the_decision_model_was_asked_and_answered(
         # Each request has a row of its own on the timeline, named by the
         # message it is about.
         assert body.count('<span class="wf-name kind-decision">duplicate') == 3
-        assert '<span class="wf-name kind-decision">duplicate m2</span>' in body
+        # Numbered as the summary's prompt numbers the chunk, from m1: the
+        # room's m2 is the chunk's m3.
+        assert '<span class="wf-name kind-decision">duplicate m3</span>' in body
         for r in rows:
             assert f'class="wf-row" data-key="d{r.uuid}"' in body
             assert f'<div class="ev-pane" data-key="d{r.uuid}">' in body
@@ -310,7 +312,7 @@ def test_a_chunk_jobs_page_shows_what_the_decision_model_was_asked_and_answered(
         assert ("&lt;message1&gt;how tall is the lighthouse&lt;/message1&gt;\n"
                 "&lt;message2&gt;look up the height of the lighthouse&lt;/message2&gt;") in card
         # The message's number is the page's, and stands in the call's line.
-        assert "(m2)" not in body and '<span class="hk-mono">m2</span>' in body
+        assert "(m2)" not in body and '<span class="hk-mono" title="m2 in the room">m3</span>' in body
         assert "<b>Question</b>" not in body and "<b>Answer</b>" not in body
         # A call with no row on /activity says so.
         assert card.count("has no row on the Activity page") == 2
@@ -320,7 +322,8 @@ def test_a_chunk_jobs_page_shows_what_the_decision_model_was_asked_and_answered(
         # its text. A message after the chunk is not listed.
         pane = body[body.index(f'data-key="a{attempt.uuid}">'):]
         pane = pane[:pane.index('<div class="ev-pane')]
-        assert "Start</b>" in pane and pane.count('<td class="hk-mono">m') == 4
+        assert "Start</b>" in pane and pane.count('<td class="hk-mono" title="m') == 4
+        assert '<td class="hk-mono" title="m0 in the room">m1</td>' in pane
         assert f'msg={messages[2]["uuid"]}' in pane and f'{messages[4]["uuid"]}' not in pane
         # The uuid's first 8 characters are shown, and the whole of it on hover.
         full = str(messages[2]["uuid"])

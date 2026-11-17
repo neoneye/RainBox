@@ -229,8 +229,10 @@ def _decision_calls(job) -> list[dict]:
     under its role, then the response. It is empty for a call with no row
     there. The state is not stored with the
     call. It is rebuilt here from the chunk's messages, as the worker built
-    it, and matched to its call by digest: `{message, next_message, after_chunk,
-    text}`, `text` being what the model was given and `after_chunk` whether
+    it, and matched to its call by digest: `{message, local, next_message,
+    after_chunk, text}`. `message` is the message's number in the room and
+    `local` its number in the chunk, counted from 1 as the summary's prompt
+    counts. `text` is what the model was given and `after_chunk` whether
     the message comes after the chunk's last one. It is None for a call whose
     messages have changed since, or whose job is not a chunk's. `verdict` is
     the first answer in a line: `{text, p, yes}`, or None without an answer."""
@@ -256,7 +258,10 @@ def _decision_calls(job) -> list[dict]:
                     messages[last + 1:last + 1 + spec["overlap"]], first):
                 # The last request of a chunk can be asked again after the
                 # chunk's edge: that message is past the chunk's range.
+                # Numbered as the summary's prompt numbers the chunk: its
+                # first message is m1.
                 shown = {"message": item["message"], "next_message": item["next_message"],
+                         "local": item["message"] - first + 1,
                          "after_chunk": item["message"] > last}
                 text = follow_up_state(item["request"], item["next_message"])
                 states[state_digest(text)] = {**shown, "text": text}
@@ -376,7 +381,7 @@ def _timeline(attempts: list[dict], now: datetime, job=None,
             state = d["state"]
             mine.append({
                 "key": f"d{r.uuid}", "kind": "decision",
-                "label": f"duplicate m{state['message']}" if state else "duplicate",
+                "label": f"duplicate m{state['local']}" if state else "duplicate",
                 "description": (f"{d['verdict']['text']} {d['verdict']['p']:.2f}"
                                 if d["verdict"] else "no answer"),
                 # The row is written when the answer is in.
@@ -997,7 +1002,7 @@ _JOB_FRAGMENT = """
         <tr><th>No.</th><th>UUID</th><th>Role</th><th>Text</th></tr>
         {% for m in start_messages %}
         <tr>
-          <td class="hk-mono">m{{ m.n }}</td>
+          <td class="hk-mono" title="m{{ m.room_n }} in the room">m{{ m.n }}</td>
           <td class="hk-mono"><a href="/chat?id={{ job.room_uuid }}&msg={{ m.uuid }}" title="{{ m.uuid }}">{{ (m.uuid|string)[:8] }}</a></td>
           <td>{{ sender_name(m.sender) }}</td>
           <td>{% if m.text|length > 120 %}<details id="m{{ m.uuid }}"><summary>{{ m.text[:120] }}&hellip;</summary><pre class="hk-pre">{{ m.text }}</pre></details>{% else %}{{ m.text }}{% endif %}</td>
@@ -1011,7 +1016,7 @@ _JOB_FRAGMENT = """
       {% set answer = (d.row.answers or [{}])[0] %}
       <div class="hk-call">
         <b title="{{ e.purpose }}">Identify duplicates</b>
-        {% if d.state %}<span class="hk-mono">m{{ d.state.message }}</span>{% if d.state.after_chunk %} <span class="hk-pill" title="This message comes after the chunk's last message. The chunk's last request is compared with the next message from the user, so a request asked again across the edge of a chunk is seen.">after the chunk</span>{% endif %}{% endif %}
+        {% if d.state %}<span class="hk-mono" title="m{{ d.state.message }} in the room">m{{ d.state.local }}</span>{% if d.state.after_chunk %} <span class="hk-pill" title="This message comes after the chunk's last message. The chunk's last request is compared with the next message from the user, so a request asked again across the edge of a chunk is seen.">after the chunk</span>{% endif %}{% endif %}
         {% if d.verdict %}<span class="hk-pill {{ 'done' if d.verdict.yes else '' }}">{{ d.verdict.text }}</span> <span class="hk-mono">{{ '%.2f'|format(d.verdict.p) }}</span>
         {% else %}<span class="hk-pill failed">no answer: {{ answer.reason or d.row.reason }}</span>{% endif %}
         <span class="hk-mono">{{ when(d.row.created_at) }}</span>
@@ -1175,15 +1180,17 @@ def housekeeping_job_page(job_uuid: UUID) -> str:
     if chunk is not None:
         messages = db.counted_room_messages(chunk.room_uuid)
         result = _chunk_view(chunk, messages, {m["id"]: i for i, m in enumerate(messages)})
-    # The messages a chunk's job was started on, each with its number in
-    # the room.
+    # The messages a chunk's job was started on.
     start_messages = []
     spec = (db.parse_chunk_subject(job.subject)
             if job.job_type == db.ROOM_CHUNK_JOB and job.subject and job.room_uuid else None)
     if spec is not None:
-        start_messages = [
-            {**m, "n": i} for i, m in enumerate(db.counted_room_messages(job.room_uuid))
-            if spec["first_id"] <= m["id"] <= spec["last_id"]]
+        inside = [(i, m) for i, m in enumerate(db.counted_room_messages(job.room_uuid))
+                  if spec["first_id"] <= m["id"] <= spec["last_id"]]
+        # Numbered as the summary's prompt numbers them: the chunk's first
+        # message is m1. `room_n` is the message's number in the room.
+        start_messages = [{**m, "n": k, "room_n": i}
+                          for k, (i, m) in enumerate(inside, 1)]
     run = db.get_assistant_run(job.run_uuid) if job.run_uuid else None
     ctx = dict(
         job=job, attempts=attempts, start_messages=start_messages,

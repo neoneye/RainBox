@@ -569,7 +569,8 @@ attempt's `llm_call` row: for a chunk, the summary that was kept.
   where it took time. The rows are each attempt (a mark at its start: its
   time is on the timeline as the calls it made; the first is named `start`,
   a later one `attempt 2` and so on), each request to the
-  decision model (`duplicate m<n>`, after the message it is about), each
+  decision model (`duplicate m<n>`, after the message it is about, numbered
+  as the summary's prompt numbers the chunk: its first message is m1), each
   model call the attempt made (`db.housekeeping_attempt_calls`), named
   `summary` or `check`, and the call still running. A chunk job that wrote
   its chunk has `result` as the last row, a mark where the job finished. A chunk's attempt makes
@@ -584,7 +585,8 @@ attempt's `llm_call` row: for a chunk, the summary that was kept.
   opens on the call still running, else on the first model call.
   - An attempt: how it ended, when it began, and its error.
   - The start of a chunk job also lists the chunk's messages in a table:
-    each one's number, the first 8 characters of its uuid as a link to it
+    each one's number in the chunk, from m1 as the summary's prompt counts
+    (its number in the room on hover), the first 8 characters of its uuid as a link to it
     in the chatroom (the whole uuid on hover), who wrote
     it (`user` or `assistant`), and its text. A long text shows its beginning
     and unfolds.
