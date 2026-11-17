@@ -973,11 +973,14 @@ _CHUNK_BODY = """  {# What is taken from a message's number in the room before i
       {% endif %}
       {% if c.row.problems %}<dt>Format</dt><dd class="hk-err" style="margin:0">{{ c.row.problems|join('; ') }}</dd>{% endif %}
     </dl>
-    <details class="hk-text" id="chunk-{{ c.row.seq }}-messages">
+{# On a job's page the messages are the start row's table. #}
+    {% if c.shift is not defined %}
+        <details class="hk-text" id="chunk-{{ c.row.seq }}-messages">
       <summary>the {{ c.messages|length }} messages</summary>
       <pre class="hk-pre">{% for m in c.messages %}[m{{ c.first_index + loop.index0 - shift }} {{ sender_name(m.sender) }}] {{ m.text }}
 {% endfor %}</pre>
     </details>
+    {% endif %}
   </div>
 """
 
@@ -1078,14 +1081,9 @@ _JOB_FRAGMENT = """
     <div class="ev-pane{% if e.selected %} on{% endif %}" data-key="{{ e.key }}">
       {% if e.kind == 'result' %}
       {% set c = e.result %}
-      {% set chunk = chunk_link(job) %}
-      <div class="hk-call">
-        <b title="{{ e.purpose }}">Messages {{ c.first_index }}&ndash;{{ c.last_index }}</b>
-        <span class="hk-mono">{{ c.dates }}</span>
-        <span title="This page numbers the chunk's messages as the summary's prompt does, from m1. The room's chunks page uses the numbers in the room.">shown as m1&ndash;m{{ c.last_index - c.shift }}</span>
-        {% if c.stale %}<span class="hk-pill deferred" title="A message in this chunk was edited or deleted after the summary was written">messages changed since</span>{% endif %}
-        {% if chunk %}<a class="hk-back" style="margin-left:auto" href="{{ chunk.href }}" title="Open this chunk on the room's page, among the room's other chunks.">chunks</a>{% endif %}
-      </div>
+      {# No heading: the band at the top names the chunk and links to it on
+         the room's page. Only a chunk whose messages changed says so. #}
+      {% if c.stale %}<div class="hk-call"><span class="hk-pill deferred" title="A message in this chunk was edited or deleted after the summary was written">messages changed since</span></div>{% endif %}
       <div class="hk-result-body">""" + _CHUNK_BODY + """</div>
 
       {% elif e.kind == 'end' %}

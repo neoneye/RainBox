@@ -384,12 +384,14 @@ def test_a_chunk_jobs_page_shows_what_the_decision_model_was_asked_and_answered(
         # Its mark is held inside the track, so one at the very end is drawn.
         assert 'class="wf-tick" style="left:min(' in body and 'calc(100% - 2px))' in body
         pane = body[body.index(f'data-key="r{chunk.uuid}">'):]
-        assert ">Messages 0&ndash;3</b>" in pane and "&rarr; It was not found." in pane
-        assert "#chunk-0" in pane and "the 4 messages" in pane
+        # It has no heading of its own, and no list of the messages: those
+        # are the start row's table.
+        pane = pane[:pane.index("</table>")]
+        assert "<b" not in pane and "&rarr; It was not found." in pane
+        assert "#chunk-0" in body and "the 4 messages" not in body
         # Numbered from m1, as the summary's prompt numbers the chunk: the
         # room's m0 to m3 are m1 to m4 here.
-        assert '<td class="hk-mono">m1&ndash;m4</td>' in pane and "shown as m1&ndash;m4" in pane
-        assert "[m1 user] how tall is the lighthouse" in pane and "[m0 " not in pane
+        assert '<td class="hk-mono">m1&ndash;m4</td>' in pane
     finally:
         for r in rows:
             db.session.delete(r)
