@@ -305,7 +305,7 @@ def _decision_calls(job) -> list[dict]:
 
 
 #: What each kind of row on a job's timeline is for, as the hover on the
-#: heading of its pane. A row's own hover is short: its name, how long it
+#: row's name in the Inspect header and on the heading of its pane. A row's own hover is short: its name, how long it
 #: took and when it began.
 _ROW_PURPOSES: dict[str, str] = {
     "start": (
@@ -726,7 +726,11 @@ _LIVE_SCRIPT = """
     });
     var label = document.getElementById('hk-crumb-label');
     var desc = document.getElementById('hk-crumb-desc');
-    if (label) { label.textContent = row.getAttribute('data-label') || ''; }
+    if (label) {
+      label.textContent = row.getAttribute('data-label') || '';
+      // What a row of this kind is for, on hover.
+      label.title = row.getAttribute('data-purpose') || '';
+    }
     if (desc) { desc.textContent = row.getAttribute('data-desc') || ''; }
     // A block is measured only while it is shown.
     if (window.tbApply) { window.tbApply(box); }
@@ -1016,7 +1020,7 @@ _JOB_FRAGMENT = """
     <div class="wf">
       {% for e in timeline %}
       <button type="button" class="wf-row{% if e.selected %} on{% endif %}" data-key="{{ e.key }}"
-              data-label="{{ e.label }}" data-desc="{{ e.description }}"
+              data-label="{{ e.label }}" data-desc="{{ e.description }}" data-purpose="{{ e.purpose }}"
               title="{{ e.label }} &mdash; {{ e.seconds }} at {{ e.clock }}">
         <span class="wf-name kind-{{ e.kind }}{% if e.failed %} is-failed{% endif %}">{{ e.label }}</span>
         <span class="wf-track">
@@ -1040,7 +1044,7 @@ _JOB_FRAGMENT = """
 <div class="hk-card">
   <div class="hd">
     <h3>Inspect</h3>
-    <span class="hk-mono" id="hk-crumb-label">{{ shown.label }}</span>
+    <span class="hk-mono" id="hk-crumb-label" title="{{ shown.purpose }}">{{ shown.label }}</span>
     <span id="hk-crumb-desc">{{ shown.description }}</span>
   </div>
   <div class="bd tb-scope">
@@ -1113,14 +1117,9 @@ _JOB_FRAGMENT = """
 
       {% elif e.kind == 'llm' %}
       {% set c = e.call %}
-      <div class="hk-call">
-        <b title="{{ e.purpose }}">{{ c.kind|capitalize }}</b>
-        {% if c.rejected %}<span class="hk-pill failed" title="The check found a part of this summary wrong, so the summary was written again. The later summary is the one that was kept.">rejected by the check</span>{% endif %}
-        <span class="hk-mono">{{ when(c.call.started_at) }}</span>
-        {% if a.calls|length > 1 %}<span>call {{ c.n }} of {{ a.calls|length }}</span>{% endif %}
-        <a class="hk-back" style="margin-left:auto" href="/activity/call/{{ c.call.uuid }}" title="{{ activity_hint }}">activity</a>
-      </div>
-      <div class="ev-kpis">{% for f in c.kpis %}<span class="ev-kpi" title="{{ f.title }}">{% if f.href %}<a href="{{ f.href }}">{{ f.html }}</a>{% else %}{{ f.html }}{% endif %}</span>{% endfor %}</div>
+      {# No heading: the row's name is in the Inspect header, and its time on
+         the timeline. The line of figures leads, with the link to the call. #}
+      <div class="ev-kpis">{% if c.rejected %}<span class="hk-pill failed" title="The check found a part of this summary wrong, so the summary was written again. The later summary is the one that was kept.">rejected by the check</span>{% endif %}<span class="ev-kpi"><a href="/activity/call/{{ c.call.uuid }}" title="{{ activity_hint }}">activity</a></span>{% for f in c.kpis %}<span class="ev-kpi" title="{{ f.title }}">{% if f.href %}<a href="{{ f.href }}">{{ f.html }}</a>{% else %}{{ f.html }}{% endif %}</span>{% endfor %}</div>
       {{ c.prompts }}
       {{ c.reply }}
 

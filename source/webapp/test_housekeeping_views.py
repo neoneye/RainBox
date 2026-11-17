@@ -579,16 +579,16 @@ def test_a_chunk_attempt_lists_every_model_call_it_made_in_order(client):
         assert body.count('class="wf-bar kind-llm is-failed"') == 1
         assert body.count(">rejected by the check</span>") == 1
         # A row's hover is its name, how long it took and when it began. What
-        # it is for is the hover on its pane's heading.
+        # it is for is the hover on its name in the Inspect header.
         assert re.search(r'title="check &mdash; 1\.0s at \d\d:\d\d:\d\d"', body)
         for text in ("The job begins.", "Asks the model to write the summary",
                      "A summary the check found wrong.", "A second model call that compares",
                      "The model call that is running now"):
-            assert f'title="{text}' in body
+            assert f'data-purpose="{text}' in body
+        # A call's pane has no heading line: its figures lead.
+        assert "call 1 of 3" not in body and "<b>Summary</b>" not in body
         places = [body.index(text) for text in (
-            "<span>call 1 of 3</span>", "reply of call 1",
-            "<span>call 2 of 3</span>", "reply of call 2",
-            "<span>call 3 of 3</span>", "reply of call 3")]
+            "reply of call 1", "reply of call 2", "reply of call 3")]
         assert places == sorted(places)
         # A bar is where its call was in the attempt, and as wide as it took.
         assert 'class="wf-bar kind-llm" style="left:' in body
