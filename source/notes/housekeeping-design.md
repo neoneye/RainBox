@@ -601,7 +601,7 @@ attempt's `llm_call` row: for a chunk, the summary that was kept.
   - The start of a chunk job also lists the chunk's messages in a table:
     each one's number in the chunk, from m1 as the summary's prompt counts
     (its number in the room on hover), the first 8 characters of its uuid as a link to it
-    in the chatroom (the whole uuid on hover), who wrote
+    in the chatroom (the whole uuid on hover), when it was written, who wrote
     it (`user` or `assistant`), and its text. A long text shows its beginning
     and unfolds.
   - A model call, with no heading of its own: a link to the call on

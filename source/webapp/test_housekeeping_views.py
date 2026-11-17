@@ -347,6 +347,9 @@ def test_a_chunk_jobs_page_shows_what_the_decision_model_was_asked_and_answered(
         full = str(messages[2]["uuid"])
         assert f'title="{full}">{full[:8]}</a>' in pane
         assert "<td>user</td>" in pane and "<td>assistant</td>" in pane
+        # Each message has the time it was written.
+        assert "<th>Date</th>" in pane
+        assert f'<td class="hk-mono">{messages[0]["created_at"].strftime("%Y-%m-%d %H:%M:%S")}</td>' in pane
         # A user's row is tinted differently from an assistant's.
         assert pane.count('<tr class="is-user">') == 2 and pane.count('<tr class="is-assistant">') == 2
         assert "look up the height of the lighthouse" in pane

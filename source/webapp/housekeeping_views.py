@@ -664,7 +664,7 @@ _STYLE = """
     letter-spacing:0.05em;color:#9ca3af;padding:0 16px 4px 0}
   .hk-msgs td{padding:4px 16px 4px 0;vertical-align:top;font-size:0.84rem;
     border-top:1px solid #f1f3f5}
-  .hk-msgs td:nth-child(-n+3){white-space:nowrap}
+  .hk-msgs td:nth-child(-n+4){white-space:nowrap}
   /* Who wrote a message is told by its row's tint: the user's are blue. */
   .hk-msgs td:first-child,.hk-msgs th:first-child{padding-left:8px}
   .hk-msgs tr.is-user td{background:#eef4ff}
@@ -1105,11 +1105,12 @@ _JOB_FRAGMENT = """
       </div>
       {% if e.attempt_no == 1 and start_messages %}
       <table class="hk-msgs">
-        <tr><th>No.</th><th>UUID</th><th>Role</th><th>Text</th></tr>
+        <tr><th>No.</th><th>UUID</th><th>Date</th><th>Role</th><th>Text</th></tr>
         {% for m in start_messages %}
         <tr class="{{ 'is-user' if m.sender == 'human' else 'is-assistant' }}">
           <td class="hk-mono" title="m{{ m.room_n }} in the room">m{{ m.n }}</td>
           <td class="hk-mono"><a href="/chat?id={{ job.room_uuid }}&msg={{ m.uuid }}" title="{{ m.uuid }}">{{ (m.uuid|string)[:8] }}</a></td>
+          <td class="hk-mono">{{ when(m.created_at) }}</td>
           <td>{{ sender_name(m.sender) }}</td>
           <td>{% if m.text|length > 120 %}<details id="m{{ m.uuid }}"><summary>{{ m.text[:120] }}&hellip;</summary><pre class="hk-pre">{{ m.text }}</pre></details>{% else %}{{ m.text }}{% endif %}</td>
         </tr>
