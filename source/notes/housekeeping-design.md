@@ -591,7 +591,10 @@ attempt's `llm_call` row: for a chunk, the summary that was kept.
 - Under the timeline, the row that is selected, in full. A click on a row
   selects it, and the address then names it (`#ev-<key>`), so a row can be
   linked to. The selection holds across the page's live reload. The page
-  opens on the call still running, else on the first model call.
+  opens on the call still running, else on the first model call. `#newest`
+  opens it on the bottom row instead: the result when the job has written
+  it, else the last thing the job has done so far. On a job still running
+  that pick moves down with each row that arrives, until a row is clicked.
   - An attempt: when it began. The rows are in the order things happened,
     so a row holds what was known at its own time, and how an attempt ended
     is not on the row where it began.
@@ -640,8 +643,9 @@ the `chunks` link beside the room's name on a job's page.
   chunks are queued or due.
 - One card per chunk: its messages' numbers and dates, its phrase and
   topics, and the messages themselves, folded. The card names no model. An
-  inspect link in its corner opens the job that wrote it: the models,
-  the prompts and replies, and what the decision model was asked.
+  inspect link in its corner opens the job that wrote it, at its result
+  (`#newest`): the summary as it was kept, with the models, the prompts and
+  replies, and what the decision model was asked in the rows above it.
 - A chunk's heading links to the chunk itself, in the series shown:
   `?size=…&overlap=…&prompt=…#chunk-N`. The chunk the address names is
   outlined.

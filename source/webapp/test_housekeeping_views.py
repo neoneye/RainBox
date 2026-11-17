@@ -451,7 +451,12 @@ def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
         # behind the button in the card's corner.
         chunk_card = body[body.index('id="chunk-0"'):body.index('id="chunk-0-messages"')]
         assert "model-a" not in chunk_card and "decider" not in chunk_card
-        assert f'href="/assistant/housekeeping/{job.uuid}"' in chunk_card and ">inspect</a>" in chunk_card
+        # It opens the job at its bottom row: the result, the summary as it
+        # was kept, and not the first model call the page opens on by itself.
+        assert f'href="/assistant/housekeeping/{job.uuid}#newest"' in chunk_card and ">inspect</a>" in chunk_card
+        assert "var newest = window.location.hash === '#newest';" in body
+        assert "if (newest) { select(newestKey()); }" in body
+        assert "select(newest ? newestKey() : picked);" in body
         # The heading links to its own chunk in this series.
         assert 'href="?size=10&amp;overlap=2&amp;prompt=17#chunk-0">Messages 0&ndash;9</a>' in body
         assert '<span class="hk-chip">numbers</span>' in body

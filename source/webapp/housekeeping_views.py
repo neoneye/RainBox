@@ -767,7 +767,7 @@ _LIVE_SCRIPT = """
       box.querySelectorAll('details').forEach(function (d) {
         if (keep.indexOf(nameOf(d)) !== -1) { d.open = true; }
       });
-      select(picked);
+      select(newest ? newestKey() : picked);
       if (window.tbApply) { window.tbApply(box); }
       seen = rev;
     });
@@ -776,7 +776,17 @@ _LIVE_SCRIPT = """
   // named by a key. The row a reader picked stays picked across a reload,
   // and is in the address as #ev-<key>, so it can be linked to. With no
   // pick, or one that is gone, the page's own choice stands.
+  //
+  // #newest asks for the bottom row instead of naming one: the result when
+  // the job has written it, else the last thing the job has done so far. It
+  // stays in the address, so on a job still running the pick moves down with
+  // each row that arrives, until the reader picks a row themselves.
   var picked = '';
+  var newest = window.location.hash === '#newest';
+  function newestKey() {
+    var rows = box.querySelectorAll('.wf-row');
+    return rows.length ? rows[rows.length - 1].getAttribute('data-key') : '';
+  }
   function select(key) {
     if (!key) { return; }
     var row = null;
@@ -805,6 +815,7 @@ _LIVE_SCRIPT = """
     var row = e.target.closest('.wf-row');
     if (!row) { return; }
     picked = row.getAttribute('data-key');
+    newest = false;
     select(picked);
     try { history.replaceState(null, '', '#ev-' + picked); } catch (err) {}
   });
@@ -812,6 +823,7 @@ _LIVE_SCRIPT = """
     picked = window.location.hash.slice(4);
     select(picked);
   }
+  if (newest) { select(newestKey()); }
   function tick() {
     // What is shown says it will not change: a job that is final. Enqueued
     // again, it is a new page load.
@@ -1444,7 +1456,7 @@ _ROOM_FRAGMENT = """
     <h3><a class="hk-anchor" title="Link to this chunk, in this series" href="?size={{ size }}&amp;overlap={{ overlap }}&amp;prompt={{ version }}#chunk-{{ c.row.seq }}">Messages {{ c.first_index }}&ndash;{{ c.last_index }}</a></h3>
     <span class="hk-mono">{{ c.dates }}</span>
     {% if c.stale %}<span class="hk-pill deferred" title="A message in this chunk was edited or deleted after the summary was written">messages changed since</span>{% endif %}
-    {% if c.row.job_uuid %}<a class="hk-back" style="margin-left:auto" href="/assistant/housekeeping/{{ c.row.job_uuid }}" title="Open the job that wrote this summary. It shows its models, prompts and replies, and what the decision model was asked.">inspect</a>{% endif %}
+    {% if c.row.job_uuid %}<a class="hk-back" style="margin-left:auto" href="/assistant/housekeeping/{{ c.row.job_uuid }}#newest" title="Open the job that wrote this summary, at its result. It also shows its models, prompts and replies, and what the decision model was asked.">inspect</a>{% endif %}
   </div>
 """ + _CHUNK_BODY + """</div>
 {% else %}
