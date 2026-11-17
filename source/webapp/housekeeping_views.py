@@ -659,7 +659,7 @@ _STYLE = """
   .hk-card .wf-undated{position:absolute;left:4px;font-size:0.68rem;color:#98a2b3}
   .hk-card .wf-secs{font-size:0.76rem;color:#667085;text-align:right;
     font-variant-numeric:tabular-nums}
-  table.hk-msgs{border-collapse:collapse;margin-top:12px;width:100%}
+  table.hk-msgs{border-collapse:collapse;width:100%}
   .hk-msgs th{text-align:left;font-size:0.68rem;font-weight:700;text-transform:uppercase;
     letter-spacing:0.05em;color:#9ca3af;padding:0 16px 4px 0}
   .hk-msgs td{padding:4px 16px 4px 0;vertical-align:top;font-size:0.84rem;
@@ -1099,10 +1099,11 @@ _JOB_FRAGMENT = """
       {% if not a.calls and not a.decisions and not a.so_far %}<p class="hk-lede" style="margin:8px 0 0">This attempt made no model call.</p>{% endif %}
 
       {% elif e.kind == 'attempt' %}
-      <div class="hk-call">
-        <b title="{{ e.purpose }}">{{ 'Start' if e.attempt_no == 1 else 'Attempt ' ~ e.attempt_no }}</b>
-        <span class="hk-mono">{{ when(a.row.started_at) }}</span>
-      </div>
+      {# No heading: the row's name is in the Inspect header, and its time on
+         the timeline. A pane with no table says when the attempt began. #}
+      {% if not (e.attempt_no == 1 and start_messages) %}
+      <p class="hk-lede" style="margin:0">Began <span class="hk-mono">{{ when(a.row.started_at) }}</span>.</p>
+      {% endif %}
       {% if e.attempt_no == 1 and start_messages %}
       <table class="hk-msgs">
         <tr><th>No.</th><th>UUID</th><th>Date</th><th>Role</th><th>Text</th></tr>

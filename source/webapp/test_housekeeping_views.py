@@ -136,8 +136,8 @@ def test_a_job_page_shows_each_attempt_with_its_prompt_and_reply(client):
     db.settle_housekeeping_job(job, "final", outcome="done")
 
     body = c.get(f"/assistant/housekeeping/{job.uuid}").get_data(as_text=True)
-    assert "Start</b>" in body and "killed: turn" in body
-    assert "Attempt 2" in body and "You summarize a run." in body
+    assert 'data-label="start"' in body and "killed: turn" in body
+    assert 'data-label="attempt 2"' in body and "You summarize a run." in body
     # The timeline is in the order things happened: the first attempt, where
     # it was killed, the second attempt, and its model call. The page opens
     # on the call.
@@ -340,7 +340,8 @@ def test_a_chunk_jobs_page_shows_what_the_decision_model_was_asked_and_answered(
         # its text. A message after the chunk is not listed.
         pane = body[body.index(f'data-key="a{attempt.uuid}">'):]
         pane = pane[:pane.index('<div class="ev-pane')]
-        assert "Start</b>" in pane and pane.count('<td class="hk-mono" title="m') == 4
+        # The pane has no heading of its own: the table leads.
+        assert "<b" not in pane and pane.count('<td class="hk-mono" title="m') == 4
         assert '<td class="hk-mono" title="m0 in the room">m1</td>' in pane
         assert f'msg={messages[2]["uuid"]}' in pane and f'{messages[4]["uuid"]}' not in pane
         # The uuid's first 8 characters are shown, and the whole of it on hover.
