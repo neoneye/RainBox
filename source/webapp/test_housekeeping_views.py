@@ -287,13 +287,14 @@ def test_a_chunk_jobs_page_shows_what_the_decision_model_was_asked_and_answered(
             record({"request": "gone", "reply": "gone", "next_message": "gone"}, 0.12)]
     try:
         body = c.get(f"/assistant/housekeeping/{job.uuid}").get_data(as_text=True)
-        assert body.count(">Identify duplicates</b>") == 3
+        assert body.count(">Identify duplicate user messages</b>") == 3
         # Each request has a row of its own on the timeline, named by the
         # message it is about.
         assert body.count('<span class="wf-name kind-decision">duplicate') == 3
         # Numbered as the summary's prompt numbers the chunk, from m1: the
         # room's m2 is the chunk's m3.
-        assert '<span class="wf-name kind-decision">duplicate m3</span>' in body
+        # The row names the two messages that are compared.
+        assert '<span class="wf-name kind-decision">duplicate m1 \u2194 m3</span>' in body
         for r in rows:
             assert f'class="wf-row" data-key="d{r.uuid}"' in body
             assert f'<div class="ev-pane" data-key="d{r.uuid}">' in body
@@ -312,7 +313,7 @@ def test_a_chunk_jobs_page_shows_what_the_decision_model_was_asked_and_answered(
         assert ("&lt;message1&gt;how tall is the lighthouse&lt;/message1&gt;\n"
                 "&lt;message2&gt;look up the height of the lighthouse&lt;/message2&gt;") in card
         # The message's number is the page's, and stands in the call's line.
-        assert "(m2)" not in body and '<span class="hk-mono" title="m2 in the room">m3</span>' in body
+        assert "(m2)" not in body and '<span class="hk-mono" title="m0 and m2 in the room">m1 &harr; m3</span>' in body
         assert "<b>Question</b>" not in body and "<b>Answer</b>" not in body
         # A call with no row on /activity says so.
         assert card.count("has no row on the Activity page") == 2

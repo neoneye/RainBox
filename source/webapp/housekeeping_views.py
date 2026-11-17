@@ -229,10 +229,11 @@ def _decision_calls(job) -> list[dict]:
     under its role, then the response. It is empty for a call with no row
     there. The state is not stored with the
     call. It is rebuilt here from the chunk's messages, as the worker built
-    it, and matched to its call by digest: `{message, local, next_message,
-    after_chunk, text}`. `message` is the message's number in the room and
-    `local` its number in the chunk, counted from 1 as the summary's prompt
-    counts. `text` is what the model was given and `after_chunk` whether
+    it, and matched to its call by digest: `{message, local, request_message,
+    request_local, next_message, after_chunk, text}`. `message` is the next
+    message's number in the room and `local` its number in the chunk,
+    counted from 1 as the summary's prompt counts; `request_message` and
+    `request_local` are the same two numbers for the request. `text` is what the model was given and `after_chunk` whether
     the message comes after the chunk's last one. It is None for a call whose
     messages have changed since, or whose job is not a chunk's. `verdict` is
     the first answer in a line: `{text, p, yes}`, or None without an answer."""
@@ -262,6 +263,8 @@ def _decision_calls(job) -> list[dict]:
                 # first message is m1.
                 shown = {"message": item["message"], "next_message": item["next_message"],
                          "local": item["message"] - first + 1,
+                         "request_local": item["request_message"] - first + 1,
+                         "request_message": item["request_message"],
                          "after_chunk": item["message"] > last}
                 text = follow_up_state(item["request"], item["next_message"])
                 states[state_digest(text)] = {**shown, "text": text}
@@ -381,7 +384,10 @@ def _timeline(attempts: list[dict], now: datetime, job=None,
             state = d["state"]
             mine.append({
                 "key": f"d{r.uuid}", "kind": "decision",
-                "label": f"duplicate m{state['local']}" if state else "duplicate",
+                # The two messages that are compared: the request, and the
+                # user's next message.
+                "label": (f"duplicate m{state['request_local']} \u2194 m{state['local']}"
+                          if state else "duplicate"),
                 "description": (f"{d['verdict']['text']} {d['verdict']['p']:.2f}"
                                 if d["verdict"] else "no answer"),
                 # The row is written when the answer is in.
@@ -1021,8 +1027,8 @@ _JOB_FRAGMENT = """
       {% set d = e.decision %}
       {% set answer = (d.row.answers or [{}])[0] %}
       <div class="hk-call">
-        <b title="{{ e.purpose }}">Identify duplicates</b>
-        {% if d.state %}<span class="hk-mono" title="m{{ d.state.message }} in the room">m{{ d.state.local }}</span>{% if d.state.after_chunk %} <span class="hk-pill" title="This message comes after the chunk's last message. The chunk's last request is compared with the next message from the user, so a request asked again across the edge of a chunk is seen.">after the chunk</span>{% endif %}{% endif %}
+        <b title="{{ e.purpose }}">Identify duplicate user messages</b>
+        {% if d.state %}<span class="hk-mono" title="m{{ d.state.request_message }} and m{{ d.state.message }} in the room">m{{ d.state.request_local }} &harr; m{{ d.state.local }}</span>{% if d.state.after_chunk %} <span class="hk-pill" title="This message comes after the chunk's last message. The chunk's last request is compared with the next message from the user, so a request asked again across the edge of a chunk is seen.">after the chunk</span>{% endif %}{% endif %}
         {% if d.verdict %}<span class="hk-pill {{ 'done' if d.verdict.yes else '' }}">{{ d.verdict.text }}</span> <span class="hk-mono">{{ '%.2f'|format(d.verdict.p) }}</span>
         {% else %}<span class="hk-pill failed">no answer: {{ answer.reason or d.row.reason }}</span>{% endif %}
         <span class="hk-mono">{{ when(d.row.created_at) }}</span>

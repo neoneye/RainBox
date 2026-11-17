@@ -569,7 +569,8 @@ attempt's `llm_call` row: for a chunk, the summary that was kept.
   where it took time. The rows are each attempt (a mark at its start: its
   time is on the timeline as the calls it made; the first is named `start`,
   a later one `attempt 2` and so on), each request to the
-  decision model (`duplicate m<n>`, after the message it is about, numbered
+  decision model (`duplicate m<a> ↔ m<b>`, the request and the user's next
+  message that are compared, numbered
   as the summary's prompt numbers the chunk: its first message is m1), each
   model call the attempt made (`db.housekeeping_attempt_calls`), named
   `summary` or `check`, and the call still running. A chunk job that wrote

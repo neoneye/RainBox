@@ -456,25 +456,30 @@ def _quotes_back(text: str, replies: list[list[str]],
 def follow_ups(chunk: list[dict[str, Any]], after: list[dict[str, Any]],
                first_index: int) -> list[dict[str, Any]]:
     """Every user message that follows a reply to an earlier request of
-    the chunk, as `{message, request, reply, next_message}`: the decision
-    model is asked about the request and the next message. The first user message after the chunk
+    the chunk, as `{message, request_message, request, reply, next_message}`:
+    the decision model is asked about the request and the next message.
+    `message` is the next message's number and `request_message` the
+    request's. The first user message after the chunk
     is one of them, so a request asked again across a chunk's edge is put to
     the model by the chunk that holds the request. Texts are cut as the
     summary's prompt cuts them."""
     out: list[dict[str, Any]] = []
     request = reply = None
+    request_at = 0
     for k, m in enumerate([*chunk, *after]):
         if m["sender"] != "human":
             if request is not None:
                 reply = m["text"]
             continue
         if request is not None and reply is not None:
-            out.append({"message": first_index + k, "request": _cut(request),
+            out.append({"message": first_index + k,
+                        "request_message": first_index + request_at,
+                        "request": _cut(request),
                         "reply": _cut(reply, PROMPT_REPLY_MAX_CHARS),
                         "next_message": _cut(m["text"])})
         if k >= len(chunk):
             break
-        request, reply = m["text"], None
+        request, reply, request_at = m["text"], None, k
     return out
 
 
