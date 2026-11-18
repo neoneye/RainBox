@@ -163,7 +163,7 @@ function promptRenderContents(){
       tr.innerHTML =
         '<td class="prompt-name-cell" style="padding-left:' + pad + 'px">' + promptEscapeHtml(p.name) + '</td>' +
         '<td>' + promptEscapeHtml(promptBasedOnLabel(p)) + '</td>' +
-        '<td>' + promptShortDate(p.updated_at) + '</td>' +
+        '<td class="prompt-time-cell">' + promptShortDate(p.updated_at) + '</td>' +
         '<td><a href="#" class="row-open">Open</a></td>';
       tr.querySelector('.row-open').addEventListener('click', e => { e.preventDefault(); promptSelectItem(p.uuid); });
     }

@@ -86,6 +86,8 @@ PROMPT_TEMPLATE = """
   .prompt-table{border-collapse:collapse;width:100%;font-size:0.9rem}
   .prompt-table th,.prompt-table td{text-align:left;padding:6px 10px;border-bottom:1px solid #eee;vertical-align:top}
   .prompt-name-cell{white-space:nowrap}
+  .prompt-time-cell{white-space:nowrap;font-variant-numeric:tabular-nums}
+  #prompt-dates{font-variant-numeric:tabular-nums}
   /* Folder rows carry the tree's folder icon in the Name cell (there is no
      Type column); align it with the text baseline. */
   .prompt-name-cell .prompt-ficon{vertical-align:text-bottom;margin-right:4px}
