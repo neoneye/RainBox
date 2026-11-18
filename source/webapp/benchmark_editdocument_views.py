@@ -70,6 +70,7 @@ document, exactly equal the reference expected output.</p>
   <label><input type="radio" name="agent" value="v6" checked> EditDocumentAgentV6 (v6)</label>
   <button id="start-btn">Start all</button>
   <button id="stop-btn">Stop</button>
+  <label title="Models whose every test has a result first, then those with some, then those with none. Unchecked keeps the listed order."><input type="checkbox" id="complete-first" checked> Complete runs first</label>
   <span class="status" id="status">loading…</span>
 </div>
 
@@ -150,7 +151,28 @@ function cellClass(trial) {
   return trial.correct ? 'cell pass' : 'cell fail';
 }
 
+// 0 = every test has a result, 1 = some ran or are running, 2 = none ran.
+function completeness(t) {
+  const st = testNames.map(n => (t.trials[n] || {status: 'pending'}).status);
+  const finished = st.filter(s => s !== 'pending' && s !== 'running').length;
+  if (finished === st.length) return 0;
+  return st.some(s => s !== 'pending') ? 1 : 2;
+}
+// "Complete runs first" lives in localStorage, on by default. Toggling it
+// redraws from the last polled state.
+const COMPLETE_FIRST_KEY = 'pp-benchmark-complete-first';
+let lastState = null;
+(function initCompleteFirst() {
+  const el = document.getElementById('complete-first');
+  el.checked = localStorage.getItem(COMPLETE_FIRST_KEY) !== '0';
+  el.addEventListener('change', () => {
+    localStorage.setItem(COMPLETE_FIRST_KEY, el.checked ? '1' : '0');
+    if (lastState) render(lastState);
+  });
+})();
+
 function render(state) {
+  lastState = state;
   const statusEl = document.getElementById('status');
   // A suite running on another page owns the machine just as much as one
   // running here, and saying which one is the most actionable thing here.
@@ -180,7 +202,13 @@ function render(state) {
     body.innerHTML = `<tr><td colspan="${testNames.length + 1}" class="cell pending">No available model configs.</td></tr>`;
     return;
   }
-  body.innerHTML = state.targets.map(t => {
+  // Grouped by completeness when "Complete runs first" is on, keeping the
+  // listed order within each group.
+  const targets = document.getElementById('complete-first').checked
+    ? state.targets.map((t, i) => ({t, i, g: completeness(t)}))
+        .sort((a, b) => a.g - b.g || a.i - b.i).map(x => x.t)
+    : state.targets;
+  body.innerHTML = targets.map(t => {
     const cells = testNames.map(n => {
       const trial = t.trials[n] || {status: 'pending'};
       return `<td class="${cellClass(trial)}">${fmtCell(trial)}</td>`;

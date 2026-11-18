@@ -110,6 +110,9 @@ BENCHMARK_TEMPLATE: str = """
     <input type="checkbox" id="warmup-toggle"> Warm up LLM
   </label>
   {% endif %}
+  <label class="warmup-toggle" title="Models whose every benchmark has a result first, then those with some, then those with none. Unchecked keeps the listed order.">
+    <input type="checkbox" id="complete-first" checked> Complete runs first
+  </label>
   <span class="status" id="status">loading…</span>
 </div>
 
@@ -395,7 +398,37 @@ function escapeHtml(s) {
   return d.innerHTML;
 }
 
+// 'complete' when a cell has a finished result (live, else stored), 'partial'
+// when it ran or is running without finishing, 'none' when it never ran.
+function cellRan(b, i, targetUuid) {
+  if (b.status === 'done') return 'complete';
+  if (b.status === 'running' || b.status === 'error') return 'partial';
+  const h = cellHistory(benchmarkNames[i], targetUuid);
+  if (h && h.complete && h.complete.length) return 'complete';
+  if (h && h.partial && h.partial.length) return 'partial';
+  return 'none';
+}
+// 0 = every benchmark has a complete result, 1 = some ran, 2 = none ran.
+function completeness(t) {
+  const ran = t.benchmarks.map((b, i) => cellRan(b, i, t.uuid));
+  if (ran.every(r => r === 'complete')) return 0;
+  return ran.some(r => r !== 'none') ? 1 : 2;
+}
+// "Complete runs first" lives in localStorage like "Warm up LLM"; on by
+// default. Toggling it redraws from the last polled state.
+const COMPLETE_FIRST_KEY = 'pp-benchmark-complete-first';
+let lastState = null;
+(function initCompleteFirst() {
+  const el = document.getElementById('complete-first');
+  el.checked = localStorage.getItem(COMPLETE_FIRST_KEY) !== '0';
+  el.addEventListener('change', () => {
+    localStorage.setItem(COMPLETE_FIRST_KEY, el.checked ? '1' : '0');
+    if (lastState) render(lastState);
+  });
+})();
+
 function render(state) {
+  lastState = state;
   const statusEl = document.getElementById('status');
   if (state.blocked_by) {
     statusEl.textContent = `${state.blocked_by} is running — benchmarks run one at a time`;
@@ -452,7 +485,13 @@ function render(state) {
   const busy = !!state.running || !!state.blocked_by;
   const topStart = document.getElementById('start-btn');
   if (topStart) topStart.disabled = busy;
-  const rows = scored.map(({ t, score }) => {
+  // Grouped by completeness when "Complete runs first" is on, keeping the
+  // listed order within each group.
+  const shown = document.getElementById('complete-first').checked
+    ? scored.map((r, i) => ({r, i, g: completeness(r.t)}))
+        .sort((a, b) => a.g - b.g || a.i - b.i).map(x => x.r)
+    : scored;
+  const rows = shown.map(({ t, score }) => {
     const rowCls = (t.status === 'running' || t.status === 'warming_up') ? 'target-running' : '';
     const providerLine = t.provider
       ? `<small class="provider">${escapeHtml(providerLabel(t.provider))}</small>`
