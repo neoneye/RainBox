@@ -501,7 +501,8 @@ CHAT_TEMPLATE: str = """
   .folder-detail table{width:100%;border-collapse:collapse;font-size:0.9rem}
   .folder-detail th,.folder-detail td{text-align:left;padding:0.45em 0.7em;border-bottom:1px solid #eee;vertical-align:top}
   .folder-detail th{color:#6b7280;font-weight:600;font-size:0.8rem;text-transform:uppercase;letter-spacing:0.03em}
-  .folder-detail td.fd-num{text-align:right;white-space:nowrap}
+  .folder-detail td.fd-num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .folder-detail td.fd-time{white-space:nowrap;font-variant-numeric:tabular-nums}
   .folder-detail .fd-name{white-space:nowrap}
   .folder-detail .fd-icon{color:#6b7280;margin-right:0.3em}
   .folder-detail a.fd-details{color:#2563eb;cursor:pointer;text-decoration:none}
@@ -2302,7 +2303,7 @@ function folderDetailFolderRow(f, depth){
   tr.appendChild(nameTd);
   tr.appendChild(document.createElement('td'));               // agents (blank)
   const mTd = document.createElement('td'); mTd.className = 'fd-num'; tr.appendChild(mTd);  // messages (blank)
-  tr.appendChild(document.createElement('td'));               // last message (blank)
+  const lTd = document.createElement('td'); lTd.className = 'fd-time'; tr.appendChild(lTd);  // last message (blank)
   const actTd = document.createElement('td');
   actTd.appendChild(fdDetailsLink(() => {
     selectedFolder = f.id;
@@ -2332,6 +2333,7 @@ function folderDetailRoomRow(r, depth){
   mTd.textContent = (d.message_count != null) ? d.message_count : '';
   tr.appendChild(mTd);
   const lastTd = document.createElement('td');
+  lastTd.className = 'fd-time';
   lastTd.textContent = d.last_message_at ? d.last_message_at : '—';
   tr.appendChild(lastTd);
   const actTd = document.createElement('td');
