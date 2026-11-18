@@ -159,6 +159,7 @@ VISION_TEMPLATE = r"""
 <div class="controls">
   <label>Trials per case <input type="number" id="trials" min="1" max="{{ max_trials }}" value="3"></label>
   <label title="One throwaway 'hi' before a model's first case, so its load time stays out of the first answer's timing."><input type="checkbox" id="warmup" checked> Warm up</label>
+  <label title="Models whose shown run answered every case first, then those with a partial run, then those that have not run. Unchecked keeps the listed order."><input type="checkbox" id="complete-first" checked> Complete runs first</label>
   <button id="start-btn">Start selected</button>
   <button id="stop-btn">Stop</button>
   <progress id="progress" value="0" max="1" hidden></progress>
@@ -206,6 +207,7 @@ const els = {
   stop: document.getElementById('stop-btn'),
   trials: document.getElementById('trials'),
   warmup: document.getElementById('warmup'),
+  completeFirst: document.getElementById('complete-first'),
   all: document.getElementById('select-all'),
 };
 let results = {};
@@ -230,6 +232,11 @@ els.trials.value = load('pp-benchmark-vision-trials', 3);
 els.warmup.checked = load('pp-benchmark-vision-warmup', true);
 els.trials.addEventListener('change', () => store('pp-benchmark-vision-trials', Number(els.trials.value)));
 els.warmup.addEventListener('change', () => store('pp-benchmark-vision-warmup', els.warmup.checked));
+els.completeFirst.checked = load('pp-benchmark-vision-complete-first', true);
+els.completeFirst.addEventListener('change', () => {
+  store('pp-benchmark-vision-complete-first', els.completeFirst.checked);
+  render();
+});
 
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g,
@@ -323,13 +330,34 @@ function rows() {
   return out;
 }
 
+// The run a row shows: the one picked in its detail row, else the latest.
+function shownRun(uuid) {
+  const runs = results[uuid] || [];
+  return runs.find(r => r.run_uuid === chosenRun[uuid]) || runs[0];
+}
+// 0 = the shown run answered every case, 1 = it ran part of them, 2 = no runs.
+function completeness(uuid) {
+  const run = shownRun(uuid);
+  if (!run) return 2;
+  return run.trials.length >= planned(run) ? 0 : 1;
+}
+// The listed order, or (with "Complete runs first") grouped by completeness,
+// keeping the listed order within each group.
+function orderedRows() {
+  const out = rows();
+  if (!els.completeFirst.checked) return out;
+  return out.map((t, i) => ({t, i, g: completeness(t.uuid)}))
+    .sort((a, b) => a.g - b.g || a.i - b.i)
+    .map(x => x.t);
+}
+
 function render() {
   const running = state && state.running;
   const cur = state && state.current;
   let html = '';
-  for (const t of rows()) {
+  for (const t of orderedRows()) {
     const runs = results[t.uuid] || [];
-    const run = runs.find(r => r.run_uuid === chosenRun[t.uuid]) || runs[0];
+    const run = shownRun(t.uuid);
     const s = run ? summarize(run.trials) : null;
     const isCur = cur && cur.uuid === t.uuid;
     const queued = running && state.queue.includes(t.uuid) && !isCur;
