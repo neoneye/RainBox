@@ -10,7 +10,7 @@ backend instead of a side service.
 Why separate processes: the voice models need their own dependency worlds
 (faster-whisper's CTranslate2; Kokoro's torch — neither belongs in the main
 venv), and the Telegram bridge holds a network credential the core app never
-sees. The launcher (`main.py`) starts whichever of them are enabled on `/settings`,
+sees. The launcher (`main.py`) starts whichever of them are enabled on `/config`,
 as sibling processes of the core (`docs/superpowers/specs/2026-09-10-launcher-design.md`);
 each can still be started by hand, and the core discovers them via an env var
 either way. All demo pages degrade gracefully when a

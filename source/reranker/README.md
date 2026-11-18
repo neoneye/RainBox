@@ -54,7 +54,7 @@ Environment overrides:
 
 The main app finds the service via `RERANKER_URL` (default
 `http://127.0.0.1:5008`) and picks a model with the
-`memory.recall_filter_backend` setting on `/settings`:
+`memory.recall_filter_backend` setting on `/config`:
 
 - `llm` — the assistant's own scorer (default)
 - `reranker:mmarco-mMiniLMv2-L12-H384-v1`

@@ -362,7 +362,7 @@ def main() -> None:
     parser.add_argument(
         "--control-fd", type=int, default=None,
         help="inherited socket to the launcher (main.py passes it); without it "
-             "the core runs unmanaged and /settings says so",
+             "the core runs unmanaged and /config says so",
     )
     args = parser.parse_args()
 

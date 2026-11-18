@@ -60,10 +60,10 @@ class Setting:
     dynamic_default: Callable[[], object] | None = None
     # The only values this setting accepts, for a setting whose domain is a
     # fixed set rather than a range. Enforced on write and rendered by the
-    # /settings page as a dropdown instead of a free-text field, so a choice
+    # /config page as a dropdown instead of a free-text field, so a choice
     # cannot be mistyped into a key that reads as unset.
     choices: tuple[str, ...] | None = None
-    # Machine-owned bookkeeping keys (event stamps) that the /settings page
+    # Machine-owned bookkeeping keys (event stamps) that the /config page
     # must not list. get_setting/set_setting treat them normally. Distinct
     # from `secret`: secrets are redacted but still listed and env-managed;
     # internal keys are ordinary DB values that are simply not operator-facing.
@@ -430,7 +430,7 @@ def _stored_is_readable(spec: Setting, text: str | None) -> bool:
     """Whether a stored/env text is set AND parses as the declared type. A
     value that does not parse (a key retyped after it was saved, or a row
     edited by hand) is treated as unset — with a warning — instead of making
-    every reader of the registry raise; the /settings page and the launcher's
+    every reader of the registry raise; the /config page and the launcher's
     desired-state endpoint must keep working so the operator can repair it,
     and a repair writes over the row without needing to read it first."""
     if _is_unset(spec, text):
@@ -440,7 +440,7 @@ def _stored_is_readable(spec: Setting, text: str | None) -> bool:
     except (ValueError, TypeError):
         logger.warning(
             "setting %s holds a value that is not a valid %s; treating it as "
-            "unset until it is corrected on /settings", spec.key, spec.type)
+            "unset until it is corrected on /config", spec.key, spec.type)
         return False
     return True
 
@@ -591,7 +591,7 @@ def set_current_profile(value: object) -> str | None:
     Returns the stamp when a change was committed, or None on a no-op (same
     effective value). A plain set_setting("profile.current", ...) still works
     but stamps nothing — it is the low-level seam for tests and scripts; UI
-    writes must route here (webapp/settings_views.py special-cases the key).
+    writes must route here (webapp/config_views.py special-cases the key).
 
     OWNS ITS TRANSACTION: it takes the profile.current row lock, then
     commits or rolls back the whole session (a no-op rolls back to release
@@ -663,7 +663,7 @@ def _source(spec: Setting) -> str:
 def all_settings(include_internal: bool = False) -> list[dict]:
     """Every registry setting with its effective value, type, secret flag,
     description, and provenance (db/env/default). Secrets are redacted; internal
-    bookkeeping keys are omitted unless include_internal is set (the /settings
+    bookkeeping keys are omitted unless include_internal is set (the /config
     page never lists them). Metadata comes from the registry, never the row, so
     it can't drift. App context required."""
     out = []

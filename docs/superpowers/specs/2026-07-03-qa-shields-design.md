@@ -191,7 +191,7 @@ one indexed lookup and retrieval already touches the DB.
   shields sit under one heading. One checkbox per full shield string, labelled so
   checked = *unlocked* (revealed to the LLM), unchecked = *locked* (hidden, the
   default). Saving posts the JSON array of the checked full shield strings through
-  the existing `settings_set_api`.
+  the existing `config_set_api`.
 - Clustering is presentation only: a group heading may carry an "unlock all in
   this group" convenience checkbox, but it simply toggles the descendant leaf
   boxes — what gets stored is always the explicit list of full shield strings, so

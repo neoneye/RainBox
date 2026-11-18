@@ -4,7 +4,7 @@
 
 The launcher is the root of rainbox's process tree and the way rainbox is
 started. It starts the core (`core.py`: supervisor + webserver) and every side
-service the operator has enabled on /settings, as *siblings*, keeps them
+service the operator has enabled on /config, as *siblings*, keeps them
 running, stops what is disabled, and reports what it sees. It never becomes
 the core: it imports only the standard library plus the data-only catalogue
 in `services/definitions.py` (and `services/procname.py`, stdlib too), so its

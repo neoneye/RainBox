@@ -279,9 +279,9 @@ Two complementary surfaces, reusing existing patterns:
   inconsistent state. Either (a) a custom `ModelView` whose `on_model_change`
   routes the write through `set_setting()` (same validation/coercion path) and
   makes `key`/`value_type`/`secret` read-only, or (b) register it **read-only**
-  until `/settings` exists. For phase 1, use **read-only**; it is cheaper,
+  until `/config` exists. For phase 1, use **read-only**; it is cheaper,
   safer, and avoids fragile admin hook code.
-- **A `/settings` page** (later): render the registry grouped by prefix
+- **A `/config` page** (later): render the registry grouped by prefix
   (`backup.*`, `providers.*`), with typed inputs, inline validation, secrets
   redacted, and "currently from: DB / env / default" provenance shown per row —
   mirroring the `/cron` and `/modelgroups` split-pane style.
@@ -339,7 +339,7 @@ DB value for app-context callers, while standalone tools are untouched.
 3. Update `notes/backup.md` / `notes/operator-guide.md` to call out the
    standalone CLI behavior: env/flags only, no DB settings.
 4. (Later) the **Kokoro URL** moves cleanly the same way.
-5. (Later) build the `/settings` page; document in `notes/operator-guide.md`.
+5. (Later) build the `/config` page; document in `notes/operator-guide.md`.
 
 ### Provider base URLs are NOT a simple move
 

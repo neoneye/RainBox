@@ -3448,7 +3448,7 @@ async function renderToolsSection(room){
   foot.className = 'ds-tools-foot';
   foot.append('Switches apply to this room only. A tool turned off in ');
   const a = document.createElement('a');
-  a.href = '/settings';
+  a.href = '/config';
   a.target = '_blank';
   a.textContent = 'Settings';
   foot.append(a, ' stays off in every room.');
@@ -3674,7 +3674,7 @@ async function renderDirectSettings(){
   const none = document.createElement('option');
   none.value = '';
   // No per-room model means the global default (chat.default_model on
-  // /settings) answers; say which one so the blank state isn't alarming.
+  // /config) answers; say which one so the blank state isn't alarming.
   const dfltModel = settings.default_model_uuid
     ? models.find(mm => mm.uuid === settings.default_model_uuid) : null;
   none.textContent = dfltModel ? '(default — ' + dfltModel.label + ')' : '(no model)';
@@ -4770,7 +4770,7 @@ async function loadRoomPersonaLine(){
   try { persona = (await getJSON('/chat/api/new-room-defaults')).persona; }
   catch (e) { el.textContent = 'Could not read the default persona.'; return; }
   const link = document.createElement('a');
-  link.href = '/settings';
+  link.href = '/config';
   link.target = '_blank';
   if (persona){
     el.append('Speaks as ' + persona.name + ' (the default persona in ');

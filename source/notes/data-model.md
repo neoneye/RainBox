@@ -303,7 +303,7 @@ Key fields:
 Operator configuration, addressed by `key` (e.g. `backup.repo`). The code-side
 registry in `db/settings.py` is the source of truth; this table only persists
 values. Reads resolve **DB value → env var → registry default**. Edited at
-`/settings`, read-only in Flask-Admin. See
+`/config`, read-only in Flask-Admin. See
 [the configuration proposal](proposals/2026-06-07-user-configuration-in-postgres.md).
 
 Key fields:
@@ -640,6 +640,6 @@ read-only in Flask-Admin as `SeedMemoryKb`.
   assistant children → run, memory evidence/embeddings → claim).
 - Timestamps are timezone-aware.
 - Each subsystem has a dedicated page (`/chat`, `/cron`, `/kanban`, `/git`,
-  `/memory`, `/assistant`, `/settings`) as its primary UI; Flask-Admin at
+  `/memory`, `/assistant`, `/config`) as its primary UI; Flask-Admin at
   `/admin` is the raw table-level fallback (read-only for `app_setting`,
   `data_seed_memory`, `retrieval_event`, and `memory_embedding`).

@@ -1,6 +1,6 @@
 # The request as its own turn
 
-**Status:** Built behind the `prompt.layout` setting (/settings):
+**Status:** Built behind the `prompt.layout` setting (/config):
 `single_turn` is the prior behaviour and the default, `request_turn` is this
 design. The evaluation below has not been run yet.
 **Date:** 2026-10-19
@@ -213,7 +213,7 @@ as it does now.
 
 `prompt.layout` (`db/settings.py`) holds the layout; its choices are
 `PROMPT_LAYOUTS` in `chat/prompt_layout.py`, so a future layout reaches the
-/settings dropdown by being added there. The assistant reads it once at the
+/config dropdown by being added there. The assistant reads it once at the
 start of a turn, beside the response-language gate, and records it in the
 turn log every step row carries — a refresh of the acceptance criteria
 mid-turn re-captures the profile, never the layout. The chat agents read it

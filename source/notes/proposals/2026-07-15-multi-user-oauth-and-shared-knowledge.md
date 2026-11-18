@@ -154,7 +154,7 @@ Add nullable `account_uuid` to `chat_user`. Each account gets its own human
 2. First login ever (no accounts exist) → becomes the **admin** account.
    This is the bootstrap path for a fresh install; existing installs instead
    get the admin account from the migration (below), and the operator links
-   their Google identity from /settings while still on localhost.
+   their Google identity from /config while still on localhost.
 3. Email domain on the allowlist (`auth.member_domains`, admin-set) →
    auto-provision an active **member** (the company case).
 4. Otherwise → auto-provision a **pending** account: authenticated, but every
@@ -171,7 +171,7 @@ today, then resolves it:
    their phone is the admin, with admin capabilities.
 2. Unknown sender → auto-provision a **guest** account (+ identity +
    chat_user + personal space), display name from the platform profile.
-   A guest exists only inside chat: no web login, no /settings, no memory
+   A guest exists only inside chat: no web login, no /config, no memory
    review — but their conversations and remembered facts persist in their
    personal space, so a later promotion to member keeps their history.
 3. A per-connector policy setting gates step 2:
@@ -194,7 +194,7 @@ Three roles, deliberately coarse (spaces do the fine-grained work):
 | read shared spaces they belong to          | ✓ | ✓ | ✓ |
 | write to shared spaces                     | ✓ | per-membership | — |
 | web login                                  | ✓ | ✓ | — |
-| /settings, backups, cron, capability toggles | ✓ | — | — |
+| /config, backups, cron, capability toggles | ✓ | — | — |
 | memory review queues, Flask-Admin          | ✓ | — | — |
 | approve accounts, manage spaces & links    | ✓ | — | — |
 | assistant write-actions (kanban, files, …) | ✓ | configurable subset | read-only actions |
@@ -332,7 +332,7 @@ global registry's reconcile-on-startup logic stays untouched.
 3. **`single_user_mode` on:** app behaves exactly as today (no login, admin
    context implied everywhere). Every phase below ships dark behind it.
 4. **Flip when ready:** operator configures OAuth env vars, links their
-   Google identity from /settings while on localhost, turns
+   Google identity from /config while on localhost, turns
    `single_user_mode` off. From then on, web requires login.
 
 Rollback at any point = flip `single_user_mode` back on; the added columns

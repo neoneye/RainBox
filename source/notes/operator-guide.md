@@ -107,7 +107,7 @@ fallback.
   Recent calls has an `inspect` link to the call in full: the messages that
   were sent, by role, and what came back. Prompt text is kept for 14 days;
   the metrics for 90.
-- `/settings` — typed operator settings (DB → env → default) with provenance.
+- `/config` — typed operator settings (DB → env → default) with provenance.
 - `/doctor` — environment health checks.
 
 ## Basic Chat Workflow
@@ -202,7 +202,7 @@ your `customize.dir`:
 person segment. `shield` is required — `null` unless every entry under the
 prefix carries the same shield name, in which case use that name.
 
-**2. Repopulate.** Press **Repopulate Q&A memory** on `/settings`. A
+**2. Repopulate.** Press **Repopulate Q&A memory** on `/config`. A
 validation error names the offending declaration and changes nothing; fix and
 press again.
 
@@ -226,7 +226,7 @@ always a typo in it.
 
 If the roster is *missing* after a successful repopulate, check the
 declaration's `shield` before anything else: a shielded roster is hidden until
-that shield is unlocked on `/settings`, which looks exactly like absence. Only
+that shield is unlocked on `/config`, which looks exactly like absence. Only
 once it is unlocked (or `null`) does a missing roster mean the members are not
 shield-uniform — see the troubleshooting entry below.
 
@@ -353,7 +353,7 @@ restore instructions: `notes/backup.md`.
 **Where the scheduled backup reads its config:** the cron job resolves the
 backup settings (`backup.repo`, `backup.age_recipient`, `backup.git_push`) from
 Postgres `app_setting` first, then the matching env var, then the default — so
-you can edit them on the **`/settings`** page and they take effect without a
+you can edit them on the **`/config`** page and they take effect without a
 restart (also visible read-only in Flask-Admin under **Config**). The standalone
 `python -m backup.dump` CLI is **flags/env
 only by design** — it builds no app context and does not read DB settings, so a
@@ -413,7 +413,7 @@ The curated Q&A pairs live in the `data_seed_memory` pgvector table, embedded fr
 
 - pgvector extension is installed.
 - Ollama is running and has `embeddinggemma:300m` available.
-- Click **Repopulate Q&A memory** on `/settings` to re-embed after editing the
+- Click **Repopulate Q&A memory** on `/config` to re-embed after editing the
   JSONL (or set `QUERY_AGENT_REBUILD_KB=1`). This (re)creates `data_seed_memory`.
 
 ### A declared relation produces no roster

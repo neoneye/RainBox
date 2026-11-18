@@ -1,13 +1,13 @@
-# Settings — design (registry + /settings page)
+# Settings — design (registry + /config page)
 
 A code-side registry (`db/settings.py`) declares every configurable key;
-values persist in the `app_setting` Postgres table; the `/settings` page
+values persist in the `app_setting` Postgres table; the `/config` page
 renders one editable card per key with provenance badges and Q&A action
 buttons.
 
 ## The idea
 
-Operator configuration is **typed, code-owned, and DB-backed**. The registry in code is the single source of truth for *which keys exist* and their type/default/validation; the database only holds the *value*. Every key resolves in a fixed priority order — **DB value → env var → default** — so the app works out of the box on env vars alone, and anything set on the page cleanly overrides the environment. The `/settings` page shows exactly where each live value comes from, so "why is this on?" is answered by a badge, not by grepping.
+Operator configuration is **typed, code-owned, and DB-backed**. The registry in code is the single source of truth for *which keys exist* and their type/default/validation; the database only holds the *value*. Every key resolves in a fixed priority order — **DB value → env var → default** — so the app works out of the box on env vars alone, and anything set on the page cleanly overrides the environment. The `/config` page shows exactly where each live value comes from, so "why is this on?" is answered by a badge, not by grepping.
 
 ## Where things live
 
@@ -15,9 +15,9 @@ Operator configuration is **typed, code-owned, and DB-backed**. The registry in 
 |-------|------|
 | Registry (`SETTINGS`), accessors, reconcile | `db/settings.py` (re-exported from the `db` facade) |
 | Table (`AppSetting`) | `db/models.py` |
-| Page + JSON API (set / repopulate / rebuild) | `webapp/settings_views.py` |
+| Page + JSON API (set / repopulate / rebuild) | `webapp/config_views.py` |
 | Q&A sync/rebuild backends | `memory/seed_memory.py` (`sync_kb`, `rebuild_kb`, `available_qa_shields`) |
-| Tests | `db/test_settings.py`, `webapp/test_settings_views.py` |
+| Tests | `db/test_settings.py`, `webapp/test_config_views.py` |
 
 ## The registry
 
@@ -34,7 +34,7 @@ Setting(key, env, type, default,
 - **`validate`** — an optional callable run on write (e.g. age-recipient shape, model-uuid existence). A failing validator rejects the save.
 - **`dynamic_default`** — a computed fallback used *instead of* `default` when both DB and env are unset (e.g. `chat.default_model` derives from the `model_config` table). Runs on every unset `get_setting()`, so it must be cheap and app-context safe.
 - **`secret`** — a `secret=True` setting is **env-only**: `set_setting` refuses to store a value for it (it would land in cleartext in Postgres and in every backup — threat model in `notes/backup.md`), `all_settings()` redacts its value, and the page renders it read-only ("environment-managed"). No currently registered key is secret; the machinery is in place for when one is.
-- **`internal`** — machine-owned bookkeeping keys (event stamps) that `all_settings()` omits by default (`include_internal=True` lists them), so the `/settings` page never shows them, and the `/settings/api/set` endpoint rejects with 400 — internal means the public write path cannot touch them, not merely that they are undisplayed. `get_setting`/`set_setting` treat them like any other key. Distinct from `secret`: secrets are redacted but still listed, internal keys are ordinary values that are simply not operator-facing.
+- **`internal`** — machine-owned bookkeeping keys (event stamps) that `all_settings()` omits by default (`include_internal=True` lists them), so the `/config` page never shows them, and the `/config/api/set` endpoint rejects with 400 — internal means the public write path cannot touch them, not merely that they are undisplayed. `get_setting`/`set_setting` treat them like any other key. Distinct from `secret`: secrets are redacted but still listed, internal keys are ordinary values that are simply not operator-facing.
 
 Unknown keys raise `UnknownSetting` — there is no ad-hoc key creation.
 
@@ -54,7 +54,7 @@ Unknown keys raise `UnknownSetting` — there is no ad-hoc key creation.
 | `qa.facts_invalidated_at` | string | unset | — | ISO timestamp of the last change that can stale prior facts (shield toggle or Q&A repopulate); the assistant posts a one-time "re-check facts" notice per room after it changes. |
 | `profile.current` | string | unset | — | The `/profile` profile that IS the operator (validated to exist, built-ins allowed). Drives the assistant's identity block (with the formatting guide as its comments) and knowledge-calibration block; unset = neither. The page edits it with a profile picker showing names, not uuids. Deleting the pointed-at profile via a tree save clears this pointer and stamps the change in the same transaction. |
 | `prompt.layout` | string (choices) | `single_turn` | — | How the assistant and chat agents arrange a call's messages: `single_turn` (one user message, the request a section inside it), `request_turn` (context message, fixed assistant acknowledgement, the request verbatim as the final user message) or `exchange_turns` (`request_turn`, with the user's previous message and the agent's reply to it repeated as a user and an assistant turn before the request, when those two are the user and then that agent). Read once per turn. Choices come from `chat/prompt_layout.py`'s `PROMPT_LAYOUTS`; a future layout is appended there. |
-| `profile.current_changed_at` | string | unset | — | **Internal.** Event stamp of the last actual `profile.current` change, written by `set_current_profile` in the same transaction as the pointer; acknowledged per room by the assistant's context marker, independently of the facts stamp. Never listed on `/settings`. |
+| `profile.current_changed_at` | string | unset | — | **Internal.** Event stamp of the last actual `profile.current` change, written by `set_current_profile` in the same transaction as the pointer; acknowledged per room by the assistant's context marker, independently of the facts stamp. Never listed on `/config`. |
 
 Main consumers: `db/cron.py` (pause, backup destination/recipients/push), `agents/assistant.py` (disabled capabilities, facts stamp), `webapp/chat_api.py` + `agents/direct_chat.py` (default model), `memory/seed_memory.py` + `agents/mcp_config.py` + `skills/loader.py` (customize dir, shields).
 
@@ -79,9 +79,9 @@ Main consumers: `db/cron.py` (pause, backup destination/recipients/push), `agent
 - **`set_current_profile(value) -> str | None`** — the runtime write path for `profile.current`: validates the target, no-ops on the same effective uuid (returns `None`), and on an actual change writes the pointer and `profile.current_changed_at` as **one transaction** (via the no-commit `_upsert_setting_row` helper, rolled back wholly on failure) — a concurrent assistant turn sees either the complete old state or the complete new state. `qa.facts_invalidated_at` is deliberately untouched: a switch changes the declared-profile prompt blocks, not the Q&A base, and independent stamps let the assistant's context marker report a still-pending Q&A event as a combined notice instead of absorbing it. A plain `set_setting("profile.current", ...)` still works but stamps nothing; it is the low-level seam for tests and scripts.
 - **`reconcile_app_settings()`** — idempotent, called from `init_db`: ensures a row exists per registry key (value left `NULL`), re-stamps `value_type`/`secret`/`description` from the registry, and **deletes rows whose key has left the registry**. The `AppSetting` columns beyond `key`/`value` are a **seeded cache** of the registry, never an independent source of truth — and so is the row itself: retiring a key removes its row (and its stored value) on the next start, because a row `get_setting` cannot read is a row that still lists in the admin table describing behavior the code no longer has.
 
-## The /settings page
+## The /config page
 
-`GET /settings` (`webapp/settings_views.py`) renders `all_settings()` as JSON into an inline script (escaped so a value containing `</script>` cannot break out) alongside the discovered Q&A shields and the chat-model choices. All rendering is client-side.
+`GET /config` (`webapp/config_views.py`) renders `all_settings()` as JSON into an inline script (escaped so a value containing `</script>` cannot break out) alongside the discovered Q&A shields and the chat-model choices. All rendering is client-side.
 
 **Form generation is type-driven.** Each key gets a card: monospace key, type chip, description, the effective value, and a provenance badge (`from db` / `from env` / `from default`, with hover help and a legend at the top). The **Edit** button opens a modal whose control depends on the setting:
 
@@ -94,12 +94,12 @@ Main consumers: `db/cron.py` (pause, backup destination/recipients/push), `agent
 
 The modal shows the current *effective* value and its source, so an empty DB field is not mistaken for "no value". **Save is disabled until the control differs from the DB-layer baseline** (the stored value if provenance is `db`, else empty). An empty control saves `null` — i.e. "clear the DB value, fall back to env/default".
 
-**Save flow.** `POST /settings/api/set` with `{key, value}` (value already typed: bool/number/string/list, or `null`). The endpoint calls `db.set_setting`; `UnknownSetting`, validation failures, and secret-store attempts come back as a 400 with the error message, rendered inline in the modal (with a session rollback so the failed write doesn't poison later requests). On success the response carries the key's fresh `all_settings()` row; the page swaps it into its local state and re-renders — no reload.
+**Save flow.** `POST /config/api/set` with `{key, value}` (value already typed: bool/number/string/list, or `null`). The endpoint calls `db.set_setting`; `UnknownSetting`, validation failures, and secret-store attempts come back as a 400 with the error message, rendered inline in the modal (with a session rollback so the failed write doesn't poison later requests). On success the response carries the key's fresh `all_settings()` row; the page swaps it into its local state and re-renders — no reload.
 
 ## Action buttons (on the `customize.dir` card)
 
-- **Repopulate Q&A memory** → `POST /settings/api/repopulate_memory` → `seed_memory.sync_kb()`: reconciles the Q&A vector table with the merged JSONL (base + `customize.dir` overlay). Only changed rows re-embed; the result line reports unchanged/updated/embedded/deleted counts. The facts-invalidated stamp happens *inside* `sync_kb`, and only when something actually changed. Failure → 502 with the error (also logged with file:line detail for JSONL parse errors / the Ollama error for embedding failures); already-synced rows stay intact and the stale ones retry on the next press.
-- **Rebuild (full)** → `POST /settings/api/rebuild_memory` → `seed_memory.rebuild_kb()`: TRUNCATE + re-embed everything — the escape hatch for genuine table corruption. A full rebuild always re-embeds, so the endpoint always calls `mark_facts_invalidated()` afterwards. Failure → 502; the table may be empty/partial, and pressing again after fixing the cause heals it.
+- **Repopulate Q&A memory** → `POST /config/api/repopulate_memory` → `seed_memory.sync_kb()`: reconciles the Q&A vector table with the merged JSONL (base + `customize.dir` overlay). Only changed rows re-embed; the result line reports unchanged/updated/embedded/deleted counts. The facts-invalidated stamp happens *inside* `sync_kb`, and only when something actually changed. Failure → 502 with the error (also logged with file:line detail for JSONL parse errors / the Ollama error for embedding failures); already-synced rows stay intact and the stale ones retry on the next press.
+- **Rebuild (full)** → `POST /config/api/rebuild_memory` → `seed_memory.rebuild_kb()`: TRUNCATE + re-embed everything — the escape hatch for genuine table corruption. A full rebuild always re-embeds, so the endpoint always calls `mark_facts_invalidated()` afterwards. Failure → 502; the table may be empty/partial, and pressing again after fixing the cause heals it.
 
 ## Settings with side effects
 
@@ -112,7 +112,7 @@ The modal shows the current *effective* value and its source, so an empty DB fie
 
 1. Add a `Setting(...)` entry to `SETTINGS` in `db/settings.py` — key, env fallback (or `None`), type, default, description, optional validator. That is the whole registration: `init_db`'s `reconcile_app_settings()` seeds the row, and the page picks it up from `all_settings()` with a type-appropriate editor automatically.
 2. Read it with `db.get_setting("your.key")` wherever it applies (inside an app context).
-3. Only bespoke UI (a custom control like the shield checklist or model picker, or an action button) needs a change in `webapp/settings_views.py`.
+3. Only bespoke UI (a custom control like the shield checklist or model picker, or an action button) needs a change in `webapp/config_views.py`.
 
 ## Deliberate tradeoffs
 

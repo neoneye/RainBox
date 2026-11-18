@@ -1,5 +1,5 @@
 """Q&A JSONL parse errors must name the file and line so the operator can fix
-the offending entry (surfaced in the /settings repopulate result and the log)."""
+the offending entry (surfaced in the /config repopulate result and the log)."""
 import json
 
 import pytest

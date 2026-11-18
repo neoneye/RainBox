@@ -285,7 +285,7 @@ def test_mark_facts_invalidated_sets_iso_timestamp(app_ctx):
 def test_set_setting_commits_so_value_survives_rollback(app_ctx):
     """set_setting must commit immediately: a later rollback (Flask-SQLAlchemy's
     per-request teardown rolls back uncommitted work) must not discard the saved
-    value. Regression guard — a displaced commit once left /settings saves
+    value. Regression guard — a displaced commit once left /config saves
     uncommitted, so they were silently forgotten on reload."""
     try:
         db.set_setting("cron.paused", True)
@@ -329,7 +329,7 @@ def test_the_recall_filter_backend_is_llm_until_the_operator_says_otherwise(app_
 
 def test_the_prompt_layout_is_single_turn_until_the_operator_says_otherwise(app_ctx):
     """The layout choices come from chat/prompt_layout.py, so a future layout
-    reaches the /settings dropdown by being added there."""
+    reaches the /config dropdown by being added there."""
     from chat.prompt_layout import PROMPT_LAYOUTS, current_prompt_layout
 
     spec = db_settings.SETTINGS["prompt.layout"]

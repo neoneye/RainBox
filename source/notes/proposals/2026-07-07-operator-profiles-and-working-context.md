@@ -30,7 +30,7 @@ is an implicit constant. Three concrete pains:
   other people soon: a public demo where **no PII may surface**, and geek
   friends who should get the technical persona but none of the family
   material. Today the only lever is manually toggling shield checkboxes on
-  `/settings` before and after — error-prone exactly when the cost of a
+  `/config` before and after — error-prone exactly when the cost of a
   mistake is highest.
 - **Situational blindness.** Each turn starts from the transcript plus
   whatever `query_memory` happens to fetch. The assistant re-asks things the
@@ -66,7 +66,7 @@ JSON file per profile in `<customize.dir>/operators/<profile>.json`
   proposal already defines; a profile is essentially a **named shield
   preset**. The effective unlocked set is
   `profile.unlocked_shields ∪ qa.unlocked_shields` (manual session unlocks
-  still work; `/settings` shows which source unlocked each).
+  still work; `/config` shows which source unlocked each).
 - `memory_ceiling` — the maximum claim sensitivity retrievable under this
   profile: `demo → public`, `friends → public`, `simon → private`
   (`secret` stays excluded everywhere, as today).
@@ -85,7 +85,7 @@ The example profiles:
 
 One new setting, `operator.profile` (default `simon`-equivalent: the first
 profile found, falling back to a built-in "unnamed operator" that behaves
-exactly like today). Switchable on `/settings`. **Switching stamps
+exactly like today). Switchable on `/config`. **Switching stamps
 `mark_facts_invalidated()`** — the existing facts-invalidation machinery then
 posts the one-time "re-check facts" notice in each room, which is precisely
 the right semantics: the knowledge base just changed shape.
@@ -136,7 +136,7 @@ Stated plainly so nobody trusts them beyond their design:
 - **Not retroactive.** Chat history, journals, kanban text, and the git page
   show whatever they contain. The demo recipe is therefore: demo profile
   **plus** fresh demo rooms (or the separate DB). The proposal adds a
-  `/settings` warning line when the active profile's ceiling is `public`
+  `/config` warning line when the active profile's ceiling is `public`
   but the current rooms contain history.
 - **Not multi-user.** There is still exactly one human `chat_user`; profiles
   choose what that human's assistant may see and say. Real accounts (one
@@ -197,7 +197,7 @@ Design rules:
    operator is" and makes the demo/friends switch one action.
    *Acceptance:* under `demo`, no overlay Q&A entry and no non-public claim
    reaches any prompt (test the pgvector filter AND the backstop); switching
-   profiles posts the re-check-facts notice; `/settings` shows the active
+   profiles posts the re-check-facts notice; `/config` shows the active
    profile and per-shield provenance.
 2. **Working-context sections from existing tables** (2–5: working on,
    changed recently, unresolved, don't repeat) behind the off-switch, with

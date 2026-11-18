@@ -192,7 +192,7 @@ def test_criteria_run_on_every_turn_with_no_switch_to_turn_them_off(app_ctx):
 
 
 def test_no_setting_exists_for_the_criteria(app_ctx):
-    """The /settings page must not offer a switch for this."""
+    """The /config page must not offer a switch for this."""
     import pytest as _pytest
 
     with _pytest.raises(db.settings.UnknownSetting):

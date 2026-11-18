@@ -34,7 +34,7 @@ across the exec exactly like an agent's `--socket-fd`. The core adopts it in
 it once `init_db` has run and again whenever a `services.*` setting or restart
 nonce changes, and a daemon thread reads the launcher's status lines up it
 until EOF. EOF means the launcher is gone and the core is unmanaged from that
-moment (`/settings` says so). Started without the flag — by hand, or by
+moment (`/config` says so). Started without the flag — by hand, or by
 `tools.serve_ui` — the core is unmanaged from the start. Nothing on this
 channel polls; see `docs/superpowers/specs/2026-09-10-launcher-design.md`.
 

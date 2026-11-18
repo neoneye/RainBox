@@ -1,9 +1,9 @@
 """The core's side of the launcher control channel: snapshots pushed on
-settings writes, status accepted from the launcher, and the /settings view.
+settings writes, status accepted from the launcher, and the /config view.
 
 The channel is a socketpair the test holds the other end of. Hits the live
 local Postgres via the Flask test client; every setting a test writes is
-restored in teardown (same guard as test_settings_views)."""
+restored in teardown (same guard as test_config_views)."""
 import json
 import socket
 
@@ -123,7 +123,7 @@ def test_startup_pushes_one_snapshot_with_the_full_shape(client, managed):
 def test_enable_and_env_edit_push_a_snapshot_with_a_new_nonce(client, managed):
     _wait_lines(managed, 1)
     key = "voice_stt_whisper"
-    r = client.post("/settings/api/set", json={"key": enabled_setting_key(key), "value": True})
+    r = client.post("/config/api/set", json={"key": enabled_setting_key(key), "value": True})
     assert r.status_code == 200, r.get_json()
     pushed = _wait_lines(managed, 1)
     assert len(pushed) == 1
@@ -131,11 +131,11 @@ def test_enable_and_env_edit_push_a_snapshot_with_a_new_nonce(client, managed):
     nonce1 = db.get_setting(nonce_setting_key(key))
     assert entry["enabled"] is True and entry["restart_nonce"] == nonce1 and nonce1
     # Same value again: no change, no nonce, no push.
-    client.post("/settings/api/set", json={"key": enabled_setting_key(key), "value": True})
+    client.post("/config/api/set", json={"key": enabled_setting_key(key), "value": True})
     assert _wait_lines(managed, 1, timeout=0.3) == []
     assert db.get_setting(nonce_setting_key(key)) == nonce1
     # An env override changes the launch environment: new nonce, pushed.
-    r = client.post("/settings/api/set", json={"key": env_setting_key(key, "WHISPER_MODEL"), "value": "medium.en"})
+    r = client.post("/config/api/set", json={"key": env_setting_key(key, "WHISPER_MODEL"), "value": "medium.en"})
     assert r.status_code == 200
     pushed = _wait_lines(managed, 1)
     entry = next(s for s in pushed[-1]["services"] if s["key"] == key)
@@ -155,7 +155,7 @@ def test_restart_rewrites_nonce_pushes_and_is_internal_to_settings_api(client, m
     assert pushed[-1]["core_restart_nonce"] == db.get_setting(nonce_setting_key("core"))
     assert client.post("/services/api/restart/nope").status_code == 404
     # The nonce is machine-owned: the public settings endpoint refuses it.
-    r = client.post("/settings/api/set", json={"key": nonce_setting_key("reranker"), "value": "x"})
+    r = client.post("/config/api/set", json={"key": nonce_setting_key("reranker"), "value": "x"})
     assert r.status_code == 400
 
 
@@ -223,14 +223,14 @@ def test_desired_snapshot_reads_one_statement(client):
 
 def test_invalid_env_override_is_refused_before_any_restart(client):
     nonce_before = db.get_setting(nonce_setting_key("reranker"))
-    r = client.post("/settings/api/set", json={"key": env_setting_key("reranker", "RERANKER_BATCH_SIZE"), "value": "oops"})
+    r = client.post("/config/api/set", json={"key": env_setting_key("reranker", "RERANKER_BATCH_SIZE"), "value": "oops"})
     assert r.status_code == 400
-    r = client.post("/settings/api/set", json={"key": env_setting_key("reranker", "RERANKER_BATCH_SIZE"), "value": 0})
+    r = client.post("/config/api/set", json={"key": env_setting_key("reranker", "RERANKER_BATCH_SIZE"), "value": 0})
     assert r.status_code == 400
-    r = client.post("/settings/api/set", json={"key": env_setting_key("reranker", "RERANKER_DEVICE"), "value": "gpu9"})
+    r = client.post("/config/api/set", json={"key": env_setting_key("reranker", "RERANKER_DEVICE"), "value": "gpu9"})
     assert r.status_code == 400
     assert db.get_setting(nonce_setting_key("reranker")) == nonce_before
-    r = client.post("/settings/api/set", json={"key": env_setting_key("reranker", "RERANKER_BATCH_SIZE"), "value": 8})
+    r = client.post("/config/api/set", json={"key": env_setting_key("reranker", "RERANKER_BATCH_SIZE"), "value": 8})
     assert r.status_code == 200
     assert db.get_setting(nonce_setting_key("reranker")) != nonce_before
     entry = next(s for s in registry.desired_snapshot()["services"] if s["key"] == "reranker")
@@ -244,7 +244,7 @@ def test_unreadable_stored_override_reads_as_unset_and_can_be_repaired(client):
         row.value = legacy
         db.session.commit()
         assert db.get_setting(key) is None
-        assert client.get("/settings").status_code == 200
+        assert client.get("/config").status_code == 200
         entry = next(s for s in registry.desired_snapshot()["services"] if s["key"] == "reranker")
         assert entry["env"] == {}
         nonce_before = db.get_setting(nonce_setting_key("reranker"))

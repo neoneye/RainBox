@@ -140,7 +140,7 @@ def test_rebuild_kb_validates_before_truncating(customize_dir, monkeypatch):
     """A loader validation error must leave the vector table alone.
 
     rebuild_kb truncates and repopulates, so if it truncated first and parsed
-    second, one malformed overlay line plus the /settings rebuild button would
+    second, one malformed overlay line plus the /config rebuild button would
     empty the table and then raise — the operator's whole KB gone to a typo.
     The incremental sync path already promises this ("validation errors raise
     before any write"); the rebuild path must match it."""

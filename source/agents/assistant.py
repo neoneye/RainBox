@@ -2126,7 +2126,7 @@ def _action_query_memory(
     (include_secret stays False).
 
     The seed KB's vector table is read exactly as it stands. Reconciling it
-    with the JSONL is the operator's action on /settings, never this action's
+    with the JSONL is the operator's action on /config, never this action's
     — see the `seed KB load` phase for why a loop step must not embed.
 
     A long fact has its MIDDLE dropped to fit the rendered per-fact cap, both
@@ -2238,7 +2238,7 @@ def _action_query_memory(
                     # step whose cost has nothing to do with what they asked.
                     # A loop step must be bounded by the question it is
                     # answering. Syncing is the operator's own action on
-                    # /settings ("Repopulate Q&A memory"), where the wait
+                    # /config ("Repopulate Q&A memory"), where the wait
                     # belongs to whoever pressed the button.
                     #
                     # Until they press it an edited entry is still reachable by

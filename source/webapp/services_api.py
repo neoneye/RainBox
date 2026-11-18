@@ -1,4 +1,4 @@
-"""JSON endpoints for the /settings page's view of the launcher (see
+"""JSON endpoints for the /config page's view of the launcher (see
 docs/superpowers/specs/2026-09-10-launcher-design.md):
 
 - `GET  /services/api/status`          observed state, from the control channel

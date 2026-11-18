@@ -9,7 +9,7 @@ Unlike other frameworks where the agents runs in the same process, being fragile
 
 At its base is an **OS-process supervisor for AI agents**, built from POSIX primitives without a workflow framework. On top of it sit the parts that get used daily: an assistant with its own ReAct loop and inspectable trace, a long-term memory store with hybrid retrieval, group chat over SSE, a kanban board, a cron scheduler, and local speech in and out.
 
-`main.py` is the launcher: it starts the core and whichever side services are enabled on `/settings`, as sibling processes it supervises. The core (`core.py`) runs a Flask webserver and an idle-by-default supervisor in the same process. When work shows up in an agent's inbox (Postgres-backed), the supervisor spawns that agent as a child process via `posix_spawn`, hands it an inherited `socketpair` for JSONL communication, and multiplexes it via a `selectors` loop. Each agent drains its inbox, journals each item through `processing → completed`, then exits when idle; the supervisor reaps it and does **not** respawn until new work appears. A heartbeat watchdog SIGKILLs unresponsive processes or broken status channels. Ctrl-C stops both the webserver and the supervisor cleanly.
+`main.py` is the launcher: it starts the core and whichever side services are enabled on `/config`, as sibling processes it supervises. The core (`core.py`) runs a Flask webserver and an idle-by-default supervisor in the same process. When work shows up in an agent's inbox (Postgres-backed), the supervisor spawns that agent as a child process via `posix_spawn`, hands it an inherited `socketpair` for JSONL communication, and multiplexes it via a `selectors` loop. Each agent drains its inbox, journals each item through `processing → completed`, then exits when idle; the supervisor reaps it and does **not** respawn until new work appears. A heartbeat watchdog SIGKILLs unresponsive processes or broken status channels. Ctrl-C stops both the webserver and the supervisor cleanly.
 
 The roles `chat_structured`, `chat_unstructured`, `tool_demo`, `workspace_shell`, `mcp`, and `assistant` back the group-chat feature; `workspace_shell` (deterministic command runner) skips the LLM completion path, while the others make **real LLM calls** when configured with model groups. The `edit_document*` roles are payload-driven document-editing planners: they consume `{document, instructions}` inbox payloads, return validated patch data in the journal result, and progressively experiment with richer patch schemas, status/comment fields, EOF handling, and reasoning fields. They plan edits but do not apply them directly.
 
@@ -82,7 +82,7 @@ One command:
 python3 main.py
 ```
 
-That is the launcher: it starts the core (`core.py`) as a child, and any side service enabled on `/settings`. The core runs the webserver on `http://127.0.0.1:5000` **and** the supervisor (in a background daemon thread). `python3 core.py` runs the core alone, unmanaged. The supervisor is idle until work shows up — no agent processes are spawned at startup.
+That is the launcher: it starts the core (`core.py`) as a child, and any side service enabled on `/config`. The core runs the webserver on `http://127.0.0.1:5000` **and** the supervisor (in a background daemon thread). `python3 core.py` runs the core alone, unmanaged. The supervisor is idle until work shows up — no agent processes are spawned at startup.
 
 Every RainBox process shows up in Activity Monitor, `ps` and `top` under its role — `RainBox Launcher`, `RainBox Core`, `RainBox Agent direct_chat`, `RainBox Discord Main Bot`, `RainBox TTS Kokoro` — instead of a column of "Python". Activity Monitor names a process after the file it executed, so each one is exec'd from a hard link to the interpreter created under its venv's `procnames/` directory (`services/procname.py`; the launcher and a hand-started `core.py` re-exec themselves the same way). It is best effort: anything that cannot be linked runs under the plain interpreter, and `RAINBOX_PROCNAME=0` switches it off.
 
@@ -117,7 +117,7 @@ Current architecture/operator docs:
 - [`notes/backup.md`](notes/backup.md) — encrypted database backups (age + zstd), scheduling, remote git upload, and restore.
 - [`notes/find-uuid-design.md`](notes/find-uuid-design.md) — the cross-table uuid resolver behind `/find` and the assistant's `find_uuid` action: exact/substring/fuzzy/mention matching, sources, ranking, Q&A shields.
 - [`notes/supervisor-design.md`](notes/supervisor-design.md) — the core runtime: inbox→journal queue, spawn-on-demand agents, heartbeat watchdog, recovery, routing.
-- [`notes/settings-design.md`](notes/settings-design.md) — typed operator settings: registry, DB → env → default provenance, the /settings page.
+- [`notes/settings-design.md`](notes/settings-design.md) — typed operator settings: registry, DB → env → default provenance, the /config page.
 - [`notes/git-design.md`](notes/git-design.md) — the /git page: repo pointers, guarded tree save, read-only inspection.
 - [`docs/superpowers/specs/2026-09-09-bridge-settings-design.md`](../docs/superpowers/specs/2026-09-09-bridge-settings-design.md) — the /bridges page and chat-bridge settings: connectors, folders, bindings, policy resolution, the live config contract a bridge process follows.
 - [`notes/profile-design.md`](notes/profile-design.md) — person profiles: field registry, sparse data JSONB, locale templates.
@@ -360,7 +360,7 @@ Helpers in `db/` (all use `db.session` under a pushed Flask app context — no c
 
 | Package | What lives there |
 |---|---|
-| `main.py`, `services/` | the launcher: starts `core.py` and the side services enabled on /settings as siblings; `services/` is the data-only catalogue both sides read (`docs/superpowers/specs/2026-09-10-launcher-design.md`) |
+| `main.py`, `services/` | the launcher: starts `core.py` and the side services enabled on /config as siblings; `services/` is the data-only catalogue both sides read (`docs/superpowers/specs/2026-09-10-launcher-design.md`) |
 | `core.py` | the core: webserver + supervisor + signal handling |
 | `agents/` | the agent child process (`python -m agents`), base class hierarchy, and every role implementation |
 | `db/` | Flask-SQLAlchemy models and all Postgres helpers (`import db` is the facade) |

@@ -155,7 +155,7 @@ RainBox today is a local, Postgres-backed assistant workbench:
   `source/data/question_answer.jsonl` registry into a pgvector-backed
   `data_seed_memory` table and answers with a two-stage lookup — exact-alias match
   first, then semantic top-K — rebuildable without a restart via `rebuild_kb()`
-  (the `/settings` "Repopulate Q&A memory" button), in
+  (the `/config` "Repopulate Q&A memory" button), in
   `source/memory/seed_memory.py`.
 - Write families already implemented: memory, skills, kanban, reminders (cron),
   and file edits. Writes are tiered as log-and-undo (execute immediately,

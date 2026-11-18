@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-29
 **Scope:** `/chat` room creation, the room-type model, the right sidebar, one
-new `/settings` key.
+new `/config` key.
 
 ## Problem
 
@@ -65,7 +65,7 @@ the agents compares against `"agents"` by value.
 A registry key in `db/settings.py`: a persona uuid, validated to name an
 existing persona, unset by default. The shipped code seeds no persona, so
 which character the operator talks to stays the operator's choice; the store
-ships empty. `/settings` renders it as a select over the persona tree, like
+ships empty. `/config` renders it as a select over the persona tree, like
 `profile.current` (persona name as the label, the uuid in the tooltip).
 
 ## UI
@@ -76,7 +76,7 @@ ships empty. `/settings` renders it as a select over the persona tree, like
   The folder "New room" menu opens the same modal, so it inherits this.
 - The agent checklist shows only for Group chat.
 - Under Assistant, one line names the persona the room will speak with, or
-  says no default persona is set, with a link to `/settings`. It is fetched
+  says no default persona is set, with a link to `/config`. It is fetched
   when the modal opens (`GET /chat/api/new-room-defaults` →
   `{"persona": {"uuid", "name"} | null}`), so a default changed in another
   tab is current.

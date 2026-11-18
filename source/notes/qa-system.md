@@ -410,7 +410,7 @@ A shield hides sensitive entries from the LLM until the operator unlocks them.
 - The `shield` value must be a **string** (the shield name). A non-string value
   (`"shield": 5`, `["a","b"]`, …) is a data error: `_load_jsonl` rejects it, so
   **repopulate fails hard** with a `file:line` message (surfaced by the
-  /settings repopulate result). As a runtime backstop, any non-string shield
+  /config repopulate result). As a runtime backstop, any non-string shield
   that still reaches a lookup is treated as locked — fail closed, never revealed
   (`_entry_locked`).
 - Enforced in two layers: at the pgvector query via a metadata filter
@@ -418,13 +418,13 @@ A shield hides sensitive entries from the LLM until the operator unlocks them.
   set, so locked entries never occupy a top-K slot) and as an in-memory backstop
   (`_entry_locked` / `_drop_locked`) that also catches cross-process staleness
   and Settings toggles with no repopulate.
-- `available_qa_shields()` lists the shield names for the /settings UI. The
+- `available_qa_shields()` lists the shield names for the /config UI. The
   unlocked set comes from `_unlocked_shields()` (the `qa.unlocked_shields`
   setting; empty outside an app context — the safe default).
 
 > **Control-plane caveat.** `qa.unlocked_shields` is an ordinary setting, and
 > the settings API has no authentication — any local HTTP caller can unlock
-> every shield with one `POST /settings/api/set`. Shields gate what reaches
+> every shield with one `POST /config/api/set`. Shields gate what reaches
 > the *LLM*, not what a local attacker can read. This is Finding 8a of
 > `notes/proposals/2026-06-25-security-review-mitigations.md` (open); the plan
 > is auth plus treating shield changes as high-sensitivity, audited actions.
@@ -660,34 +660,34 @@ validation errors (duplicate id/path, bad JSON, non-string shield) raise with
   message with no button press. A sync failure here (e.g. Ollama down) is
   fatal only when the table is empty; with existing rows it is logged and
   retrieval keeps serving them.
-- **On demand** — the /settings button (below).
+- **On demand** — the /config button (below).
 
 ## Operator operations
 
 - **Add/edit facts** — edit the overlay `question_answer.jsonl` under
   `customize.dir` (or the base file). The edit is picked up on the next
-  message (see [Sync](#sync-incremental-reconcile)); the /settings button
+  message (see [Sync](#sync-incremental-reconcile)); the /config button
   forces it immediately.
 - **Add/edit relations** — edit `relations.json` in the same directory. It
   joins the same mtime/size snapshot, so a declaration edit is picked up on the
   next message like a JSONL edit, and the roster's digest covers every field
   that changes what is stored or rendered. Adding a member to a declared prefix
   needs no edit here at all — membership is derived.
-- **Repopulate** — the /settings "Repopulate Q&A memory" button
-  (`POST /settings/api/repopulate_memory` → `sync_kb`) reconciles without a
+- **Repopulate** — the /config "Repopulate Q&A memory" button
+  (`POST /config/api/repopulate_memory` → `sync_kb`) reconciles without a
   restart and reports `{unchanged, updated, embedded, deleted}` row counts. A
   failure (embedding backend down, a JSONL parse error carrying
   `file:line:column`, or a `relations.json` validation error naming the
   declaration) leaves synced rows intact; pressing again retries the stale
   ones.
 - **Rebuild (full)** — the escape hatch next to it
-  (`POST /settings/api/rebuild_memory` → `rebuild_kb`) keeps the TRUNCATE +
+  (`POST /config/api/rebuild_memory` → `rebuild_kb`) keeps the TRUNCATE +
   re-embed-everything semantics for genuine table corruption. Equivalent to
   setting `QUERY_AGENT_REBUILD_KB=1` (`REBUILD_ENV`) and restarting. A failure
   here can leave the table empty/partial; the next successful run heals it.
   Sources are parsed **before** the TRUNCATE, so a malformed JSONL or
   `relations.json` is a no-op rather than an emptied table.
-- **Unlock a shield** — check it on /settings and Save; this writes
+- **Unlock a shield** — check it on /config and Save; this writes
   `qa.unlocked_shields`. Shielded entries become visible to the LLM immediately
   (the in-memory backstop applies on the next query; no repopulate needed).
 - **Troubleshooting** retrieval failures: see `operator-guide.md`

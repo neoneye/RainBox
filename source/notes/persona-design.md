@@ -262,7 +262,7 @@ they keep their own model + system-prompt Settings panel, no persona section.
 An **assistant room** (`room_type='assistant'`, the New-chatroom modal's
 default "Assistant" choice) is the operator and the assistant, members fixed,
 and is born with a persona: `POST /chat/api/rooms` copies the
-`chat.default_persona` setting (a persona uuid, picked on `/settings`) into
+`chat.default_persona` setting (a persona uuid, picked on `/config`) into
 the assistant member's binding, following the newest revision — the same
 binding the picker writes, so the room's Settings show it and can change it.
 The copy happens once, at creation: changing the default later re-voices no

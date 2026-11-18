@@ -2,7 +2,7 @@
 `profile.current` that writes the pointer and `profile.current_changed_at`
 atomically on an actual change while leaving `qa.facts_invalidated_at`
 independent — plus the `internal` registry flag that keeps the stamp off the
-/settings page.
+/config page.
 
 Hits the live local Postgres (rainbox_claude via conftest); the three touched
 settings are saved and restored around every test.
@@ -236,7 +236,7 @@ def test_internal_setting_hidden_from_listing_but_readable(app_ctx):
 
 
 def test_settings_endpoint_routes_profile_current_through_helper(app_ctx):
-    """A /settings page write of profile.current must fire the stamps — the
+    """A /config page write of profile.current must fire the stamps — the
     endpoint routing, not just the helper."""
     import webapp.core as webapp_core
 
@@ -246,7 +246,7 @@ def test_settings_endpoint_routes_profile_current_through_helper(app_ctx):
 
     client = webapp_core.app.test_client()
     target = _template_uuid(0)
-    resp = client.post("/settings/api/set",
+    resp = client.post("/config/api/set",
                        json={"key": "profile.current", "value": target})
     assert resp.status_code == 200
     assert resp.get_json()["ok"] is True
@@ -256,14 +256,14 @@ def test_settings_endpoint_routes_profile_current_through_helper(app_ctx):
     assert db.get_setting("qa.facts_invalidated_at") is None   # untouched
 
     # An unrelated setting write must not advance the profile stamp.
-    resp = client.post("/settings/api/set",
+    resp = client.post("/config/api/set",
                        json={"key": "cron.paused", "value": None})
     assert resp.status_code == 200
     assert db.get_setting("profile.current_changed_at") == stamp
 
     # Internal keys are machine-owned: the public endpoint rejects writes,
     # not merely hides them from the listing.
-    resp = client.post("/settings/api/set",
+    resp = client.post("/config/api/set",
                        json={"key": "profile.current_changed_at",
                              "value": "2026-01-01T00:00:00+00:00"})
     assert resp.status_code == 400

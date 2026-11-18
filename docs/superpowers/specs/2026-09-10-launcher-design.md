@@ -3,7 +3,7 @@
 **Date:** 2026-09-10
 
 **Status:** phase 1 implemented (`source/main.py` — the launcher IS the entrypoint; the core moved to `source/core.py`, `source/services/`,
-`source/webapp/services_api.py`, the `services.*` settings and the /settings
+`source/webapp/services_api.py`, the `services.*` settings and the /config
 launcher card). Two runtime facts beyond the text below: `RAINBOX_CORE_PORT`
 overrides the core's port for both `core.py` and the launcher, so a second
 core can run beside the operator's for a smoke test; and the control channel
@@ -174,7 +174,7 @@ this fd can speak on it, so there are no instance markers to check, and EOF on
 either end means the peer is gone. When the core dies the launcher sees EOF
 (and `SIGCHLD`); when the launcher dies the core's reader sees EOF and the core
 is unmanaged from that moment. A core started without `--control-fd` (by hand,
-`tools.serve_ui`) is unmanaged and `/settings` says so.
+`tools.serve_ui`) is unmanaged and `/config` says so.
 
 There is no port probe before spawning the core: any check the launcher
 made would be a time-of-check/time-of-use race against the core's own bind a
@@ -384,7 +384,7 @@ raised into the loop.
 States: `starting`, `running`, `stopping`, `stopped`, `backoff`, `failed`,
 `credential missing`, `not installed`. Include next-retry time for `backoff` and
 credential source for credential-related states, never a credential value.
-`/settings` displays the desired toggle separately from observed state, with a
+`/config` displays the desired toggle separately from observed state, with a
 POST Restart action. `running` describes liveness only. When the channel is
 closed (EOF, or a failed send) the core is unmanaged and shows every observed
 state as `unknown`; it never alters the desired toggle. A core started without
@@ -434,7 +434,7 @@ What the numbers say:
   when a process changes, `SIGCHLD` delivers child exits, and the loop sleeps
   in `select()` until one of those happens. The launcher's remaining 8
   wakeups per 30 s are the inactivity log and the sampler itself; the core's
-  idle is back to what it was without a launcher. A toggle on `/settings`
+  idle is back to what it was without a launcher. A toggle on `/config`
   now applies in milliseconds instead of within 5 s.
 - **Liveness is free.** Two timed signals a heartbeat used to buy — "is the
   launcher alive?", "is the core alive?" — come from EOF on the socket and

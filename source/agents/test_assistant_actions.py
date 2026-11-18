@@ -543,7 +543,7 @@ def test_query_memory_never_reconciles_the_vector_table(app_ctx, monkeypatch):
     A reconcile embeds one call per changed row, so leaving it in the loop
     makes a turn's latency a function of how much the operator last edited —
     an edit of fifty entries stalls the next question behind fifty embeds it
-    has no use for. Syncing belongs to /settings, where the person who pressed
+    has no use for. Syncing belongs to /config, where the person who pressed
     the button is the person who waits.
 
     Asserted on the seam rather than on a timing: `_ensure_populated` is the

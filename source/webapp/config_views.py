@@ -1,4 +1,4 @@
-"""The /settings page + its JSON API.
+"""The /config page + its JSON API.
 
 Operator-editable configuration backed by the `db_settings` registry (the source
 of truth) and the `app_setting` table (persisted values). The page renders one
@@ -48,7 +48,7 @@ def _persona_choices() -> list[dict]:
 
 SETTINGS_TEMPLATE = """
 <!doctype html>
-<title>Settings &mdash; rainbox</title>
+<title>Configuration &mdash; rainbox</title>
 <style>
   body{font-family:system-ui,sans-serif;margin:0;padding:0}
   .pp-content{max-width:900px}
@@ -96,7 +96,7 @@ SETTINGS_TEMPLATE = """
 </style>
 {% include "_nav.html" %}
 <div class="pp-content">
-<h1>Settings</h1>
+<h1>Configuration</h1>
 <p class="muted">Operator configuration stored in Postgres. Each value resolves
 in priority order: <b>DB &rarr; environment&nbsp;variable &rarr; built-in
 default</b>. Click <b>Edit</b> to change it; clearing the field (or choosing
@@ -284,7 +284,7 @@ function render(){
         .filter(cb => cb.checked).map(cb => cb.getAttribute('data-shield'));
       btn.disabled = true; if (out) out.textContent = 'saving…';
       try {
-        const r = await fetch('/settings/api/set', {
+        const r = await fetch('/config/api/set', {
           method: 'POST', headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({key: 'qa.unlocked_shields', value: names}),
         });
@@ -304,7 +304,7 @@ function render(){
       btn.disabled = true;
       out.textContent = 'syncing…';
       try {
-        const r = await fetch('/settings/api/repopulate_memory', {method: 'POST'});
+        const r = await fetch('/config/api/repopulate_memory', {method: 'POST'});
         const d = await r.json();
         out.textContent = d.ok
           ? 'synced: ' + d.unchanged + ' unchanged, ' + d.updated + ' updated, '
@@ -323,7 +323,7 @@ function render(){
       btn.disabled = true;
       out.textContent = 'embedding…';
       try {
-        const r = await fetch('/settings/api/rebuild_memory', {method: 'POST'});
+        const r = await fetch('/config/api/rebuild_memory', {method: 'POST'});
         const d = await r.json();
         out.textContent = d.ok
           ? 're-embedded ' + d.entries + ' entries / ' + d.documents + ' questions'
@@ -473,7 +473,7 @@ function typedValue(s){
 function saveEdit(){
   if (!editKey) return;
   const s = SETTINGS.find(x => x.key === editKey);
-  fetch('/settings/api/set', {
+  fetch('/config/api/set', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({key: editKey, value: typedValue(s)}),
   }).then(r => r.json().then(d => ({status: r.status, d})))
@@ -499,8 +499,8 @@ render();
 """
 
 
-@app.route("/settings")
-def settings_page() -> str:
+@app.route("/config")
+def config_page() -> str:
     import json
 
     import memory.seed_memory as seed_memory
@@ -522,8 +522,8 @@ def settings_page() -> str:
     )
 
 
-@app.route("/settings/api/set", methods=["POST"])
-def settings_set_api() -> tuple[Response, int] | Response:
+@app.route("/config/api/set", methods=["POST"])
+def config_set_api() -> tuple[Response, int] | Response:
     data = request.get_json(silent=True)
     if not isinstance(data, dict) or "key" not in data:
         return jsonify({"ok": False, "error": "body must be a JSON object with a 'key'"}), 400
@@ -563,8 +563,8 @@ def settings_set_api() -> tuple[Response, int] | Response:
     return jsonify({"ok": True, "setting": _setting_row(key)})
 
 
-@app.route("/settings/api/repopulate_memory", methods=["POST"])
-def settings_repopulate_memory() -> tuple[Response, int] | Response:
+@app.route("/config/api/repopulate_memory", methods=["POST"])
+def config_repopulate_memory() -> tuple[Response, int] | Response:
     """Reconcile the Q&A vector table with the merged JSONL (base +
     customize.dir overlay) — the 'Repopulate Q&A memory' button. Only changed
     rows re-embed (sync_kb), and the facts-invalidated stamp happens inside
@@ -586,8 +586,8 @@ def settings_repopulate_memory() -> tuple[Response, int] | Response:
     return jsonify({"ok": True, **counts})
 
 
-@app.route("/settings/api/rebuild_memory", methods=["POST"])
-def settings_rebuild_memory() -> tuple[Response, int] | Response:
+@app.route("/config/api/rebuild_memory", methods=["POST"])
+def config_rebuild_memory() -> tuple[Response, int] | Response:
     """TRUNCATE + re-embed everything — the 'Rebuild (full)' escape hatch for
     genuine table corruption. 502 carries the error; the table may then be
     empty or partial, and pressing again after fixing the cause heals it."""

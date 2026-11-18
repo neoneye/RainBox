@@ -56,7 +56,7 @@ def test_an_unknown_reranker_model_raises_rather_than_falling_back():
 
 
 def test_the_settings_registry_offers_exactly_these_backends():
-    """The /settings dropdown and this module must not drift apart: the
+    """The /config dropdown and this module must not drift apart: the
     registry's choices are literal (it is the source of truth for settings),
     so a model added here has to appear there."""
     from db.settings import SETTINGS

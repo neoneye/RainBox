@@ -6,7 +6,7 @@ against the chunk size before embedding: a long answer as metadata trips
 "Metadata length (N) is longer than chunk size (1024)". Excluding the metadata
 from the embed/LLM text both fixes that crash and makes embeddings truly
 question-only. This test drives the real SentenceSplitter path that
-VectorStoreIndex.from_documents runs, so it reproduces the /settings crash.
+VectorStoreIndex.from_documents runs, so it reproduces the /config crash.
 """
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.schema import MetadataMode
@@ -15,7 +15,7 @@ import memory.seed_memory as seed_memory
 
 
 def test_long_answer_does_not_trip_chunk_size_guard():
-    # Answer far longer than the default 1024-token chunk size (the /settings case).
+    # Answer far longer than the default 1024-token chunk size (the /config case).
     long_answer = "sentence about the topic. " * 400
     entries = [{"id": "big", "kind": "static", "questions": ["what is it?"],
                 "answer": long_answer}]

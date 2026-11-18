@@ -2,7 +2,7 @@
 pgvector table, and the matching over both.
 
 Callers are the assistant's `memory_query` action, `agents/recall_filter.py`,
-/memory/developer and the /settings repopulate buttons.
+/memory/developer and the /config repopulate buttons.
 
 Many names here keep a leading underscore for historical reasons and are
 imported explicitly by those callers anyway — the underscore marks "internal
@@ -626,7 +626,7 @@ def _load_jsonl() -> list[dict[str, Any]]:
                 entry = json.loads(line)
             except json.JSONDecodeError as exc:
                 # Name the file + 1-based line + column so the operator can fix
-                # the offending entry. The /settings repopulate result shows this
+                # the offending entry. The /config repopulate result shows this
                 # str(); the endpoint also logs it.
                 raise ValueError(
                     f"{path}:{lineno}: invalid JSON — {exc.msg} "
@@ -829,7 +829,7 @@ def _ensure_populated(vs: PGVectorStore) -> None:
     Called by the chat-route agents and by /memory/developer. The assistant's
     ReAct loop is NOT among them: an inline reconcile costs one embed call per
     changed row, so it would make a turn's latency a function of how much the
-    operator last edited. That surface syncs only from /settings."""
+    operator last edited. That surface syncs only from /config."""
     global _populated, _sync_snapshot
     with _lock:
         if not _populated and os.environ.get(REBUILD_ENV) == "1":
@@ -860,7 +860,7 @@ def _ensure_populated(vs: PGVectorStore) -> None:
 
 def rebuild_kb() -> dict[str, int]:
     """Reset the in-process registry caches, TRUNCATE data_seed_memory,
-    and eagerly re-embed the merged JSONL (the /settings 'Repopulate Q&A
+    and eagerly re-embed the merged JSONL (the /config 'Repopulate Q&A
     memory' button; same semantics as QUERY_AGENT_REBUILD_KB=1 but without
     a restart). Returns {"entries": N, "documents": M} (M = embedded
     question variants). Raises on embedding failure (e.g. Ollama down) —

@@ -189,8 +189,8 @@ is not just UI impersonation — it is execution authority over the agent queue.
 
 **Severity:** P0 · **Status:** open, unchanged
 
-The settings API changes registered settings via `POST /settings/api/set`
-(`webapp/settings_views.py:358-377`), unauthenticated. The registry
+The settings API changes registered settings via `POST /config/api/set`
+(`webapp/config_views.py:358-377`), unauthenticated. The registry
 (`db/settings.py:66-117`) includes high-impact backup settings — `backup.repo`,
 `backup.age_recipient`, `backup.git_push` — alongside newer ones
 (`cron.paused`, `assistant.disabled_capabilities`, `customize.dir`,
@@ -427,8 +427,8 @@ are new blast radius behind the same missing lock.
 The seed-memory Q&A system hides entries tagged with a `shield` unless that
 shield is unlocked (`memory/seed_memory.py:_entry_hidden`), and the set of
 unlocked shields is the `qa.unlocked_shields` setting. That setting is togglable
-through the same unauthenticated `POST /settings/api/set`
-(`settings_views.py:358-377`). Unlocking a shield exposes previously-hidden Q&A
+through the same unauthenticated `POST /config/api/set`
+(`config_views.py:358-377`). Unlocking a shield exposes previously-hidden Q&A
 answers — which the in-flight qa-overlay work is designed to hold *personal /
 household data* — to the assistant on its next run. A confidentiality control
 whose entire job is gating private data is flippable by any local caller with no
@@ -460,7 +460,7 @@ proxy behind auth; consider rate limits.
 
 ### 8d. Other unauthenticated state-changing routes
 
-`POST /settings/api/repopulate_memory` rebuilds and re-embeds the Q&A KB (a
+`POST /config/api/repopulate_memory` rebuilds and re-embeds the Q&A KB (a
 resource-heavy operation that can hammer Ollama); `POST /demo` calls
 `reset_demo_data()` and re-enqueues demo tasks (destructive to demo state);
 the kanban API (`POST /kanban/api/...`, ~12 routes) and conversation API

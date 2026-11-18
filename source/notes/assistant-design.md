@@ -709,7 +709,7 @@ block, not at the end of the enum.
 
 The operator can turn capabilities off at runtime via the
 `assistant.disabled_capabilities` setting (a JSON list of names, editable on
-`/settings`); `capability_report()` exposes the effective set for inspection.
+`/config`); `capability_report()` exposes the effective set for inspection.
 
 In a chat room, the sidebar's Settings mode lists the assistant's tools under
 **Tools** (`room_tools(room_uuid)`, served at `/chat/api/rooms/<room>/tools`),

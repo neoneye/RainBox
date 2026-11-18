@@ -24,7 +24,7 @@ history); `proposals/` holds design-time intent and reviews.
   recovery, routing, the agent class hierarchy.
 - [settings-design.md](settings-design.md) — typed operator settings: the
   code-owned registry, DB → env → default resolution with provenance, the
-  /settings page, Q&A repopulate actions.
+  /config page, Q&A repopulate actions.
 - [assistant-design.md](assistant-design.md) — the ReAct loop: capability
   registry, acceptance-criteria step 0, write tiers (log-and-undo /
   confirm), undo ledger, controls, trace, worker-failure recovery, chat

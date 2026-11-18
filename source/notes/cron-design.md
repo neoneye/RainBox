@@ -56,7 +56,7 @@ cron_run                          -- one row per firing → the "logs"
   created_at
 ```
 
-There is no `cron_setting` table: global state lives in the settings registry (`db/settings.py`) — `cron.paused` — so it also shows up on `/settings`.
+There is no `cron_setting` table: global state lives in the settings registry (`db/settings.py`) — `cron.paused` — so it also shows up on `/config`.
 
 ### Tree model
 

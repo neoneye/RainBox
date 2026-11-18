@@ -132,7 +132,7 @@ Expected implementation surface:
 - Phase 0: `evals/profile_guidance.py` plus focused runner tests;
 - Phase 1: `profile_fields.py`, `data/profile_templates.json`,
   `static/profile.js`, new `user_profile/formatting.py`, exports in
-  `user_profile/__init__.py`, `db/settings.py`, `webapp/settings_views.py`,
+  `user_profile/__init__.py`, `db/settings.py`, `webapp/config_views.py`,
   `agents/assistant.py`, `notes/operator-guide.md`, and their tests (including
   the existing marker suite, generalized from facts to profile context);
 - Phase 2: shared mutation logic in `db/profile.py`, new
@@ -1082,7 +1082,7 @@ Implementation contract for the marker:
   rolls the whole transaction back on failure;
 - "omitted from the settings editor" needs a mechanism that does not exist
   yet: the `Setting` registry dataclass gains `internal: bool = False`, and
-  `all_settings()` gains `include_internal=False` so the `/settings` page
+  `all_settings()` gains `include_internal=False` so the `/config` page
   never lists internal keys, while `get_setting`/`set_setting` treat them
   normally. `profile.current_changed_at` registers as a string setting,
   default `None`, `internal=True`. (The existing `secret` flag is wrong for

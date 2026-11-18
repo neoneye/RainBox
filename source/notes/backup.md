@@ -78,7 +78,7 @@ database, so this widens nothing beyond that window.
 The encrypt-only design holds only as long as the *recipient configuration* is
 trustworthy, and today it is not protected: the web app has no authentication,
 so any process that can reach the localhost HTTP port can change
-`backup.age_recipient` and `backup.repo` via `POST /settings/api/set` (the DB
+`backup.age_recipient` and `backup.repo` via `POST /config/api/set` (the DB
 value **overrides** the env var), then fire the backup job via the cron API —
 producing a dump of the whole database encrypted to a key *they* control,
 optionally pushed off-machine if `backup.git_push` is on. The destination has
@@ -263,7 +263,7 @@ time — no restart):
 | `backup.git_push`     | bool   | `RAINBOX_BACKUP_GIT_PUSH`       |
 
 Resolution is **DB value → env var → default**; an empty string is treated as
-unset (falls through). Edit them on the **`/settings`** page (typed inputs,
+unset (falls through). Edit them on the **`/config`** page (typed inputs,
 shows whether each value comes from DB/env/default, with a Clear button to drop
 the DB value and fall back); they're also visible read-only in Flask-Admin under
 **Config → App settings**. `RAINBOX_BACKUP_AGE_RECIPIENTS_FILE` has no setting —

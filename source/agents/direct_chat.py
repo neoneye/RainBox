@@ -40,7 +40,7 @@ _END = object()  # `next(chunks, _END)`: the stream is exhausted
 NO_MODEL_NOTICE: str = (
     "No model selected for this chat, and no global default is available. "
     "Open the right panel, choose “Settings”, and pick a model — or set "
-    "chat.default_model on the /settings page."
+    "chat.default_model on the /config page."
 )
 
 

@@ -124,7 +124,7 @@ shield tests to the sync path.
 
 Once a clean sync is ~free, the manual step can disappear:
 
-1. **Phase 1** — the `/settings` button runs `sync_kb()` and reports
+1. **Phase 1** — the `/config` button runs `sync_kb()` and reports
    `{unchanged, updated, embedded, deleted}` counts. A separate **"Rebuild
    (full)"** escape hatch keeps today's TRUNCATE semantics for genuine
    corruption.

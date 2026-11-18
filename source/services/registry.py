@@ -15,7 +15,7 @@ and both are event-driven — nothing on either side polls:
 EOF is liveness: when the launcher dies the reader sees EOF and the core is
 unmanaged from that moment; when the core dies the launcher sees EOF (and
 SIGCHLD). A core started without `--control-fd` (by hand, `tools.serve_ui`)
-is unmanaged, and /settings says so instead of showing toggles that would do
+is unmanaged, and /config says so instead of showing toggles that would do
 nothing.
 """
 from __future__ import annotations
@@ -224,7 +224,7 @@ class LauncherStatus:
             self._last_sequence = -1
 
     def view(self, managed: bool) -> dict[str, Any]:
-        """What /settings renders: managed?, and per-service observed state —
+        """What /config renders: managed?, and per-service observed state —
         `unknown` when unmanaged (no launcher on the channel) or for a service
         the launcher has not reported yet."""
         with self._lock:

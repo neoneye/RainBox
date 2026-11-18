@@ -146,7 +146,7 @@ provider-consent boundary. Consequently:
 
 - The default generation scope is publishable upstream static entries only.
 - Broader scopes are enabled by a **persistent generation policy**, configured
-  once on `/settings` rather than re-approved ceremony-by-ceremony per run:
+  once on `/config` rather than re-approved ceremony-by-ceremony per run:
   the policy names the allowed provenance classes (and, separately, shield
   sets) plus the pinned generator and validator model groups for that scope.
   Runs display the active policy and reuse it. Changing its provenance or
@@ -355,7 +355,7 @@ generation policy stores explicit generator and validator group UUIDs rather
 than following either agent's fallback chain. The job does not enqueue normal
 agent journal work.
 
-The `/settings` action should:
+The `/config` action should:
 
 1. show scope plus the complete resolved generator and validator provider chains
    before confirmation;
@@ -615,7 +615,7 @@ here so the build does not stall on them:
   control plane. Provider locality is still displayed and pinned, but is not
   accepted as proof of operator authorization.
 - **Run execution model.** The generation job runs as a single-flight
-  background run (the benchmark-runner pattern): `/settings` starts it,
+  background run (the benchmark-runner pattern): `/config` starts it,
   polls a progress endpoint, and shows the last run's summary counts from
   `seed_followup_run`. The worker heartbeats that row between entries. One run
   at a time; starting while one has a fresh non-terminal heartbeat is refused.
@@ -674,11 +674,11 @@ here so the build does not stall on them:
   any overlay or shield scope requires operator authentication and both
   explicit group UUIDs.
 - **Policy UI.** Do not expose this policy through the generic JSON textarea.
-  Add a dedicated Q&A follow-up card on `/settings` with provenance checkboxes,
+  Add a dedicated Q&A follow-up card on `/config` with provenance checkboxes,
   shield checkboxes, and generator/validator group selects filtered with the
   same structured-output compatibility rule as `/agentmodel`. Saving still
   calls `db.set_setting`, so the registry validator remains the authoritative
-  server-side check. `settings_page()` must pass structured-capable group
+  server-side check. `config_page()` must pass structured-capable group
   choices (UUID, label, ordered member/provider summary) alongside its existing
   shield data so the confirmation screen shows exactly where both calls may go.
 - **Fixture set.** Extend the existing eval framework with
@@ -728,7 +728,7 @@ The follow-up product is implemented in these concrete seams:
 - `webapp/core.py`: instantiate one `qa_followup_runner`.
 - `webapp/qa_followup_api.py`: register the start/state/stop endpoints below;
   import it from `webapp/__init__.py`.
-- `webapp/settings_views.py`: render the dedicated policy/run card.
+- `webapp/config_views.py`: render the dedicated policy/run card.
 - `webapp/memory_developer_views.py` and `static/memory_developer.js`: add
   inspection, candidate-gap review, graph summaries, and overlay-draft export.
 - `agents/assistant.py`: consume only the shared servable-hint lookup when
@@ -757,16 +757,16 @@ The follow-up product is implemented in these concrete seams:
 Runner endpoints:
 
 ```text
-POST /settings/api/qa_followups/start
+POST /config/api/qa_followups/start
 body: {"force": false}
 -> 202 {ok, running, run_id}
 -> 409 when a run is already active
 
-GET /settings/api/qa_followups/state
+GET /config/api/qa_followups/state
 -> {status, running, run_id, started_at, heartbeat_at, finished_at,
     current: {phase, completed, total}, totals, error_code}
 
-POST /settings/api/qa_followups/stop
+POST /config/api/qa_followups/stop
 -> {ok, stopping}
 ```
 
@@ -1025,7 +1025,7 @@ current capability.
 1. Telemetry-mined gap report (variant A): the unanswered-query event
    producer (small CHECK-constraint migration) plus a report over verdict and
    unanswered rows on `/memory/developer`; no model calls.
-2. Shared framework: persistent generation policy on `/settings`, pinned model
+2. Shared framework: persistent generation policy on `/config`, pinned model
    resolution, durable scoped batch runner, structured-call helpers, and tests.
    Keep it upstream-only until operator authentication exists.
 3. Optional alias track: write and approve its product-specific storage/sync

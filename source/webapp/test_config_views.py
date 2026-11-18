@@ -1,4 +1,4 @@
-"""Tests for the /settings page and its JSON API.
+"""Tests for the /config page and its JSON API.
 
 Hits the live local Postgres via the Flask test client. Any setting a test
 writes is reset to NULL in teardown so the shared app_setting rows are left as
@@ -30,8 +30,8 @@ def client():
 
 
 def test_page_renders_registry_rows(client):
-    body = client.get("/settings").get_data(as_text=True)
-    assert "Settings" in body
+    body = client.get("/config").get_data(as_text=True)
+    assert "<h1>Configuration</h1>" in body
     for key in ("backup.repo", "backup.age_recipient", "backup.git_push"):
         assert key in body
     # The registry data is embedded for the inline JS to render.
@@ -39,7 +39,7 @@ def test_page_renders_registry_rows(client):
 
 
 def test_page_uses_edit_overlay_not_inline_save(client):
-    body = client.get("/settings").get_data(as_text=True)
+    body = client.get("/config").get_data(as_text=True)
     # Edit-button + overlay UX (Save gated on change, Cancel to back out).
     assert "data-edit=" in body
     assert 'id="s-modal"' in body and 'id="s-save"' in body and 'id="s-cancel"' in body
@@ -50,7 +50,7 @@ def test_page_uses_edit_overlay_not_inline_save(client):
 
 
 def test_page_explains_source_badges(client):
-    body = client.get("/settings").get_data(as_text=True)
+    body = client.get("/config").get_data(as_text=True)
     # A legend explains from db / env / default so the operator needn't remember.
     assert 's-legend' in body
     assert "stored in the database" in body         # 'from db' meaning
@@ -60,7 +60,7 @@ def test_page_explains_source_badges(client):
 
 
 def test_set_string_setting_roundtrips_and_reports_db_source(client):
-    resp = client.post("/settings/api/set", json={"key": "backup.repo", "value": "/tmp/repo"})
+    resp = client.post("/config/api/set", json={"key": "backup.repo", "value": "/tmp/repo"})
     assert resp.status_code == 200
     d = resp.get_json()
     assert d["ok"] is True
@@ -71,9 +71,9 @@ def test_set_string_setting_roundtrips_and_reports_db_source(client):
 
 def test_clear_setting_falls_back(client, monkeypatch):
     monkeypatch.setenv("RAINBOX_BACKUP_REPO", "/env/repo")
-    client.post("/settings/api/set", json={"key": "backup.repo", "value": "/tmp/db"})
+    client.post("/config/api/set", json={"key": "backup.repo", "value": "/tmp/db"})
     # Clearing (value=None) drops the DB value -> env fallback.
-    resp = client.post("/settings/api/set", json={"key": "backup.repo", "value": None})
+    resp = client.post("/config/api/set", json={"key": "backup.repo", "value": None})
     assert resp.status_code == 200
     d = resp.get_json()
     assert d["setting"]["value"] == "/env/repo"
@@ -81,27 +81,27 @@ def test_clear_setting_falls_back(client, monkeypatch):
 
 
 def test_bool_setting_explicit_false(client):
-    resp = client.post("/settings/api/set", json={"key": "backup.git_push", "value": False})
+    resp = client.post("/config/api/set", json={"key": "backup.git_push", "value": False})
     assert resp.status_code == 200
     assert resp.get_json()["setting"]["value"] is False
     assert db.get_setting("backup.git_push") is False
 
 
 def test_invalid_recipient_rejected_400(client):
-    resp = client.post("/settings/api/set",
+    resp = client.post("/config/api/set",
                        json={"key": "backup.age_recipient", "value": "not-a-key"})
     assert resp.status_code == 400
     assert "age recipient" in resp.get_json()["error"]
 
 
 def test_unknown_key_rejected_400(client):
-    resp = client.post("/settings/api/set", json={"key": "nope.key", "value": "x"})
+    resp = client.post("/config/api/set", json={"key": "nope.key", "value": "x"})
     assert resp.status_code == 400
     assert "unknown setting" in resp.get_json()["error"]
 
 
 def test_missing_key_rejected_400(client):
-    resp = client.post("/settings/api/set", json={"value": "x"})
+    resp = client.post("/config/api/set", json={"value": "x"})
     assert resp.status_code == 400
 
 
@@ -110,7 +110,7 @@ def test_secret_setting_cannot_be_set_via_api(client, monkeypatch):
     spec = db_settings.Setting(key="test.secret", env="TEST_SECRET", type="string",
                                default=None, secret=True)
     monkeypatch.setitem(db_settings.SETTINGS, "test.secret", spec)
-    resp = client.post("/settings/api/set", json={"key": "test.secret", "value": "x"})
+    resp = client.post("/config/api/set", json={"key": "test.secret", "value": "x"})
     assert resp.status_code == 400
     assert "env-only" in resp.get_json()["error"]
 
@@ -120,20 +120,20 @@ def test_secret_rendered_readonly_on_page(client, monkeypatch):
                                default=None, secret=True)
     monkeypatch.setitem(db_settings.SETTINGS, "test.secret", spec)
     monkeypatch.setenv("TEST_SECRET", "supersecret")
-    body = client.get("/settings").get_data(as_text=True)
+    body = client.get("/config").get_data(as_text=True)
     assert "supersecret" not in body            # redacted, never sent to the browser
     assert db_settings.REDACTED in body
 
 
 def test_repopulate_memory_endpoint_success(client, monkeypatch):
-    """POST /settings/api/repopulate_memory → sync_kb() counts. The
+    """POST /config/api/repopulate_memory → sync_kb() counts. The
     monkeypatch targets seed_memory (the endpoint resolves the function
     at call time)."""
     import memory.seed_memory as seed_memory
 
     monkeypatch.setattr(seed_memory, "sync_kb",
                         lambda: {"unchanged": 5, "updated": 1, "embedded": 2, "deleted": 0})
-    resp = client.post("/settings/api/repopulate_memory")
+    resp = client.post("/config/api/repopulate_memory")
     assert resp.status_code == 200
     data = resp.get_json()
     assert data == {"ok": True, "unchanged": 5, "updated": 1, "embedded": 2, "deleted": 0}
@@ -146,20 +146,20 @@ def test_repopulate_memory_endpoint_failure_is_502(client, monkeypatch):
         raise RuntimeError("Connection refused (Ollama down?)")
 
     monkeypatch.setattr(seed_memory, "sync_kb", boom)
-    resp = client.post("/settings/api/repopulate_memory")
+    resp = client.post("/config/api/repopulate_memory")
     assert resp.status_code == 502
     data = resp.get_json()
     assert data["ok"] is False and "Ollama" in data["error"]
 
 
 def test_rebuild_memory_endpoint_success(client, monkeypatch):
-    """POST /settings/api/rebuild_memory → rebuild_kb() counts (the full
+    """POST /config/api/rebuild_memory → rebuild_kb() counts (the full
     TRUNCATE + re-embed escape hatch)."""
     import memory.seed_memory as seed_memory
 
     monkeypatch.setattr(seed_memory, "rebuild_kb",
                         lambda: {"entries": 7, "documents": 21})
-    resp = client.post("/settings/api/rebuild_memory")
+    resp = client.post("/config/api/rebuild_memory")
     assert resp.status_code == 200
     data = resp.get_json()
     assert data == {"ok": True, "entries": 7, "documents": 21}
@@ -172,7 +172,7 @@ def test_rebuild_memory_endpoint_failure_is_502(client, monkeypatch):
         raise RuntimeError("Connection refused (Ollama down?)")
 
     monkeypatch.setattr(seed_memory, "rebuild_kb", boom)
-    resp = client.post("/settings/api/rebuild_memory")
+    resp = client.post("/config/api/rebuild_memory")
     assert resp.status_code == 502
     data = resp.get_json()
     assert data["ok"] is False and "Ollama" in data["error"]
@@ -180,7 +180,7 @@ def test_rebuild_memory_endpoint_failure_is_502(client, monkeypatch):
 
 def test_repopulate_button_rendered_for_customize_dir(client):
     """The page's JS renders both memory buttons only on the customize.dir card."""
-    body = client.get("/settings").get_data(as_text=True)
+    body = client.get("/config").get_data(as_text=True)
     assert "repopulate_memory" in body
     assert "Repopulate Q&A memory" in body
     assert "rebuild_memory" in body
@@ -200,8 +200,8 @@ def test_repopulate_surfaces_jsonl_file_and_line(client, monkeypatch, caplog):
         raise ValueError(msg)
 
     monkeypatch.setattr(seed_memory, "sync_kb", boom)
-    with caplog.at_level(logging.WARNING, logger="webapp.settings_views"):
-        resp = client.post("/settings/api/repopulate_memory")
+    with caplog.at_level(logging.WARNING, logger="webapp.config_views"):
+        resp = client.post("/config/api/repopulate_memory")
 
     assert resp.status_code == 502
     body = resp.get_json()
@@ -215,7 +215,7 @@ def test_page_injects_available_shields(client, monkeypatch):
     import memory.seed_memory as kb
     monkeypatch.setattr(kb, "available_qa_shields",
                         lambda: ["alice.travel", "bob.notes"])
-    body = client.get("/settings").get_data(as_text=True)
+    body = client.get("/config").get_data(as_text=True)
     assert "const QA_SHIELDS =" in body
     assert "alice.travel" in body and "bob.notes" in body
     # The special-case checklist container is rendered for the shields key.
@@ -225,12 +225,12 @@ def test_page_injects_available_shields(client, monkeypatch):
 def test_default_model_picker_offers_available_models_only(client):
     """The chat.default_model picker hides unavailable models, keeping only the
     uuid the setting already holds so the select can't show a different one."""
-    body = client.get("/settings").get_data(as_text=True)
+    body = client.get("/config").get_data(as_text=True)
     assert "MODELS.filter(m => m.available || held.has(m.uuid))" in body
 
 
 def test_unlocked_shields_roundtrips_through_api(client):
-    r = client.post("/settings/api/set", json={
+    r = client.post("/config/api/set", json={
         "key": "qa.unlocked_shields", "value": ["alice.travel"]})
     assert r.status_code == 200 and r.get_json()["ok"] is True
     assert db_settings.get_setting("qa.unlocked_shields") == ["alice.travel"]
@@ -244,18 +244,18 @@ def test_set_shields_stamps_facts_invalidated_when_changed(client):
         db.set_setting("qa.unlocked_shields", [])
         db.set_setting("qa.facts_invalidated_at", None)
         db.session.commit()
-        r = client.post("/settings/api/set",
+        r = client.post("/config/api/set",
                         json={"key": "qa.unlocked_shields", "value": ["alice.travel"]})
         assert r.status_code == 200
         first = db.get_setting("qa.facts_invalidated_at")
         assert first, "changing shields must stamp facts_invalidated_at"
         # Re-save the same value -> no new stamp.
-        r = client.post("/settings/api/set",
+        r = client.post("/config/api/set",
                         json={"key": "qa.unlocked_shields", "value": ["alice.travel"]})
         assert r.status_code == 200
         assert db.get_setting("qa.facts_invalidated_at") == first
         # Change again -> new stamp.
-        r = client.post("/settings/api/set",
+        r = client.post("/config/api/set",
                         json={"key": "qa.unlocked_shields", "value": []})
         assert r.status_code == 200
         assert db.get_setting("qa.facts_invalidated_at") != first
@@ -270,7 +270,7 @@ def test_set_non_shield_setting_does_not_stamp(client):
     try:
         db.set_setting("qa.facts_invalidated_at", None)
         db.session.commit()
-        r = client.post("/settings/api/set", json={"key": "cron.paused", "value": True})
+        r = client.post("/config/api/set", json={"key": "cron.paused", "value": True})
         assert r.status_code == 200
         assert db.get_setting("qa.facts_invalidated_at") in (None, "")
     finally:
@@ -290,7 +290,7 @@ def test_repopulate_does_not_stamp_at_endpoint_level(client, monkeypatch):
     try:
         db.set_setting("qa.facts_invalidated_at", None)
         db.session.commit()
-        r = client.post("/settings/api/repopulate_memory")
+        r = client.post("/config/api/repopulate_memory")
         assert r.status_code == 200
         assert db.get_setting("qa.facts_invalidated_at") in (None, "")
     finally:
@@ -306,7 +306,7 @@ def test_rebuild_stamps_facts_invalidated(client, monkeypatch):
     try:
         db.set_setting("qa.facts_invalidated_at", None)
         db.session.commit()
-        r = client.post("/settings/api/rebuild_memory")
+        r = client.post("/config/api/rebuild_memory")
         assert r.status_code == 200
         assert db.get_setting("qa.facts_invalidated_at"), "rebuild must stamp"
     finally:
@@ -317,7 +317,7 @@ def test_rebuild_stamps_facts_invalidated(client, monkeypatch):
 def test_a_choice_setting_renders_as_a_dropdown(client):
     """The recall-filter backend is a fixed set of values, and a free-text
     field would let a typo read as 'unset' — which silently keeps the LLM."""
-    body = client.get("/settings").get_data(as_text=True)
+    body = client.get("/config").get_data(as_text=True)
     assert "memory.recall_filter_backend" in body
     assert "reranker:jina-reranker-v2-base-multilingual" in body
     # The generic branch: any registry setting carrying choices gets a select.
@@ -325,7 +325,7 @@ def test_a_choice_setting_renders_as_a_dropdown(client):
 
 
 def test_api_rejects_a_value_outside_a_settings_choices(client):
-    resp = client.post("/settings/api/set", json={
+    resp = client.post("/config/api/set", json={
         "key": "memory.recall_filter_backend", "value": "reranker:gpt-9"})
     assert resp.status_code == 400
     assert "not one of" in resp.get_json()["error"]
@@ -333,7 +333,7 @@ def test_api_rejects_a_value_outside_a_settings_choices(client):
 
 
 def test_api_accepts_a_reranker_backend(client):
-    resp = client.post("/settings/api/set", json={
+    resp = client.post("/config/api/set", json={
         "key": "memory.recall_filter_backend",
         "value": "reranker:mmarco-mMiniLMv2-L12-H384-v1"})
     assert resp.status_code == 200
@@ -341,10 +341,10 @@ def test_api_accepts_a_reranker_backend(client):
             == "reranker:mmarco-mMiniLMv2-L12-H384-v1")
 
 
-def test_settings_page_shows_launcher_status_and_restart(client):
+def test_config_page_shows_launcher_status_and_restart(client):
     """Service toggles carry the launcher's observed state and a Restart
     action; the launcher card says whether this core is managed at all."""
-    body = client.get("/settings").get_data(as_text=True)
+    body = client.get("/config").get_data(as_text=True)
     assert 'data-restart="core"' in body
     assert "/services/api/status" in body
     assert "/services/api/restart/" in body

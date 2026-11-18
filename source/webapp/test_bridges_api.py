@@ -166,11 +166,11 @@ def test_desired_snapshot_carries_bridge_entries_and_autostart_gates_them(client
     assert entry["state_file"] == {"env": "DISCORD_STATE_FILE", "name": f"bridge-{cu}.json"}
     nonce = entry["restart_nonce"]
     # Autostart off: the gate closes, nonce untouched; on again: nonce bumped.
-    r = c.post("/settings/api/set", json={"key": "services.bridges.autostart", "value": False})
+    r = c.post("/config/api/set", json={"key": "services.bridges.autostart", "value": False})
     assert r.status_code == 200, r.get_json()
     entry = next(s for s in registry.desired_snapshot()["services"] if s["key"] == f"bridge:{cu}")
     assert entry["enabled"] is False and entry["restart_nonce"] == nonce
-    c.post("/settings/api/set", json={"key": "services.bridges.autostart", "value": True})
+    c.post("/config/api/set", json={"key": "services.bridges.autostart", "value": True})
     entry = next(s for s in registry.desired_snapshot()["services"] if s["key"] == f"bridge:{cu}")
     assert entry["enabled"] is True and entry["restart_nonce"] != nonce
     # Restart through the services endpoint rewrites the connector nonce.

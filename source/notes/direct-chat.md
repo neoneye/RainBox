@@ -79,7 +79,7 @@ Per turn, in order:
    ordered by config and override name. If Ollama has no override, Jan and then
    LM Studio are considered (`db.model_config.default_chat_model_uuid`). So a
    fresh install with at least one override answers direct rooms with zero
-   configuration while preferring Ollama. The /settings page edits this key
+   configuration while preferring Ollama. The /config page edits this key
    with a model dropdown
    (`db.chat_model_choices` supplies the options).
 3. **Neither resolves** — the agent posts the no-model notice, and the /chat

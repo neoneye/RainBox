@@ -228,7 +228,7 @@ Surfacing *which* aliases collide is a separate feature and must not hold up
 the correctness fix. It needs plumbing that does not exist: `_load_jsonl`
 tracks `lineno` only in local dicts and never stores it on an entry, so
 `file:line` reporting means retaining line provenance per entry. And
-`/settings/api/repopulate_memory` returns four sync counts which the UI renders
+`/config/api/repopulate_memory` returns four sync counts which the UI renders
 verbatim, so a diagnostics list would need an endpoint schema and a UI.
 
 When it is built: it fires only from an explicit Repopulate request, never from

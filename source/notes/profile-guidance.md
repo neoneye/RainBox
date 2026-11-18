@@ -148,7 +148,7 @@ Start the app, open `/profile`:
 
 This is the direct proof the assistant actually carries the blocks:
 
-1. On `/settings`: set `profile.current` to a profile (e.g. your duplicated
+1. On `/config`: set `profile.current` to a profile (e.g. your duplicated
    copy).
 2. In a chat room with the assistant, ask anything ("how far is 100 km?").
 3. Open `/assistant`, select the newest run, and inspect any step's **user

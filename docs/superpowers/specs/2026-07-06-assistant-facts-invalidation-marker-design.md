@@ -36,12 +36,12 @@ timestamp of the last change that can stale prior facts.
 A helper `db.mark_facts_invalidated() -> str` sets it to
 `datetime.now(UTC).isoformat()` and returns the value.
 
-Stamped from two existing endpoints in `source/webapp/settings_views.py`:
+Stamped from two existing endpoints in `source/webapp/config_views.py`:
 
-- `POST /settings/api/set` — when `key == "qa.unlocked_shields"` **and** the
+- `POST /config/api/set` — when `key == "qa.unlocked_shields"` **and** the
   stored value actually changed (compare before/after; re-saving the same value
   does not stamp).
-- `POST /settings/api/repopulate_memory` — on a successful `rebuild_kb()`.
+- `POST /config/api/repopulate_memory` — on a successful `rebuild_kb()`.
 
 ### Lazy marker in the assistant loop
 
@@ -109,10 +109,10 @@ transcript = format_history(raw, context_limit=self.MAX_RECENT_MESSAGES)
 
 - `db.mark_facts_invalidated()` sets `qa.facts_invalidated_at` to a non-empty
   ISO string and returns it.
-- `POST /settings/api/set` with `qa.unlocked_shields` stamps
+- `POST /config/api/set` with `qa.unlocked_shields` stamps
   `qa.facts_invalidated_at` when the value changes, and does **not** stamp when
   the value is unchanged.
-- `POST /settings/api/repopulate_memory` stamps it on success (stub
+- `POST /config/api/repopulate_memory` stamps it on success (stub
   `rebuild_kb`).
 - `_maybe_post_facts_marker`: posts one `kind="message"` marker with
   `meta.facts_invalidation == stamp` when a room has none for the current stamp;
