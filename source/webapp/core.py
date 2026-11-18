@@ -250,9 +250,9 @@ NAV_TEMPLATE = """
     <summary class="pp-item" title="Who the people are, how the app is configured, its outside chat services and its system prompts"><svg class="pp-ico" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M10.2 5.6L10.5 3.1h3l.3 2.5 1.5.7 1.9-1.6 2.1 2.1-1.6 1.9.7 1.5 2.5.3v3l-2.5.3-.7 1.5 1.6 1.9-2.1 2.1-1.9-1.6-1.5.7-.3 2.5h-3l-.3-2.5-1.5-.7-1.9 1.6-2.1-2.1 1.6-1.9-.7-1.5-2.5-.3v-3l2.5-.3.7-1.5-1.6-1.9 2.1-2.1 1.9 1.6z"/><circle cx="12" cy="12" r="3"/></svg><span class="pp-label">Settings</span><svg class="pp-chev" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></summary>
     <div class="pp-dd-menu">
       <a href="{{ url_for('profile_page') }}" class="{{ 'pp-active' if request.endpoint == 'profile_page' }}" title="The record of each person: name, language, formats, contact">Profile</a>
-      <a href="{{ url_for('settings_page') }}" class="{{ 'pp-active' if request.endpoint == 'settings_page' }}" title="The app's configuration, with where each value comes from">Advanced</a>
-      <a href="{{ url_for('bridges_page') }}" class="{{ 'pp-active' if request.endpoint == 'bridges_page' }}" title="Connections between chatrooms and outside chat services">Bridges</a>
       <a href="{{ url_for('prompt_page') }}" class="{{ 'pp-active' if request.endpoint == 'prompt_page' }}" title="System prompts for the models, kept in versions">Prompt</a>
+      <a href="{{ url_for('bridges_page') }}" class="{{ 'pp-active' if request.endpoint == 'bridges_page' }}" title="Connections between chatrooms and outside chat services">Bridges</a>
+      <a href="{{ url_for('settings_page') }}" class="{{ 'pp-active' if request.endpoint == 'settings_page' }}" title="The app's configuration, with where each value comes from">Advanced</a>
     </div>
   </details>
 
