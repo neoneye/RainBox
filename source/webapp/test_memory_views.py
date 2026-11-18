@@ -137,15 +137,14 @@ def test_the_nav_is_a_sidebar_of_icons_with_a_name_each():
         r'class="pp-item[^"]*" title="[^"]*"><svg class="pp-ico"[^>]*>.*?</svg>'
         r'<span class="pp-label">([^<]+)</span>', nav)
     assert items == [
-        "Home", "Chat", "Prompt", "Cron", "Kanban", "Memory", "Assistant", "Git",
-        "Settings", "Models", "Benchmark", "Voice", "Find", "Activity", "Doctor",
-        "Multimodal"]
+        "Home", "Chat", "Cron", "Kanban", "Memory", "Assistant", "Git", "Settings",
+        "Models", "Benchmark", "Voice", "Find", "Activity", "Doctor", "Multimodal"]
     # An item says on hover what its page is for, not its name again.
     hovers = re.findall(r'title="([^"]*)"><svg class="pp-ico".*?<span class="pp-label">([^<]+)</span>', nav)
-    assert len(hovers) == 16 and all(len(tip) > len(name) + 10 for tip, name in hovers)
+    assert len(hovers) == 15 and all(len(tip) > len(name) + 10 for tip, name in hovers)
     assert 'title="Scheduled jobs: send a message or run a command at set times"' in nav
     # So does each page of a group.
-    assert nav.count('" title="') == 16 + 24
+    assert nav.count('" title="') == 15 + 25
     # No colour of their own, and no emoji.
     assert "fill=" not in nav and "stroke=" not in nav
     # The page's own group is unfolded, and the others are not.
