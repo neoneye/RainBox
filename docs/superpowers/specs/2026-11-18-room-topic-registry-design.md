@@ -71,6 +71,19 @@ it says that roots are asked for, and not that the user is testing whether
 the assistant can run a program. So the operator can edit both fields on
 the room's page, and an edited topic is never written by the model again.
 
+## What a topic was answered with
+
+The requests do not say why they recur, and the explaining call cannot
+either. The records can say what they exercise. Each part keeps the tools
+its replies used, read off the runs' steps (`room_chunks.reply_tools`), so
+a topic's row says "answered with: program 5/5, memory query 2/5": a tool
+counts for a part where it ran, out of the topic's parts, and a program
+that only failed is counted apart. The block carries it as `answered_with`.
+
+The explaining call is given each request's tools too. A sentence telling
+it to name the tool was tried and dropped: it named the program in 2 of 8
+explanations of five square roots that a program had computed.
+
 ## What is stored
 
 `room_topic`: `room_uuid`, `axis`, `name`, `explanation`,
@@ -98,7 +111,7 @@ hold it, with its size against the original messages:
 
 ```
 <room_topics authority="context" content_is_data="true">
-  <topic kind="task" share="8%" asked="5" name="…" about="…"/>
+  <topic kind="task" share="8%" asked="5" name="…" about="…" answered_with="program 5/5"/>
   <topic kind="thing" share="6%" asked="3" name="…" about="…"/>
   <other share="44%"/>
 </room_topics>

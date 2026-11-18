@@ -635,10 +635,13 @@ def attach_reply_signals(room_uuid: UUID,
       counts the times it sent the reply back. Absent when no audit ran.
     - `vote`: the human's latest vote on the message, `upvote` or
       `downvote`, with `vote_comment` when they wrote one.
+    - `tools`: the tools the reply's run used, and how the reply stands on
+      them (`agents.room_chunks.reply_tools`). Absent when it used none.
 
     A message with no run and no vote gets `None`."""
     import json as _json
 
+    from agents.room_chunks import reply_tools
     from db.models import AssistantStep, FeedbackEvent
 
     run_uuids = {UUID(m["run_uuid"]) for m in messages if m.get("run_uuid")}
@@ -658,6 +661,17 @@ def attach_reply_signals(room_uuid: UUID,
                 verdict = None
             if verdict:
                 audits.setdefault(run_uuid, []).append(verdict)
+    steps: dict[UUID, list[dict[str, Any]]] = {}
+    if run_uuids:
+        for row in (db.session.query(
+                        AssistantStep.run_uuid, AssistantStep.action, AssistantStep.phase,
+                        AssistantStep.code_driven, AssistantStep.args,
+                        AssistantStep.observation_preview)
+                    .filter(AssistantStep.run_uuid.in_(run_uuids))
+                    .order_by(AssistantStep.id.asc()).all()):
+            steps.setdefault(row[0], []).append({
+                "action": row[1], "phase": row[2], "code_driven": row[3],
+                "args": row[4], "output": row[5]})
     votes = {v.message_uuid: v for v in db.session.query(FeedbackEvent)
              .filter(FeedbackEvent.room_uuid == room_uuid)
              .order_by(FeedbackEvent.id.asc()).all()}   # the latest vote wins
@@ -670,6 +684,9 @@ def attach_reply_signals(room_uuid: UUID,
             if verdicts:
                 signals["criteria"] = "met" if verdicts[-1] == "send" else "not met"
                 signals["revisions"] = sum(1 for v in verdicts if v == "revise")
+            tools = reply_tools(steps.get(run.uuid, []), m["text"])
+            if tools:
+                signals["tools"] = tools
         vote = votes.get(m["uuid"])
         if vote is not None and m["sender"] != "human":
             signals["vote"] = vote.rating

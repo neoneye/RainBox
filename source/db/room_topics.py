@@ -101,8 +101,10 @@ def list_room_topic_members(room_uuid: UUID) -> list[RoomTopicMember]:
 
 def room_topic_requests(topic_uuid: UUID, limit: int) -> tuple[int, list[dict[str, str]]]:
     """How many members a topic has, and its newest `limit` as what the
-    model that explains it reads: `{wanted, result}`, oldest first. The
-    result is the part's own, read off its chunk."""
+    model that explains it reads: `{wanted, result, tools}`, oldest first.
+    The result and the tools are the part's own, read off its chunk."""
+    from agents.room_chunks import part_tools_text
+
     members = _in_order(db.session.query(RoomTopicMember)
                         .filter_by(topic_uuid=topic_uuid)).all()
     out = []
@@ -110,7 +112,8 @@ def room_topic_requests(topic_uuid: UUID, limit: int) -> tuple[int, list[dict[st
         chunk = db.session.get(RoomChunk, m.chunk_uuid)
         parts = (chunk.parts or []) if chunk is not None else []
         part = parts[m.part_index] if m.part_index < len(parts) else {}
-        out.append({"wanted": m.phrase, "result": str(part.get("result") or "")})
+        out.append({"wanted": m.phrase, "result": str(part.get("result") or ""),
+                    "tools": part_tools_text(part)})
     return len(members), out
 
 

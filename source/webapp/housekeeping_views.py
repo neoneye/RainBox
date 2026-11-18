@@ -576,6 +576,12 @@ def _signal_texts(signals: dict | None) -> list[str]:
         out.append(f"\u25b2 {signals['up']}")
     if signals.get("down"):
         out.append(f"\u25bc {signals['down']}")
+    # The tools the part's replies used: how many times each ran, and failed.
+    for name, count in (signals.get("tools") or {}).items():
+        text = f"{name} \u00d7{count['ran']}" if count["ran"] else name
+        if count["failed"]:
+            text += f" ({count['failed']} failed)"
+        out.append(text)
     return out
 
 
@@ -1017,6 +1023,10 @@ _CHUNK_BODY = """  {# What is taken from a message's number in the room before i
                 {% for a in part.asked_again_at or [] %}<span class="hk-chip" title="The decision model's probability that this message asks for the same thing again">m{{ a.message - shift }} asks again {{ '%.2f'|format(a.p) }}{% if a.kind %} ({{ a.kind }}){% endif %}</span>{% endfor %}
                 {% for r in reaction_texts(part) %}<span class="hk-mono" title="What the user did after each reply">{{ r }}</span>{% endfor %}
                 {% for text in signal_texts(part.signals) %}<span class="hk-chip" title="From the records">{{ text }}</span>{% endfor %}
+                {% if part.grounding %}<span class="hk-pill {{ 'done' if part.grounding == 'tool' else 'deferred' }}" title="{{ {
+                  'tool': 'Every answer in this part that used a tool stands on it: the tool ran, and what a program printed is in the reply.',
+                  'output not used': 'A program ran, and the reply does not hold what it printed.',
+                  'tool failed': 'A program or a lookup failed and none ran, and a reply was written anyway.'}[part.grounding] }} Decided by rule from the run\'s steps.">{{ {'tool': 'grounded in a tool', 'output not used': 'tool output not used', 'tool failed': 'tool failed'}[part.grounding] }}</span>{% endif %}
               </div>
               {% endif %}
               {% if part.audit and not (part.audit.request and part.audit.result and part.audit.get('reaction', true)) %}
@@ -1514,6 +1524,7 @@ _ROOM_FRAGMENT = """
           <td class="hk-num hk-right">{{ r.parts }}</td>
           <td><button type="button" class="hk-topic-name" data-topic="{{ r.topic.uuid }}" data-name="{{ r.topic.name }}" data-explanation="{{ r.topic.explanation }}" title="Click to write the name and the explanation yourself">{{ r.topic.name }}</button>{% if r.topic.operator_edited %} <span class="hk-pill" title="You wrote this name and explanation. The model does not write them again.">yours</span>{% endif %}</td>
           <td>{{ r.topic.explanation or '&mdash;'|safe }}
+            {% if r.answered_with %}<div class="hk-mono" title="The tools this topic's parts were answered with, out of its parts, from the runs' steps.">answered with: {{ r.answered_with }}</div>{% endif %}
             <details id="topic-{{ r.topic.uuid }}"><summary>the {{ r.parts }} requests</summary>
               <ul class="hk-topic-members">{% for m in r.members %}<li>{{ m.phrase }}</li>{% endfor %}</ul></details></td>
         </tr>
@@ -1731,7 +1742,8 @@ def housekeeping_room_page(room_uuid: UUID) -> str:
         chunk_uuids = {c["row"].uuid for c in chunks}
         members = db.list_room_topic_members(room_uuid)
         tallied = room_topics.tally(
-            db.list_room_topics(room_uuid), members, chunk_uuids, covered_messages)
+            db.list_room_topics(room_uuid), members, chunk_uuids, covered_messages,
+            {c["row"].uuid: c["row"].parts or [] for c in chunks})
         topics_text = room_topics.render_room_topics(tallied)
         assigned = len({m.chunk_uuid for m in members} & chunk_uuids)
         topics = {

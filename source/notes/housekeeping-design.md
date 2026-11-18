@@ -75,6 +75,33 @@ signals, when the records have any (`db.attach_reply_signals`):
 | `run resolved` / `partial` / `failed` | the assistant summary's outcome for the reply's run, else the run's status |
 | `criteria met` / `criteria not met`, and how many revisions | the reply audit's verdicts for that run: met when the last one was to send the reply |
 | `voted up` / `voted down`, with the comment | the user's latest vote on the message |
+| `ran a program (what it does) … and what it printed is in the reply` / `is not in the reply`; `a program failed N times and none ran`; `used diary query, memory query` | the steps of the reply's run (`room_chunks.reply_tools`) |
+
+**The tools behind a reply** are read off its run's steps, by rule. A step
+the assistant chose is a tool unless it ends the turn or checks it
+(`NOT_TOOLS`); `observed` means it ran, `failed` that it did not. The step
+that runs a program the assistant wrote (`python_run`) is told apart: its
+`description`, when the deciding call gave one, says what kind of program
+it is, and what it printed is looked for in the reply, as text or as a
+number the reply rounds or cuts (`output_used`). From that a reply has a
+`grounding`:
+
+| grounding | when |
+|---|---|
+| `tool` | a tool ran; for a program, what it printed is in the reply |
+| `output not used` | a program ran, and the reply does not hold what it printed |
+| `tool failed` | the program never ran, or no tool did, and a reply was written anyway |
+
+On one room's 81 replies with a run: 49 `tool`, 23 with no tool, 7
+`output not used`, 2 `tool failed`. Of the 7, five were right: two replies
+gave up at the step limit after their program had printed the answer, and
+three stated a count other than the one printed. Two were wrong: the
+program printed a digit and the reply wrote the number as a word, which
+the rule does not read, since number words differ by language.
+
+It is kept apart from the calibration. A program that ran can be the
+wrong program, so `tool` is evidence and not a verdict; `tool failed` is
+the warning: a number given after its program failed was not computed.
 
 The signals are records, and the prompt says so. They are what lets a small
 model say something about reliability without judging an answer from its own
@@ -319,7 +346,11 @@ down makes it overconfident, a vote up calibrated.
 `signals`, counted by code: repeated and bare requests, read from their
 text, and from the records of its replies the runs by outcome, the first and
 the last run's outcome, replies that did not meet their criteria, revisions,
-votes up and down. The page shows the calibration in
+votes up and down; and for a part whose replies used tools, `tools` (how
+many times each ran and failed) and `grounding` (how many replies stand
+how). The part's own `grounding` is the worst of its replies': one answer
+written after its program failed marks the part. The page shows it as a
+label beside the calibration, and the tools with the other counts. The page shows the calibration in
 colour with its basis, the reactions, and these counts in grey. A run of
 the same reaction is written once with its count. A result is an old
 answer, and it is never shown without them.
@@ -491,6 +522,16 @@ that sentence gemma4:e4b-mlx answered three of six such prompts as plain
 text, and with it six of six as the object. A call no model delivers
 leaves the topic under the name it started with, and it is due again when
 the next part joins it.
+**What a topic was answered with** is counted, not written. Each part
+keeps the tools its replies used (see The records under a reply), so a
+topic's row says "answered with: program 5/5, memory query 2/5": a tool
+counts for a part where it ran, out of the topic's parts, and a program
+that only failed is counted apart. The block carries it as
+`answered_with`. It is the records' answer to what a topic is an exercise
+of. The explaining call is given each request's tools as well, and no
+sentence tells it to name them: told to, it named the program in 2 of 8
+explanations of five square roots a program had computed.
+
 The call sees what was asked and not why: of five square roots it says
 that roots are asked for, and not that the operator is testing whether the
 assistant can run a program. The operator can write both fields on the
@@ -605,7 +646,7 @@ The inbox item is a hint. The rows say what is due.
 | `first_message_id`, `last_message_id`, `message_count` | its edges and size |
 | `content_hash` | over its messages' ids and texts when it was written |
 | `summary`, `topics` | the chunk's subjects, joined, and broader topics |
-| `parts` | its parts: `{first_message, last_message, summary, topics, requests}`, and from prompt 3 `result`, the reactions, `calibration`, `signals`; from prompt 4 `calibration_basis`; from prompt 6 `audit`; from prompt 7 the reactions are read by rule; from prompt 12 `asked_again_at`; NULL for a chunk of the first prompt |
+| `parts` | its parts: `{first_message, last_message, summary, topics, requests}`, and from prompt 3 `result`, the reactions, `calibration`, `signals`; from prompt 4 `calibration_basis`; from prompt 6 `audit`; from prompt 7 the reactions are read by rule; from prompt 12 `asked_again_at`; from prompt 19 `grounding`, and `tools` in its `signals`; NULL for a chunk of the first prompt |
 | `problems` | what was off in the reply, and in the check's reply |
 | `audit` | the check: `{attempts, rewritten, error}`, and `repeat_check`, what the decision model was asked; NULL for a chunk written before the check existed |
 | `model`, `job_uuid` | what wrote it |

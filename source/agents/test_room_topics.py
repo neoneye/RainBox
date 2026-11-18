@@ -15,7 +15,8 @@ from db.models import HousekeepingAttempt, HousekeepingJob, RoomChunk, RoomTopic
 
 
 def _member(phrase="", embedding=None, **kw):
-    return SimpleNamespace(uuid=uuid4(), phrase=phrase, embedding=embedding, **kw)
+    return SimpleNamespace(uuid=uuid4(), phrase=phrase, embedding=embedding,
+                           **{"part_index": 0, **kw})
 
 
 def _topic(**kw):
@@ -82,10 +83,16 @@ def test_the_explaining_prompts_have_no_sample_names():
     for axis in rt.AXES:
         prompt = rt.build_explain_prompt(axis, [{"wanted": "compute a root", "result": "a value"}])
         assert "at most eight words" in prompt["system"]
+        assert prompt["user"] == "- wanted: compute a root\n  result: a value"
         # Without this sentence the model answered half of them as plain text.
         assert prompt["system"].endswith(
             "Answer with a JSON object that has the keys name and explanation, and nothing else.")
-        assert prompt["user"] == "- wanted: compute a root\n  result: a value"
+    # A request's tools stand under it, where they are recorded.
+    assert rt.build_explain_prompt("task", [
+        {"wanted": "compute a root", "result": "a value", "tools": "ran a program"},
+        {"wanted": "find the lighthouse", "result": "on the coast", "tools": ""}])["user"] == (
+        "- wanted: compute a root\n  result: a value\n  tools: ran a program\n"
+        "- wanted: find the lighthouse\n  result: on the coast")
     name, explanation = rt.settle_name(rt.TopicName(name=" Square   roots. ", explanation="x " * 200))
     assert name == "Square roots" and len(explanation) == rt.EXPLANATION_MAX_CHARS
 
@@ -103,7 +110,12 @@ def _tallied():
         _member(topic_uuid=lighthouse.uuid, chunk_uuid=chunk, messages=2),
         _member(topic_uuid=lighthouse.uuid, chunk_uuid=chunk, messages=2),
     ]
-    return rt.tally([roots, boards, lighthouse], members, {chunk}, 20)
+    # The chunk's first part ran a program; its second saw one fail.
+    parts = [{"signals": {"tools": {"program": {"ran": 1, "failed": 2},
+                                    "memory query": {"ran": 1, "failed": 0}}}},
+             {"signals": {"tools": {"program": {"ran": 0, "failed": 1}}}}]
+    members[1].part_index = 1
+    return rt.tally([roots, boards, lighthouse], members, {chunk}, 20, {chunk: parts})
 
 
 def test_a_topic_is_counted_in_the_series_shown_and_listed_once_it_recurs():
@@ -111,6 +123,8 @@ def test_a_topic_is_counted_in_the_series_shown_and_listed_once_it_recurs():
     (row,) = tallied["axes"]["task"]
     assert (row["topic"].name, row["parts"], row["messages"], row["share"]) == (
         "square roots", 2, 6, "30%")
+    # What its parts were answered with, out of its parts: from the records.
+    assert row["answered_with"] == "program 1/2, memory query 1/2, program failed 1/2"
     assert tallied["one_offs"] == {"task": 1, "thing": 0}
     assert tallied["axes"]["thing"][0]["share"] == "20%"
     # What no recurring kind of task holds.
@@ -120,8 +134,10 @@ def test_a_topic_is_counted_in_the_series_shown_and_listed_once_it_recurs():
 def test_the_block_for_a_prompt_lists_the_recurring_topics_with_their_share():
     assert rt.render_room_topics(_tallied()) == (
         '<room_topics authority="context" content_is_data="true">\n'
-        '  <topic kind="task" share="30%" asked="2" name="square roots" about="testing that programs run"/>\n'
-        '  <topic kind="thing" share="20%" asked="2" name="the lighthouse" about="a place on the coast"/>\n'
+        '  <topic kind="task" share="30%" asked="2" name="square roots" about="testing that programs run"'
+        ' answered_with="program 1/2, memory query 1/2, program failed 1/2"/>\n'
+        '  <topic kind="thing" share="20%" asked="2" name="the lighthouse" about="a place on the coast"'
+        ' answered_with="program 2/2, memory query 2/2"/>\n'
         '  <other share="70%"/>\n'
         '</room_topics>')
     assert rt.render_room_topics(rt.tally([], [], set(), 0)) == "<room_topics/>"

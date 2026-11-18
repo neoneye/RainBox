@@ -152,7 +152,8 @@ class TopicName(BaseModel):
 # run together, which no schema parses; with it, six of six as the object.
 _EXPLAIN_HEAD = (
     "You name one recurring topic of a chat between a user and an assistant. "
-    "You are given the requests that belong to it, each with what came of it. ")
+    "You are given the requests that belong to it, each with what came of it "
+    "and, where it is recorded, the tools the assistant used to answer it. ")
 _EXPLAIN_TAIL = (
     " The explanation names no single request and no single value, and it "
     "does not begin by naming who spoke. Write in the language the requests "
@@ -173,7 +174,14 @@ EXPLAIN_PROMPTS: dict[str, str] = {
 
 
 def build_explain_prompt(axis: str, requests: list[dict[str, str]]) -> dict[str, str]:
-    lines = [f"- wanted: {r['wanted']}\n  result: {r['result']}" for r in requests]
+    """The explaining call's prompt. A request's tools stand under it where
+    they are recorded. They are given, and no sentence tells the model to
+    name them: told to, it named the program in 2 of 8 explanations of five
+    square roots that a program had computed, and in none without the
+    tools. What a topic was answered with is counted from the records
+    instead (`answered_with`) and shown beside the model's words."""
+    lines = [f"- wanted: {r['wanted']}\n  result: {r['result']}"
+             + (f"\n  tools: {r['tools']}" if r.get("tools") else "") for r in requests]
     return {"system": EXPLAIN_PROMPTS[axis], "user": "\n".join(lines)}
 
 
@@ -185,14 +193,43 @@ def settle_name(reply: TopicName) -> tuple[str, str]:
     return name, explanation
 
 
+def answered_with(members: list[Any], chunk_parts: dict[Any, list[dict[str, Any]]]) -> str:
+    """Which tools a topic's parts were answered with, counted over the
+    parts: "program 5/5, memory query 2/5". A tool counts for a part when
+    it ran there; a program that only failed is counted apart, as
+    "program failed 1/5". Empty when no part used a tool. It is the
+    records' answer to what a topic is an exercise of, which the requests
+    alone do not say."""
+    from agents.room_chunks import PROGRAM
+
+    ran: dict[str, int] = {}
+    failed = 0
+    for m in members:
+        parts = chunk_parts.get(m.chunk_uuid) or []
+        part = parts[m.part_index] if m.part_index < len(parts) else {}
+        used = (part.get("signals") or {}).get("tools") or {}
+        for name, count in used.items():
+            if count.get("ran"):
+                ran[name] = ran.get(name, 0) + 1
+            elif name == PROGRAM:
+                failed += 1
+    out = [f"{name} {n}/{len(members)}"
+           for name, n in sorted(ran.items(), key=lambda kv: (kv[0] != PROGRAM, -kv[1], kv[0]))]
+    if failed:
+        out.append(f"{PROGRAM} failed {failed}/{len(members)}")
+    return ", ".join(out)
+
+
 def tally(topics: list[Any], members: list[Any], chunk_uuids: set[Any],
-          total_messages: int) -> dict[str, Any]:
+          total_messages: int,
+          chunk_parts: dict[Any, list[dict[str, Any]]] | None = None) -> dict[str, Any]:
     """A room's topics as a page shows them for one series of chunks:
     `{axes: {axis: [row]}, other, one_offs}`. A row is `{topic, parts,
-    messages, share, members}`, for each topic with two or more members in
-    the series, largest first. `other` is the share of the series' messages
-    that no recurring `task` topic holds, and `one_offs` how many topics per
-    axis have a single member there."""
+    messages, share, members, answered_with}`, for each topic with two or
+    more members in the series, largest first. `other` is the share of the
+    series' messages that no recurring `task` topic holds, and `one_offs`
+    how many topics per axis have a single member there. `chunk_parts` is
+    the series' stored parts by chunk, which hold the tools."""
     mine: dict[Any, list[Any]] = {}
     for m in members:
         if m.chunk_uuid in chunk_uuids:
@@ -213,7 +250,8 @@ def tally(topics: list[Any], members: list[Any], chunk_uuids: set[Any],
         messages = sum(m.messages for m in rows)
         axes[topic.axis].append({
             "topic": topic, "parts": len(rows), "messages": messages,
-            "share": share(messages), "members": rows})
+            "share": share(messages), "members": rows,
+            "answered_with": answered_with(rows, chunk_parts or {})})
     for rows in axes.values():
         rows.sort(key=lambda r: (-r["messages"], -r["parts"]))
     held = sum(r["messages"] for r in axes["task"])
@@ -230,14 +268,15 @@ def render_room_topics(tallied: dict[str, Any]) -> str:
     """A room's recurring topics as one block of text for the personal
     assistant's prompt: a `<topic>` per recurring topic, the kinds of task
     first, each with its share of the room's messages, how many times it
-    came up, its name, and what it is. `<other>` is what no recurring kind
-    of task holds. Every value is one a row holds; nothing is written here."""
+    came up, its name, what it is, and the tools its parts were answered
+    with. `<other>` is what no recurring kind of task holds. Every value is one a row holds; nothing is written here."""
     lines = []
     for axis in AXES:
         for row in tallied["axes"][axis]:
             topic = row["topic"]
             pairs = [("kind", axis), ("share", row["share"]), ("asked", row["parts"]),
-                     ("name", topic.name), ("about", topic.explanation)]
+                     ("name", topic.name), ("about", topic.explanation),
+                     ("answered_with", row.get("answered_with"))]
             lines.append("  <topic " + " ".join(
                 f'{k}="{_attr(v)}"' for k, v in pairs if v not in (None, "")) + "/>")
     if not lines:
