@@ -497,7 +497,7 @@ class TestChartGeometry:
         ]
 
     def test_bars_never_escape_the_plot(self):
-        chart = build_chart(self._buckets([100, 500, 1000]), DEFAULT_METRIC, 3600)
+        chart = build_chart(self._buckets([100, 500, 1000]), "cached_tokens", 3600)
         for bar in chart["bars"]:
             assert bar["upper_y"] >= 0
             assert bar["lower_y"] + bar["lower_h"] <= chart["baseline"] + 0.01

@@ -87,7 +87,7 @@ _METRICS: dict[str, tuple[str, str, str]] = {
     "p50_throughput_tps": ("P50 throughput", "p50_throughput_tps", "tps"),
     "p90_throughput_tps": ("P90 throughput", "p90_throughput_tps", "tps"),
 }
-DEFAULT_METRIC = "cached_tokens"
+DEFAULT_METRIC = "calls"
 
 _DIMENSION_LABELS = {"model": "Model", "caller": "Caller", "provider": "Provider"}
 DEFAULT_DIMENSION = "model"
