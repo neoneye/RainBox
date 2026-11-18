@@ -1270,6 +1270,72 @@ class RoomChunk(db.Model):
     )
 
 
+class RoomTopic(db.Model):
+    """Something a room keeps coming back to: a kind of task, or a named
+    thing. The parts of the room's chunks are its members
+    (`RoomTopicMember`). A topic with one member is a one-off, kept because
+    it is what the next part about the same thing joins.
+
+    A topic belongs to its room and not to a series of chunks: a room
+    summarized again under a new prompt has its new parts assigned to the
+    topics there are. Design:
+    docs/superpowers/specs/2026-11-18-room-topic-registry-design.md.
+    """
+
+    __tablename__ = "room_topic"
+    uuid: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    room_uuid: Mapped[UUID] = mapped_column(index=True)
+    # `task`: its members ask for the same kind of task. `thing`: they are
+    # about the same named thing. A part has one topic on each axis.
+    axis: Mapped[str] = mapped_column(Text)
+    name: Mapped[str] = mapped_column(Text)
+    explanation: Mapped[str] = mapped_column(Text, default="")
+    # Set once the operator has written the name or the explanation. The
+    # model never writes either again.
+    operator_edited: Mapped[bool] = mapped_column(default=False)
+    # How many members it had when the model last explained it. 0: never.
+    explained_members: Mapped[int] = mapped_column(default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+    __table_args__ = (
+        CheckConstraint("axis IN ('task','thing')", name="room_topic_axis_check"),
+    )
+
+
+class RoomTopicMember(db.Model):
+    """One part of a chunk, as a member of one topic. The part is named by
+    its chunk and its place in the chunk's `parts`."""
+
+    __tablename__ = "room_topic_member"
+    uuid: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    topic_uuid: Mapped[UUID] = mapped_column(index=True)
+    room_uuid: Mapped[UUID] = mapped_column(index=True)
+    axis: Mapped[str] = mapped_column(Text)
+    chunk_uuid: Mapped[UUID] = mapped_column(index=True)
+    part_index: Mapped[int] = mapped_column()
+    # What the part wanted, as it was compared: the part's `summary`.
+    phrase: Mapped[str] = mapped_column(Text)
+    # The part's length in messages, for the topic's share of the room.
+    messages: Mapped[int] = mapped_column(default=0)
+    # The score it joined its topic on. NULL for the part that started it.
+    p: Mapped[float | None] = mapped_column()
+    # The phrase's vector, which ranks topics before any is scored. NULL
+    # when the embedder did not answer.
+    embedding: Mapped[list | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    __table_args__ = (
+        UniqueConstraint("chunk_uuid", "part_index", "axis",
+                         name="room_topic_member_part_key"),
+    )
+
+
 class AssistantStep(db.Model):
     """One logical step in an assistant run, as **a single mutable row**. A normal
     action step is inserted at `phase="running"` (so a crash mid-action leaves a

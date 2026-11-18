@@ -115,6 +115,8 @@ ASSISTANT_ROOM_SUMMARIZER_UUID: UUID = UUID("2f6c1d8e-7b3a-4c59-a1e4-9d0b5f3c8a6
 # A decision slot: bound to one decision model (llm/systemone.py), and never
 # falling back to assistant.default, which cannot answer that API.
 ASSISTANT_REPEAT_CHECK_UUID: UUID = UUID("9b2e4f70-3c1a-4d86-b5e9-6a7f0c2d1e38")
+ASSISTANT_TOPIC_MATCH_UUID: UUID = UUID("3e7a9c14-6b52-4d08-9f1e-c5a0d48b2e96")
+ASSISTANT_TOPIC_NAMER_UUID: UUID = UUID("8d15f2a6-0c47-4b93-a6e2-51b7c9e03f4d")
 
 # The in-flight progress bubble, posted at enqueue time (the moment a human
 # message triggers a turn) so it appears immediately — before the agent process
@@ -258,6 +260,17 @@ agent_config: dict[str, AgentConfigEntry] = {
         "requires_structured_output": False,
         "requires_systemone": True,
         "description": "binding-only: the DECISION model (Ollama's /v1/systemone, e.g. d1:3b) that scores fast yes-or-no questions. The housekeeping role asks it whether a follow-up message asks for the same thing again. Takes only a model group that requires SystemOne, and the model must be local; only the group's first member is used. Does NOT fall back to assistant.default: unbound, the questions go unanswered and the callers use their rules alone.",
+    },
+    "assistant.topic_namer": {
+        "uuid": ASSISTANT_TOPIC_NAMER_UUID,
+        "requires_structured_output": True,
+        "description": "binding-only: the model that NAMES AND EXPLAINS a topic a room keeps coming back to, for the housekeeping role, once the topic recurs: one structured call that reads the requests that belong to the topic and what came of them. Must be a local model: it reads the room's own requests. Unbound, it falls back to assistant.default.",
+    },
+    "assistant.topic_match": {
+        "uuid": ASSISTANT_TOPIC_MATCH_UUID,
+        "requires_structured_output": False,
+        "requires_systemone": True,
+        "description": "binding-only: the DECISION model (Ollama's /v1/systemone, e.g. d1:3b) that the housekeeping role asks whether two requests of a room ask for the same kind of task, and whether they are about the same named thing, to gather a room's recurring topics. Takes only a model group that requires SystemOne, and the model must be local; only the group's first member is used. Unbound, the model bound to assistant.repeat_check is asked; with neither, a room's topics are not gathered.",
     },
     "assistant.response_language_classifier": {
         "uuid": ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID,

@@ -58,8 +58,13 @@ def _run(made: dict, *, finished: bool = True) -> AssistantRun:
     return run
 
 
-def _agent(monkeypatch, *, idle: bool = True) -> hk.HousekeepingAgent:
+def _agent(monkeypatch, *, idle: bool = True, topics: bool = False) -> hk.HousekeepingAgent:
     agent = hk.HousekeepingAgent(HOUSEKEEPING_UUID, "housekeeping", lambda _m: None)
+    if not topics:
+        # Assigning a chunk's parts to topics has tests of its own. Here its
+        # jobs would run after every summary and be counted with them.
+        monkeypatch.setattr(agent, "_queue_chunk_topics", lambda chunk: None)
+        monkeypatch.setattr(db, "ensure_room_topic_jobs", lambda *a, **kw: 0)
     agent.POLL_SECONDS = 0.01
     agent.PROGRESS_SECONDS = 0.0
     if idle:

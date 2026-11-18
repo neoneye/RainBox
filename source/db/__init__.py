@@ -42,6 +42,7 @@ from db.benchmark_vision import *  # noqa: F401,F403  re-export /benchmark_visio
 from db.assistant_log import *  # noqa: F401,F403  re-export the assistant run read model
 from db.housekeeping import *  # noqa: F401,F403  re-export the after-the-turn job queue and its record
 from db.decisions import *  # noqa: F401,F403  re-export the decision models' call record
+from db.room_topics import *  # noqa: F401,F403  re-export a room's recurring topics and their members
 from db.diary import *  # noqa: F401,F403  re-export diary source/publication/retention ops
 
 #: The SQLAlchemy session, re-exported so a caller who has `import db`

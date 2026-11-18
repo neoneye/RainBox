@@ -398,7 +398,7 @@ small model copies both. With a list of earlier names to reuse, it chose
 from the list whether or not a name fitted, and returned the list's
 placeholder word as a topic. So topic names are not shared between chunks:
 the same subject can get two names in two chunks. Recognizing them as one
-topic is a later step, and not this call's job.
+topic is a later step, and not this call's job: see Chatroom topics.
 
 **What it does well and badly**, on gemma4:e4b-mlx, 4 to 8 seconds for the
 summary call; the check writes more and takes longer:
@@ -445,6 +445,64 @@ prompt.
 **A rest after ten calls.** The worker counts its model calls, of any job
 type, and a chunk's check and rewrite each count as one. After 10 in a row it rests for 60 seconds before the next, and the
 waiting job shows as resting. A new message still stops the call in progress.
+
+## Chatroom topics
+
+What a room keeps coming back to. A chunk's own topic names do not say: in
+one room of 16 chunks the 93 names its parts were given were 79 different
+names, and 70 of them occurred once. So each part is assigned, after its
+chunk is summarized, to a topic of its room (`room_topic`), and a topic is
+listed once two parts share it. Rules and wordings: `agents/room_topics.py`.
+Design, and the measurements behind the numbers below:
+`docs/superpowers/specs/2026-11-18-room-topic-registry-design.md`.
+
+**Two axes.** A part has one topic on each. `task`: its requests ask for
+the same kind of task (computing a root, looking up a day). `thing`: they
+are about the same named thing. The two are counted apart, since a part
+that looks a project up in the diary is in a topic of each kind.
+
+**One job per chunk** (`room_topics`, subject: the chunk's uuid). It is
+queued when the chunk is stored, and for chunks stored earlier with the
+room's chunk jobs: 20 per run end, the rest on request. For each part:
+
+1. Its phrase (what was wanted) is embedded, and on each axis the room's
+   topics are ranked by how near their exemplars lie. An exemplar is one of
+   a topic's first 2 members. The nearest 5 topics are kept. Without a
+   vector the newest 5 are.
+2. The decision model (`assistant.topic_match`; unbound, the model of
+   `assistant.repeat_check`) is asked of the part and each exemplar, both
+   axes' questions in one request: about six requests a part, a third of a
+   second each. They are not counted toward the worker's rest.
+3. A topic's score is the mean over its exemplars. The part joins the best
+   topic at 0.5 or above, or starts one, named after the part's own first
+   topic name.
+
+A part's memberships are written when it is placed, so an attempt that a
+new message stops has kept its finished parts. With no decision model the
+job is skipped, and its chunk is still without topics.
+
+**Name and explanation.** A topic that reaches 2 members, and again each
+time it has doubled, is named and explained by one generative call
+(the slot `assistant.topic_namer`, local models only), from its
+newest 8 requests and their results: at most eight words on what the user
+is doing with these requests (`task`), or on what the thing is (`thing`).
+The prompt ends by asking for a JSON object with those two keys: without
+that sentence gemma4:e4b-mlx answered three of six such prompts as plain
+text, and with it six of six as the object. A call no model delivers
+leaves the topic under the name it started with, and it is due again when
+the next part joins it.
+The call sees what was asked and not why: of five square roots it says
+that roots are asked for, and not that the operator is testing whether the
+assistant can run a program. The operator can write both fields on the
+room's page, and a topic they wrote is never written by the model again.
+
+**A topic belongs to its room, not to a series.** A new prompt version
+summarizes the room again, and the new chunks' parts join the topics there
+are, so names and the operator's words carry over. A page counts a topic's
+members in the series it shows.
+
+**Not built:** topics across rooms, merging two topics or moving a part by
+hand, and the block in a prompt.
 
 ## Order
 
@@ -554,6 +612,15 @@ The inbox item is a hint. The rows say what is due.
 
 The prompt and the reply are never copied. A job's page reads them from the
 attempt's `llm_call` row: for a chunk, the summary that was kept.
+
+`room_topic`: one row per topic of a room, on one `axis` (`task`, `thing`):
+its `name`, its `explanation`, `operator_edited`, and `explained_members`
+(how many members it had when the model last explained it).
+
+`room_topic_member`: one row per part and axis. `chunk_uuid` and
+`part_index` name the part; `phrase` is what was compared, `messages` the
+part's length, `p` the score it joined on (NULL for the part that started
+the topic), `embedding` the phrase's vector.
 
 ## The pages
 
@@ -672,7 +739,21 @@ the `chunks` link beside the room's name on a job's page.
   what the first answer had in the parts the check found wrong.
 - A chip per series the room has chunks in, earlier prompts included.
 - **Summarize the rest**, with the number of chunks it will write.
-- **Show: summaries | as in the prompt.** The second (`&view=prompt`) puts
+- **Show: summaries | as in the prompt | topics.** The third
+  (`&view=topics`) lists the room's recurring topics in place of the cards
+  (see Chatroom topics): a table per axis with each topic's share of the
+  series' summarized messages, its number of parts, its name, its
+  explanation, and its requests folded under it; and how many topics came
+  up once. A click on a name opens a modal with the name and the
+  explanation, Cancel and Save (`notes/ui-modal-rename.md`); what is saved
+  there is marked "yours". **Assign topics** queues a job for each chunk
+  whose parts have no topic yet, and summarizes nothing. Under the tables
+  is the `<room_topics>` block a prompt could hold in place of every chunk
+  (`agents/room_topics.render_room_topics`): a `<topic>` per recurring
+  topic with `kind`, `share`, `asked`, `name` and `about`, then `<other>`
+  with the share no recurring kind of task holds; with its number of
+  characters against the messages' own.
+  The second (`&view=prompt`) puts
   the series' chunks into one `<room_earlier>` block of text, in place of the
   cards: a `<chunk>` per chunk with its message range, dates, topics and
   phrase, and inside it a `<part>` per part with its range, topics, how many
