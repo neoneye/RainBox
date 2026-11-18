@@ -20,6 +20,7 @@ from agents.config import (
     ASSISTANT_MEMORY_FILTER_UUID,
     ASSISTANT_PYTHON_PROGRAM_UUID,
     ASSISTANT_ROOM_SUMMARIZER_UUID,
+    ASSISTANT_TOPIC_NAMER_UUID,
     ASSISTANT_REPLY_AUDIT_UUID,
     ASSISTANT_REQUEST_SUMMARY_UUID,
     ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID,
@@ -42,6 +43,7 @@ STEP_SLOTS = [
     ASSISTANT_RUN_SUMMARIZER_UUID,
     ASSISTANT_PYTHON_PROGRAM_UUID,
     ASSISTANT_ROOM_SUMMARIZER_UUID,
+    ASSISTANT_TOPIC_NAMER_UUID,
 ]
 
 
@@ -77,6 +79,8 @@ def test_the_slot_roster_is_exactly_the_assistants_calls():
         "assistant.python_program",
         "assistant.room_summarizer",
         "assistant.repeat_check",
+        "assistant.topic_namer",
+        "assistant.topic_match",
     }
 
 
@@ -102,8 +106,10 @@ def test_every_structured_slot_requires_structured_output():
     one. The program writer answers in plain source — the point of its own
     call — so any group may run it. A decision slot returns probabilities
     and no text at all."""
-    unstructured = PLAIN_TEXT_SLOTS | {"assistant.repeat_check"}
-    assert agent_config["assistant.repeat_check"]["requires_systemone"] is True
+    decision = {"assistant.repeat_check", "assistant.topic_match"}
+    unstructured = PLAIN_TEXT_SLOTS | decision
+    for name in decision:
+        assert agent_config[name]["requires_systemone"] is True
     for name, entry in agent_config.items():
         if name.startswith("assistant."):
             assert (entry.get("requires_structured_output") is True) is (

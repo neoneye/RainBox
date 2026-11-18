@@ -476,13 +476,15 @@ def assistant_slot_uuids() -> list[UUID]:
         ASSISTANT_ROOM_SUMMARIZER_UUID,
         ASSISTANT_RUN_SUMMARIZER_UUID,
         ASSISTANT_SECOND_OPINION_UUID,
+        ASSISTANT_TOPIC_NAMER_UUID,
     )
 
     return [ASSISTANT_DEFAULT_UUID, ASSISTANT_DECIDE_UUID, ASSISTANT_ACCEPTANCE_CRITERIA_UUID,
             ASSISTANT_REQUEST_SUMMARY_UUID, ASSISTANT_MEMORY_FILTER_UUID,
             ASSISTANT_SECOND_OPINION_UUID, ASSISTANT_REPLY_AUDIT_UUID,
             ASSISTANT_RESPONSE_LANGUAGE_CLASSIFIER_UUID, ASSISTANT_RUN_SUMMARIZER_UUID,
-            ASSISTANT_PYTHON_PROGRAM_UUID, ASSISTANT_ROOM_SUMMARIZER_UUID]
+            ASSISTANT_PYTHON_PROGRAM_UUID, ASSISTANT_ROOM_SUMMARIZER_UUID,
+            ASSISTANT_TOPIC_NAMER_UUID]
 
 
 def model_base_url(member_uuid: UUID) -> str | None:
@@ -529,9 +531,9 @@ def assistant_models_all_local() -> tuple[bool, str | None]:
 
 def decision_slot_uuids() -> list[UUID]:
     """The slots bound to a decision model (llm/systemone.py)."""
-    from agents.config import ASSISTANT_REPEAT_CHECK_UUID
+    from agents.config import ASSISTANT_REPEAT_CHECK_UUID, ASSISTANT_TOPIC_MATCH_UUID
 
-    return [ASSISTANT_REPEAT_CHECK_UUID]
+    return [ASSISTANT_REPEAT_CHECK_UUID, ASSISTANT_TOPIC_MATCH_UUID]
 
 
 def decision_slot_member_uuids(slot_uuid: UUID) -> list[UUID]:

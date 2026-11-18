@@ -35,7 +35,7 @@ from pydantic import BaseModel, Field
 #: Bumped when the prompt, the schema or the parsing changes. A chunk belongs
 #: to the series of the version that wrote it, so a new version summarizes a
 #: room again beside the old series, and the two can be compared.
-PROMPT_VERSION = 18
+PROMPT_VERSION = 19
 
 SUMMARY_MAX_CHARS = 120
 RESULT_MAX_CHARS = 160
@@ -97,7 +97,9 @@ SYSTEM_PROMPT = (
     "seen. The chunk's messages are numbered from m1. Under an assistant message "
     "there can be a line of signals. They are records, not opinions: how the "
     "assistant's run ended, whether its reply met the acceptance criteria it "
-    "was checked against, and whether the user voted the reply up or down. "
+    "was checked against, whether the user voted the reply up or down, and "
+    "which tools the assistant used to write the reply: whether a program "
+    "it wrote ran, and whether what the program printed is in the reply. "
     "A few messages before and after the chunk are given as context. They "
     "show where a subject began or continues, and they are not part of the "
     "chunk.\n\n"
@@ -141,6 +143,130 @@ SYSTEM_PROMPT = (
 )
 
 
+#: The actions of a run that are not tools: how a turn ends, and the calls
+#: that prepare or check it. Every other step the assistant chose is a tool
+#: it used, and so is a step in `CODE_DRIVEN_TOOLS`, which code runs for it.
+#: A step code runs is left out by its flag too; the names are here for the
+#: rows that were written without it.
+NOT_TOOLS = frozenset({
+    "reply", "ask_clarifying_question", "acceptance_criteria", "reply_language",
+    "reply_audit", "response_language_classifier", "recall_filter",
+    "python_program", "request_summary", "second_opinion"})
+CODE_DRIVEN_TOOLS = frozenset({"memory_queries"})
+#: The step that runs a program the assistant wrote. `PROGRAM` is what it
+#: is called where tools are counted.
+PROGRAM_ACTION = "python_run"
+PROGRAM = "program"
+#: Several names for one tool, as they were recorded over time.
+_TOOL_NAMES = {PROGRAM_ACTION: PROGRAM, "memory_queries": "memory query",
+               "query_memory": "memory query"}
+TOOL_ABOUT_MAX_CHARS = 120
+
+#: How well a reply stands on what the assistant looked up or computed.
+#: `tool`: a tool ran, and for a program, what it printed is in the reply.
+#: `output not used`: a program ran and the reply does not hold what it
+#: printed. `tool failed`: the program never ran, or no tool did, and the
+#: reply was written anyway. Worst first: it is the order a part takes its
+#: own from.
+GROUNDINGS = ("tool failed", "output not used", "tool")
+
+_NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
+_THOUSANDS = re.compile(r"(?<=\d),(?=\d{3}(?:\D|$))")
+
+
+def output_used(output: str | None, reply: str | None) -> bool:
+    """Whether what a program printed is in the reply: the text itself, or
+    one of its numbers as the reply rounds or cuts it. A reply states
+    289.55 where the program printed 289.54792349454004."""
+    out = " ".join(str(output or "").split())
+    text = _THOUSANDS.sub("", str(reply or ""))
+    if not out or not text:
+        return False
+    if len(out) >= 3 and out.casefold() in text.casefold():
+        return True
+    printed = [float(n) for n in _NUMBER.findall(_THOUSANDS.sub("", out))[:50]]
+    if not printed:
+        return False
+    for token in _NUMBER.findall(text.replace(",", ".")):
+        decimals = len(token.partition(".")[2])
+        scale = 10 ** decimals
+        stated = float(token)
+        for value in printed:
+            if round(value, decimals) == stated or int(value * scale) / scale == stated:
+                return True
+    return False
+
+
+def reply_tools(steps: list[dict[str, Any]], reply: str | None) -> dict[str, Any] | None:
+    """What a run's steps say about the tools behind its reply, or None
+    when it used none: `{used: {tool: {ran, failed}}, grounding}`, and for a
+    program that ran `about` (what the assistant said the program does,
+    when it said) and `output_in_reply`.
+
+    `steps` is the run's steps in order: `{action, phase, code_driven, args,
+    output}`. A step that was `observed` ran; one that `failed` did not."""
+    used: dict[str, dict[str, int]] = {}
+    about, output = "", None
+    for step in steps:
+        action = step.get("action") or ""
+        if not action or action in NOT_TOOLS:
+            continue
+        if step.get("code_driven") and action not in CODE_DRIVEN_TOOLS:
+            continue
+        ran = step.get("phase") == "observed"
+        if not ran and step.get("phase") != "failed":
+            continue
+        name = _TOOL_NAMES.get(action, action.replace("_", " "))
+        count = used.setdefault(name, {"ran": 0, "failed": 0})
+        count["ran" if ran else "failed"] += 1
+        if action == PROGRAM_ACTION and ran:
+            output = step.get("output")
+            said = " ".join(str((step.get("args") or {}).get("description") or "").split())
+            about = said[:TOOL_ABOUT_MAX_CHARS] or about
+    if not used:
+        return None
+    out: dict[str, Any] = {"used": used}
+    program = used.get(PROGRAM)
+    if program and program["ran"]:
+        out["output_in_reply"] = output_used(output, reply)
+        if about:
+            out["about"] = about
+        out["grounding"] = "tool" if out["output_in_reply"] else "output not used"
+    elif program or not any(c["ran"] for c in used.values()):
+        out["grounding"] = "tool failed"
+    else:
+        out["grounding"] = "tool"
+    return out
+
+
+def _times(n: int) -> str:
+    return "once" if n == 1 else f"{n} times"
+
+
+def tools_line(tools: dict[str, Any] | None) -> str:
+    """A reply's tools as the prompt states them, the program first."""
+    if not tools:
+        return ""
+    used = dict(tools.get("used") or {})
+    out = []
+    program = used.pop(PROGRAM, None)
+    if program and program["ran"]:
+        text = "ran a program" + (f" ({tools['about']})" if tools.get("about") else "")
+        if program["failed"]:
+            text += f" after it failed {_times(program['failed'])}"
+        out.append(text + (", and what it printed is in the reply" if tools.get("output_in_reply")
+                           else ", and what it printed is not in the reply"))
+    elif program:
+        out.append(f"a program failed {_times(program['failed'])} and none ran")
+    ran = [name for name, c in used.items() if c["ran"]]
+    failed = [name for name, c in used.items() if not c["ran"]]
+    if ran:
+        out.append("used " + ", ".join(ran))
+    if failed:
+        out.append("failed: " + ", ".join(failed))
+    return "; ".join(out)
+
+
 def signal_line(signals: dict[str, Any] | None) -> str:
     """What the records say about one assistant reply, as the prompt states
     it. Empty when nothing is recorded."""
@@ -164,6 +290,9 @@ def signal_line(signals: dict[str, Any] | None) -> str:
                    else "voted down by the user")
         if signals.get("vote_comment"):
             out.append(f"the user's comment on the vote: {_cut(signals['vote_comment'], 200)}")
+    tools = tools_line(signals.get("tools"))
+    if tools:
+        out.append(tools)
     return "; ".join(out)
 
 
@@ -405,7 +534,11 @@ def part_signals(part: dict[str, Any], chunk: list[dict[str, Any]],
     `{replies, repeats, bare, runs: {outcome: n}, first_run, last_run,
     criteria_not_met, revisions, up, down}`. `repeats` and `bare` are read
     from the text of the part's requests (`count_repeats`). These are facts,
-    kept beside the model's own words about the part."""
+    kept beside the model's own words about the part.
+
+    A part whose replies used tools also has `tools`, `{tool: {ran,
+    failed}}` summed over its replies, and `grounding`, how many of its
+    replies stand how (`GROUNDINGS`): `{label: n}`."""
     out: dict[str, Any] = {"replies": 0, "repeats": 0, "bare": 0, "runs": {},
                            "first_run": None, "last_run": None,
                            "criteria_not_met": 0, "revisions": 0,
@@ -413,6 +546,8 @@ def part_signals(part: dict[str, Any], chunk: list[dict[str, Any]],
     if part.get("first_message") is None:
         return out
     runs: Counter[str] = Counter()
+    grounding: Counter[str] = Counter()
+    tools: dict[str, dict[str, int]] = {}
     requests: list[str] = []
     for k, m in enumerate(chunk):
         if not part["first_message"] <= first_index + k <= part["last_message"]:
@@ -430,6 +565,16 @@ def part_signals(part: dict[str, Any], chunk: list[dict[str, Any]],
         out["revisions"] += signals.get("revisions") or 0
         out["up"] += int(signals.get("vote") == "upvote")
         out["down"] += int(signals.get("vote") == "downvote")
+        used = signals.get("tools") or {}
+        for name, count in (used.get("used") or {}).items():
+            mine = tools.setdefault(name, {"ran": 0, "failed": 0})
+            mine["ran"] += count["ran"]
+            mine["failed"] += count["failed"]
+        if used.get("grounding"):
+            grounding[used["grounding"]] += 1
+    if tools:
+        out["tools"] = tools
+        out["grounding"] = dict(grounding)
     out["runs"] = dict(runs)
     out["repeats"], out["bare"] = count_repeats(requests)
     return out
@@ -590,6 +735,29 @@ def react(part: dict[str, Any], chunk: list[dict[str, Any]],
     return out
 
 
+def part_grounding(signals: dict[str, Any] | None) -> str | None:
+    """How a part's answers stand on tools: the worst of its replies'
+    (`GROUNDINGS`), or None when no reply of it used a tool. One answer
+    written after its program failed marks the part, however many others
+    were computed."""
+    counted = (signals or {}).get("grounding") or {}
+    return next((label for label in GROUNDINGS if counted.get(label)), None)
+
+
+def part_tools_text(part: dict[str, Any]) -> str:
+    """A part's tools in a few words, for a reader of the part: which ran,
+    and that a program failed where none did."""
+    used = dict((part.get("signals") or {}).get("tools") or {})
+    program = used.pop(PROGRAM, None)
+    out = []
+    if program and program["ran"]:
+        out.append("ran a program")
+    elif program:
+        out.append("a program failed and none ran")
+    out += [name for name, c in used.items() if c["ran"]]
+    return ", ".join(out)
+
+
 def calibrate(part: dict[str, Any]) -> tuple[Calibration, str]:
     """How well calibrated the assistant was in one part, and on what basis.
 
@@ -697,6 +865,9 @@ def settle(reply: ChunkSummary, first_index: int, last_index: int,
             part["asked_again_at"] = said
         # The last entry is what followed the part, not a request in it.
         part["requests"] = 1 + part["reactions"][:-1].count("asked_again")
+        stands = part_grounding(signals)
+        if stands:
+            part["grounding"] = stands
         del part["read"]
         part["calibration"], part["calibration_basis"] = calibrate(part)
     summary = _subjects(reply.subjects, problems)
@@ -893,6 +1064,7 @@ def render_room_earlier(chunks: list[dict[str, Any]]) -> str:
                 ("topics", _topic_names(part.get("topics"))),
                 ("asked", asked if asked > 1 else None),
                 ("calibration", part.get("calibration")),
+                ("grounding", part.get("grounding")),
                 ("wanted", part.get("summary")),
                 ("result", part.get("result"))]) + "/>")
         out.append("  </chunk>")

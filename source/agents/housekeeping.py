@@ -40,6 +40,12 @@ MAX_RETRIES = 1
 CHUNK_JOBS_PER_RUN = 2
 #: Chunk jobs queued when the operator asks for the rest of a room.
 CHUNK_JOBS_PER_REQUEST = 200
+#: Topics jobs queued for a room when one of its runs ends, and when the
+#: operator asks for the rest. A topics job is a few seconds of scoring by
+#: the decision model, so a run takes more of a backlog than it does of
+#: chunks to summarize.
+TOPIC_JOBS_PER_RUN = 20
+TOPIC_JOBS_PER_REQUEST = 200
 
 #: Model calls in a row before the worker rests, and for how long. The
 #: operator's machine takes 10 to 15 calls in a row before it needs a minute
@@ -205,7 +211,9 @@ class HousekeepingAgent(Agent):
 
     def _expand(self, payload: dict[str, Any]) -> None:
         """An item's jobs: the run's summary, and the next chunks of its room.
-        An item with `room_chunks` and no run asks for the rest of a room."""
+        An item with `room_chunks` and no run asks for the rest of a room,
+        one with `room_topics` for topics for the chunks it has, and one
+        with `room_topic_merges` for the room's topics that look like one."""
         room_uuid: UUID | None = None
         try:
             if payload.get("room_uuid"):
@@ -221,18 +229,33 @@ class HousekeepingAgent(Agent):
                 db.requeue_housekeeping_job(job)
         if room_uuid is None or payload.get("force"):
             return
+        from agents.room_chunks import PROMPT_VERSION
+
+        series = (int(db.get_setting("housekeeping.room_chunk_size")),
+                  int(db.get_setting("housekeeping.room_chunk_overlap")),
+                  PROMPT_VERSION)
+        if payload.get("room_topic_merges"):
+            # One job per room, run again each time it is asked for.
+            job, created = db.ensure_housekeeping_job(
+                db.ROOM_TOPIC_MERGES_JOB, room_uuid=room_uuid, subject=str(room_uuid))
+            if not created and job.state == "final":
+                db.requeue_housekeeping_job(job)
+            return
+        if payload.get("room_topics"):
+            db.ensure_room_topic_jobs(room_uuid, *series, TOPIC_JOBS_PER_REQUEST)
+            return
         if payload.get("room_chunks"):
             limit = CHUNK_JOBS_PER_REQUEST
         elif run_uuid is not None and db.get_setting("housekeeping.room_summaries"):
             limit = CHUNK_JOBS_PER_RUN
         else:
             return
-        from agents.room_chunks import PROMPT_VERSION
-
-        db.ensure_room_chunk_jobs(
-            room_uuid, int(db.get_setting("housekeeping.room_chunk_size")),
-            int(db.get_setting("housekeeping.room_chunk_overlap")),
-            PROMPT_VERSION, limit)
+        db.ensure_room_chunk_jobs(room_uuid, *series, limit)
+        # Chunks summarized before, whose parts have no topic yet. A chunk
+        # summarized from here on queues its own topics job when it is stored.
+        db.ensure_room_topic_jobs(
+            room_uuid, *series,
+            TOPIC_JOBS_PER_REQUEST if payload.get("room_chunks") else TOPIC_JOBS_PER_RUN)
 
     def _drain(self) -> dict[str, int]:
         counts: Counter[str] = Counter()
@@ -478,7 +501,7 @@ class HousekeepingAgent(Agent):
                 room_numbers(reply), first, last, chunk, after, retries)
             audit["attempts"] = 2
         _provider, model_name, _args = db.resolved_model_kwargs(model_uuid)
-        db.store_room_chunk(
+        stored = db.store_room_chunk(
             room_uuid=job.room_uuid, chunk_size=size, overlap=overlap, seq=seq,
             first_message_id=chunk[0]["id"], last_message_id=chunk[-1]["id"],
             message_count=len(chunk),
@@ -487,7 +510,15 @@ class HousekeepingAgent(Agent):
             audit=audit,
             model=model_name, prompt_version=room_chunks.PROMPT_VERSION,
             job_uuid=job.uuid)
+        self._queue_chunk_topics(stored)
         return "done"
+
+    @staticmethod
+    def _queue_chunk_topics(chunk: Any) -> None:
+        """A stored chunk's parts are assigned to the room's topics by a job
+        of their own, queued here so it follows the chunk's summary."""
+        db.ensure_housekeeping_job(
+            db.ROOM_TOPICS_JOB, room_uuid=chunk.room_uuid, subject=str(chunk.uuid))
 
     #: A decision call answers in well under a second. One that has not by
     #: then is given up, and the follow-up is read by rule.
@@ -540,7 +571,252 @@ class HousekeepingAgent(Agent):
             record["identical"] = identical
         return said, record
 
+    #: A decision call answers in well under a second. One that has not by
+    #: then fails the attempt, and the job is tried once more.
+    TOPIC_MATCH_DEADLINE_SECONDS = 20.0
+    TOPIC_MATCH_MAX_STATE_CHARS = 2000
+
+    def _assign_topics(self, job: Any, attempt: Any, watch: TurnWatch) -> str:
+        """The parts of one chunk, each assigned to a topic of its room on
+        each axis (`agents/room_topics.py`): the decision model is asked of
+        the part and the exemplars of the nearest topics, and the part joins
+        the best or starts a topic of its own. These calls are not counted
+        toward the rest: each is a fraction of a second of scoring. A topic
+        that now recurs is then named and explained by one generative call,
+        which is counted.
+
+        A part's memberships are written as soon as it is placed, so an
+        attempt that a new message stops has kept the parts it finished,
+        and the next attempt goes on with the rest."""
+        from agents import room_topics
+        from agents.config import ASSISTANT_REPEAT_CHECK_UUID, ASSISTANT_TOPIC_MATCH_UUID
+        from llm import systemone
+
+        # Every attempt is counted as a model call before it runs. This one
+        # generates no text unless a topic is explained, which counts itself.
+        self._burst -= 1
+        try:
+            chunk = db.get_room_chunk(UUID(job.subject))
+        except ValueError:
+            raise ValueError(f"malformed topics subject {job.subject!r}") from None
+        if chunk is None:
+            return "skipped: the chunk is gone"
+        parts = [(n, part) for n, part in enumerate(chunk.parts or [])
+                 if str(part.get("summary") or "").strip()]
+        if not parts:
+            return "skipped: the chunk has no parts"
+        placed = db.assigned_chunk_parts(chunk.uuid)
+        todo = [(n, part) for n, part in parts if n not in placed]
+        if todo:
+            bound = (systemone.slot_model(ASSISTANT_TOPIC_MATCH_UUID)
+                     or systemone.slot_model(ASSISTANT_REPEAT_CHECK_UUID))
+            if bound is None:
+                return "skipped: no decision model is bound"
+        for n, part in todo:
+            phrase = " ".join(str(part["summary"]).split())
+            vector = self._embed_phrase(phrase)
+            candidates = {
+                axis: room_topics.nearest(vector, db.room_topic_exemplars(
+                    chunk.room_uuid, axis, room_topics.EXEMPLARS))
+                for axis in room_topics.AXES}
+            # One request answers both axes, so a part that is an exemplar
+            # on both, as most are, is asked about once.
+            earlier = dict.fromkeys(m.phrase for axis in room_topics.AXES
+                                    for c in candidates[axis] for m in c["exemplars"])
+            scores: dict[str, dict[str, float]] = {}
+            for exemplar in earlier:
+                with watch.interruptible():
+                    answers = systemone.ask(
+                        ASSISTANT_TOPIC_MATCH_UUID,
+                        room_topics.pair_state(exemplar, phrase),
+                        [room_topics.QUESTIONS[axis] for axis in room_topics.AXES],
+                        deadline_s=self.TOPIC_MATCH_DEADLINE_SECONDS,
+                        max_state_chars=self.TOPIC_MATCH_MAX_STATE_CHARS,
+                        question_set_version=room_topics.QUESTION_SET_VERSION,
+                        job_uuid=job.uuid, bound=bound)
+                unanswered = [a for a in answers if a.status != "ok" or a.p is None]
+                if unanswered:
+                    raise RuntimeError(
+                        f"the decision model did not answer: {unanswered[0].reason}")
+                scores[exemplar] = {a.name: float(a.p) for a in answers}  # type: ignore[arg-type]
+            rows = []
+            for axis in room_topics.AXES:
+                topic, p = room_topics.pick(candidates[axis], scores, axis)
+                if topic is None:
+                    topic = db.add_room_topic(
+                        chunk.room_uuid, axis, room_topics.seed_name(part))
+                rows.append({
+                    "topic_uuid": topic.uuid, "room_uuid": chunk.room_uuid,
+                    "axis": axis, "chunk_uuid": chunk.uuid, "part_index": n,
+                    "phrase": phrase, "messages": room_topics.part_messages(part),
+                    "p": p, "embedding": vector})
+            db.add_room_topic_members(rows)
+        explained = self._explain_topics(chunk, watch)
+        if not todo and not explained:
+            return "skipped: already assigned"
+        return "done"
+
+    @staticmethod
+    def _embed_phrase(phrase: str) -> list[float] | None:
+        """A phrase's vector, or None when the embedder does not answer: the
+        part is then scored against the newest topics instead of the
+        nearest."""
+        try:
+            from memory.seed_memory import embed_query
+
+            return [float(v) for v in embed_query(phrase)]
+        except Exception as e:   # noqa: BLE001 - ranking is an aid, not the answer
+            logger.warning("housekeeping: no embedding for a part's phrase: %s", e)
+            return None
+
+    def _explain_topics(self, chunk: Any, watch: TurnWatch) -> int:
+        """Name and explain each topic of the chunk's parts that is due for
+        it (`room_topics.due_for_explaining`), one structured call each on
+        the local models of `assistant.topic_namer`. Returns how many were written.
+        A call that no model could deliver leaves the topic as it was: it
+        is due again the next time a part joins it."""
+        from agents import room_topics
+        from agents.config import ASSISTANT_TOPIC_NAMER_UUID
+        from agents.model_groups import resolve_assistant_model_uuids, structured_llm_call
+
+        models: list[UUID] | None = None
+        written = 0
+        for topic in db.list_chunk_topics(chunk.uuid):
+            members, requests = db.room_topic_requests(
+                topic.uuid, room_topics.EXPLAIN_REQUESTS)
+            if not room_topics.due_for_explaining(topic, members):
+                continue
+            if models is None:
+                found, _label = resolve_assistant_model_uuids(ASSISTANT_TOPIC_NAMER_UUID)
+                models = [m for m in found or [] if _is_local_model(m)]
+            if not models:
+                return written
+            prompt = room_topics.build_explain_prompt(topic.axis, requests)
+            self._burst += 1
+            try:
+                with watch.interruptible():
+                    reply, _model = structured_llm_call(
+                        room_topics.NAMER_CALLER, models, prompt["system"],
+                        prompt["user"], room_topics.TopicName)
+            except RuntimeError as e:
+                logger.warning("housekeeping: topic %s was not explained: %s", topic.uuid, e)
+                continue
+            name, explanation = room_topics.settle_name(reply)  # type: ignore[arg-type]
+            if name and db.explain_room_topic(topic.uuid, name, explanation, members):
+                written += 1
+        if written:
+            # A topic that was just given the name another has is that topic.
+            self._merge_same_named(chunk.room_uuid)
+        return written
+
+    def _suggest_merges(self, job: Any, attempt: Any, watch: TurnWatch) -> str:
+        """Look through a room's topics for pairs that are one
+        (`agents/room_topics.py`). Topics of one axis that the model gave
+        the same name are merged here: two names it wrote alone, from two
+        sets of requests, and that came out alike. Every other pair is
+        only recorded, for the operator. On each axis a topic of
+        `MERGE_MIN_PARTS` parts or more, counted in the room's current
+        series, is compared with its nearest by embedding: the decision
+        model scores their sample requests, and a pair at `SUGGEST_AT` or
+        above is put to the generative model with both topics' requests. A
+        pair is compared once; what was found of it is kept, whichever way
+        it went."""
+        from agents import room_topics
+        from agents.config import (
+            ASSISTANT_REPEAT_CHECK_UUID,
+            ASSISTANT_TOPIC_MATCH_UUID,
+            ASSISTANT_TOPIC_NAMER_UUID,
+        )
+        from agents.model_groups import resolve_assistant_model_uuids, structured_llm_call
+        from llm import systemone
+
+        # Counted as a model call before it ran; each judging call counts itself.
+        self._burst -= 1
+        if job.room_uuid is None:
+            raise ValueError("a topic merges job needs a room")
+        bound = (systemone.slot_model(ASSISTANT_TOPIC_MATCH_UUID)
+                 or systemone.slot_model(ASSISTANT_REPEAT_CHECK_UUID))
+        if bound is None:
+            return "skipped: no decision model is bound"
+        found, _label = resolve_assistant_model_uuids(ASSISTANT_TOPIC_NAMER_UUID)
+        models = [m for m in found or [] if _is_local_model(m)]
+        if not models:
+            return "skipped: no local model is bound to assistant.topic_namer"
+        self._merge_same_named(job.room_uuid)
+        from agents.room_chunks import PROMPT_VERSION
+
+        # A topic's size is its parts in the series the room is read in now:
+        # a room summarized twice holds every request twice.
+        series = {c.uuid for c in db.list_room_chunks(
+            job.room_uuid, int(db.get_setting("housekeeping.room_chunk_size")),
+            int(db.get_setting("housekeeping.room_chunk_overlap")), PROMPT_VERSION)}
+        members: dict[UUID, list[Any]] = {}
+        for m in db.list_room_topic_members(job.room_uuid):
+            if m.chunk_uuid in series:
+                members.setdefault(m.topic_uuid, []).append(m)
+        compared = {frozenset((s.topic_uuid, s.other_uuid))
+                    for s in db.list_room_topic_suggestions(job.room_uuid, state=None)}
+        for axis in room_topics.AXES:
+            topics = [{"topic": t, "members": members[t.uuid]}
+                      for t in db.list_room_topics(job.room_uuid)
+                      if t.axis == axis and members.get(t.uuid)]
+            for i, j in room_topics.merge_pairs(topics):
+                first, second = topics[i], topics[j]
+                pair = (first["topic"].uuid, second["topic"].uuid)
+                if frozenset(pair) in compared:
+                    continue
+                ps = []
+                for a in room_topics.merge_sample(first["members"]):
+                    for b in room_topics.merge_sample(second["members"]):
+                        with watch.interruptible():
+                            (answer,) = systemone.ask(
+                                ASSISTANT_TOPIC_MATCH_UUID,
+                                room_topics.pair_state(a.phrase, b.phrase),
+                                [room_topics.QUESTIONS[axis]],
+                                deadline_s=self.TOPIC_MATCH_DEADLINE_SECONDS,
+                                max_state_chars=self.TOPIC_MATCH_MAX_STATE_CHARS,
+                                question_set_version=room_topics.QUESTION_SET_VERSION,
+                                job_uuid=job.uuid, bound=bound)
+                        if answer.status != "ok" or answer.p is None:
+                            raise RuntimeError(
+                                f"the decision model did not answer: {answer.reason}")
+                        ps.append(float(answer.p))
+                score = sum(ps) / len(ps)
+                if score < room_topics.SUGGEST_AT:
+                    continue
+                prompt = room_topics.build_judge_prompt(
+                    axis, first["members"], second["members"])
+                self._burst += 1
+                try:
+                    with watch.interruptible():
+                        reply, _model = structured_llm_call(
+                            room_topics.NAMER_CALLER, models, prompt["system"],
+                            prompt["user"], room_topics.SameTopic)
+                except RuntimeError as e:
+                    # Not compared: the pair is looked at again next time.
+                    logger.warning("housekeeping: two topics were not compared: %s", e)
+                    continue
+                reason = " ".join(str(reply.reason).split())[:room_topics.REASON_MAX_CHARS]  # type: ignore[attr-defined]
+                same = bool(reply.same)  # type: ignore[attr-defined]
+                db.suggest_room_topic_merge(job.room_uuid, *pair, score, reason,
+                                            state="open" if same else "apart")
+        return "done"
+
+    @staticmethod
+    def _merge_same_named(room_uuid: UUID) -> int:
+        """Merge the room's topics that share a name on one axis, into the
+        one with the most parts. Returns how many went. A name the
+        operator wrote counts like any other: a topic the model names as
+        they named theirs is theirs."""
+        gone = 0
+        for group in db.same_named_room_topics(room_uuid):
+            for other in group[1:]:
+                gone += int(db.merge_room_topics(group[0].uuid, other.uuid) is not None)
+        return gone
+
     _RUNNERS: dict[str, Callable[..., str]] = {
         db.RUN_SUMMARY_JOB: _summarize_run,
         db.ROOM_CHUNK_JOB: _summarize_chunk,
+        db.ROOM_TOPICS_JOB: _assign_topics,
+        db.ROOM_TOPIC_MERGES_JOB: _suggest_merges,
     }

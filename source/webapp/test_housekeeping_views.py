@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import html
+import json
 import re
 from uuid import uuid4
 
@@ -441,7 +442,7 @@ def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
                "rewritten": [{
             "first_message": 0, "last_message": 5, "summary": "which number is odd",
             "result": "seven", "reasoning": "seven answers a later request"}]},
-        model="model-a", prompt_version=18, job_uuid=job.uuid)
+        model="model-a", prompt_version=19, job_uuid=job.uuid)
     try:
         body = c.get(f"/assistant/housekeeping/room/{room.uuid}").get_data(as_text=True)
         assert "Messages 0&ndash;9" in body and "questions about numbers" in body
@@ -458,7 +459,7 @@ def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
         assert "if (newest) { select(newestKey()); }" in body
         assert "select(newest ? newestKey() : picked);" in body
         # The heading links to its own chunk in this series.
-        assert 'href="?size=10&amp;overlap=2&amp;prompt=18#chunk-0">Messages 0&ndash;9</a>' in body
+        assert 'href="?size=10&amp;overlap=2&amp;prompt=19#chunk-0">Messages 0&ndash;9</a>' in body
         assert '<span class="hk-chip">numbers</span>' in body
         assert "m0&ndash;m5" in body and "which number comes next" in body
         assert "&times;3" in body and '<span class="hk-chip">notation</span>' in body
@@ -478,7 +479,7 @@ def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
         assert "seven answers a later request" in body
 
         # The same chunks as the text a prompt is going to hold, with its size.
-        assert f'href="/assistant/housekeeping/room/{room.uuid}?size=10&amp;overlap=2&amp;prompt=18&view=prompt"' in body
+        assert f'href="/assistant/housekeeping/room/{room.uuid}?size=10&amp;overlap=2&amp;prompt=19&view=prompt"' in body
         as_prompt = c.get(
             f"/assistant/housekeeping/room/{room.uuid}?view=prompt").get_data(as_text=True)
         assert 'id="chunk-0"' not in as_prompt
@@ -671,3 +672,238 @@ def test_a_job_does_not_show_the_call_of_the_job_that_ran_right_after_it(client)
     names = re.findall(r'<span class="wf-name kind-[a-z]+(?: is-failed)?">([^<]*)</span>', body)
     assert names == ["start", "summary", "check"]
     assert "reply at 8.6" not in body and "rejected" not in "".join(names)
+
+
+def _room_with_topics(made):
+    """A room with one summarized chunk of two parts that share a topic."""
+    from agents.config import ASSISTANT_UUID
+    from agents.room_chunks import PROMPT_VERSION, content_hash
+
+    human = db.get_human_user()
+    room = db.create_chatroom(f"hkt-{uuid4().hex[:8]}", human.uuid, [ASSISTANT_UUID])
+    made["rooms"].append(room.uuid)
+    for i in range(12):
+        db.post_chat_message(room.uuid, human.uuid if i % 2 == 0 else ASSISTANT_UUID,
+                             f"message number {i}")
+    messages = db.counted_room_messages(room.uuid)
+    chunk = db.store_room_chunk(
+        room_uuid=room.uuid, chunk_size=10, overlap=2, seq=0,
+        first_message_id=messages[0]["id"], last_message_id=messages[9]["id"],
+        message_count=10, content_hash=content_hash(messages[:10]),
+        summary="roots", topics=["roots"], problems=[], prompt_version=PROMPT_VERSION,
+        parts=[{"first_message": 0, "last_message": 3, "summary": "compute the root of nine",
+                "result": "three", "topics": ["roots"]},
+               {"first_message": 4, "last_message": 5, "summary": "compute the root of four",
+                "result": "two", "topics": ["roots"]}])
+    topic = db.add_room_topic(room.uuid, "task", "roots")
+    db.add_room_topic_members([
+        {"topic_uuid": topic.uuid, "room_uuid": room.uuid, "axis": "task",
+         "chunk_uuid": chunk.uuid, "part_index": n, "phrase": phrase, "messages": count,
+         "p": p, "embedding": None}
+        for n, (phrase, count, p) in enumerate((
+            ("compute the root of nine", 4, None), ("compute the root of four", 2, 0.9)))])
+    return room, chunk, topic
+
+
+def _drop_topics(room_uuid):
+    from db.models import RoomTopic, RoomTopicMember, RoomTopicSuggestion
+
+    for model in (RoomTopicSuggestion, RoomTopicMember, RoomTopic, db.RoomChunk):
+        db.session.query(model).filter_by(room_uuid=room_uuid).delete()
+    db.session.commit()
+
+
+def test_a_rooms_page_lists_its_recurring_topics_with_their_share(client):
+    c, made = client
+    room, _chunk, topic = _room_with_topics(made)
+    try:
+        page = f"/assistant/housekeeping/room/{room.uuid}"
+        body = c.get(page).get_data(as_text=True)
+        # A third view beside the summaries and the prompt's text.
+        assert f'href="{page}?size=10&amp;overlap=2&amp;prompt=19&view=topics"' in body
+        body = c.get(f"{page}?view=topics").get_data(as_text=True)
+        assert "<h3>Kinds of task</h3>" in body and "<h3>Named things</h3>" in body
+        # Six of the ten summarized messages, in two parts.
+        row = body[body.index('class="hk-topic-name"'):]
+        row = row[:row.index("</tr>")]
+        assert f'data-topic="{topic.uuid}" data-axis="task" data-name="roots" data-explanation=""' in row
+        assert "<li>compute the root of nine</li><li>compute the root of four</li>" in row
+        assert '<td class="hk-num hk-right">60%</td>' in body
+        assert "1 of 1 chunk\n  has its parts assigned" in body
+        # Nothing recurs on the other axis.
+        assert "Nothing has come up twice yet." in body
+        # The block a prompt could hold, and the modal a name opens.
+        assert "&lt;topic kind=&#34;task&#34; share=&#34;60%&#34; asked=&#34;2&#34; name=&#34;roots&#34;/&gt;" in body
+        assert 'id="hk-topic-modal"' in body and "/static/ui-modal.css" in body
+        # Every chunk has its topics, so there is nothing to assign.
+        assert "Assign topics:" not in body
+    finally:
+        _drop_topics(room.uuid)
+
+
+def test_the_operator_writes_a_topics_name_and_explanation(client):
+    c, made = client
+    room, _chunk, topic = _room_with_topics(made)
+    try:
+        page = f"/assistant/housekeeping/room/{room.uuid}"
+        resp = c.post(f"/assistant/housekeeping/topic/{topic.uuid}", data={
+            "name": "  python   check ", "explanation": "testing that programs run",
+            "next": f"{page}?size=10&overlap=2&prompt=19&view=topics"})
+        assert resp.status_code == 302
+        assert resp.headers["Location"] == f"{page}?size=10&overlap=2&prompt=19&view=topics"
+        db.session.refresh(topic)
+        assert (topic.name, topic.explanation, topic.operator_edited) == (
+            "python check", "testing that programs run", True)
+        body = c.get(f"{page}?view=topics").get_data(as_text=True)
+        assert ">python check</button>" in body and ">yours</span>" in body
+        assert "testing that programs run" in body
+        # A name is required, and the way back is never another place.
+        assert c.post(f"/assistant/housekeeping/topic/{topic.uuid}",
+                      data={"name": " "}).status_code == 400
+        resp = c.post(f"/assistant/housekeeping/topic/{topic.uuid}",
+                      data={"name": "x", "next": "https://elsewhere.invalid/"})
+        assert resp.headers["Location"] == f"{page}?view=topics"
+        assert c.post(f"/assistant/housekeeping/topic/{uuid4()}",
+                      data={"name": "x"}).status_code == 404
+    finally:
+        _drop_topics(room.uuid)
+
+
+def test_topics_can_be_asked_for_and_their_job_has_a_page(client):
+    from agents.config import HOUSEKEEPING_UUID
+
+    c, made = client
+    room, chunk, _topic = _room_with_topics(made)
+    try:
+        from db.models import RoomTopicMember
+
+        db.session.query(RoomTopicMember).filter_by(room_uuid=room.uuid).delete()
+        db.session.commit()
+        page = f"/assistant/housekeeping/room/{room.uuid}"
+        body = c.get(f"{page}?view=topics").get_data(as_text=True)
+        assert f'action="{page}/topics"' in body and "Assign topics: 1 chunk<" in body
+        resp = c.post(f"{page}/topics")
+        assert resp.headers["Location"] == f"{page}?view=topics"
+        item = (db.session.query(Inbox).filter(Inbox.agent_uuid == HOUSEKEEPING_UUID)
+                .order_by(Inbox.id.desc()).first())
+        payload = item.payload if isinstance(item.payload, dict) else json.loads(item.payload)
+        assert payload == {"room_uuid": str(room.uuid), "room_topics": True}
+        db.session.delete(item)
+        db.session.commit()
+        # The job's page names what it is and links to the room's topics.
+        job, _ = db.ensure_housekeeping_job(
+            db.ROOM_TOPICS_JOB, room_uuid=room.uuid, subject=str(chunk.uuid))
+        attempt = db.start_housekeeping_attempt(job)
+        call = db.record_decision_call(
+            job_uuid=job.uuid, slot="assistant.topic_match", model="decider",
+            question_set_version=1, bands_version=1, state_digest="d" * 64,
+            questions=[], status="ok", elapsed_ms=300, answers=[
+                {"name": "task", "status": "ok", "p": 0.97, "label": "yes"},
+                {"name": "thing", "status": "ok", "p": 0.05, "label": "no"}])
+        db.finish_housekeeping_attempt(job, attempt, "done")
+        db.settle_housekeeping_job(job, "final", outcome="done")
+        body = c.get(f"/assistant/housekeeping/{job.uuid}").get_data(as_text=True)
+        assert "chatroom topics" in body
+        assert f'href="{page}?view=topics">topics</a>' in body
+        # A request to the decision model is a row of its own, named for what
+        # it is here, with both axes' scores.
+        assert '<span class="wf-name kind-decision">match</span>' in body
+        assert 'data-desc="compare a part with a part of a topic"' in body
+        assert "task 0.97, thing 0.05</span>" in body
+        db.session.delete(call)
+        db.session.commit()
+    finally:
+        _drop_topics(room.uuid)
+
+
+def test_two_topics_that_look_like_one_are_put_to_the_operator(client):
+    """Nothing merges two topics but the operator: a pair the models agree
+    on is listed with both topics' requests, to merge or to tell apart, and
+    a topic's modal can make it part of another."""
+    from agents.config import HOUSEKEEPING_UUID
+    from db.models import RoomTopicSuggestion
+
+    from agents import room_topics
+
+    c, made = client
+    room, chunk, roots = _room_with_topics(made)
+    restore = room_topics.MERGE_MIN_PARTS
+    try:
+        page = f"/assistant/housekeeping/room/{room.uuid}"
+        # Two topics of one part each: a pair that small is not worth a
+        # decision, so the page keeps it to itself until one has five parts.
+        maths = db.add_room_topic(room.uuid, "task", "maths")
+        db.session.query(db.RoomTopicMember).filter_by(
+            topic_uuid=roots.uuid, part_index=1).update({"topic_uuid": maths.uuid})
+        db.session.commit()
+        assert db.suggest_room_topic_merge(room.uuid, roots.uuid, maths.uuid, 0.61,
+                                           "Both compute a root.")
+        assert "These look like one topic" not in c.get(f"{page}?view=topics").get_data(as_text=True)
+        db.session.query(db.RoomTopicSuggestion).filter_by(room_uuid=room.uuid).delete()
+        db.session.query(db.RoomTopicMember).filter_by(topic_uuid=maths.uuid).update(
+            {"topic_uuid": roots.uuid})
+        db.session.delete(maths)
+        db.session.commit()
+        room_topics.MERGE_MIN_PARTS = 1
+        # A second topic, holding the chunk's second part on the other axis's
+        # place in the table: two recurring topics of one kind.
+        maths = db.add_room_topic(room.uuid, "task", "maths")
+        db.session.query(db.RoomTopicMember).filter_by(
+            topic_uuid=roots.uuid, part_index=1).update({"topic_uuid": maths.uuid})
+        db.session.commit()
+        assert db.suggest_room_topic_merge(room.uuid, roots.uuid, maths.uuid, 0.61,
+                                           "Both compute a root.")
+        # The pair is recorded once, in either order.
+        assert not db.suggest_room_topic_merge(room.uuid, maths.uuid, roots.uuid, 0.9, "again")
+        body = c.get(f"{page}?view=topics").get_data(as_text=True)
+        assert "<h3>These look like one topic</h3>" in body and "Both compute a root." in body
+        (suggestion,) = db.list_room_topic_suggestions(room.uuid)
+        assert f'action="/assistant/housekeeping/topic/{maths.uuid}/merge"' in body
+        assert f'name="into" value="{roots.uuid}"' in body
+        assert f'action="/assistant/housekeeping/topic-suggestion/{suggestion.uuid}/dismiss"' in body
+        # The modal offers the other topics of its kind, read off the page.
+        assert 'id="hk-topic-into"' in body and "data-axis" in body
+        assert f'action="{page}/topic-merges"' in body
+
+        # Asked for: one job for the room, queued through the worker's inbox.
+        assert c.post(f"{page}/topic-merges").headers["Location"] == f"{page}?view=topics"
+        item = (db.session.query(Inbox).filter(Inbox.agent_uuid == HOUSEKEEPING_UUID)
+                .order_by(Inbox.id.desc()).first())
+        payload = item.payload if isinstance(item.payload, dict) else json.loads(item.payload)
+        assert payload == {"room_uuid": str(room.uuid), "room_topic_merges": True}
+        db.session.delete(item)
+        db.session.commit()
+
+        # Told apart: the pair is gone from the page, and is not suggested again.
+        resp = c.post(f"/assistant/housekeeping/topic-suggestion/{suggestion.uuid}/dismiss")
+        assert resp.headers["Location"] == f"{page}?view=topics"
+        assert db.list_room_topic_suggestions(room.uuid) == []
+        assert "These look like one topic" not in c.get(f"{page}?view=topics").get_data(as_text=True)
+        assert not db.suggest_room_topic_merge(room.uuid, roots.uuid, maths.uuid, 0.7, "x")
+
+        # Merged by hand: the one topic has both parts, under the name it had.
+        db.edit_room_topic(maths.uuid, "sums", "testing that programs run")
+        resp = c.post(f"/assistant/housekeeping/topic/{maths.uuid}/merge",
+                      data={"into": str(roots.uuid), "next": f"{page}?view=topics&x=1"})
+        assert resp.headers["Location"] == f"{page}?view=topics&x=1"
+        assert db.get_room_topic(maths.uuid) is None
+        db.session.refresh(roots)
+        assert sorted(m.part_index for m in db.list_room_topic_members(room.uuid)
+                      if m.topic_uuid == roots.uuid) == [0, 1]
+        # Only the topic that went carried the operator's words: they are kept.
+        assert (roots.name, roots.explanation, roots.operator_edited) == (
+            "sums", "testing that programs run", True)
+        assert db.session.query(RoomTopicSuggestion).filter_by(room_uuid=room.uuid).count() == 0
+        # A topic is not merged into itself, into nothing, or across kinds.
+        assert c.post(f"/assistant/housekeeping/topic/{roots.uuid}/merge",
+                      data={"into": str(roots.uuid)}).status_code == 404
+        assert c.post(f"/assistant/housekeeping/topic/{roots.uuid}/merge",
+                      data={"into": "nonsense"}).status_code == 400
+        thing = db.add_room_topic(room.uuid, "thing", "the lighthouse")
+        db.session.commit()
+        assert c.post(f"/assistant/housekeeping/topic/{roots.uuid}/merge",
+                      data={"into": str(thing.uuid)}).status_code == 404
+        assert c.post(f"/assistant/housekeeping/topic-suggestion/{uuid4()}/dismiss").status_code == 404
+    finally:
+        room_topics.MERGE_MIN_PARTS = restore
+        _drop_topics(room.uuid)

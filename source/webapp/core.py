@@ -30,6 +30,9 @@ from db import (
     HousekeepingAttempt,
     HousekeepingJob,
     RoomChunk,
+    RoomTopic,
+    RoomTopicMember,
+    RoomTopicSuggestion,
     SecondOpinionAssessment,
     SecondOpinionReview,
     assistant_step_path,
@@ -943,6 +946,35 @@ class RoomChunkView(ModelView):
 
 
 admin.add_view(RoomChunkView(RoomChunk, db, category="Assistant"))
+
+
+class RoomTopicView(ModelView):
+    # Written by the housekeeping role, and by the operator on the room's
+    # chunks page, which is where a name or an explanation is edited.
+    column_default_sort = ("created_at", True)
+    can_create = False
+    can_edit = False
+    column_type_formatters = CRON_TYPE_FORMATTERS
+    column_formatters = {"uuid": _fmt_short_uuid}
+
+
+class RoomTopicMemberView(ModelView):
+    # Written once by the housekeeping role; read-only here. The vector is
+    # 768 numbers, which a list has no room for.
+    column_default_sort = ("created_at", True)
+    can_create = False
+    can_edit = False
+    column_exclude_list = ("embedding",)
+    column_type_formatters = CRON_TYPE_FORMATTERS
+    column_formatters = {"uuid": _fmt_short_uuid}
+
+
+admin.add_view(RoomTopicView(RoomTopic, db, category="Assistant"))
+admin.add_view(RoomTopicMemberView(RoomTopicMember, db, category="Assistant"))
+# Two topics that look like one: answered on the room's chunks page.
+admin.add_view(RoomTopicView(
+    RoomTopicSuggestion, db, category="Assistant", name="Room Topic Suggestion",
+    endpoint="roomtopicsuggestion"))
 
 
 class DecisionCallView(ModelView):

@@ -85,7 +85,10 @@ def _attempt_calls(job, row, calls) -> dict:
                        collapsed=True, key=f"{key}-m{i}")
             for i, m in enumerate(call.messages or [], 1) if isinstance(m, dict))
         out.append({
-            "n": n, "kind": "check" if call.caller in check else "summary",
+            "n": n, "kind": ("check" if call.caller in check else
+                             "explanation" if job.job_type == db.ROOM_TOPICS_JOB
+                             else "comparison" if job.job_type == db.ROOM_TOPIC_MERGES_JOB
+                             else "summary"),
             "call": call, "kpis": _call_kpis(call), "prompts": prompts,
             "reply": text_block("response", call.response_text)})
     # The check has a summary written again once. A summary with a check
@@ -139,6 +142,16 @@ _JOB_PURPOSES: dict[str, str] = {
         "Summarizes one stretch of a chatroom's messages: what was asked "
         "for in each part, what came of it, and how well calibrated the "
         "assistant was. The summary is shown on the chatroom's chunks page."),
+    db.ROOM_TOPICS_JOB: (
+        "Assigns each part of one summarized chunk to a topic of its room: "
+        "a kind of task the room keeps coming back to, and a named thing. "
+        "A topic that now recurs is named and explained. The topics are "
+        "shown on the chatroom's chunks page, under Show: topics."),
+    db.ROOM_TOPIC_MERGES_JOB: (
+        "Looks through a chatroom's topics for pairs that look like one "
+        "topic. A pair two models agree on is shown on the chatroom's "
+        "chunks page, under Show: topics, for you to merge or to tell "
+        "apart. Nothing is merged by this job."),
 }
 
 
@@ -165,7 +178,12 @@ def _outcome(job) -> tuple[str, str]:
 
 
 def _chunk_link(job) -> dict | None:
-    """For a chunk job: which chunk it is, and the room page that shows it."""
+    """For a chunk job: which chunk it is, and the room page that shows it.
+    For a topics job: the room page's topics."""
+    if (job.job_type in (db.ROOM_TOPICS_JOB, db.ROOM_TOPIC_MERGES_JOB)
+            and job.room_uuid is not None):
+        return {"text": "topics",
+                "href": f"/assistant/housekeeping/room/{job.room_uuid}?view=topics"}
     if job.job_type != db.ROOM_CHUNK_JOB or job.room_uuid is None:
         return None
     spec = db.parse_chunk_subject(job.subject)
@@ -285,6 +303,15 @@ def _decision_calls(job) -> list[dict]:
         answer = (row.answers or [{}])[0]
         if answer.get("status") != "ok":
             return None
+        if job.job_type in (db.ROOM_TOPICS_JOB, db.ROOM_TOPIC_MERGES_JOB):
+            # One request scores both axes: the line names each with its
+            # probability, and the figure after it is the higher.
+            ps = {a.get("name"): a.get("p") for a in row.answers or []
+                  if a.get("status") == "ok" and a.get("p") is not None}
+            if not ps:
+                return None
+            return {"text": ", ".join(f"{k} {v:.2f}" for k, v in ps.items()),
+                    "p": max(ps.values()), "yes": max(ps.values()) >= 0.5}
         probabilities = answer.get("probabilities")
         if probabilities:
             top = max(probabilities, key=lambda k: probabilities[k])
@@ -375,6 +402,17 @@ _ROW_PURPOSES: dict[str, str] = {
         "was killed, skipped or failed. A job that is killed or fails is "
         "run again later."),
     "result": "What the job wrote: the chunk's summary, as the room's page shows it.",
+    "match": (
+        "Asks the decision model whether a part of the chunk and a part "
+        "that is in a topic already ask for the same kind of task, and "
+        "whether they are about the same named thing. The part joins the "
+        "topic that scores best, or starts one."),
+    "explanation": (
+        "Asks the model to name and explain a topic that now recurs, from "
+        "the requests that belong to it and what came of them."),
+    "comparison": (
+        "Asks the model whether two topics are one, from the requests of "
+        "both. A pair it calls the same is shown to you to merge."),
 }
 
 
@@ -390,11 +428,16 @@ _ROW_SAYS: dict[str, str] = {
     "live": "the model call that is running now",
     "end": "this run of the job ended before its work was done",
     "result": "the summary the job wrote",
+    "match": "compare a part with a part of a topic",
+    "explanation": "name and explain a topic that recurs",
+    "comparison": "say whether two topics are one",
 }
 
 
 def _row_what(row: dict) -> str:
     """Which entry of `_ROW_PURPOSES` and `_ROW_SAYS` a timeline row is."""
+    if row.get("what"):
+        return row["what"]
     if row["kind"] == "attempt":
         return "start" if row.get("attempt_no") == 1 else "attempt"
     if row["kind"] == "llm":
@@ -432,6 +475,8 @@ def _timeline(attempts: list[dict], now: datetime, job=None,
     `wrote` is what the job wrote, a chunk as `_chunk_view` gives it. It is
     the last row, of kind `result`: a mark where the job finished."""
     rows: list[dict] = []
+    topics_job = job is not None and job.job_type in (
+        db.ROOM_TOPICS_JOB, db.ROOM_TOPIC_MERGES_JOB)
     for n, a in enumerate(attempts, 1):
         row = a["row"]
         result = row.result or ""
@@ -449,8 +494,10 @@ def _timeline(attempts: list[dict], now: datetime, job=None,
                 "key": f"d{r.uuid}", "kind": "decision",
                 # The two messages that are compared: the request, and the
                 # user's next message.
-                "label": (f"duplicate m{state['request_local']} \u2194 m{state['local']}"
+                "label": ("match" if topics_job else
+                          f"duplicate m{state['request_local']} \u2194 m{state['local']}"
                           if state else "duplicate"),
+                **({"what": "match"} if topics_job else {}),
                 # The row is written when the answer is in.
                 "start": r.created_at - timedelta(milliseconds=elapsed),
                 "duration_ms": r.elapsed_ms, "failed": d["verdict"] is None,
@@ -541,6 +588,12 @@ def _signal_texts(signals: dict | None) -> list[str]:
         out.append(f"\u25b2 {signals['up']}")
     if signals.get("down"):
         out.append(f"\u25bc {signals['down']}")
+    # The tools the part's replies used: how many times each ran, and failed.
+    for name, count in (signals.get("tools") or {}).items():
+        text = f"{name} \u00d7{count['ran']}" if count["ran"] else name
+        if count["failed"]:
+            text += f" ({count['failed']} failed)"
+        out.append(text)
     return out
 
 
@@ -982,6 +1035,10 @@ _CHUNK_BODY = """  {# What is taken from a message's number in the room before i
                 {% for a in part.asked_again_at or [] %}<span class="hk-chip" title="The decision model's probability that this message asks for the same thing again">m{{ a.message - shift }} asks again {{ '%.2f'|format(a.p) }}{% if a.kind %} ({{ a.kind }}){% endif %}</span>{% endfor %}
                 {% for r in reaction_texts(part) %}<span class="hk-mono" title="What the user did after each reply">{{ r }}</span>{% endfor %}
                 {% for text in signal_texts(part.signals) %}<span class="hk-chip" title="From the records">{{ text }}</span>{% endfor %}
+                {% if part.grounding %}<span class="hk-pill {{ 'done' if part.grounding == 'tool' else 'deferred' }}" title="{{ {
+                  'tool': 'Every answer in this part that used a tool stands on it: the tool ran, and what a program printed is in the reply.',
+                  'output not used': 'A program ran, and the reply does not hold what it printed.',
+                  'tool failed': 'A program or a lookup failed and none ran, and a reply was written anyway.'}[part.grounding] }} Decided by rule from the run\'s steps.">{{ {'tool': 'grounded in a tool', 'output not used': 'tool output not used', 'tool failed': 'tool failed'}[part.grounding] }}</span>{% endif %}
               </div>
               {% endif %}
               {% if part.audit and not (part.audit.request and part.audit.result and part.audit.get('reaction', true)) %}
@@ -1449,6 +1506,86 @@ _ROOM_FRAGMENT = """
   </tbody>
 </table>
 <div class="tb-scope">{{ prompt_block }}</div>
+{% elif as_topics %}
+<p class="hk-lede">What this room keeps coming back to. Each part of a summarized
+  chunk is compared, by the decision model, with the parts that came before it:
+  whether the two ask for the same kind of task, and whether they are about the
+  same named thing. A topic is listed once two parts share it. The share is of
+  the {{ covered }} summarized messages. A name and an explanation are written by
+  the model from the requests alone, so they say what was asked and not why:
+  click a name to write your own, which the model then leaves alone.
+  {{ topics.assigned }} of {{ chunks|length }} chunk{{ '' if chunks|length == 1 else 's' }}
+  {{ 'has its' if topics.assigned == 1 else 'have their' }} parts assigned{% if topics.queued %}, {{ topics.queued }} queued{% endif %}.</p>
+<div class="hk-topic-actions">
+{% if is_current and topics.unassigned %}
+<form method="post" action="/assistant/housekeeping/room/{{ room_uuid }}/topics">
+  <button class="hk-btn" type="submit" title="A few seconds of scoring by the decision model per chunk, and one model call for each topic that then recurs. A new message stops the call in progress.">Assign topics: {{ topics.unassigned }} chunk{{ '' if topics.unassigned == 1 else 's' }}</button>
+</form>
+{% endif %}
+<form method="post" action="/assistant/housekeeping/room/{{ room_uuid }}/topic-merges">
+  <button class="hk-btn" type="submit" title="Topics the model gave the same name are merged. Each topic of five parts or more is then compared with the topics nearest it: scoring by the decision model, and one model call for each pair that scores as alike. A pair both call the same is listed here for you to merge.">Look for topics that are one</button>
+</form>
+{% if topics.merges_queued %}<span class="hk-pill deferred">looking</span>{% endif %}
+</div>
+{% if topics.suggestions %}
+<div class="hk-card">
+  <div class="hd"><h3>These look like one topic</h3>
+    <span class="hk-mono">{{ topics.suggestions|length }} pair{{ '' if topics.suggestions|length == 1 else 's' }}</span></div>
+  <div class="bd">
+    {% for g in topics.suggestions %}
+    <div class="hk-suggestion">
+      <div><b>{{ g.first.name }}</b> <span class="hk-mono">{{ g.first_members|length }}</span>
+        and <b>{{ g.second.name }}</b> <span class="hk-mono">{{ g.second_members|length }}</span>
+        <span class="hk-chip" title="{{ 'The requests ask for the same kind of task' if g.first.axis == 'task' else 'The requests are about the same named thing' }}">{{ 'kind of task' if g.first.axis == 'task' else 'named thing' }}</span>
+        <span class="hk-mono" title="The decision model's mean score for the two topics' sample requests">{{ '%.2f'|format(g.row.score) }}</span></div>
+      <div class="hk-lede" style="margin:2px 0 4px">{{ g.row.reason }}</div>
+      <details id="suggestion-{{ g.row.uuid }}"><summary>the requests of both</summary>
+        <ul class="hk-topic-members">{% for m in g.first_members %}<li>{{ m.phrase }}</li>{% endfor %}</ul>
+        <ul class="hk-topic-members" style="margin-top:8px">{% for m in g.second_members %}<li>{{ m.phrase }}</li>{% endfor %}</ul></details>
+      <div class="hk-suggestion-actions">
+        <form method="post" action="/assistant/housekeeping/topic/{{ g.second.uuid }}/merge">
+          <input type="hidden" name="into" value="{{ g.first.uuid }}">
+          <button class="hk-btn" type="submit" title="The second topic's requests become the first's, which keeps its name. This cannot be undone here.">Merge</button></form>
+        <form method="post" action="/assistant/housekeeping/topic-suggestion/{{ g.row.uuid }}/dismiss">
+          <button class="hk-btn" type="submit" title="They are two topics. The pair is not suggested again.">Not the same</button></form>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+{% for axis, title, what in topics.axes %}
+<div class="hk-card">
+  <div class="hd"><h3>{{ title }}</h3>
+    <span class="hk-mono">{{ topics.rows[axis]|length }} recurring &middot; {{ topics.one_offs[axis] }} that came up once</span></div>
+  <div class="bd">
+    {% if topics.rows[axis] %}
+    <table class="hk-log hk-topics">
+      <thead><tr><th class="hk-right">Share</th><th class="hk-right">Parts</th><th>Name</th><th>{{ what }}</th></tr></thead>
+      <tbody>
+        {% for r in topics.rows[axis] %}
+        <tr>
+          <td class="hk-num hk-right">{{ r.share }}</td>
+          <td class="hk-num hk-right">{{ r.parts }}</td>
+          <td><button type="button" class="hk-topic-name" data-topic="{{ r.topic.uuid }}" data-axis="{{ axis }}" data-name="{{ r.topic.name }}" data-explanation="{{ r.topic.explanation }}" title="Click to write the name and the explanation yourself">{{ r.topic.name }}</button>{% if r.topic.operator_edited %} <span class="hk-pill" title="You wrote this name and explanation. The model does not write them again.">yours</span>{% endif %}</td>
+          <td>{{ r.topic.explanation or '&mdash;'|safe }}
+            {% if r.answered_with %}<div class="hk-mono" title="The tools this topic's parts were answered with, out of its parts, from the runs' steps.">answered with: {{ r.answered_with }}</div>{% endif %}
+            <details id="topic-{{ r.topic.uuid }}"><summary>the {{ r.parts }} requests</summary>
+              <ul class="hk-topic-members">{% for m in r.members %}<li>{{ m.phrase }}</li>{% endfor %}</ul></details></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="hk-lede" style="margin:0">Nothing has come up twice yet.</p>
+    {% endif %}
+  </div>
+</div>
+{% endfor %}
+<p class="hk-lede">The recurring topics as one block of text, the way a prompt could hold
+  them in place of every chunk: <b>{{ '{:,}'.format(topics.chars) }} characters</b>{% if topics.percent %},
+  {{ topics.percent }} of the summarized messages' own text{% endif %}. No prompt holds it yet.</p>
+<div class="tb-scope">{{ topics.block }}</div>
 {% else %}
 {% for c in chunks %}
 <div class="hk-card" id="chunk-{{ c.row.seq }}">
@@ -1466,9 +1603,107 @@ _ROOM_FRAGMENT = """
 {% endif %}
 """
 
+# The modal a topic's name opens (notes/ui-modals.md, notes/ui-modal-rename.md):
+# the name and the explanation, Cancel and Save. It stands outside #hk-live,
+# so the page's live reload does not close it. No backslashes: this string
+# is not raw.
+_TOPIC_MODAL = """
+<div class="ui-modal-backdrop" id="ui-modal-backdrop" hidden></div>
+<form class="ui-modal" id="hk-topic-modal" method="post" hidden>
+  <h3>Topic</h3>
+  <p>What you write here stays: the model does not name or explain this topic again.</p>
+  <label class="hk-topic-field">Name
+    <input type="text" name="name" id="hk-topic-input-name" autocomplete="off" maxlength="48"></label>
+  <label class="hk-topic-field">What it is
+    <input type="text" name="explanation" id="hk-topic-input-explanation" autocomplete="off" maxlength="120"></label>
+  <label class="hk-topic-field">Or make it part of another topic, which keeps its own name
+    <select name="into" id="hk-topic-into"><option value="">Keep it a topic of its own</option></select></label>
+  <input type="hidden" name="next" id="hk-topic-next">
+  <div class="modal-actions">
+    <button type="button" class="btn-cancel" id="hk-topic-cancel">Cancel</button>
+    <button type="submit" class="btn-primary" id="hk-topic-save" disabled>Save</button>
+  </div>
+</form>
+<script>
+(function () {
+  var modal = document.getElementById('hk-topic-modal');
+  var backdrop = document.getElementById('ui-modal-backdrop');
+  var name = document.getElementById('hk-topic-input-name');
+  var explanation = document.getElementById('hk-topic-input-explanation');
+  var save = document.getElementById('hk-topic-save');
+  var was = null;   // the stored values at open; null while closed
+  var into = document.getElementById('hk-topic-into');
+  var topic = '';
+  function dirty() {
+    return was !== null && (name.value.trim() !== was.name
+      || explanation.value.trim() !== was.explanation || into.value !== '');
+  }
+  // Save needs a name, and something that differs from what is stored. With
+  // another topic chosen it merges into that one instead of saving the words.
+  function sync() {
+    save.disabled = !dirty() || name.value.trim() === '';
+    save.textContent = into.value ? 'Merge' : 'Save';
+    modal.action = '/assistant/housekeeping/topic/' + topic + (into.value ? '/merge' : '');
+  }
+  function close() { modal.hidden = true; backdrop.hidden = true; was = null; }
+  document.addEventListener('click', function (e) {
+    var button = e.target.closest('.hk-topic-name');
+    if (!button) { return; }
+    was = {name: button.getAttribute('data-name') || '',
+           explanation: button.getAttribute('data-explanation') || ''};
+    name.value = was.name;
+    explanation.value = was.explanation;
+    topic = button.getAttribute('data-topic');
+    // The other topics of its kind that the page lists.
+    into.innerHTML = '';
+    into.appendChild(new Option('Keep it a topic of its own', ''));
+    document.querySelectorAll('.hk-topic-name').forEach(function (other) {
+      if (other !== button && other.getAttribute('data-axis') === button.getAttribute('data-axis')) {
+        into.appendChild(new Option(other.getAttribute('data-name'), other.getAttribute('data-topic')));
+      }
+    });
+    document.getElementById('hk-topic-next').value = window.location.pathname + window.location.search;
+    sync();
+    backdrop.hidden = false;
+    modal.hidden = false;
+    explanation.focus();
+  });
+  name.addEventListener('input', sync);
+  explanation.addEventListener('input', sync);
+  into.addEventListener('change', sync);
+  document.getElementById('hk-topic-cancel').addEventListener('click', close);
+  // Typed text is only dropped by Cancel: a click beside the card or Escape
+  // closes it while nothing has been changed.
+  backdrop.addEventListener('click', function () { if (!dirty()) { close(); } });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && was !== null && !dirty()) { close(); }
+  });
+})();
+</script>
+"""
+
 _ROOM_PAGE = """
 <!doctype html>
 <title>Room chunks &mdash; rainbox</title>
+<link rel="stylesheet" href="/static/ui-modal.css">
+<style>
+  .hk-topic-name{font:inherit;font-weight:600;color:#1a1a2e;background:none;text-align:left;
+                 border:1px solid transparent;border-radius:6px;padding:2px 6px;margin-left:-6px;cursor:pointer}
+  .hk-topic-name:hover{border-color:#cbd5e1;background:#f8fafc}
+  .hk-topics details{margin-top:2px}
+  .hk-topics summary{color:#667085;font-size:0.8rem;cursor:pointer}
+  .hk-topic-members{margin:4px 0 0;padding-left:1.2rem;color:#374151;font-size:0.85rem}
+  .hk-topic-field{display:block;font-size:0.8rem;color:#667085;margin:0 0 0.7em}
+  .hk-topic-field select{display:block;width:100%;box-sizing:border-box;margin-top:3px;padding:0.45em;
+                 border:1px solid #ccc;border-radius:6px;font:inherit;color:#1a1a2e;background:#fff}
+  .hk-topic-actions{display:flex;gap:8px;align-items:center;margin:0 0 14px}
+  .hk-suggestion{padding:10px 0;border-bottom:1px solid #eef0f4}
+  .hk-suggestion:last-child{border-bottom:none}
+  .hk-suggestion summary{color:#667085;font-size:0.8rem;cursor:pointer}
+  .hk-suggestion-actions{display:flex;gap:8px;margin-top:8px}
+  .ui-modal .hk-topic-field input[type=text]{display:block;width:100%;box-sizing:border-box;margin-top:3px;
+                 padding:0.5em;border:1px solid #ccc;border-radius:6px;font:inherit;color:#1a1a2e}
+</style>
 """ + _STYLE + BLOCKS_STYLE + """
 {% include "_nav.html" %}
 <style>.pp-nav{margin-bottom:0}</style>
@@ -1491,7 +1726,7 @@ _ROOM_PAGE = """
       <div class="hk-chips">
         {% for s_size, s_overlap, s_version, n in series %}
         <a class="hk-chip {{ 'sel' if (s_size, s_overlap, s_version) == (size, overlap, version) }}"
-           href="/assistant/housekeeping/room/{{ room_uuid }}?size={{ s_size }}&overlap={{ s_overlap }}&prompt={{ s_version }}{{ '&view=prompt' if as_prompt }}">{{ s_size }} per chunk, {{ s_overlap }} of context, prompt {{ s_version }}{% if n %} &middot; {{ n }}{% endif %}</a>
+           href="/assistant/housekeeping/room/{{ room_uuid }}?size={{ s_size }}&overlap={{ s_overlap }}&prompt={{ s_version }}{{ '&view=prompt' if as_prompt }}{{ '&view=topics' if as_topics }}">{{ s_size }} per chunk, {{ s_overlap }} of context, prompt {{ s_version }}{% if n %} &middot; {{ n }}{% endif %}</a>
         {% endfor %}
       </div>
     </div>
@@ -1499,16 +1734,18 @@ _ROOM_PAGE = """
       <label>Show</label>
       <div class="hk-chips">
         {% set here = '/assistant/housekeeping/room/' ~ room_uuid ~ '?size=' ~ size ~ '&overlap=' ~ overlap ~ '&prompt=' ~ version %}
-        <a class="hk-chip {{ 'sel' if not as_prompt }}" href="{{ here }}"
+        <a class="hk-chip {{ 'sel' if not as_prompt and not as_topics }}" href="{{ here }}"
            title="Each chunk as a card: its summary, its parts, the check, and a link to the job that wrote it.">summaries</a>
         <a class="hk-chip {{ 'sel' if as_prompt }}" href="{{ here }}&view=prompt"
            title="The chunks as the text that is going to stand in the personal assistant's prompt, with its number of characters.">as in the prompt</a>
+        <a class="hk-chip {{ 'sel' if as_topics }}" href="{{ here }}&view=topics"
+           title="What the room keeps coming back to: the kinds of task and the named things that recur across its chunks, each with its share of the room.">topics</a>
       </div>
     </div>
   </div>
   <div id="hk-live" data-revision="{{ revision }}">""" + _ROOM_FRAGMENT + """</div>
 </div>
-""" + BLOCKS_SCRIPT + _LIVE_SCRIPT
+""" + _TOPIC_MODAL + BLOCKS_SCRIPT + _LIVE_SCRIPT
 
 
 def _int_arg(name: str, default: int) -> int:
@@ -1520,6 +1757,7 @@ def _int_arg(name: str, default: int) -> int:
 
 @app.route("/assistant/housekeeping/room/<uuid:room_uuid>")
 def housekeeping_room_page(room_uuid: UUID) -> str:
+    from agents import room_topics
     from agents.room_chunks import PROMPT_VERSION, render_room_earlier
 
     names = db.housekeeping_room_names([room_uuid])
@@ -1548,6 +1786,7 @@ def housekeeping_room_page(room_uuid: UUID) -> str:
     due = len(db.due_room_chunks(room_uuid, size, overlap, version, 500)) \
         if is_current else 0
     as_prompt = request.args.get("view") == "prompt"
+    as_topics = request.args.get("view") == "topics"
     # What the summarized chunks' own messages come to, to hold the block's
     # size against. A message of the human's is theirs; every other is a reply.
     inside_all = [m for c in chunks for m in c["messages"]]
@@ -1568,8 +1807,36 @@ def housekeeping_room_page(room_uuid: UUID) -> str:
          "date_from": c["date_from"], "date_to": c["date_to"],
          "summary": c["row"].summary, "topics": c["row"].topics,
          "parts": c["row"].parts} for c in chunks]) if as_prompt else ""
+    topics: dict = {}
+    if as_topics:
+        covered_messages = sum(c["row"].message_count for c in chunks)
+        chunk_uuids = {c["row"].uuid for c in chunks}
+        members = db.list_room_topic_members(room_uuid)
+        tallied = room_topics.tally(
+            db.list_room_topics(room_uuid), members, chunk_uuids, covered_messages,
+            {c["row"].uuid: c["row"].parts or [] for c in chunks})
+        topics_text = room_topics.render_room_topics(tallied)
+        assigned = len({m.chunk_uuid for m in members} & chunk_uuids)
+        topics = {
+            "axes": (("task", "Kinds of task", "What you are doing"),
+                     ("thing", "Named things", "What it is")),
+            "rows": tallied["axes"], "one_offs": tallied["one_offs"],
+            "assigned": assigned, "unassigned": len(chunks) - assigned,
+            "queued": sum(
+                1 for r in db.list_housekeeping_jobs(
+                    job_type=db.ROOM_TOPICS_JOB, room_uuid=room_uuid, limit=500)[0]
+                if r["job"].state != "final"),
+            "suggestions": _topic_suggestions(room_uuid, members, chunk_uuids),
+            "merges_queued": any(
+                r["job"].state != "final" for r in db.list_housekeeping_jobs(
+                    job_type=db.ROOM_TOPIC_MERGES_JOB, room_uuid=room_uuid, limit=5)[0]),
+            "chars": len(topics_text), "percent": share(len(topics_text)),
+            "block": text_block(
+                f"room_topics ({len(topics_text):,} chars)", topics_text, whole=True),
+        }
     ctx = dict(
-        as_prompt=as_prompt, prompt_chars=len(prompt_text),
+        as_prompt=as_prompt, as_topics=as_topics, topics=topics,
+        prompt_chars=len(prompt_text),
         sizes={
             "human": sum(human), "human_count": len(human),
             "replies": sum(replies), "reply_count": len(replies),
@@ -1599,6 +1866,106 @@ def housekeeping_room_summarize(room_uuid: UUID) -> Response:
 
     db.enqueue(HOUSEKEEPING_UUID, {"room_uuid": str(room_uuid), "room_chunks": True})
     return redirect(f"/assistant/housekeeping/room/{room_uuid}")
+
+
+def _topic_suggestions(room_uuid: UUID, members: list, chunk_uuids: set) -> list[dict]:
+    """A room's open suggestions as the page lists them: `{row, first,
+    second, first_members, second_members}`, the pair's older topic first,
+    with each topic's parts in the series shown. One whose topic is gone is
+    left out, and so is a pair of two small topics
+    (`room_topics.MERGE_MIN_PARTS`): which of them a part fell into is not
+    worth a decision."""
+    from agents.room_topics import MERGE_MIN_PARTS
+
+    topics = {t.uuid: t for t in db.list_room_topics(room_uuid)}
+    mine: dict[UUID, list] = {}
+    for m in members:
+        if m.chunk_uuid in chunk_uuids:
+            mine.setdefault(m.topic_uuid, []).append(m)
+    out = []
+    for row in db.list_room_topic_suggestions(room_uuid):
+        if row.topic_uuid not in topics or row.other_uuid not in topics:
+            continue
+        first, second = mine.get(row.topic_uuid, []), mine.get(row.other_uuid, [])
+        if max(len(first), len(second)) < MERGE_MIN_PARTS:
+            continue
+        out.append({"row": row, "first": topics[row.topic_uuid],
+                    "second": topics[row.other_uuid],
+                    "first_members": first, "second_members": second})
+    return out
+
+
+@app.route("/assistant/housekeeping/room/<uuid:room_uuid>/topic-merges", methods=["POST"])
+def housekeeping_room_topic_merges(room_uuid: UUID) -> Response:
+    """Queue a look through the room's topics for pairs that are one. What
+    it finds is listed on the room's topics; nothing is merged by it."""
+    if room_uuid not in db.housekeeping_room_names([room_uuid]):
+        abort(404, "room not found")
+    from agents.config import HOUSEKEEPING_UUID
+
+    db.enqueue(HOUSEKEEPING_UUID, {"room_uuid": str(room_uuid), "room_topic_merges": True})
+    return redirect(f"/assistant/housekeeping/room/{room_uuid}?view=topics")
+
+
+def _back_to_topics(room_uuid: UUID) -> Response:
+    """Back to the room's view an action was taken from, and to no other
+    place."""
+    here = f"/assistant/housekeeping/room/{room_uuid}"
+    back = request.form.get("next") or ""
+    return redirect(back if back.startswith(here + "?") else f"{here}?view=topics")
+
+
+@app.route("/assistant/housekeeping/topic/<uuid:topic_uuid>/merge", methods=["POST"])
+def housekeeping_topic_merge(topic_uuid: UUID) -> Response:
+    """Make this topic part of the topic `into` names, which keeps its own
+    name: the operator's decision, from the modal or from a suggestion."""
+    try:
+        into = UUID(request.form.get("into") or "")
+    except ValueError:
+        abort(400, "into is not a topic")
+    kept = db.merge_room_topics(into, topic_uuid)
+    if kept is None:
+        abort(404, "the two are not topics of one room and kind")
+    return _back_to_topics(kept.room_uuid)
+
+
+@app.route("/assistant/housekeeping/topic-suggestion/<uuid:suggestion_uuid>/dismiss",
+           methods=["POST"])
+def housekeeping_topic_suggestion_dismiss(suggestion_uuid: UUID) -> Response:
+    """The operator says the two are not one topic."""
+    row = db.dismiss_room_topic_suggestion(suggestion_uuid)
+    if row is None:
+        abort(404, "suggestion not found")
+    return _back_to_topics(row.room_uuid)
+
+
+@app.route("/assistant/housekeeping/room/<uuid:room_uuid>/topics", methods=["POST"])
+def housekeeping_room_topics(room_uuid: UUID) -> Response:
+    """Queue a topics job for every summarized chunk of the room whose parts
+    have no topic yet. No chunk is summarized by this."""
+    if room_uuid not in db.housekeeping_room_names([room_uuid]):
+        abort(404, "room not found")
+    from agents.config import HOUSEKEEPING_UUID
+
+    db.enqueue(HOUSEKEEPING_UUID, {"room_uuid": str(room_uuid), "room_topics": True})
+    return redirect(f"/assistant/housekeeping/room/{room_uuid}?view=topics")
+
+
+@app.route("/assistant/housekeeping/topic/<uuid:topic_uuid>", methods=["POST"])
+def housekeeping_topic_edit(topic_uuid: UUID) -> Response:
+    """The operator's name and explanation for a topic. The topic is theirs
+    from here on: the model does not write it again."""
+    from agents.room_topics import EXPLANATION_MAX_CHARS, NAME_MAX_CHARS
+
+    name = " ".join((request.form.get("name") or "").split())[:NAME_MAX_CHARS]
+    explanation = " ".join(
+        (request.form.get("explanation") or "").split())[:EXPLANATION_MAX_CHARS]
+    if not name:
+        abort(400, "a topic needs a name")
+    topic = db.edit_room_topic(topic_uuid, name, explanation)
+    if topic is None:
+        abort(404, "topic not found")
+    return _back_to_topics(topic.room_uuid)
 
 
 @app.route("/assistant/housekeeping/api/revision")

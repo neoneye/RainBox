@@ -58,8 +58,13 @@ def _run(made: dict, *, finished: bool = True) -> AssistantRun:
     return run
 
 
-def _agent(monkeypatch, *, idle: bool = True) -> hk.HousekeepingAgent:
+def _agent(monkeypatch, *, idle: bool = True, topics: bool = False) -> hk.HousekeepingAgent:
     agent = hk.HousekeepingAgent(HOUSEKEEPING_UUID, "housekeeping", lambda _m: None)
+    if not topics:
+        # Assigning a chunk's parts to topics has tests of its own. Here its
+        # jobs would run after every summary and be counted with them.
+        monkeypatch.setattr(agent, "_queue_chunk_topics", lambda chunk: None)
+        monkeypatch.setattr(db, "ensure_room_topic_jobs", lambda *a, **kw: 0)
     agent.POLL_SECONDS = 0.01
     agent.PROGRESS_SECONDS = 0.0
     if idle:
@@ -369,7 +374,7 @@ def _fake_chunk_model(monkeypatch, reply=None, check=None):
     return prompts
 
 
-V = 18   # agents.room_chunks.PROMPT_VERSION
+V = 19   # agents.room_chunks.PROMPT_VERSION
 
 
 def test_chunks_are_cut_in_order_and_wait_for_their_context(app_ctx):
@@ -900,6 +905,26 @@ def test_reply_signals_come_from_the_run_the_audit_and_the_vote(app_ctx):
             "vote": "downvote", "vote_comment": "wrong count"}     # the latest vote
         assert by_id[plain.id] is None
         assert all(m["signals"] is None for m in messages if m["sender"] == "human")
+        # The run's steps say which tools stood behind the reply. A program
+        # that failed and then ran, and whose number the reply states.
+        for i, (action, phase, preview, args) in enumerate((
+                ("memory_query", "observed", "two claims", {}),
+                ("python_program", "observed", "print(1)", {}),
+                ("python_run", "failed", "SyntaxError", {"code": "x"}),
+                ("python_run", "observed", "289.54792349454004",
+                 {"code": "y", "description": "square root of a number"}),
+                ("reply", "final", "", {})), start=3):
+            db.append_assistant_step(
+                run_uuid=run.uuid, step_index=i, phase=phase, action=action,
+                reason="r", args=args, observation_preview=preview)
+        reply.text = "It is about 289.55."
+        db.session.commit()
+        messages = db.attach_reply_signals(room.uuid, db.counted_room_messages(room.uuid))
+        assert {m["id"]: m["signals"] for m in messages}[reply.id]["tools"] == {
+            "used": {"memory query": {"ran": 1, "failed": 0},
+                     "program": {"ran": 1, "failed": 1}},
+            "output_in_reply": True, "about": "square root of a number",
+            "grounding": "tool"}
     finally:
         db.session.query(db.FeedbackEvent).filter(
             db.FeedbackEvent.uuid.in_([f.uuid for f in made])).delete()
@@ -1041,3 +1066,80 @@ def test_a_chunks_summary_is_a_phrase_per_part_and_not_a_bare_name():
     assert problems == []
     room_chunks._subjects(["x" * (room_chunks.SUBJECT_MAX_CHARS + 1)], problems)
     assert problems == [f"chunk: a subject of {room_chunks.SUBJECT_MAX_CHARS + 1} characters"]
+
+
+def test_what_a_program_printed_is_looked_for_in_the_reply():
+    from agents import room_chunks as rc
+
+    # The number as the reply rounds it, or cuts it; with a thousands comma.
+    assert rc.output_used("289.54792349454004", "The root is about 289.55.")
+    assert rc.output_used("289.54792349454004", "It is 289.54 and a bit.")
+    assert rc.output_used("1595.628", "That is 1,595.63 meters.")
+    assert rc.output_used("3", "There are 3 of them.")
+    assert rc.output_used("the shed is blue", "I found that The Shed Is Blue today.")
+    assert not rc.output_used("289.54792349454004", "It is roughly 300.")
+    assert not rc.output_used("", "289.55") and not rc.output_used("289.5", "")
+
+
+def test_a_replys_tools_are_read_off_its_runs_steps():
+    from agents import room_chunks as rc
+
+    def step(action, phase, output="", code_driven=False, **args):
+        return {"action": action, "phase": phase, "code_driven": code_driven,
+                "args": args, "output": output}
+
+    # How a turn ends, the calls that check it, and what code runs are not tools.
+    assert rc.reply_tools([step("reply", "final"), step("reply_audit", "observed"),
+                           step("request_summary", "observed", code_driven=True),
+                           step("kanban_read", "running")], "an answer") is None
+    looked_up = rc.reply_tools([step("diary_query", "observed"),
+                                step("memory_queries", "observed", code_driven=True),
+                                step("query_memory", "observed")], "an answer")
+    assert looked_up == {"used": {"diary query": {"ran": 1, "failed": 0},
+                                  "memory query": {"ran": 2, "failed": 0}},
+                         "grounding": "tool"}
+    assert rc.tools_line(looked_up) == "used diary query, memory query"
+    # A program that ran, and a reply that states something else.
+    unused = rc.reply_tools([step("python_run", "observed", "42")], "It is about 7.")
+    assert (unused["grounding"], unused["output_in_reply"]) == ("output not used", False)
+    assert rc.tools_line(unused) == "ran a program, and what it printed is not in the reply"
+    # A program that never ran, and a reply that was written anyway.
+    failed = rc.reply_tools([step("python_run", "failed", "SyntaxError"),
+                             step("python_run", "failed", "repeated"),
+                             step("memory_query", "observed")], "It is 12.")
+    assert failed["grounding"] == "tool failed"
+    assert rc.tools_line(failed) == "a program failed 2 times and none ran; used memory query"
+    ran = rc.reply_tools([step("python_run", "failed", "x"),
+                          step("python_run", "observed", "12.5", description="feet to meters")],
+                         "That is 12.5 meters.")
+    assert rc.tools_line(ran) == ("ran a program (feet to meters) after it failed once, "
+                                  "and what it printed is in the reply")
+    assert rc.signal_line({"run": "resolved", "tools": ran}).startswith("run resolved; ran a program")
+    assert rc.reply_tools([step("kanban_read", "failed")], "x")["grounding"] == "tool failed"
+
+
+def test_a_part_keeps_its_tools_and_takes_the_worst_of_its_replies():
+    from agents import room_chunks as rc
+
+    def reply(grounding, **used):
+        return {"sender": "assistant", "text": "a", "signals": {"tools": {
+            "used": {k: {"ran": v[0], "failed": v[1]} for k, v in used.items()},
+            "grounding": grounding}}}
+
+    chunk = [{"sender": "human", "text": "compute a root"}, reply("tool", program=(1, 0)),
+             {"sender": "human", "text": "compute another root"}, reply("tool failed", program=(0, 2)),
+             {"sender": "human", "text": "which boards exist"},
+             {"sender": "assistant", "text": "two", "signals": None}]
+    signals = rc.part_signals({"first_message": 0, "last_message": 3}, chunk, 0)
+    assert signals["tools"] == {"program": {"ran": 1, "failed": 2}}
+    assert signals["grounding"] == {"tool": 1, "tool failed": 1}
+    # One answer written after its program failed marks the part.
+    assert rc.part_grounding(signals) == "tool failed"
+    assert rc.part_tools_text({"signals": signals}) == "ran a program"
+    # A part whose replies used no tool says nothing about tools.
+    plain = rc.part_signals({"first_message": 4, "last_message": 5}, chunk, 0)
+    assert "tools" not in plain and rc.part_grounding(plain) is None
+    assert rc.part_tools_text({"signals": plain}) == ""
+    assert rc.part_tools_text({"signals": {"tools": {
+        "program": {"ran": 0, "failed": 1}, "diary query": {"ran": 1, "failed": 0}}}}) == (
+        "a program failed and none ran, diary query")

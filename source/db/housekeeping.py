@@ -34,12 +34,15 @@ __all__ = [
     "JOB_CALLERS",
     "JOB_CHECK_CALLERS",
     "ROOM_CHUNK_JOB",
+    "ROOM_TOPICS_JOB",
+    "ROOM_TOPIC_MERGES_JOB",
     "RUN_SUMMARY_JOB",
     "attach_reply_signals",
     "chunk_subject",
     "counted_room_messages",
     "due_room_chunks",
     "ensure_room_chunk_jobs",
+    "ensure_room_topic_jobs",
     "list_room_chunk_series",
     "job_room_chunk",
     "list_room_chunks",
@@ -72,12 +75,16 @@ __all__ = [
 
 RUN_SUMMARY_JOB = "run_summary"
 ROOM_CHUNK_JOB = "room_chunk_summary"
+ROOM_TOPICS_JOB = "room_topics"
+ROOM_TOPIC_MERGES_JOB = "room_topic_merges"
 
 #: job type -> (tier, label). Tier 1 is read by the next turn; tier 2 is
 #: generative work that is read eventually. The label is what the page prints.
 HOUSEKEEPING_JOB_TYPES: dict[str, tuple[int, str]] = {
     RUN_SUMMARY_JOB: (2, "assistant summary"),
     ROOM_CHUNK_JOB: (2, "chatroom chunk summary"),
+    ROOM_TOPICS_JOB: (2, "chatroom topics"),
+    ROOM_TOPIC_MERGES_JOB: (2, "chatroom topic merges"),
 }
 
 #: The /activity caller tag of each job type's model call. It is how an
@@ -85,6 +92,13 @@ HOUSEKEEPING_JOB_TYPES: dict[str, tuple[int, str]] = {
 JOB_CALLERS: dict[str, str] = {
     RUN_SUMMARY_JOB: "assistant.run_summarizer",
     ROOM_CHUNK_JOB: "assistant.room_summarizer",
+    # The call that names and explains a topic once it recurs. Assigning a
+    # chunk's parts to topics is the decision model's work, which is not
+    # recorded under a caller of the job's.
+    ROOM_TOPICS_JOB: "assistant.topic_namer",
+    # The same slot's model reads two topics' requests and says whether
+    # they are one.
+    ROOM_TOPIC_MERGES_JOB: "assistant.topic_namer",
 }
 
 #: The caller tags of the further calls a job type makes inside one attempt:
@@ -627,10 +641,13 @@ def attach_reply_signals(room_uuid: UUID,
       counts the times it sent the reply back. Absent when no audit ran.
     - `vote`: the human's latest vote on the message, `upvote` or
       `downvote`, with `vote_comment` when they wrote one.
+    - `tools`: the tools the reply's run used, and how the reply stands on
+      them (`agents.room_chunks.reply_tools`). Absent when it used none.
 
     A message with no run and no vote gets `None`."""
     import json as _json
 
+    from agents.room_chunks import reply_tools
     from db.models import AssistantStep, FeedbackEvent
 
     run_uuids = {UUID(m["run_uuid"]) for m in messages if m.get("run_uuid")}
@@ -650,6 +667,17 @@ def attach_reply_signals(room_uuid: UUID,
                 verdict = None
             if verdict:
                 audits.setdefault(run_uuid, []).append(verdict)
+    steps: dict[UUID, list[dict[str, Any]]] = {}
+    if run_uuids:
+        for row in (db.session.query(
+                        AssistantStep.run_uuid, AssistantStep.action, AssistantStep.phase,
+                        AssistantStep.code_driven, AssistantStep.args,
+                        AssistantStep.observation_preview)
+                    .filter(AssistantStep.run_uuid.in_(run_uuids))
+                    .order_by(AssistantStep.id.asc()).all()):
+            steps.setdefault(row[0], []).append({
+                "action": row[1], "phase": row[2], "code_driven": row[3],
+                "args": row[4], "output": row[5]})
     votes = {v.message_uuid: v for v in db.session.query(FeedbackEvent)
              .filter(FeedbackEvent.room_uuid == room_uuid)
              .order_by(FeedbackEvent.id.asc()).all()}   # the latest vote wins
@@ -662,6 +690,9 @@ def attach_reply_signals(room_uuid: UUID,
             if verdicts:
                 signals["criteria"] = "met" if verdicts[-1] == "send" else "not met"
                 signals["revisions"] = sum(1 for v in verdicts if v == "revise")
+            tools = reply_tools(steps.get(run.uuid, []), m["text"])
+            if tools:
+                signals["tools"] = tools
         vote = votes.get(m["uuid"])
         if vote is not None and m["sender"] != "human":
             signals["vote"] = vote.rating
@@ -729,6 +760,21 @@ def ensure_room_chunk_jobs(room_uuid: UUID, size: int, overlap: int,
         _job, new = ensure_housekeeping_job(
             ROOM_CHUNK_JOB, room_uuid=room_uuid,
             subject=chunk_subject(size, overlap, version, **due))
+        created += int(new)
+    return created
+
+
+def ensure_room_topic_jobs(room_uuid: UUID, size: int, overlap: int,
+                           version: int, limit: int) -> int:
+    """Queue a topics job for each chunk of the series whose parts have no
+    topic yet, oldest first, at most `limit`. Returns how many were
+    created. A chunk's job is named by the chunk, so it is queued once."""
+    from db.room_topics import unassigned_room_chunks
+
+    created = 0
+    for chunk in unassigned_room_chunks(room_uuid, size, overlap, version, limit):
+        _job, new = ensure_housekeeping_job(
+            ROOM_TOPICS_JOB, room_uuid=room_uuid, subject=str(chunk.uuid))
         created += int(new)
     return created
 

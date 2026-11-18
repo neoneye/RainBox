@@ -75,6 +75,33 @@ signals, when the records have any (`db.attach_reply_signals`):
 | `run resolved` / `partial` / `failed` | the assistant summary's outcome for the reply's run, else the run's status |
 | `criteria met` / `criteria not met`, and how many revisions | the reply audit's verdicts for that run: met when the last one was to send the reply |
 | `voted up` / `voted down`, with the comment | the user's latest vote on the message |
+| `ran a program (what it does) … and what it printed is in the reply` / `is not in the reply`; `a program failed N times and none ran`; `used diary query, memory query` | the steps of the reply's run (`room_chunks.reply_tools`) |
+
+**The tools behind a reply** are read off its run's steps, by rule. A step
+the assistant chose is a tool unless it ends the turn or checks it
+(`NOT_TOOLS`); `observed` means it ran, `failed` that it did not. The step
+that runs a program the assistant wrote (`python_run`) is told apart: its
+`description`, when the deciding call gave one, says what kind of program
+it is, and what it printed is looked for in the reply, as text or as a
+number the reply rounds or cuts (`output_used`). From that a reply has a
+`grounding`:
+
+| grounding | when |
+|---|---|
+| `tool` | a tool ran; for a program, what it printed is in the reply |
+| `output not used` | a program ran, and the reply does not hold what it printed |
+| `tool failed` | the program never ran, or no tool did, and a reply was written anyway |
+
+On one room's 81 replies with a run: 49 `tool`, 23 with no tool, 7
+`output not used`, 2 `tool failed`. Of the 7, five were right: two replies
+gave up at the step limit after their program had printed the answer, and
+three stated a count other than the one printed. Two were wrong: the
+program printed a digit and the reply wrote the number as a word, which
+the rule does not read, since number words differ by language.
+
+It is kept apart from the calibration. A program that ran can be the
+wrong program, so `tool` is evidence and not a verdict; `tool failed` is
+the warning: a number given after its program failed was not computed.
 
 The signals are records, and the prompt says so. They are what lets a small
 model say something about reliability without judging an answer from its own
@@ -319,7 +346,11 @@ down makes it overconfident, a vote up calibrated.
 `signals`, counted by code: repeated and bare requests, read from their
 text, and from the records of its replies the runs by outcome, the first and
 the last run's outcome, replies that did not meet their criteria, revisions,
-votes up and down. The page shows the calibration in
+votes up and down; and for a part whose replies used tools, `tools` (how
+many times each ran and failed) and `grounding` (how many replies stand
+how). The part's own `grounding` is the worst of its replies': one answer
+written after its program failed marks the part. The page shows it as a
+label beside the calibration, and the tools with the other counts. The page shows the calibration in
 colour with its basis, the reactions, and these counts in grey. A run of
 the same reaction is written once with its count. A result is an old
 answer, and it is never shown without them.
@@ -398,7 +429,7 @@ small model copies both. With a list of earlier names to reuse, it chose
 from the list whether or not a name fitted, and returned the list's
 placeholder word as a topic. So topic names are not shared between chunks:
 the same subject can get two names in two chunks. Recognizing them as one
-topic is a later step, and not this call's job.
+topic is a later step, and not this call's job: see Chatroom topics.
 
 **What it does well and badly**, on gemma4:e4b-mlx, 4 to 8 seconds for the
 summary call; the check writes more and takes longer:
@@ -445,6 +476,119 @@ prompt.
 **A rest after ten calls.** The worker counts its model calls, of any job
 type, and a chunk's check and rewrite each count as one. After 10 in a row it rests for 60 seconds before the next, and the
 waiting job shows as resting. A new message still stops the call in progress.
+
+## Chatroom topics
+
+What a room keeps coming back to. A chunk's own topic names do not say: in
+one room of 16 chunks the 93 names its parts were given were 79 different
+names, and 70 of them occurred once. So each part is assigned, after its
+chunk is summarized, to a topic of its room (`room_topic`), and a topic is
+listed once two parts share it. Rules and wordings: `agents/room_topics.py`.
+Design, and the measurements behind the numbers below:
+`docs/superpowers/specs/2026-11-18-room-topic-registry-design.md`.
+
+**Two axes.** A part has one topic on each. `task`: its requests ask for
+the same kind of task (computing a root, looking up a day). `thing`: they
+are about the same named thing. The two are counted apart, since a part
+that looks a project up in the diary is in a topic of each kind.
+
+**One job per chunk** (`room_topics`, subject: the chunk's uuid). It is
+queued when the chunk is stored, and for chunks stored earlier with the
+room's chunk jobs: 20 per run end, the rest on request. For each part:
+
+1. Its phrase (what was wanted) is embedded, and on each axis the room's
+   topics are ranked by how near their exemplars lie. An exemplar is one of
+   a topic's first 2 members whose phrases differ: a request made twice in
+   the same words is one, or every later part is compared with that one
+   sentence alone. It does not by itself keep a topic whole: in one room
+   a request that started a topic beside the one it belonged to scored
+   0.45 and 0.43 against that topic's two distinct exemplars. The model
+   then gave both topics the same name, which is what joins them (see Two
+   topics that are one). The nearest 5 topics are kept. Without a
+   vector the newest 5 are.
+2. The decision model (`assistant.topic_match`; unbound, the model of
+   `assistant.repeat_check`) is asked of the part and each exemplar, both
+   axes' questions in one request: about six requests a part, a third of a
+   second each. They are not counted toward the worker's rest.
+3. A topic's score is the mean over its exemplars. The part joins the best
+   topic at 0.5 or above, or starts one, named after the part's own first
+   topic name.
+
+A part's memberships are written when it is placed, so an attempt that a
+new message stops has kept its finished parts. With no decision model the
+job is skipped, and its chunk is still without topics.
+
+**Name and explanation.** A topic that reaches 2 members, and again each
+time it has doubled, is named and explained by one generative call
+(the slot `assistant.topic_namer`, local models only), from its
+newest 8 requests and their results: at most eight words on what the user
+is doing with these requests (`task`), or on what the thing is (`thing`).
+The prompt ends by asking for a JSON object with those two keys: without
+that sentence gemma4:e4b-mlx answered three of six such prompts as plain
+text, and with it six of six as the object. A call no model delivers
+leaves the topic under the name it started with, and it is due again when
+the next part joins it.
+**What a topic was answered with** is counted, not written. Each part
+keeps the tools its replies used (see The records under a reply), so a
+topic's row says "answered with: program 5/5, memory query 2/5": a tool
+counts for a part where it ran, out of the topic's parts, and a program
+that only failed is counted apart. The block carries it as
+`answered_with`. It is the records' answer to what a topic is an exercise
+of. The explaining call is given each request's tools as well, and no
+sentence tells it to name them: told to, it named the program in 2 of 8
+explanations of five square roots a program had computed.
+
+The call sees what was asked and not why: of five square roots it says
+that roots are asked for, and not that the operator is testing whether the
+assistant can run a program. The operator can write both fields on the
+room's page, and a topic they wrote is never written by the model again.
+
+**A topic belongs to its room, not to a series.** A new prompt version
+summarizes the room again, and the new chunks' parts join the topics there
+are, so names and the operator's words carry over. A page counts a topic's
+members in the series it shows.
+
+**Two topics that are one.** A part joins a topic by how it scores against
+the topic's first members, so a room summarized again, with its requests
+worded anew, can start a second topic beside the one it should have
+joined. Two things are done about it without asking:
+
+- **Topics the model gives the same name are one.** Two names it wrote
+  alone, from two sets of requests, that came out alike, letter case
+  aside: the smaller is merged into the larger when either is named, and
+  when the merges job runs.
+- **Small topics are left alone.** A topic is looked at for a second half
+  of itself once it has 5 parts in the series in use
+  (`MERGE_MIN_PARTS`). Which of two small topics a part fell into matters
+  to nobody.
+
+Any other pair is merged only by the operator:
+
+- **By hand.** A topic's modal has a list of the other topics of its kind
+  that the page shows; choosing one makes Save a Merge. The topic's parts
+  become the chosen topic's, which keeps its name. Only when the topic
+  that goes carried the operator's own words, and the other did not, are
+  those kept. A topic the operator did not write is explained anew the
+  next time a part joins it.
+- **Suggested.** "Look for topics that are one" queues a job for the room
+  (`room_topic_merges`). On each axis a topic of 5 parts or more is
+  compared with its 3 nearest by embedding, by a sample of each: its first and its
+  newest request. The decision model scores the samples, and a pair at
+  0.3 or above is put to the generative model (`assistant.topic_namer`)
+  with up to 6 requests of each topic. A pair it calls the same is listed
+  on the page with both topics' requests, to merge or to answer "not the
+  same". A pair is compared once (`room_topic_suggestion`: `open`,
+  `dismissed` by the operator, or `apart` when the model said so).
+
+Why neither model merges by itself, on one room's 14 nearest pairs: the
+decision model's score put a fruit and a computer whose names sound alike
+at 0.68, above the two halves of the diary's date lookups at 0.40 and the
+two halves of its first-mention lookups at 0.39; the generative model told
+the fruit and the computer apart and called those halves one, and called
+12 of the 14 one, a project and a board it has among them.
+
+**Not built:** topics across rooms, moving one part to another topic,
+undoing a merge, and the block in a prompt.
 
 ## Order
 
@@ -547,13 +691,27 @@ The inbox item is a hint. The rows say what is due.
 | `first_message_id`, `last_message_id`, `message_count` | its edges and size |
 | `content_hash` | over its messages' ids and texts when it was written |
 | `summary`, `topics` | the chunk's subjects, joined, and broader topics |
-| `parts` | its parts: `{first_message, last_message, summary, topics, requests}`, and from prompt 3 `result`, the reactions, `calibration`, `signals`; from prompt 4 `calibration_basis`; from prompt 6 `audit`; from prompt 7 the reactions are read by rule; from prompt 12 `asked_again_at`; NULL for a chunk of the first prompt |
+| `parts` | its parts: `{first_message, last_message, summary, topics, requests}`, and from prompt 3 `result`, the reactions, `calibration`, `signals`; from prompt 4 `calibration_basis`; from prompt 6 `audit`; from prompt 7 the reactions are read by rule; from prompt 12 `asked_again_at`; from prompt 19 `grounding`, and `tools` in its `signals`; NULL for a chunk of the first prompt |
 | `problems` | what was off in the reply, and in the check's reply |
 | `audit` | the check: `{attempts, rewritten, error}`, and `repeat_check`, what the decision model was asked; NULL for a chunk written before the check existed |
 | `model`, `job_uuid` | what wrote it |
 
 The prompt and the reply are never copied. A job's page reads them from the
 attempt's `llm_call` row: for a chunk, the summary that was kept.
+
+`room_topic`: one row per topic of a room, on one `axis` (`task`, `thing`):
+its `name`, its `explanation`, `operator_edited`, and `explained_members`
+(how many members it had when the model last explained it).
+
+`room_topic_suggestion`: two topics of a room that were compared:
+`topic_uuid` (the older) and `other_uuid`, the decision model's `score`,
+the generative model's `reason`, and `state` (`open`, `dismissed`,
+`apart`).
+
+`room_topic_member`: one row per part and axis. `chunk_uuid` and
+`part_index` name the part; `phrase` is what was compared, `messages` the
+part's length, `p` the score it joined on (NULL for the part that started
+the topic), `embedding` the phrase's vector.
 
 ## The pages
 
@@ -672,7 +830,24 @@ the `chunks` link beside the room's name on a job's page.
   what the first answer had in the parts the check found wrong.
 - A chip per series the room has chunks in, earlier prompts included.
 - **Summarize the rest**, with the number of chunks it will write.
-- **Show: summaries | as in the prompt.** The second (`&view=prompt`) puts
+- **Show: summaries | as in the prompt | topics.** The third
+  (`&view=topics`) lists the room's recurring topics in place of the cards
+  (see Chatroom topics): a table per axis with each topic's share of the
+  series' summarized messages, its number of parts, its name, its
+  explanation, and its requests folded under it; and how many topics came
+  up once. A click on a name opens a modal with the name and the
+  explanation, Cancel and Save (`notes/ui-modal-rename.md`); what is saved
+  there is marked "yours"; the modal also merges the topic into another of
+its kind. Above the tables, the pairs that look like one topic, each with
+Merge and Not the same, and **Look for topics that are one**, which queues
+the job that finds them. **Assign topics** queues a job for each chunk
+  whose parts have no topic yet, and summarizes nothing. Under the tables
+  is the `<room_topics>` block a prompt could hold in place of every chunk
+  (`agents/room_topics.render_room_topics`): a `<topic>` per recurring
+  topic with `kind`, `share`, `asked`, `name` and `about`, then `<other>`
+  with the share no recurring kind of task holds; with its number of
+  characters against the messages' own.
+  The second (`&view=prompt`) puts
   the series' chunks into one `<room_earlier>` block of text, in place of the
   cards: a `<chunk>` per chunk with its message range, dates, topics and
   phrase, and inside it a `<part>` per part with its range, topics, how many
