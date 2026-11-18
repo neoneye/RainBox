@@ -205,7 +205,7 @@ MEMORY_DEVELOPER_TEMPLATE = """
   .muted{color:#6b7280;font-size:0.85rem}
   code{font-family:ui-monospace,monospace;background:#eef;padding:1px 6px;border-radius:3px}
   .err{color:#991b1b;font-weight:600}
-  .memdev-content{padding:0 24px 2em;max-width:1600px}
+  .memdev-content{padding:0 24px 2em}
   .memdev-queryrow{display:flex;gap:10px;margin:0 0 1em}
   .memdev-queryrow input{flex:1 1 auto;font:inherit;font-size:1rem;padding:8px 12px;
     border:1px solid #d1d5db;border-radius:8px}
@@ -218,12 +218,10 @@ MEMORY_DEVELOPER_TEMPLATE = """
     border:1px solid #d1d5db;border-radius:8px}
   .memdev-topk select{max-width:14em;font:inherit;font-size:0.95rem;padding:8px 6px;
     border:1px solid #d1d5db;border-radius:8px}
-  .memdev-cols{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
   .memdev-models{margin:0 0 14px}
   .memdev-models[hidden]{display:none}
   .memdev-models summary{cursor:pointer;-webkit-user-select:none;user-select:none}
   .memdev-models .memdev-table{margin-top:8px}
-  @media (max-width:1000px){.memdev-cols{grid-template-columns:1fr}}
   .memdev-panel{border:1px solid #e5e7eb;border-radius:10px;background:#fbfbfb;
     padding:14px 16px;min-width:0;overflow-x:auto}
   .memdev-panel h2{margin:0 0 2px;font-size:1.05rem}
@@ -251,8 +249,8 @@ MEMORY_DEVELOPER_TEMPLATE = """
 </style>
 {% include "_nav.html" %}
 <div class="memdev-content">
-  <p class="muted">Run one query through both retrieval pipelines and compare what
-  each returns. Read-only: nothing is posted, no telemetry is recorded, and
+  <p class="muted">Run one query through the assistant's retrieval pipeline and see
+  what it returns. Read-only: nothing is posted, no telemetry is recorded, and
   memory commands are detected but never executed. The room selector sets the
   probe's reach: "(all rooms)" is the operator view — room-scoped claims from
   every room are candidates (no live turn has this reach); a specific room
@@ -276,14 +274,12 @@ MEMORY_DEVELOPER_TEMPLATE = """
     <summary class="memdev-section-label">models in play (per pipeline stage)</summary>
     <div id="memdev-models-out"></div>
   </details>
-  <div class="memdev-cols">
-    <section class="memdev-panel" id="memdev-assistant">
-      <h2>assistant &middot; memory_query</h2>
-      <p class="muted sub">LLM-filtered seed answers (gated fallback) + hybrid claim
-      retrieval, as the observation text the assistant model receives</p>
-      <div id="memdev-assistant-out"><p class="memdev-empty">No query run yet.</p></div>
-    </section>
-  </div>
+  <section class="memdev-panel" id="memdev-assistant">
+    <h2>assistant &middot; memory_query</h2>
+    <p class="muted sub">LLM-filtered seed answers (gated fallback) + hybrid claim
+    retrieval, as the observation text the assistant model receives</p>
+    <div id="memdev-assistant-out"><p class="memdev-empty">No query run yet.</p></div>
+  </section>
 </div>
 <script src="/static/memory_developer.js?v={{ memory_developer_js_v }}"></script>
 """
