@@ -13,6 +13,7 @@ from db import LlmCall
 from llm.activity_metrics import MIN_CALIBRATION_CALLS
 from webapp.activity_views import (
     DEFAULT_METRIC,
+    OTHER_MODELS,
     _hit_rate_cell,
     _hit_rate_hover,
     build_chart,
@@ -571,6 +572,76 @@ class TestChartGeometry:
         chart = build_chart(self._buckets([1000]), "p50_latency_ms", 3600)
         assert any("ms" in g["label"] or "s" in g["label"]
                    for g in chart["gridlines"])
+
+
+class TestModelSplit:
+    """A count metric's bars split into one band per model: the window's
+    TOP_MODELS busiest models, then "other models"."""
+
+    def _chart(self, per_bucket, metric="calls"):
+        buckets = [
+            {"start": datetime(2026, 8, 10, h, tzinfo=UTC),
+             "calls": sum(c["calls"] for c in models.values()),
+             "prompt_tokens": sum(c["prompt_tokens"] for c in models.values()),
+             "completion_tokens": 0, "cached_tokens": 0, "uncached_tokens": 0,
+             "p50_latency_ms": 100.0}
+            for h, models in enumerate(per_bucket)
+        ]
+        return build_chart(buckets, metric, 3600, per_bucket)
+
+    @staticmethod
+    def _cell(calls, prompt_tokens=0):
+        return {"calls": calls, "prompt_tokens": prompt_tokens, "completion_tokens": 0}
+
+    def test_the_bands_fill_the_bar_biggest_model_at_the_bottom(self):
+        chart = self._chart([{"a": self._cell(3), "b": self._cell(1)}])
+        bar = chart["bars"][0]
+        assert [s["colour"] for s in bar["segments"]] == [
+            c["colour"] for c in chart["series"]]
+        assert [c["name"] for c in chart["series"]] == ["a", "b"]
+        low, high = bar["segments"]
+        assert low["y"] + low["h"] == pytest.approx(chart["baseline"], abs=0.02)
+        assert high["y"] + high["h"] == pytest.approx(low["y"], abs=0.02)
+        assert low["h"] == pytest.approx(3 * high["h"], abs=0.05)
+        assert high["y"] == pytest.approx(bar["lower_y"], abs=0.05)
+
+    def test_past_five_models_the_rest_share_one_band(self):
+        models = {f"m{i}": self._cell(10 - i) for i in range(8)}
+        chart = self._chart([models])
+        names = [c["name"] for c in chart["series"]]
+        assert names == ["m0", "m1", "m2", "m3", "m4", OTHER_MODELS]
+        assert len(chart["bars"][0]["segments"]) == 6
+
+    def test_the_ranking_is_over_the_window_and_by_the_metric(self):
+        chart = self._chart(
+            [{"few": self._cell(1, 9000), "many": self._cell(5, 10)}],
+            metric="prompt_tokens")
+        assert [c["name"] for c in chart["series"]] == ["few", "many"]
+
+    def test_a_metric_that_does_not_add_up_is_not_split(self):
+        chart = self._chart([{"a": self._cell(3), "b": self._cell(1)}],
+                            metric="p50_latency_ms")
+        assert chart["series"] == []
+        assert chart["bars"][0]["segments"] == []
+
+    def test_the_hover_names_the_models_in_the_column(self):
+        models = {f"m{i}": self._cell(10 - i) for i in range(7)}
+        title = self._chart([models])["bars"][0]["title"]
+        lines = title.split("\n")
+        assert lines[1] == "m0: 10"
+        assert lines[5] == "m4: 6"
+        assert lines[6] == f"{OTHER_MODELS} (2): 9"
+        assert len(lines) == 7
+
+    def test_a_latency_hover_lists_each_models_calls(self):
+        title = self._chart([{"a": self._cell(2)}], metric="p50_latency_ms")[
+            "bars"][0]["title"]
+        assert title.split("\n")[1] == "a: 2 calls"
+
+    def test_an_empty_bucket_has_no_bands_and_no_model_lines(self):
+        chart = self._chart([{}, {"a": self._cell(1)}])
+        assert chart["bars"][0]["segments"] == []
+        assert "\n" not in chart["bars"][0]["title"]
 
 
 class TestFormatting:

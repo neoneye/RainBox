@@ -355,6 +355,31 @@ class TestSeries:
         assert [b["calls"] for b in buckets] == [1, 0, 1]
 
 
+class TestSeriesByModel:
+    def test_each_bucket_holds_each_models_volume(self, model):
+        """Asserts only on this test's model: the query is not filtered, so
+        other calls in the window may sit beside it."""
+        add_call(model, started_at=NOW - timedelta(hours=2, minutes=30),
+                 prompt_tokens=300, completion_tokens=30)
+        add_call(model, started_at=NOW - timedelta(minutes=30),
+                 prompt_tokens=1000, completion_tokens=100)
+        add_call(model, started_at=NOW - timedelta(minutes=20),
+                 prompt_tokens=500, completion_tokens=50)
+        buckets = db.activity_series_by_model(
+            NOW - timedelta(hours=3), NOW, bucket_seconds=3600)
+        assert len(buckets) == 3
+        assert buckets[0][model] == {
+            "calls": 1, "prompt_tokens": 300, "completion_tokens": 30}
+        assert model not in buckets[1]
+        assert buckets[2][model] == {
+            "calls": 2, "prompt_tokens": 1500, "completion_tokens": 150}
+
+    def test_aligns_with_the_plain_series(self, model):
+        start, end = NOW - timedelta(hours=5), NOW
+        assert len(db.activity_series_by_model(start, end, 3600)) == len(
+            db.activity_series(start, end, 3600))
+
+
 class TestRollup:
     def test_grouping_by_model(self, model):
         add_call(model, prompt_tokens=1000, cached_tokens_estimated=500)

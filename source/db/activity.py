@@ -319,6 +319,51 @@ def activity_series(
     return buckets
 
 
+def activity_series_by_model(
+    start: datetime,
+    end: datetime,
+    bucket_seconds: int,
+) -> list[dict[str, dict[str, int]]]:
+    """Per-bucket, per-model volume: one dict per bucket (aligned with
+    `activity_series`), keyed by model, holding that model's calls, prompt
+    tokens and completion tokens. A bucket with no calls is an empty dict.
+    A call with no model is counted under "unknown", as in the rollup."""
+    if bucket_seconds <= 0:
+        raise ValueError("bucket_seconds must be positive")
+    span = (end - start).total_seconds()
+    count = max(1, int(-(-span // bucket_seconds)))  # ceil
+    index = sa.cast(
+        sa.func.floor(
+            sa.extract("epoch", LlmCall.started_at - sa.literal(start))
+            / bucket_seconds
+        ),
+        sa.Integer,
+    )
+    rows = db.session.execute(
+        sa.select(
+            index.label("idx"),
+            LlmCall.model,
+            sa.func.count(),
+            sa.func.coalesce(sa.func.sum(LlmCall.prompt_tokens), 0),
+            sa.func.coalesce(sa.func.sum(LlmCall.completion_tokens), 0),
+        )
+        .where(*_window(start, end, None))
+        .group_by(index, LlmCall.model)
+    ).all()
+    out: list[dict[str, dict[str, int]]] = [{} for _ in range(count)]
+    for idx, model, calls, prompt_tokens, completion_tokens in rows:
+        i = int(idx)
+        if not 0 <= i < count:
+            continue
+        key = model or "unknown"
+        cell = out[i].setdefault(
+            key, {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0})
+        cell["calls"] += int(calls)
+        cell["prompt_tokens"] += int(prompt_tokens)
+        cell["completion_tokens"] += int(completion_tokens)
+    return out
+
+
 def activity_rollup(
     start: datetime,
     end: datetime,

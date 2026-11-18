@@ -309,15 +309,53 @@ _PAD_TOP = 16
 _PLOT_H = 232  # leaves room under the axis for x labels
 _MIN_SEGMENT_H = 2.0  # the smallest height a nonzero value may draw at
 
+# A count metric's bars are split by model: the window's busiest models each
+# get a colour of their own, and the rest share one grey band.
+TOP_MODELS = 5
+OTHER_MODELS = "other models"
+_MODEL_COLOURS = ["#4e79a7", "#f28e2b", "#59a14f", "#e15759", "#b07aa1"]
+_OTHER_COLOUR = "#c4c9d0"
 
-def build_chart(buckets: list[dict], metric: str, bucket_seconds: int) -> dict:
+
+def _model_series(by_model: list[dict], field: str) -> list[dict]:
+    """The bands a model-split chart draws, biggest first: the TOP_MODELS
+    models with the most `field` over the window, then "other models" when
+    there are more. Each is {name, colour, models}; `models` is the set of
+    model names it stands for."""
+    totals: dict[str, int] = {}
+    for bucket in by_model:
+        for model, cell in bucket.items():
+            totals[model] = totals.get(model, 0) + cell[field]
+    ranked = sorted((m for m in totals if totals[m] > 0),
+                    key=lambda m: (-totals[m], m))
+    series = [
+        {"name": m, "colour": _MODEL_COLOURS[i], "models": {m}}
+        for i, m in enumerate(ranked[:TOP_MODELS])
+    ]
+    rest = set(ranked[TOP_MODELS:])
+    if rest:
+        series.append({"name": OTHER_MODELS, "colour": _OTHER_COLOUR, "models": rest})
+    return series
+
+
+def build_chart(
+    buckets: list[dict],
+    metric: str,
+    bucket_seconds: int,
+    by_model: list[dict] | None = None,
+) -> dict:
     """Geometry for the inline SVG: bars, gridlines and axis labels.
 
     Returned as plain data rather than markup so the template stays readable
-    and the arithmetic stays testable.
+    and the arithmetic stays testable. `by_model` is the per-bucket, per-model
+    volume from `db.activity_series_by_model`; with it a count metric's bars
+    are split into one band per model, and every bar's hover names the
+    models in it.
     """
     label, field, kind = _METRICS[metric]
     stacked = kind == "stacked"
+    split = kind == "count" and by_model is not None
+    series = _model_series(by_model, field) if split and by_model else []
 
     if stacked:
         tops = [b["cached_tokens"] + b["uncached_tokens"] for b in buckets]
@@ -355,6 +393,25 @@ def build_chart(buckets: list[dict], metric: str, bucket_seconds: int) -> dict:
                     upper -= excess
         else:
             lower, upper = height(bucket.get(field) or 0), 0.0
+        segments = []
+        if series and by_model and lower > 0:
+            # Bands share the bar's drawn height in proportion to their
+            # value, biggest model at the bottom, so the bar's outline is
+            # the same as it would be undivided.
+            values = [
+                sum(by_model[i].get(m, {}).get(field, 0) for m in band["models"])
+                for band in series
+            ]
+            total = sum(values)
+            y = baseline
+            for band, value in zip(series, values):
+                if value <= 0 or total <= 0:
+                    continue
+                h = lower * value / total
+                y -= h
+                segments.append({"y": round(y, 2), "h": round(h, 2),
+                                 "colour": band["colour"]})
+        models = by_model[i] if by_model is not None and i < len(by_model) else None
         bars.append(
             {
                 # The whole slot, top padding to axis, answers the hover —
@@ -367,7 +424,8 @@ def build_chart(buckets: list[dict], metric: str, bucket_seconds: int) -> dict:
                 "lower_h": round(lower, 2),
                 "upper_y": round(baseline - lower - upper, 2),
                 "upper_h": round(upper, 2),
-                "title": _bar_title(bucket, metric, bucket_seconds),
+                "segments": segments,
+                "title": _bar_title(bucket, metric, bucket_seconds, models),
             }
         )
 
@@ -401,6 +459,8 @@ def build_chart(buckets: list[dict], metric: str, bucket_seconds: int) -> dict:
         "gridlines": gridlines,
         "x_labels": x_labels,
         "stacked": stacked,
+        # The legend of a model-split chart: name and colour of each band.
+        "series": [{"name": b["name"], "colour": b["colour"]} for b in series],
         "metric_label": label,
         "empty": not any(t for t in tops),
     }
@@ -414,17 +474,43 @@ def _time_label(moment: datetime, bucket_seconds: int) -> str:
     return moment.strftime("%H:%M")
 
 
-def _bar_title(bucket: dict, metric: str, bucket_seconds: int) -> str:
-    """Native SVG tooltip text — no hover JS, and it survives in a saved page."""
+def _bar_title(
+    bucket: dict, metric: str, bucket_seconds: int, models: dict | None = None,
+) -> str:
+    """Native SVG tooltip text — no hover JS, and it survives in a saved page.
+
+    With `models` (this bucket's per-model volume) a line per model follows
+    the headline, busiest first: the metric's own value for a count metric,
+    the call count for any other. Past TOP_MODELS, the rest are summed on an
+    "other models" line that says how many models it covers."""
     when = _time_label(bucket["start"], bucket_seconds)
     if metric == "cached_tokens":
-        return (
+        head = (
             f"{when} — {si(bucket['cached_tokens'])} cached, "
             f"{si(bucket['uncached_tokens'])} uncached "
             f"({bucket['calls']} calls)"
         )
+    else:
+        _label, field, kind = _METRICS[metric]
+        head = f"{when} — {format_metric(bucket.get(field), kind)} ({bucket['calls']} calls)"
+    if not models:
+        return head
     _label, field, kind = _METRICS[metric]
-    return f"{when} — {format_metric(bucket.get(field), kind)} ({bucket['calls']} calls)"
+    per_model = field if kind == "count" else "calls"
+    unit = "" if kind == "count" else " calls"
+    ranked = sorted(
+        ((m, cell[per_model]) for m, cell in models.items() if cell[per_model]),
+        key=lambda mv: (-mv[1], mv[0]),
+    )
+    lines = [head]
+    for model, value in ranked[:TOP_MODELS]:
+        lines.append(f"{model}: {format_metric(value, 'count')}{unit}")
+    rest = ranked[TOP_MODELS:]
+    if rest:
+        total = sum(v for _m, v in rest)
+        lines.append(
+            f"{OTHER_MODELS} ({len(rest)}): {format_metric(total, 'count')}{unit}")
+    return "\n".join(lines)
 
 
 # --- Page -------------------------------------------------------------------
@@ -482,6 +568,7 @@ def build_context(args: Any, now: datetime) -> dict:
 
     summary = db.activity_summary(start, end)
     buckets = db.activity_series(start, end, bucket_seconds)
+    buckets_by_model = db.activity_series_by_model(start, end, bucket_seconds)
     by_model = db.activity_rollup(start, end, dimension="model")
     grouped = (
         by_model
@@ -515,7 +602,7 @@ def build_context(args: Any, now: datetime) -> dict:
         "dimension_label": _DIMENSION_LABELS[dimension],
         "dimensions": _DIMENSION_LABELS,
         "summary": summary,
-        "chart": build_chart(buckets, metric, bucket_seconds),
+        "chart": build_chart(buckets, metric, bucket_seconds, buckets_by_model),
         "by_model": by_model,
         "by_caller": by_caller,
         "grouped": grouped,
@@ -583,6 +670,7 @@ ACTIVITY_TEMPLATE = """
   .pp-act svg { width: 100%; height: auto; display: block; }
   .pp-act .legend { display: flex; gap: 1.1rem; align-items: center; margin-top: 0.6rem;
                     color: #6c757d; font-size: 0.85rem; }
+  .pp-act .legend-models { flex-wrap: wrap; row-gap: 0.3rem; }
   .pp-act .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%;
                     margin-right: 0.35rem; vertical-align: middle; }
   .pp-act table { border-collapse: collapse; width: 100%; }
@@ -771,7 +859,12 @@ ACTIVITY_TEMPLATE = """
         <g class="col"><title>{{ bar.title }}</title>
           <rect class="hit" x="{{ bar.slot_x }}" y="{{ chart.top }}"
                 width="{{ bar.slot_w }}" height="{{ chart.plot_h }}" />
-          {% if bar.lower_h > 0 %}
+          {% if bar.segments %}
+          {% for seg in bar.segments %}
+          <rect x="{{ bar.x }}" y="{{ seg.y }}" width="{{ bar.width }}"
+                height="{{ seg.h }}" fill="{{ seg.colour }}" />
+          {% endfor %}
+          {% elif bar.lower_h > 0 %}
           <rect x="{{ bar.x }}" y="{{ bar.lower_y }}" width="{{ bar.width }}"
                 height="{{ bar.lower_h }}" fill="#9aa3af" />
           {% endif %}
@@ -786,6 +879,13 @@ ACTIVITY_TEMPLATE = """
               font-size="11" fill="#9aa3af">{{ tick.label }}</text>
       {% endfor %}
     </svg>
+    {% if chart.series %}
+    <div class="legend legend-models">
+      {% for band in chart.series %}
+      <span><span class="swatch" style="background:{{ band.colour }}"></span>{{ band.name }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
     {% if chart.stacked %}
     <div class="legend">
       <span><span class="swatch" style="background:#9aa3af"></span>Uncached</span>
