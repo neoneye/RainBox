@@ -212,7 +212,8 @@ class HousekeepingAgent(Agent):
     def _expand(self, payload: dict[str, Any]) -> None:
         """An item's jobs: the run's summary, and the next chunks of its room.
         An item with `room_chunks` and no run asks for the rest of a room,
-        and one with `room_topics` for topics for the chunks it has."""
+        one with `room_topics` for topics for the chunks it has, and one
+        with `room_topic_merges` for the room's topics that look like one."""
         room_uuid: UUID | None = None
         try:
             if payload.get("room_uuid"):
@@ -233,6 +234,13 @@ class HousekeepingAgent(Agent):
         series = (int(db.get_setting("housekeeping.room_chunk_size")),
                   int(db.get_setting("housekeeping.room_chunk_overlap")),
                   PROMPT_VERSION)
+        if payload.get("room_topic_merges"):
+            # One job per room, run again each time it is asked for.
+            job, created = db.ensure_housekeeping_job(
+                db.ROOM_TOPIC_MERGES_JOB, room_uuid=room_uuid, subject=str(room_uuid))
+            if not created and job.state == "final":
+                db.requeue_housekeeping_job(job)
+            return
         if payload.get("room_topics"):
             db.ensure_room_topic_jobs(room_uuid, *series, TOPIC_JOBS_PER_REQUEST)
             return
@@ -698,8 +706,89 @@ class HousekeepingAgent(Agent):
                 written += 1
         return written
 
+    def _suggest_merges(self, job: Any, attempt: Any, watch: TurnWatch) -> str:
+        """Look through a room's topics for pairs that look like one, and
+        record each for the operator (`agents/room_topics.py`: nothing is
+        merged here). On each axis a recurring topic is compared with its
+        nearest by embedding: the decision model scores their sample
+        requests, and a pair at `SUGGEST_AT` or above is put to the
+        generative model with both topics' requests. A pair is compared
+        once; what was found of it is kept, whichever way it went."""
+        from agents import room_topics
+        from agents.config import (
+            ASSISTANT_REPEAT_CHECK_UUID,
+            ASSISTANT_TOPIC_MATCH_UUID,
+            ASSISTANT_TOPIC_NAMER_UUID,
+        )
+        from agents.model_groups import resolve_assistant_model_uuids, structured_llm_call
+        from llm import systemone
+
+        # Counted as a model call before it ran; each judging call counts itself.
+        self._burst -= 1
+        if job.room_uuid is None:
+            raise ValueError("a topic merges job needs a room")
+        bound = (systemone.slot_model(ASSISTANT_TOPIC_MATCH_UUID)
+                 or systemone.slot_model(ASSISTANT_REPEAT_CHECK_UUID))
+        if bound is None:
+            return "skipped: no decision model is bound"
+        found, _label = resolve_assistant_model_uuids(ASSISTANT_TOPIC_NAMER_UUID)
+        models = [m for m in found or [] if _is_local_model(m)]
+        if not models:
+            return "skipped: no local model is bound to assistant.topic_namer"
+        members: dict[UUID, list[Any]] = {}
+        for m in db.list_room_topic_members(job.room_uuid):
+            members.setdefault(m.topic_uuid, []).append(m)
+        compared = {frozenset((s.topic_uuid, s.other_uuid))
+                    for s in db.list_room_topic_suggestions(job.room_uuid, state=None)}
+        for axis in room_topics.AXES:
+            topics = [{"topic": t, "members": members[t.uuid]}
+                      for t in db.list_room_topics(job.room_uuid)
+                      if t.axis == axis and members.get(t.uuid)]
+            for i, j in room_topics.merge_pairs(topics):
+                first, second = topics[i], topics[j]
+                pair = (first["topic"].uuid, second["topic"].uuid)
+                if frozenset(pair) in compared:
+                    continue
+                ps = []
+                for a in room_topics.merge_sample(first["members"]):
+                    for b in room_topics.merge_sample(second["members"]):
+                        with watch.interruptible():
+                            (answer,) = systemone.ask(
+                                ASSISTANT_TOPIC_MATCH_UUID,
+                                room_topics.pair_state(a.phrase, b.phrase),
+                                [room_topics.QUESTIONS[axis]],
+                                deadline_s=self.TOPIC_MATCH_DEADLINE_SECONDS,
+                                max_state_chars=self.TOPIC_MATCH_MAX_STATE_CHARS,
+                                question_set_version=room_topics.QUESTION_SET_VERSION,
+                                job_uuid=job.uuid, bound=bound)
+                        if answer.status != "ok" or answer.p is None:
+                            raise RuntimeError(
+                                f"the decision model did not answer: {answer.reason}")
+                        ps.append(float(answer.p))
+                score = sum(ps) / len(ps)
+                if score < room_topics.SUGGEST_AT:
+                    continue
+                prompt = room_topics.build_judge_prompt(
+                    axis, first["members"], second["members"])
+                self._burst += 1
+                try:
+                    with watch.interruptible():
+                        reply, _model = structured_llm_call(
+                            room_topics.NAMER_CALLER, models, prompt["system"],
+                            prompt["user"], room_topics.SameTopic)
+                except RuntimeError as e:
+                    # Not compared: the pair is looked at again next time.
+                    logger.warning("housekeeping: two topics were not compared: %s", e)
+                    continue
+                reason = " ".join(str(reply.reason).split())[:room_topics.REASON_MAX_CHARS]  # type: ignore[attr-defined]
+                same = bool(reply.same)  # type: ignore[attr-defined]
+                db.suggest_room_topic_merge(job.room_uuid, *pair, score, reason,
+                                            state="open" if same else "apart")
+        return "done"
+
     _RUNNERS: dict[str, Callable[..., str]] = {
         db.RUN_SUMMARY_JOB: _summarize_run,
         db.ROOM_CHUNK_JOB: _summarize_chunk,
         db.ROOM_TOPICS_JOB: _assign_topics,
+        db.ROOM_TOPIC_MERGES_JOB: _suggest_merges,
     }

@@ -542,8 +542,36 @@ summarizes the room again, and the new chunks' parts join the topics there
 are, so names and the operator's words carry over. A page counts a topic's
 members in the series it shows.
 
-**Not built:** topics across rooms, merging two topics or moving a part by
-hand, and the block in a prompt.
+**Two topics that are one.** A part joins a topic by how it scores against
+the topic's first members, so a room summarized again, with its requests
+worded anew, can start a second topic beside the one it should have
+joined. Nothing merges two topics but the operator:
+
+- **By hand.** A topic's modal has a list of the other topics of its kind
+  that the page shows; choosing one makes Save a Merge. The topic's parts
+  become the chosen topic's, which keeps its name. Only when the topic
+  that goes carried the operator's own words, and the other did not, are
+  those kept. A topic the operator did not write is explained anew the
+  next time a part joins it.
+- **Suggested.** "Look for topics that are one" queues a job for the room
+  (`room_topic_merges`). On each axis a recurring topic is compared with
+  its 3 nearest by embedding, by a sample of each: its first and its
+  newest request. The decision model scores the samples, and a pair at
+  0.3 or above is put to the generative model (`assistant.topic_namer`)
+  with up to 6 requests of each topic. A pair it calls the same is listed
+  on the page with both topics' requests, to merge or to answer "not the
+  same". A pair is compared once (`room_topic_suggestion`: `open`,
+  `dismissed` by the operator, or `apart` when the model said so).
+
+Why neither model merges by itself, on one room's 14 nearest pairs: the
+decision model's score put a fruit and a computer whose names sound alike
+at 0.68, above the two halves of the diary's date lookups at 0.40 and the
+two halves of its first-mention lookups at 0.39; the generative model told
+the fruit and the computer apart and called those halves one, and called
+12 of the 14 one, a project and a board it has among them.
+
+**Not built:** topics across rooms, moving one part to another topic,
+undoing a merge, and the block in a prompt.
 
 ## Order
 
@@ -657,6 +685,11 @@ attempt's `llm_call` row: for a chunk, the summary that was kept.
 `room_topic`: one row per topic of a room, on one `axis` (`task`, `thing`):
 its `name`, its `explanation`, `operator_edited`, and `explained_members`
 (how many members it had when the model last explained it).
+
+`room_topic_suggestion`: two topics of a room that were compared:
+`topic_uuid` (the older) and `other_uuid`, the decision model's `score`,
+the generative model's `reason`, and `state` (`open`, `dismissed`,
+`apart`).
 
 `room_topic_member`: one row per part and axis. `chunk_uuid` and
 `part_index` name the part; `phrase` is what was compared, `messages` the
@@ -787,7 +820,10 @@ the `chunks` link beside the room's name on a job's page.
   explanation, and its requests folded under it; and how many topics came
   up once. A click on a name opens a modal with the name and the
   explanation, Cancel and Save (`notes/ui-modal-rename.md`); what is saved
-  there is marked "yours". **Assign topics** queues a job for each chunk
+  there is marked "yours"; the modal also merges the topic into another of
+its kind. Above the tables, the pairs that look like one topic, each with
+Merge and Not the same, and **Look for topics that are one**, which queues
+the job that finds them. **Assign topics** queues a job for each chunk
   whose parts have no topic yet, and summarizes nothing. Under the tables
   is the `<room_topics>` block a prompt could hold in place of every chunk
   (`agents/room_topics.render_room_topics`): a `<topic>` per recurring

@@ -259,6 +259,104 @@ def tally(topics: list[Any], members: list[Any], chunk_uuids: set[Any],
             "other": share(max(0, total_messages - held))}
 
 
+# --- two topics that look like one --------------------------------------------
+#
+# A part joins a topic by how it scores against the topic's first members,
+# so a room summarized again, with its requests worded anew, can start a
+# second topic beside the one it should have joined. Nothing merges two
+# topics by itself: on one room's 14 nearest pairs, the decision model's
+# score put two wrong pairs above the two pairs that were one activity (a
+# fruit and a computer whose names sound alike, at 0.68; the two halves of
+# the diary's date lookups, at 0.40), and the generative model, shown both
+# topics' requests, called 12 of the 14 the same. Where both agree the
+# pair is put to the operator, who merges it or says the two are apart.
+
+#: The topics a topic is compared with: its nearest by embedding.
+MERGE_CANDIDATES = 3
+#: A pair is shown to the generative model when its sample requests score at
+#: least this on the decision model, and suggested when that model agrees.
+SUGGEST_AT = 0.3
+#: The requests of each topic the generative model reads.
+JUDGE_REQUESTS = 6
+REASON_MAX_CHARS = 160
+
+
+def merge_sample(members: list[Any]) -> list[Any]:
+    """The members that stand for a topic when it is compared with another:
+    its first and its newest, when their phrases differ. The first is what
+    the topic began as, the newest what it has become."""
+    out: list[Any] = []
+    for m in [*members[:1], *reversed(members)]:
+        if all(m.phrase.casefold() != o.phrase.casefold() for o in out):
+            out.append(m)
+        if len(out) == 2:
+            break
+    return out
+
+
+def merge_pairs(topics: list[dict[str, Any]], limit: int = MERGE_CANDIDATES) -> list[tuple[int, int]]:
+    """The pairs of one axis's topics worth comparing, as places in
+    `topics`, the older first: each topic that recurs with its nearest
+    `limit` by embedding. `topics` is `{topic, members}` each, oldest
+    first. Two topics of one member each are left out: that pair was
+    scored when the newer one's part was placed."""
+    pairs: set[tuple[int, int]] = set()
+    samples = [merge_sample(t["members"]) for t in topics]
+
+    def near(i: int, j: int) -> float:
+        found = [c for c in (cosine(a.embedding, b.embedding)
+                             for a in samples[i] for b in samples[j]) if c is not None]
+        return max(found) if found else -1.0
+
+    for i, topic in enumerate(topics):
+        if len(topic["members"]) < 2:
+            continue
+        others = sorted((j for j in range(len(topics)) if j != i),
+                        key=lambda j: near(i, j), reverse=True)[:limit]
+        pairs.update((min(i, j), max(i, j)) for j in others)
+    return sorted(pairs)
+
+
+class SameTopic(BaseModel):
+    same: bool = Field(description="Whether the two lists are one topic.")
+    reason: str = Field(description="Why, in a few words.")
+
+
+_JUDGE_TAIL = (
+    " Answer with a JSON object that has the keys same, true or false, and "
+    "reason, at most twelve words, and nothing else.")
+JUDGE_PROMPTS: dict[str, str] = {
+    "task": (
+        "You are given two lists of requests a user made to an assistant. "
+        "Decide whether the two lists are one kind of task: whether every "
+        "request of both lists asks the assistant to do the same kind of "
+        "thing, whatever it is about.") + _JUDGE_TAIL,
+    "thing": (
+        "You are given two lists of requests a user made to an assistant. "
+        "Decide whether the two lists are about one named thing: whether "
+        "every request of both lists is about the same project, person, "
+        "tool or other thing that has a name. Two names that only look or "
+        "sound alike are two things.") + _JUDGE_TAIL,
+}
+
+
+def _requests(members: list[Any]) -> list[str]:
+    out: list[str] = []
+    for m in members:
+        if all(m.phrase.casefold() != o.casefold() for o in out):
+            out.append(m.phrase)
+    return out[:JUDGE_REQUESTS]
+
+
+def build_judge_prompt(axis: str, first: list[Any], second: list[Any]) -> dict[str, str]:
+    """Both topics' requests, each phrase once, for the model that says
+    whether the two are one."""
+    lists = [("list1", first), ("list2", second)]
+    return {"system": JUDGE_PROMPTS[axis], "user": "\n\n".join(
+        f"{name}:\n" + "\n".join(f"- {r}" for r in _requests(members))
+        for name, members in lists)}
+
+
 def _attr(text: Any) -> str:
     return (str(text).replace("&", "&amp;").replace('"', "&quot;")
             .replace("<", "&lt;").replace(">", "&gt;"))

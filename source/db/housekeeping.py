@@ -35,6 +35,7 @@ __all__ = [
     "JOB_CHECK_CALLERS",
     "ROOM_CHUNK_JOB",
     "ROOM_TOPICS_JOB",
+    "ROOM_TOPIC_MERGES_JOB",
     "RUN_SUMMARY_JOB",
     "attach_reply_signals",
     "chunk_subject",
@@ -75,6 +76,7 @@ __all__ = [
 RUN_SUMMARY_JOB = "run_summary"
 ROOM_CHUNK_JOB = "room_chunk_summary"
 ROOM_TOPICS_JOB = "room_topics"
+ROOM_TOPIC_MERGES_JOB = "room_topic_merges"
 
 #: job type -> (tier, label). Tier 1 is read by the next turn; tier 2 is
 #: generative work that is read eventually. The label is what the page prints.
@@ -82,6 +84,7 @@ HOUSEKEEPING_JOB_TYPES: dict[str, tuple[int, str]] = {
     RUN_SUMMARY_JOB: (2, "assistant summary"),
     ROOM_CHUNK_JOB: (2, "chatroom chunk summary"),
     ROOM_TOPICS_JOB: (2, "chatroom topics"),
+    ROOM_TOPIC_MERGES_JOB: (2, "chatroom topic merges"),
 }
 
 #: The /activity caller tag of each job type's model call. It is how an
@@ -93,6 +96,9 @@ JOB_CALLERS: dict[str, str] = {
     # chunk's parts to topics is the decision model's work, which is not
     # recorded under a caller of the job's.
     ROOM_TOPICS_JOB: "assistant.topic_namer",
+    # The same slot's model reads two topics' requests and says whether
+    # they are one.
+    ROOM_TOPIC_MERGES_JOB: "assistant.topic_namer",
 }
 
 #: The caller tags of the further calls a job type makes inside one attempt:

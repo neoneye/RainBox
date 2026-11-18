@@ -706,9 +706,9 @@ def _room_with_topics(made):
 
 
 def _drop_topics(room_uuid):
-    from db.models import RoomTopic, RoomTopicMember
+    from db.models import RoomTopic, RoomTopicMember, RoomTopicSuggestion
 
-    for model in (RoomTopicMember, RoomTopic, db.RoomChunk):
+    for model in (RoomTopicSuggestion, RoomTopicMember, RoomTopic, db.RoomChunk):
         db.session.query(model).filter_by(room_uuid=room_uuid).delete()
     db.session.commit()
 
@@ -726,7 +726,7 @@ def test_a_rooms_page_lists_its_recurring_topics_with_their_share(client):
         # Six of the ten summarized messages, in two parts.
         row = body[body.index('class="hk-topic-name"'):]
         row = row[:row.index("</tr>")]
-        assert f'data-topic="{topic.uuid}" data-name="roots" data-explanation=""' in row
+        assert f'data-topic="{topic.uuid}" data-axis="task" data-name="roots" data-explanation=""' in row
         assert "<li>compute the root of nine</li><li>compute the root of four</li>" in row
         assert '<td class="hk-num hk-right">60%</td>' in body
         assert "1 of 1 chunk\n  has its parts assigned" in body
@@ -812,5 +812,79 @@ def test_topics_can_be_asked_for_and_their_job_has_a_page(client):
         assert "task 0.97, thing 0.05</span>" in body
         db.session.delete(call)
         db.session.commit()
+    finally:
+        _drop_topics(room.uuid)
+
+
+def test_two_topics_that_look_like_one_are_put_to_the_operator(client):
+    """Nothing merges two topics but the operator: a pair the models agree
+    on is listed with both topics' requests, to merge or to tell apart, and
+    a topic's modal can make it part of another."""
+    from agents.config import HOUSEKEEPING_UUID
+    from db.models import RoomTopicSuggestion
+
+    c, made = client
+    room, chunk, roots = _room_with_topics(made)
+    try:
+        page = f"/assistant/housekeeping/room/{room.uuid}"
+        # A second topic, holding the chunk's second part on the other axis's
+        # place in the table: two recurring topics of one kind.
+        maths = db.add_room_topic(room.uuid, "task", "maths")
+        db.session.query(db.RoomTopicMember).filter_by(
+            topic_uuid=roots.uuid, part_index=1).update({"topic_uuid": maths.uuid})
+        db.session.commit()
+        assert db.suggest_room_topic_merge(room.uuid, roots.uuid, maths.uuid, 0.61,
+                                           "Both compute a root.")
+        # The pair is recorded once, in either order.
+        assert not db.suggest_room_topic_merge(room.uuid, maths.uuid, roots.uuid, 0.9, "again")
+        body = c.get(f"{page}?view=topics").get_data(as_text=True)
+        assert "<h3>These look like one topic</h3>" in body and "Both compute a root." in body
+        (suggestion,) = db.list_room_topic_suggestions(room.uuid)
+        assert f'action="/assistant/housekeeping/topic/{maths.uuid}/merge"' in body
+        assert f'name="into" value="{roots.uuid}"' in body
+        assert f'action="/assistant/housekeeping/topic-suggestion/{suggestion.uuid}/dismiss"' in body
+        # The modal offers the other topics of its kind, read off the page.
+        assert 'id="hk-topic-into"' in body and "data-axis" in body
+        assert f'action="{page}/topic-merges"' in body
+
+        # Asked for: one job for the room, queued through the worker's inbox.
+        assert c.post(f"{page}/topic-merges").headers["Location"] == f"{page}?view=topics"
+        item = (db.session.query(Inbox).filter(Inbox.agent_uuid == HOUSEKEEPING_UUID)
+                .order_by(Inbox.id.desc()).first())
+        payload = item.payload if isinstance(item.payload, dict) else json.loads(item.payload)
+        assert payload == {"room_uuid": str(room.uuid), "room_topic_merges": True}
+        db.session.delete(item)
+        db.session.commit()
+
+        # Told apart: the pair is gone from the page, and is not suggested again.
+        resp = c.post(f"/assistant/housekeeping/topic-suggestion/{suggestion.uuid}/dismiss")
+        assert resp.headers["Location"] == f"{page}?view=topics"
+        assert db.list_room_topic_suggestions(room.uuid) == []
+        assert "These look like one topic" not in c.get(f"{page}?view=topics").get_data(as_text=True)
+        assert not db.suggest_room_topic_merge(room.uuid, roots.uuid, maths.uuid, 0.7, "x")
+
+        # Merged by hand: the one topic has both parts, under the name it had.
+        db.edit_room_topic(maths.uuid, "sums", "testing that programs run")
+        resp = c.post(f"/assistant/housekeeping/topic/{maths.uuid}/merge",
+                      data={"into": str(roots.uuid), "next": f"{page}?view=topics&x=1"})
+        assert resp.headers["Location"] == f"{page}?view=topics&x=1"
+        assert db.get_room_topic(maths.uuid) is None
+        db.session.refresh(roots)
+        assert sorted(m.part_index for m in db.list_room_topic_members(room.uuid)
+                      if m.topic_uuid == roots.uuid) == [0, 1]
+        # Only the topic that went carried the operator's words: they are kept.
+        assert (roots.name, roots.explanation, roots.operator_edited) == (
+            "sums", "testing that programs run", True)
+        assert db.session.query(RoomTopicSuggestion).filter_by(room_uuid=room.uuid).count() == 0
+        # A topic is not merged into itself, into nothing, or across kinds.
+        assert c.post(f"/assistant/housekeeping/topic/{roots.uuid}/merge",
+                      data={"into": str(roots.uuid)}).status_code == 404
+        assert c.post(f"/assistant/housekeeping/topic/{roots.uuid}/merge",
+                      data={"into": "nonsense"}).status_code == 400
+        thing = db.add_room_topic(room.uuid, "thing", "the lighthouse")
+        db.session.commit()
+        assert c.post(f"/assistant/housekeeping/topic/{roots.uuid}/merge",
+                      data={"into": str(thing.uuid)}).status_code == 404
+        assert c.post(f"/assistant/housekeeping/topic-suggestion/{uuid4()}/dismiss").status_code == 404
     finally:
         _drop_topics(room.uuid)

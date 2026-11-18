@@ -7,21 +7,27 @@ docs/superpowers/specs/2026-11-18-room-topic-registry-design.md.
 from typing import Any
 from uuid import UUID
 
-from db.models import RoomChunk, RoomTopic, RoomTopicMember, db
+import sqlalchemy as sa
+
+from db.models import RoomChunk, RoomTopic, RoomTopicMember, RoomTopicSuggestion, db
 
 __all__ = [
     "add_room_topic",
     "add_room_topic_members",
     "assigned_chunk_parts",
+    "dismiss_room_topic_suggestion",
     "edit_room_topic",
     "explain_room_topic",
     "get_room_chunk",
     "get_room_topic",
     "list_chunk_topics",
     "list_room_topic_members",
+    "list_room_topic_suggestions",
     "list_room_topics",
+    "merge_room_topics",
     "room_topic_exemplars",
     "room_topic_requests",
+    "suggest_room_topic_merge",
     "unassigned_room_chunks",
 ]
 
@@ -150,3 +156,73 @@ def unassigned_room_chunks(room_uuid: UUID, size: int, overlap: int,
                        prompt_version=version)
             .filter(RoomChunk.uuid.notin_(assigned))
             .order_by(RoomChunk.seq.asc()).limit(limit).all())
+
+
+def merge_room_topics(keep_uuid: UUID, drop_uuid: UUID) -> RoomTopic | None:
+    """Make two topics one: the members of `drop` become members of `keep`,
+    and `drop` is gone. `keep` stays what it was called, unless only `drop`
+    carried the operator's own words, which are then kept. A topic the
+    operator did not write is due for a new explanation, since it now holds
+    more than the model explained. None when either is missing, or they are
+    not two topics of one room and axis."""
+    keep = db.session.get(RoomTopic, keep_uuid)
+    drop = db.session.get(RoomTopic, drop_uuid)
+    if (keep is None or drop is None or keep.uuid == drop.uuid
+            or (keep.room_uuid, keep.axis) != (drop.room_uuid, drop.axis)):
+        return None
+    if drop.operator_edited and not keep.operator_edited:
+        keep.name, keep.explanation, keep.operator_edited = drop.name, drop.explanation, True
+    if not keep.operator_edited:
+        keep.explained_members = 0
+    db.session.execute(sa.update(RoomTopicMember)
+                       .where(RoomTopicMember.topic_uuid == drop.uuid)
+                       .values(topic_uuid=keep.uuid))
+    # What was suggested of the topic that is gone no longer names a topic.
+    db.session.execute(sa.delete(RoomTopicSuggestion).where(sa.or_(
+        RoomTopicSuggestion.topic_uuid == drop.uuid,
+        RoomTopicSuggestion.other_uuid == drop.uuid)))
+    db.session.delete(drop)
+    db.session.commit()
+    return keep
+
+
+def suggest_room_topic_merge(room_uuid: UUID, topic_uuid: UUID, other_uuid: UUID,
+                             score: float, reason: str, *, state: str = "open") -> bool:
+    """Record what was found of two topics: `open`, they look like one; or
+    `apart`, the model that read their requests said they are two. False,
+    and nothing written, when the pair is recorded already, in either
+    order: a pair is compared once, and one the operator dismissed stays
+    dismissed."""
+    known = db.session.query(RoomTopicSuggestion.uuid).filter(sa.or_(
+        sa.and_(RoomTopicSuggestion.topic_uuid == topic_uuid,
+                RoomTopicSuggestion.other_uuid == other_uuid),
+        sa.and_(RoomTopicSuggestion.topic_uuid == other_uuid,
+                RoomTopicSuggestion.other_uuid == topic_uuid))).first()
+    if known is not None:
+        return False
+    db.session.add(RoomTopicSuggestion(
+        room_uuid=room_uuid, topic_uuid=topic_uuid, other_uuid=other_uuid,
+        score=score, reason=reason, state=state))
+    db.session.commit()
+    return True
+
+
+def list_room_topic_suggestions(room_uuid: UUID, *,
+                                state: str | None = "open") -> list[RoomTopicSuggestion]:
+    """A room's suggestions, best first: the open ones, or with `state=None`
+    all of them, which is what a new pass checks a pair against."""
+    query = db.session.query(RoomTopicSuggestion).filter_by(room_uuid=room_uuid)
+    if state is not None:
+        query = query.filter_by(state=state)
+    return query.order_by(RoomTopicSuggestion.score.desc()).all()
+
+
+def dismiss_room_topic_suggestion(suggestion_uuid: UUID) -> RoomTopicSuggestion | None:
+    """The operator says the two are not one topic. The row stays, so the
+    pair is not suggested again."""
+    row = db.session.get(RoomTopicSuggestion, suggestion_uuid)
+    if row is None:
+        return None
+    row.state = "dismissed"
+    db.session.commit()
+    return row

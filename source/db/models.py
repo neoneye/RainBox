@@ -1336,6 +1336,32 @@ class RoomTopicMember(db.Model):
     )
 
 
+class RoomTopicSuggestion(db.Model):
+    """Two topics of a room that look like one, for the operator to merge or
+    to tell apart. Written by the housekeeping role; nothing is merged
+    without the operator. `topic_uuid` is the older of the two."""
+
+    __tablename__ = "room_topic_suggestion"
+    uuid: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    room_uuid: Mapped[UUID] = mapped_column(index=True)
+    topic_uuid: Mapped[UUID] = mapped_column()
+    other_uuid: Mapped[UUID] = mapped_column()
+    # The decision model's mean score for the two topics' sample requests.
+    score: Mapped[float] = mapped_column()
+    # Why the model that compared their requests called them one.
+    reason: Mapped[str] = mapped_column(Text, default="")
+    # `open`: shown to the operator. `dismissed`: the operator said they
+    # are not the same. `apart`: the model that read both topics' requests
+    # said so, and the pair was never shown. A pair is compared once.
+    state: Mapped[str] = mapped_column(Text, default="open")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    __table_args__ = (
+        UniqueConstraint("topic_uuid", "other_uuid", name="room_topic_suggestion_pair_key"),
+    )
+
+
 class AssistantStep(db.Model):
     """One logical step in an assistant run, as **a single mutable row**. A normal
     action step is inserted at `phase="running"` (so a crash mid-action leaves a

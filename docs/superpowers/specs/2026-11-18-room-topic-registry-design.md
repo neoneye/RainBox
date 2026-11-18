@@ -120,8 +120,24 @@ hold it, with its size against the original messages:
 `other` is what no recurring `task` topic holds. No prompt holds the block
 yet.
 
+## Two topics that are one
+
+A second pass over a room, worded differently by a new summary, splits
+topics: two for the diary's date lookups, two for its first mentions.
+Merging is the operator's. They merge a topic into another from its modal,
+or accept a suggestion: a job compares each recurring topic with its 3
+nearest (decision model on a sample of each, then the generative model on
+both topics' requests when the sample scores 0.3 or above) and lists the
+pairs both call one. A pair is compared once, and one the operator calls
+"not the same" is not suggested again.
+
+It suggests and does not merge because neither model is right alone. On
+one room's 14 nearest pairs the decision model scored a wrong pair (two
+names that sound alike) above both true splits, and the generative model
+called 12 of the 14 one.
+
 ## Not in this step
 
 - A registry across rooms: the same assignment, run over the rooms' topics.
-- Merging two topics, or moving a part to another topic, by hand.
+- Moving one part to another topic, and undoing a merge.
 - Putting the block into the assistant's prompt.

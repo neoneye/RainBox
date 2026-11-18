@@ -11,7 +11,14 @@ import db
 from agents import housekeeping as hk
 from agents import room_topics as rt
 from agents.config import ASSISTANT_TOPIC_MATCH_UUID, HOUSEKEEPING_UUID
-from db.models import HousekeepingAttempt, HousekeepingJob, RoomChunk, RoomTopic, RoomTopicMember
+from db.models import (
+    HousekeepingAttempt,
+    HousekeepingJob,
+    RoomChunk,
+    RoomTopic,
+    RoomTopicMember,
+    RoomTopicSuggestion,
+)
 
 
 def _member(phrase="", embedding=None, **kw):
@@ -143,6 +150,40 @@ def test_the_block_for_a_prompt_lists_the_recurring_topics_with_their_share():
     assert rt.render_room_topics(rt.tally([], [], set(), 0)) == "<room_topics/>"
 
 
+def test_a_topic_is_compared_by_its_first_and_its_newest_request():
+    a, b, c = _member("compute a root"), _member("Compute a root"), _member("root of nine")
+    assert rt.merge_sample([a, b, c]) == [a, c]
+    assert rt.merge_sample([a, b]) == [a]            # the same phrase stands once
+    assert rt.merge_sample([]) == []
+
+
+def test_recurring_topics_are_compared_with_their_nearest_and_one_offs_not_with_each_other():
+    def topic(vector, n):
+        return {"topic": _topic(), "members": [
+            _member(f"p{vector}{k}", embedding=vector) for k in range(n)]}
+
+    topics = [topic([1.0, 0.0], 2), topic([0.9, 0.1], 1), topic([0.0, 1.0], 1),
+              topic([0.1, 0.9], 1)]
+    # Only the first recurs. Its nearest is compared with it; the one-offs
+    # are not compared with each other.
+    assert rt.merge_pairs(topics, limit=1) == [(0, 1)]
+    assert rt.merge_pairs(topics, limit=3) == [(0, 1), (0, 2), (0, 3)]
+    topics[3]["members"].append(_member("more", embedding=[0.1, 0.9]))
+    assert rt.merge_pairs(topics, limit=1) == [(0, 1), (2, 3)]   # each pair once, older first
+
+
+def test_the_model_that_says_whether_two_topics_are_one_reads_both_lists():
+    first = [_member("compute a root"), _member("Compute a root"), _member("root of nine")]
+    prompt = rt.build_judge_prompt("thing", first, [_member("find the lighthouse")])
+    assert prompt["user"] == ("list1:\n- compute a root\n- root of nine\n\n"
+                              "list2:\n- find the lighthouse")
+    assert "Two names that only look or sound alike are two things." in prompt["system"]
+    for axis in rt.AXES:
+        assert rt.JUDGE_PROMPTS[axis].endswith(
+            "Answer with a JSON object that has the keys same, true or false, and "
+            "reason, at most twelve words, and nothing else.")
+
+
 # --- the job ------------------------------------------------------------------
 
 @pytest.fixture
@@ -158,7 +199,7 @@ def room():
             yield room_uuid
         finally:
             db.session.rollback()
-            for model in (RoomTopicMember, RoomTopic, RoomChunk):
+            for model in (RoomTopicSuggestion, RoomTopicMember, RoomTopic, RoomChunk):
                 db.session.query(model).filter_by(room_uuid=room_uuid).delete()
             db.session.query(HousekeepingAttempt).delete()
             db.session.query(HousekeepingJob).delete()
@@ -333,3 +374,72 @@ def test_topics_jobs_are_queued_for_chunks_without_topics_once(room, monkeypatch
     assert agent.handle(uuid4(), {})["jobs"] == {"done": 2}
     assert [c.uuid for c in db.unassigned_room_chunks(room, 10, 2, 1, 10)] == []
     assert {m.chunk_uuid for m in db.list_room_topic_members(room)} == {a.uuid, b.uuid}
+
+
+def test_a_pair_both_models_call_one_is_suggested_and_nothing_is_merged(room, monkeypatch):
+    from agents import model_groups
+
+    agent, asked, _explained = _worker(monkeypatch)
+    # Two topics of one kind of task that the first pass kept apart, and one
+    # that is something else. The fake decision model goes by the first word.
+    _run(agent, _chunk(room, 0, ("compute the root of nine", "three")))
+    _run(agent, _chunk(room, 1, ("compute the root of four", "two")))
+    _run(agent, _chunk(room, 2, ("find the lighthouse", "on the coast")))
+    _run(agent, _chunk(room, 3, ("compute the root of one", "one")))
+    task = [t for t in db.list_room_topics(room) if t.axis == "task"]
+    roots, lighthouse = task
+    split = db.add_room_topic(room, "task", "square roots")
+    db.session.query(RoomTopicMember).filter_by(
+        topic_uuid=roots.uuid, phrase="compute the root of four").update(
+        {"topic_uuid": split.uuid, "phrase": "compute a square root"})
+    db.session.commit()
+    asked.clear()
+    judged: list[str] = []
+
+    def judge(agent_name, models, system_prompt, user_prompt, response_model, **_kw):
+        assert agent_name == "assistant.topic_namer" and response_model is rt.SameTopic
+        judged.append(user_prompt)
+        return rt.SameTopic(same=True, reason=" Both compute  a root. "), models[0]
+
+    monkeypatch.setattr(model_groups, "structured_llm_call", judge)
+    monkeypatch.setattr(rt, "due_for_explaining", lambda topic, members: False)
+    assert agent.handle(uuid4(), {"room_uuid": str(room), "room_topic_merges": True})[
+        "jobs"] == {"done": 1}
+    # Only the pair that scored as alike was put to the model that reads both lists.
+    assert judged == ["list1:\n- compute the root of nine\n- compute the root of one\n\n"
+                      "list2:\n- compute a square root"]
+    (suggestion,) = db.list_room_topic_suggestions(room)
+    assert (suggestion.topic_uuid, suggestion.other_uuid, suggestion.score, suggestion.reason) == (
+        roots.uuid, split.uuid, 0.9, "Both compute a root.")
+    # Nothing was merged: that is the operator's.
+    assert {t.uuid for t in db.list_room_topics(room) if t.axis == "task"} == {
+        roots.uuid, lighthouse.uuid, split.uuid}
+    # Asked for again, the job runs again and compares no pair twice.
+    asked.clear()
+    assert agent.handle(uuid4(), {"room_uuid": str(room), "room_topic_merges": True})[
+        "jobs"] == {"done": 1}
+    assert len(judged) == 1 and len(db.list_room_topic_suggestions(room)) == 1
+    assert not any("compute a square root" in state for state in asked)
+
+
+def test_a_pair_the_model_tells_apart_is_kept_and_never_shown(room, monkeypatch):
+    from agents import model_groups
+
+    agent, _asked, _explained = _worker(monkeypatch)
+    _run(agent, _chunk(room, 0, ("compute the root of nine", "three"),
+                       ("compute the sum of nine", "eighteen")))
+    (topic,) = [t for t in db.list_room_topics(room) if t.axis == "task"]
+    other = db.add_room_topic(room, "task", "sums")
+    db.session.query(RoomTopicMember).filter_by(
+        topic_uuid=topic.uuid, phrase="compute the sum of nine").update({"topic_uuid": other.uuid})
+    db.add_room_topic_members([{
+        "topic_uuid": topic.uuid, "room_uuid": room, "axis": "task",
+        "chunk_uuid": uuid4(), "part_index": 0, "phrase": "compute the root of one",
+        "messages": 2, "p": 0.9, "embedding": None}])
+    monkeypatch.setattr(model_groups, "structured_llm_call",
+                        lambda *a, **kw: (rt.SameTopic(same=False, reason="a root is not a sum"), a[1][0]))
+    monkeypatch.setattr(rt, "due_for_explaining", lambda topic, members: False)
+    agent.handle(uuid4(), {"room_uuid": str(room), "room_topic_merges": True})
+    assert db.list_room_topic_suggestions(room) == []
+    (kept,) = db.list_room_topic_suggestions(room, state=None)
+    assert (kept.state, kept.reason) == ("apart", "a root is not a sum")

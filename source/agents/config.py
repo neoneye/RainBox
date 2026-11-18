@@ -264,7 +264,7 @@ agent_config: dict[str, AgentConfigEntry] = {
     "assistant.topic_namer": {
         "uuid": ASSISTANT_TOPIC_NAMER_UUID,
         "requires_structured_output": True,
-        "description": "binding-only: the model that NAMES AND EXPLAINS a topic a room keeps coming back to, for the housekeeping role, once the topic recurs: one structured call that reads the requests that belong to the topic and what came of them. Must be a local model: it reads the room's own requests. Unbound, it falls back to assistant.default.",
+        "description": "binding-only: the model that NAMES AND EXPLAINS a topic a room keeps coming back to, for the housekeeping role, once the topic recurs: one structured call that reads the requests that belong to the topic and what came of them. The same model reads the requests of two topics that look alike and says whether they are one, for the operator to merge. Must be a local model: it reads the room's own requests. Unbound, it falls back to assistant.default.",
     },
     "assistant.topic_match": {
         "uuid": ASSISTANT_TOPIC_MATCH_UUID,

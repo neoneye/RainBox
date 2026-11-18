@@ -32,6 +32,7 @@ from db import (
     RoomChunk,
     RoomTopic,
     RoomTopicMember,
+    RoomTopicSuggestion,
     SecondOpinionAssessment,
     SecondOpinionReview,
     assistant_step_path,
@@ -970,6 +971,10 @@ class RoomTopicMemberView(ModelView):
 
 admin.add_view(RoomTopicView(RoomTopic, db, category="Assistant"))
 admin.add_view(RoomTopicMemberView(RoomTopicMember, db, category="Assistant"))
+# Two topics that look like one: answered on the room's chunks page.
+admin.add_view(RoomTopicView(
+    RoomTopicSuggestion, db, category="Assistant", name="Room Topic Suggestion",
+    endpoint="roomtopicsuggestion"))
 
 
 class DecisionCallView(ModelView):
