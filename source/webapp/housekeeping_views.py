@@ -1523,7 +1523,7 @@ _ROOM_FRAGMENT = """
 </form>
 {% endif %}
 <form method="post" action="/assistant/housekeeping/room/{{ room_uuid }}/topic-merges">
-  <button class="hk-btn" type="submit" title="Compares each recurring topic with the topics nearest it: scoring by the decision model, and one model call for each pair that scores as alike. A pair both call the same is listed here for you to merge. Nothing is merged without you.">Look for topics that are one</button>
+  <button class="hk-btn" type="submit" title="Topics the model gave the same name are merged. Each topic of five parts or more is then compared with the topics nearest it: scoring by the decision model, and one model call for each pair that scores as alike. A pair both call the same is listed here for you to merge.">Look for topics that are one</button>
 </form>
 {% if topics.merges_queued %}<span class="hk-pill deferred">looking</span>{% endif %}
 </div>
@@ -1826,7 +1826,7 @@ def housekeeping_room_page(room_uuid: UUID) -> str:
                 1 for r in db.list_housekeeping_jobs(
                     job_type=db.ROOM_TOPICS_JOB, room_uuid=room_uuid, limit=500)[0]
                 if r["job"].state != "final"),
-            "suggestions": _topic_suggestions(room_uuid, members),
+            "suggestions": _topic_suggestions(room_uuid, members, chunk_uuids),
             "merges_queued": any(
                 r["job"].state != "final" for r in db.list_housekeeping_jobs(
                     job_type=db.ROOM_TOPIC_MERGES_JOB, room_uuid=room_uuid, limit=5)[0]),
@@ -1868,19 +1868,31 @@ def housekeeping_room_summarize(room_uuid: UUID) -> Response:
     return redirect(f"/assistant/housekeeping/room/{room_uuid}")
 
 
-def _topic_suggestions(room_uuid: UUID, members: list) -> list[dict]:
+def _topic_suggestions(room_uuid: UUID, members: list, chunk_uuids: set) -> list[dict]:
     """A room's open suggestions as the page lists them: `{row, first,
-    second, first_members, second_members}`, the pair's older topic first.
-    One whose topic is gone is left out."""
+    second, first_members, second_members}`, the pair's older topic first,
+    with each topic's parts in the series shown. One whose topic is gone is
+    left out, and so is a pair of two small topics
+    (`room_topics.MERGE_MIN_PARTS`): which of them a part fell into is not
+    worth a decision."""
+    from agents.room_topics import MERGE_MIN_PARTS
+
     topics = {t.uuid: t for t in db.list_room_topics(room_uuid)}
     mine: dict[UUID, list] = {}
     for m in members:
-        mine.setdefault(m.topic_uuid, []).append(m)
-    return [{"row": row, "first": topics[row.topic_uuid], "second": topics[row.other_uuid],
-             "first_members": mine.get(row.topic_uuid, []),
-             "second_members": mine.get(row.other_uuid, [])}
-            for row in db.list_room_topic_suggestions(room_uuid)
-            if row.topic_uuid in topics and row.other_uuid in topics]
+        if m.chunk_uuid in chunk_uuids:
+            mine.setdefault(m.topic_uuid, []).append(m)
+    out = []
+    for row in db.list_room_topic_suggestions(room_uuid):
+        if row.topic_uuid not in topics or row.other_uuid not in topics:
+            continue
+        first, second = mine.get(row.topic_uuid, []), mine.get(row.other_uuid, [])
+        if max(len(first), len(second)) < MERGE_MIN_PARTS:
+            continue
+        out.append({"row": row, "first": topics[row.topic_uuid],
+                    "second": topics[row.other_uuid],
+                    "first_members": first, "second_members": second})
+    return out
 
 
 @app.route("/assistant/housekeeping/room/<uuid:room_uuid>/topic-merges", methods=["POST"])

@@ -27,6 +27,7 @@ __all__ = [
     "merge_room_topics",
     "room_topic_exemplars",
     "room_topic_requests",
+    "same_named_room_topics",
     "suggest_room_topic_merge",
     "unassigned_room_chunks",
 ]
@@ -54,7 +55,9 @@ def room_topic_exemplars(room_uuid: UUID, axis: str,
                          limit: int) -> list[dict[str, Any]]:
     """A room's topics on one axis, oldest first, each with the members a
     new part is compared with: `{topic, exemplars}`, the exemplars being
-    the topic's first `limit` members."""
+    the topic's first `limit` members whose phrases differ. A request made
+    twice in the same words is one exemplar: as two, every later part
+    would be compared with that one sentence alone."""
     topics = (db.session.query(RoomTopic)
               .filter_by(room_uuid=room_uuid, axis=axis)
               .order_by(RoomTopic.created_at.asc()).all())
@@ -62,7 +65,8 @@ def room_topic_exemplars(room_uuid: UUID, axis: str,
     for m in _in_order(db.session.query(RoomTopicMember)
                        .filter_by(room_uuid=room_uuid, axis=axis)):
         mine = members.setdefault(m.topic_uuid, [])
-        if len(mine) < limit:
+        if len(mine) < limit and all(
+                m.phrase.casefold() != o.phrase.casefold() for o in mine):
             mine.append(m)
     return [{"topic": t, "exemplars": members.get(t.uuid, [])} for t in topics]
 
@@ -226,3 +230,17 @@ def dismiss_room_topic_suggestion(suggestion_uuid: UUID) -> RoomTopicSuggestion 
     row.state = "dismissed"
     db.session.commit()
     return row
+
+
+def same_named_room_topics(room_uuid: UUID) -> list[list[RoomTopic]]:
+    """The room's topics that share a name with another of their axis, as
+    groups: each the topics of one name, the one with the most members
+    first, then the oldest. Letter case does not tell two names apart."""
+    counts = dict(db.session.query(RoomTopicMember.topic_uuid, sa.func.count())
+                  .filter_by(room_uuid=room_uuid)
+                  .group_by(RoomTopicMember.topic_uuid).all())
+    groups: dict[tuple[str, str], list[RoomTopic]] = {}
+    for topic in list_room_topics(room_uuid):
+        groups.setdefault((topic.axis, topic.name.casefold()), []).append(topic)
+    return [sorted(group, key=lambda t: (-counts.get(t.uuid, 0), t.created_at))
+            for group in groups.values() if len(group) > 1]

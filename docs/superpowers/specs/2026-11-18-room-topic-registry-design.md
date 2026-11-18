@@ -32,7 +32,8 @@ For each part, in order:
 
 1. The part's phrase (`summary`, what was wanted) is embedded.
 2. On each axis the room's topics are ranked by the cosine between that
-   vector and their exemplars' (`EXEMPLARS` = the first 2 members), and the
+   vector and their exemplars' (`EXEMPLARS` = the first 2 members whose
+   phrases differ), and the
    nearest `CANDIDATES` = 5 are kept. Without a vector the newest 5 are.
 3. Each exemplar of a candidate is put to the decision model with the part,
    one request for both axes' questions. A topic's score is the mean over
@@ -124,8 +125,11 @@ yet.
 
 A second pass over a room, worded differently by a new summary, splits
 topics: two for the diary's date lookups, two for its first mentions.
-Merging is the operator's. They merge a topic into another from its modal,
-or accept a suggestion: a job compares each recurring topic with its 3
+Topics the model gives the same name are merged without asking, the
+smaller into the larger. A topic under 5 parts is not looked at: which of
+two small topics a part fell into matters to nobody. Any other merge is the
+operator's. They merge a topic into another from its modal, or accept a
+suggestion: a job compares each topic of 5 parts or more with its 3
 nearest (decision model on a sample of each, then the generative model on
 both topics' requests when the sample scores 0.3 or above) and lists the
 pairs both call one. A pair is compared once, and one the operator calls

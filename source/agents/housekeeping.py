@@ -704,16 +704,23 @@ class HousekeepingAgent(Agent):
             name, explanation = room_topics.settle_name(reply)  # type: ignore[arg-type]
             if name and db.explain_room_topic(topic.uuid, name, explanation, members):
                 written += 1
+        if written:
+            # A topic that was just given the name another has is that topic.
+            self._merge_same_named(chunk.room_uuid)
         return written
 
     def _suggest_merges(self, job: Any, attempt: Any, watch: TurnWatch) -> str:
-        """Look through a room's topics for pairs that look like one, and
-        record each for the operator (`agents/room_topics.py`: nothing is
-        merged here). On each axis a recurring topic is compared with its
-        nearest by embedding: the decision model scores their sample
-        requests, and a pair at `SUGGEST_AT` or above is put to the
-        generative model with both topics' requests. A pair is compared
-        once; what was found of it is kept, whichever way it went."""
+        """Look through a room's topics for pairs that are one
+        (`agents/room_topics.py`). Topics of one axis that the model gave
+        the same name are merged here: two names it wrote alone, from two
+        sets of requests, and that came out alike. Every other pair is
+        only recorded, for the operator. On each axis a topic of
+        `MERGE_MIN_PARTS` parts or more, counted in the room's current
+        series, is compared with its nearest by embedding: the decision
+        model scores their sample requests, and a pair at `SUGGEST_AT` or
+        above is put to the generative model with both topics' requests. A
+        pair is compared once; what was found of it is kept, whichever way
+        it went."""
         from agents import room_topics
         from agents.config import (
             ASSISTANT_REPEAT_CHECK_UUID,
@@ -735,9 +742,18 @@ class HousekeepingAgent(Agent):
         models = [m for m in found or [] if _is_local_model(m)]
         if not models:
             return "skipped: no local model is bound to assistant.topic_namer"
+        self._merge_same_named(job.room_uuid)
+        from agents.room_chunks import PROMPT_VERSION
+
+        # A topic's size is its parts in the series the room is read in now:
+        # a room summarized twice holds every request twice.
+        series = {c.uuid for c in db.list_room_chunks(
+            job.room_uuid, int(db.get_setting("housekeeping.room_chunk_size")),
+            int(db.get_setting("housekeeping.room_chunk_overlap")), PROMPT_VERSION)}
         members: dict[UUID, list[Any]] = {}
         for m in db.list_room_topic_members(job.room_uuid):
-            members.setdefault(m.topic_uuid, []).append(m)
+            if m.chunk_uuid in series:
+                members.setdefault(m.topic_uuid, []).append(m)
         compared = {frozenset((s.topic_uuid, s.other_uuid))
                     for s in db.list_room_topic_suggestions(job.room_uuid, state=None)}
         for axis in room_topics.AXES:
@@ -785,6 +801,18 @@ class HousekeepingAgent(Agent):
                 db.suggest_room_topic_merge(job.room_uuid, *pair, score, reason,
                                             state="open" if same else "apart")
         return "done"
+
+    @staticmethod
+    def _merge_same_named(room_uuid: UUID) -> int:
+        """Merge the room's topics that share a name on one axis, into the
+        one with the most parts. Returns how many went. A name the
+        operator wrote counts like any other: a topic the model names as
+        they named theirs is theirs."""
+        gone = 0
+        for group in db.same_named_room_topics(room_uuid):
+            for other in group[1:]:
+                gone += int(db.merge_room_topics(group[0].uuid, other.uuid) is not None)
+        return gone
 
     _RUNNERS: dict[str, Callable[..., str]] = {
         db.RUN_SUMMARY_JOB: _summarize_run,

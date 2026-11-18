@@ -273,6 +273,10 @@ def tally(topics: list[Any], members: list[Any], chunk_uuids: set[Any],
 
 #: The topics a topic is compared with: its nearest by embedding.
 MERGE_CANDIDATES = 3
+#: A topic is looked at for a second half of itself once it has this many
+#: parts. Below that, which of two small topics a part fell into matters to
+#: nobody: the operator said so of anything under five.
+MERGE_MIN_PARTS = 5
 #: A pair is shown to the generative model when its sample requests score at
 #: least this on the decision model, and suggested when that model agrees.
 SUGGEST_AT = 0.3
@@ -296,10 +300,9 @@ def merge_sample(members: list[Any]) -> list[Any]:
 
 def merge_pairs(topics: list[dict[str, Any]], limit: int = MERGE_CANDIDATES) -> list[tuple[int, int]]:
     """The pairs of one axis's topics worth comparing, as places in
-    `topics`, the older first: each topic that recurs with its nearest
-    `limit` by embedding. `topics` is `{topic, members}` each, oldest
-    first. Two topics of one member each are left out: that pair was
-    scored when the newer one's part was placed."""
+    `topics`, the older first: each topic of `MERGE_MIN_PARTS` parts or
+    more with its nearest `limit` by embedding. `topics` is `{topic,
+    members}` each, oldest first. Two small topics are never compared."""
     pairs: set[tuple[int, int]] = set()
     samples = [merge_sample(t["members"]) for t in topics]
 
@@ -309,7 +312,7 @@ def merge_pairs(topics: list[dict[str, Any]], limit: int = MERGE_CANDIDATES) -> 
         return max(found) if found else -1.0
 
     for i, topic in enumerate(topics):
-        if len(topic["members"]) < 2:
+        if len(topic["members"]) < MERGE_MIN_PARTS:
             continue
         others = sorted((j for j in range(len(topics)) if j != i),
                         key=lambda j: near(i, j), reverse=True)[:limit]

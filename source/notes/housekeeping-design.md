@@ -498,7 +498,13 @@ room's chunk jobs: 20 per run end, the rest on request. For each part:
 
 1. Its phrase (what was wanted) is embedded, and on each axis the room's
    topics are ranked by how near their exemplars lie. An exemplar is one of
-   a topic's first 2 members. The nearest 5 topics are kept. Without a
+   a topic's first 2 members whose phrases differ: a request made twice in
+   the same words is one, or every later part is compared with that one
+   sentence alone. It does not by itself keep a topic whole: in one room
+   a request that started a topic beside the one it belonged to scored
+   0.45 and 0.43 against that topic's two distinct exemplars. The model
+   then gave both topics the same name, which is what joins them (see Two
+   topics that are one). The nearest 5 topics are kept. Without a
    vector the newest 5 are.
 2. The decision model (`assistant.topic_match`; unbound, the model of
    `assistant.repeat_check`) is asked of the part and each exemplar, both
@@ -545,7 +551,18 @@ members in the series it shows.
 **Two topics that are one.** A part joins a topic by how it scores against
 the topic's first members, so a room summarized again, with its requests
 worded anew, can start a second topic beside the one it should have
-joined. Nothing merges two topics but the operator:
+joined. Two things are done about it without asking:
+
+- **Topics the model gives the same name are one.** Two names it wrote
+  alone, from two sets of requests, that came out alike, letter case
+  aside: the smaller is merged into the larger when either is named, and
+  when the merges job runs.
+- **Small topics are left alone.** A topic is looked at for a second half
+  of itself once it has 5 parts in the series in use
+  (`MERGE_MIN_PARTS`). Which of two small topics a part fell into matters
+  to nobody.
+
+Any other pair is merged only by the operator:
 
 - **By hand.** A topic's modal has a list of the other topics of its kind
   that the page shows; choosing one makes Save a Merge. The topic's parts
@@ -554,8 +571,8 @@ joined. Nothing merges two topics but the operator:
   those kept. A topic the operator did not write is explained anew the
   next time a part joins it.
 - **Suggested.** "Look for topics that are one" queues a job for the room
-  (`room_topic_merges`). On each axis a recurring topic is compared with
-  its 3 nearest by embedding, by a sample of each: its first and its
+  (`room_topic_merges`). On each axis a topic of 5 parts or more is
+  compared with its 3 nearest by embedding, by a sample of each: its first and its
   newest request. The decision model scores the samples, and a pair at
   0.3 or above is put to the generative model (`assistant.topic_namer`)
   with up to 6 requests of each topic. A pair it calls the same is listed

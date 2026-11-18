@@ -823,10 +823,28 @@ def test_two_topics_that_look_like_one_are_put_to_the_operator(client):
     from agents.config import HOUSEKEEPING_UUID
     from db.models import RoomTopicSuggestion
 
+    from agents import room_topics
+
     c, made = client
     room, chunk, roots = _room_with_topics(made)
+    restore = room_topics.MERGE_MIN_PARTS
     try:
         page = f"/assistant/housekeeping/room/{room.uuid}"
+        # Two topics of one part each: a pair that small is not worth a
+        # decision, so the page keeps it to itself until one has five parts.
+        maths = db.add_room_topic(room.uuid, "task", "maths")
+        db.session.query(db.RoomTopicMember).filter_by(
+            topic_uuid=roots.uuid, part_index=1).update({"topic_uuid": maths.uuid})
+        db.session.commit()
+        assert db.suggest_room_topic_merge(room.uuid, roots.uuid, maths.uuid, 0.61,
+                                           "Both compute a root.")
+        assert "These look like one topic" not in c.get(f"{page}?view=topics").get_data(as_text=True)
+        db.session.query(db.RoomTopicSuggestion).filter_by(room_uuid=room.uuid).delete()
+        db.session.query(db.RoomTopicMember).filter_by(topic_uuid=maths.uuid).update(
+            {"topic_uuid": roots.uuid})
+        db.session.delete(maths)
+        db.session.commit()
+        room_topics.MERGE_MIN_PARTS = 1
         # A second topic, holding the chunk's second part on the other axis's
         # place in the table: two recurring topics of one kind.
         maths = db.add_room_topic(room.uuid, "task", "maths")
@@ -887,4 +905,5 @@ def test_two_topics_that_look_like_one_are_put_to_the_operator(client):
                       data={"into": str(thing.uuid)}).status_code == 404
         assert c.post(f"/assistant/housekeeping/topic-suggestion/{uuid4()}/dismiss").status_code == 404
     finally:
+        room_topics.MERGE_MIN_PARTS = restore
         _drop_topics(room.uuid)

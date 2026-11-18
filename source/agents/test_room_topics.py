@@ -11,6 +11,7 @@ import db
 from agents import housekeeping as hk
 from agents import room_topics as rt
 from agents.config import ASSISTANT_TOPIC_MATCH_UUID, HOUSEKEEPING_UUID
+from agents.room_chunks import PROMPT_VERSION
 from db.models import (
     HousekeepingAttempt,
     HousekeepingJob,
@@ -157,15 +158,16 @@ def test_a_topic_is_compared_by_its_first_and_its_newest_request():
     assert rt.merge_sample([]) == []
 
 
-def test_recurring_topics_are_compared_with_their_nearest_and_one_offs_not_with_each_other():
+def test_a_topic_of_five_parts_is_compared_with_its_nearest_and_small_ones_with_none():
     def topic(vector, n):
         return {"topic": _topic(), "members": [
             _member(f"p{vector}{k}", embedding=vector) for k in range(n)]}
 
-    topics = [topic([1.0, 0.0], 2), topic([0.9, 0.1], 1), topic([0.0, 1.0], 1),
-              topic([0.1, 0.9], 1)]
-    # Only the first recurs. Its nearest is compared with it; the one-offs
-    # are not compared with each other.
+    assert rt.MERGE_MIN_PARTS == 5
+    topics = [topic([1.0, 0.0], 5), topic([0.9, 0.1], 1), topic([0.0, 1.0], 4),
+              topic([0.1, 0.9], 4)]
+    # Only the first is large enough to matter. Its nearest is compared with
+    # it; two small topics are never compared, however alike.
     assert rt.merge_pairs(topics, limit=1) == [(0, 1)]
     assert rt.merge_pairs(topics, limit=3) == [(0, 1), (0, 2), (0, 3)]
     topics[3]["members"].append(_member("more", embedding=[0.1, 0.9]))
@@ -206,6 +208,10 @@ def room():
             db.session.commit()
 
 
+#: The series the room is read in: the settings' sizes and the prompt in use.
+SERIES = (10, 2, PROMPT_VERSION)
+
+
 def _chunk(room_uuid, seq, *parts):
     """A stored chunk whose parts are `(wanted, result)` pairs of two
     messages each."""
@@ -213,7 +219,7 @@ def _chunk(room_uuid, seq, *parts):
     return db.store_room_chunk(
         room_uuid=room_uuid, chunk_size=10, overlap=2, seq=seq,
         first_message_id=first + 1, last_message_id=first + 10, message_count=10,
-        content_hash="h", summary="", topics=[], problems=[], prompt_version=1,
+        content_hash="h", summary="", topics=[], problems=[], prompt_version=PROMPT_VERSION,
         parts=[{"first_message": first + 2 * i, "last_message": first + 2 * i + 1,
                 "summary": wanted, "result": result, "topics": [wanted.split()[-1]]}
                for i, (wanted, result) in enumerate(parts)])
@@ -367,12 +373,12 @@ def test_topics_jobs_are_queued_for_chunks_without_topics_once(room, monkeypatch
     agent, _asked, _explained = _worker(monkeypatch)
     a = _chunk(room, 0, ("compute the root of nine", "three"))
     b = _chunk(room, 1, ("compute the root of four", "two"))
-    assert db.ensure_room_topic_jobs(room, 10, 2, 1, 1) == 1      # oldest first, at most one
-    assert db.ensure_room_topic_jobs(room, 10, 2, 1, 10) == 1
-    assert db.ensure_room_topic_jobs(room, 10, 2, 1, 10) == 0
-    assert db.ensure_room_topic_jobs(room, 10, 2, 2, 10) == 0     # another series
+    assert db.ensure_room_topic_jobs(room, *SERIES, 1) == 1      # oldest first, at most one
+    assert db.ensure_room_topic_jobs(room, *SERIES, 10) == 1
+    assert db.ensure_room_topic_jobs(room, *SERIES, 10) == 0
+    assert db.ensure_room_topic_jobs(room, 10, 2, PROMPT_VERSION + 1, 10) == 0   # another series
     assert agent.handle(uuid4(), {})["jobs"] == {"done": 2}
-    assert [c.uuid for c in db.unassigned_room_chunks(room, 10, 2, 1, 10)] == []
+    assert [c.uuid for c in db.unassigned_room_chunks(room, *SERIES, 10)] == []
     assert {m.chunk_uuid for m in db.list_room_topic_members(room)} == {a.uuid, b.uuid}
 
 
@@ -380,6 +386,7 @@ def test_a_pair_both_models_call_one_is_suggested_and_nothing_is_merged(room, mo
     from agents import model_groups
 
     agent, asked, _explained = _worker(monkeypatch)
+    monkeypatch.setattr(rt, "MERGE_MIN_PARTS", 2)
     # Two topics of one kind of task that the first pass kept apart, and one
     # that is something else. The fake decision model goes by the first word.
     _run(agent, _chunk(room, 0, ("compute the root of nine", "three")))
@@ -426,15 +433,17 @@ def test_a_pair_the_model_tells_apart_is_kept_and_never_shown(room, monkeypatch)
     from agents import model_groups
 
     agent, _asked, _explained = _worker(monkeypatch)
+    monkeypatch.setattr(rt, "MERGE_MIN_PARTS", 2)
     _run(agent, _chunk(room, 0, ("compute the root of nine", "three"),
                        ("compute the sum of nine", "eighteen")))
+    extra = _chunk(room, 1)
     (topic,) = [t for t in db.list_room_topics(room) if t.axis == "task"]
     other = db.add_room_topic(room, "task", "sums")
     db.session.query(RoomTopicMember).filter_by(
         topic_uuid=topic.uuid, phrase="compute the sum of nine").update({"topic_uuid": other.uuid})
     db.add_room_topic_members([{
         "topic_uuid": topic.uuid, "room_uuid": room, "axis": "task",
-        "chunk_uuid": uuid4(), "part_index": 0, "phrase": "compute the root of one",
+        "chunk_uuid": extra.uuid, "part_index": 0, "phrase": "compute the root of one",
         "messages": 2, "p": 0.9, "embedding": None}])
     monkeypatch.setattr(model_groups, "structured_llm_call",
                         lambda *a, **kw: (rt.SameTopic(same=False, reason="a root is not a sum"), a[1][0]))
@@ -443,3 +452,68 @@ def test_a_pair_the_model_tells_apart_is_kept_and_never_shown(room, monkeypatch)
     assert db.list_room_topic_suggestions(room) == []
     (kept,) = db.list_room_topic_suggestions(room, state=None)
     assert (kept.state, kept.reason) == ("apart", "a root is not a sum")
+
+
+def test_a_request_made_twice_is_one_of_the_requests_a_part_is_compared_with(room, monkeypatch):
+    """A topic's first two requests were once what every part was compared
+    with. When they were one request made twice, a topic took in only what
+    was like that one sentence."""
+    agent, asked, _explained = _worker(monkeypatch)
+    _run(agent, _chunk(room, 0, ("compute the root of nine", "three"),
+                       ("compute the root of nine", "three again")))
+    _run(agent, _chunk(room, 1, ("compute the root of four", "two")))
+    (topic,) = [t for t in db.room_topic_exemplars(room, "task", rt.EXEMPLARS)]
+    assert [m.phrase for m in topic["exemplars"]] == [
+        "compute the root of nine", "compute the root of four"]
+    asked.clear()
+    _run(agent, _chunk(room, 2, ("compute the root of one", "one")))
+    assert asked == ["<request1>compute the root of nine</request1>\n"
+                     "<request2>compute the root of one</request2>",
+                     "<request1>compute the root of four</request1>\n"
+                     "<request2>compute the root of one</request2>"]
+
+
+def test_topics_the_model_gives_one_name_are_one_topic(room, monkeypatch):
+    """Two names the model wrote alone, from two sets of requests, that
+    came out alike: nobody is asked."""
+    agent, _asked, _explained = _worker(
+        monkeypatch, explain=lambda prompt: rt.TopicName(
+            name="Compute root" if "compute" in prompt else "find", explanation="e"))
+    # "square" is another kind of task to the fake decision model, which
+    # goes by the first word, and so it is a topic of its own.
+    _run(agent, _chunk(room, 0, ("compute the root of nine", "three")))
+    _run(agent, _chunk(room, 1, ("square root of nine, compute it", "three")))
+    _run(agent, _chunk(room, 2, ("compute the root of four", "two")))
+    _run(agent, _chunk(room, 3, ("square root of four, compute it", "two")))
+    # Each recurred and was named, the second as the first was: one topic,
+    # under the name of the larger, with all four requests.
+    assert _topics(room, "task") == [("Compute root", [
+        "compute the root of nine", "square root of nine, compute it",
+        "compute the root of four", "square root of four, compute it"])]
+
+
+def test_the_merges_job_joins_same_named_topics_and_counts_the_series_shown(room, monkeypatch):
+    agent, asked, _explained = _worker(monkeypatch)
+    _run(agent, _chunk(room, 0, ("compute the root of nine", "three")))
+    _run(agent, _chunk(room, 1, ("find the lighthouse", "on the coast")))
+    roots, lighthouse = [t for t in db.list_room_topics(room) if t.axis == "task"]
+    # Named alike by hand, in another letter case; and a topic that would be
+    # large enough only by its parts in a series that is not read any more.
+    db.edit_room_topic(roots.uuid, "Lookups", "")
+    db.edit_room_topic(lighthouse.uuid, "lookups", "")
+    old = db.store_room_chunk(
+        room_uuid=room, chunk_size=10, overlap=2, seq=0, first_message_id=1,
+        last_message_id=10, message_count=10, content_hash="h", summary="", topics=[],
+        problems=[], prompt_version=PROMPT_VERSION - 1, parts=[])
+    other = db.add_room_topic(room, "task", "boards")
+    db.add_room_topic_members([
+        {"topic_uuid": other.uuid, "room_uuid": room, "axis": "task", "chunk_uuid": old.uuid,
+         "part_index": n, "phrase": f"which boards exist {n}", "messages": 2, "p": None,
+         "embedding": None} for n in range(6)])
+    asked.clear()
+    assert agent.handle(uuid4(), {"room_uuid": str(room), "room_topic_merges": True})[
+        "jobs"] == {"done": 1}
+    names = sorted(t.name for t in db.list_room_topics(room) if t.axis == "task")
+    assert names == ["Lookups", "boards"]
+    # No topic has five parts in the series in use, so no pair was compared.
+    assert asked == [] and db.list_room_topic_suggestions(room, state=None) == []
