@@ -85,6 +85,8 @@ PERSONA_TEMPLATE = """
   .persona-table{border-collapse:collapse;width:100%;font-size:0.9rem}
   .persona-table th,.persona-table td{text-align:left;padding:6px 10px;border-bottom:1px solid #eee;vertical-align:top}
   .persona-name-cell{white-space:nowrap}
+  .persona-time-cell,.persona-num-cell{white-space:nowrap;font-variant-numeric:tabular-nums}
+  #persona-dates{font-variant-numeric:tabular-nums}
   /* Folder rows carry the tree's folder icon in the Name cell (there is no
      Type column); align it with the text baseline. */
   .persona-name-cell .persona-ficon{vertical-align:text-bottom;margin-right:4px}

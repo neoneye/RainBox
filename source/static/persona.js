@@ -159,8 +159,8 @@ function personaRenderContents(){
       const p = item.node;
       tr.innerHTML =
         '<td class="persona-name-cell" style="padding-left:' + pad + 'px">' + personaEscapeHtml(p.name) + '</td>' +
-        '<td>' + (p.revisionCount || 0) + '</td>' +
-        '<td>' + personaShortDate(p.updated_at) + '</td>' +
+        '<td class="persona-num-cell">' + (p.revisionCount || 0) + '</td>' +
+        '<td class="persona-time-cell">' + personaShortDate(p.updated_at) + '</td>' +
         '<td><a href="#" class="row-open">Open</a></td>';
       tr.querySelector('.row-open').addEventListener('click', e => { e.preventDefault(); personaSelectItem(p.uuid); });
     }
@@ -1219,8 +1219,8 @@ async function personaLoadHistory(uuid){
     const tr = document.createElement('tr');
     const when = personaShortDate(r.created_at) + (r.current ? ' (current)' : '');
     tr.innerHTML =
-      '<td class="persona-name-cell">' + personaEscapeHtml(when) + '</td>' +
-      '<td>' + r.bytes + ' B</td>' +
+      '<td class="persona-time-cell">' + personaEscapeHtml(when) + '</td>' +
+      '<td class="persona-num-cell">' + r.bytes + ' B</td>' +
       '<td>' + personaEscapeHtml(r.preview) + '</td>' +
       '<td></td>';
     const actions = tr.lastElementChild;
