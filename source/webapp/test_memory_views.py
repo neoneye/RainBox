@@ -137,8 +137,8 @@ def test_the_nav_is_a_sidebar_of_icons_with_a_name_each():
         r'class="pp-item[^"]*" title="[^"]*"><svg class="pp-ico"[^>]*>.*?</svg>'
         r'<span class="pp-label">([^<]+)</span>', nav)
     assert items == [
-        "Home", "Chat", "Cron", "Kanban", "Memory", "Assistant", "Git", "Settings",
-        "Models", "Benchmark", "Voice", "Find", "Activity", "Doctor", "Multimodal"]
+        "Home", "Chat", "Cron", "Kanban", "Memory", "Assistant", "Git", "Models",
+        "Benchmark", "Voice", "Find", "Activity", "Doctor", "Multimodal", "Settings"]
     # An item says on hover what its page is for, not its name again.
     hovers = re.findall(r'title="([^"]*)"><svg class="pp-ico".*?<span class="pp-label">([^<]+)</span>', nav)
     assert len(hovers) == 15 and all(len(tip) > len(name) + 10 for tip, name in hovers)
