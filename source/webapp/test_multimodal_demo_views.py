@@ -900,3 +900,48 @@ def test_stop_for_a_run_that_is_not_streaming_says_so():
 
 def test_stop_without_a_valid_run_is_a_400():
     assert app.test_client().post("/demo/multimodal/stop?run=nope").status_code == 400
+
+
+@pytest.fixture
+def seeded_catalog_prompt():
+    """One folder holding one prompt in the sandbox catalog; cleaned up after."""
+    from uuid import UUID
+
+    import db as dbmod
+
+    with app.app_context():
+        folder = dbmod.prompt_create_folder("Demo pitches", None)
+        prompt = dbmod.prompt_create("Pitch <v2>", UUID(folder["id"]))
+        dbmod.prompt_update_content(UUID(prompt["uuid"]), "You sell <things> & more.")
+    try:
+        yield prompt["uuid"]
+    finally:
+        with app.app_context():
+            dbmod.prompt_delete(UUID(prompt["uuid"]))
+            dbmod.prompt_delete_folder(UUID(folder["id"]))
+
+
+def test_the_prompt_catalog_is_offered_beside_the_system_prompt(seeded_model, seeded_catalog_prompt):
+    body = app.test_client().get(f"/demo/multimodal?id={seeded_model}").get_data(as_text=True)
+    assert 'id="pp-prompt-picker"' in body
+    assert "Demo pitches" in body
+    assert f'data-uuid="{seeded_catalog_prompt}"' in body
+    assert "Pitch &lt;v2&gt;" in body
+    assert 'id="system" rows="3" placeholder="(optional)"></textarea>' in body  # nothing picked yet
+
+
+def test_the_last_picked_prompt_opens_filled_in(seeded_model, seeded_catalog_prompt):
+    client = app.test_client()
+    client.set_cookie("pp_mm_prompt", seeded_catalog_prompt, path="/demo/multimodal")
+    body = client.get(f"/demo/multimodal?id={seeded_model}").get_data(as_text=True)
+    assert '<b id="pp-prompt-summary">Pitch &lt;v2&gt;</b>' in body
+    assert ">You sell &lt;things&gt; &amp; more.</textarea>" in body
+    assert f'href="/prompt?id={seeded_catalog_prompt}"' in body
+
+
+def test_a_remembered_prompt_that_is_gone_leaves_the_system_prompt_empty(seeded_model):
+    client = app.test_client()
+    client.set_cookie("pp_mm_prompt", "0f0f0f0f-0000-4000-8000-000000000000", path="/demo/multimodal")
+    body = client.get(f"/demo/multimodal?id={seeded_model}").get_data(as_text=True)
+    assert '<b id="pp-prompt-summary">(none)</b>' in body
+    assert 'placeholder="(optional)"></textarea>' in body

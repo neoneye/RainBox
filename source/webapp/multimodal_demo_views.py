@@ -31,7 +31,7 @@ model went on generating, to the end of the answer.
 import base64
 import json
 import threading
-from collections import namedtuple
+from collections import defaultdict, namedtuple
 from datetime import UTC, datetime
 from functools import cache
 from uuid import UUID
@@ -46,6 +46,8 @@ from db import (
     get_model_config,
     get_model_config_override,
     list_model_configs_with_overrides,
+    prompt_get,
+    prompt_load_tree,
     resolved_model_kwargs,
 )
 
@@ -55,6 +57,9 @@ from .core import app
 DEFAULT_MODEL_UUID = "00ea3152-ff12-40e1-a63b-8f572de49edf"
 # The last model picked on the page; it opens there when the URL has no ?id.
 MODEL_COOKIE = "pp_mm_model"
+# The catalog prompt last picked for the System prompt; the page opens with
+# its current text.
+PROMPT_COOKIE = "pp_mm_prompt"
 PROXY_TIMEOUT = 300  # seconds; multimodal generation on a local box can be slow
 
 # The runs streaming right now, by the uuid the page named each with; the
@@ -302,6 +307,9 @@ MULTIMODAL_TEMPLATE = """
   ul.tree a{display:block;padding:0.2em 0.4em;border-radius:3px;text-decoration:none;color:inherit}
   ul.tree a:hover{background:#eef}
   ul.tree a.selected{background:#dde7ff;font-weight:600}
+  ul.tree .pp-folder{display:block;padding:0.2em 0.4em;color:#6b7280}
+  #pp-prompt-picker{margin:0.2em 0 0.4em}
+  #pp-prompt-picker summary{cursor:pointer}
   .pp-provider-badge{display:inline-block;font-size:75%;padding:0 0.4em;
     border-radius:0.4em;margin-right:0.3em;background:#dbeafe;color:#1e40af;
     vertical-align:0.05em}
@@ -344,12 +352,31 @@ MULTIMODAL_TEMPLATE = """
 Attach one or more images or audio files, add prompts, and watch the streamed
 response. Nothing is saved.</p>
 
+{% macro prompt_nodes(nodes) %}{% for n in nodes %}
+  {% if n.kind == 'folder' %}
+  <li><span class="pp-folder">{{ n.name }}</span><ul>{{ prompt_nodes(n.children) }}</ul></li>
+  {% else %}
+  <li><a href="#" data-uuid="{{ n.uuid }}" onclick="return ppSelectPrompt(event, this)"
+         class="{% if picked and picked.uuid == n.uuid %}selected{% endif %}">{{ n.name }}</a></li>
+  {% endif %}
+{% endfor %}{% endmacro %}
 <div class="row">
   <div class="pp-lbl">
     <label for="system">System prompt</label>
     <button type="button" class="pp-copy" onclick="ppCopy(this,'system')">Copy</button>
   </div>
-  <textarea id="system" rows="3" placeholder="(optional)"></textarea>
+  <details id="pp-prompt-picker">
+    <summary>From the catalog: <b id="pp-prompt-summary">{% if picked %}{{ picked.name or '(unnamed)' }}{% else %}(none){% endif %}</b><span id="pp-prompt-edited" class="muted"></span> &mdash; choose</summary>
+    <ul class="tree">
+      <li><a href="#" data-uuid="" onclick="return ppSelectPrompt(event, this)"
+             class="{% if not picked %}selected{% endif %}">(none &mdash; write your own)</a></li>
+      {{ prompt_nodes(catalog) }}
+    </ul>
+  </details>
+  <a id="pp-prompt-edit" target="_blank"
+     href="{% if picked %}{{ url_for('prompt_page', id=picked.uuid) }}{% endif %}"
+     {% if not picked %}style="display:none"{% endif %}>Edit in the catalog</a>
+  <textarea id="system" rows="3" placeholder="(optional)">{% if picked %}{{ picked.content }}{% endif %}</textarea>
 </div>
 <div class="row">
   <div class="pp-lbl">
@@ -473,6 +500,76 @@ function ppRememberModel() {
     + '; path=/demo/multimodal; max-age=31536000; samesite=lax';
 }
 {% if target %}ppRememberModel();{% endif %}
+
+// The catalog prompt the System prompt was filled from, with the text it had
+// then; null while the System prompt is written here. The text is fetched
+// fresh on every pick and page load, so an edit saved in /prompt shows up.
+let ppPrompt = {{ picked_state | tojson }};
+if (ppPrompt) document.getElementById('system').value = ppPrompt.content;
+
+function ppPromptEdited() {
+  const marker = document.getElementById('pp-prompt-edited');
+  const edited = ppPrompt && document.getElementById('system').value !== ppPrompt.content;
+  marker.textContent = edited ? ' (edited here)' : '';
+}
+
+function ppShowPrompt(uuid, name) {
+  document.getElementById('pp-prompt-summary').textContent = name;
+  document.querySelectorAll('#pp-prompt-picker a.selected').forEach(function(a) {
+    a.classList.remove('selected');
+  });
+  document.querySelectorAll('#pp-prompt-picker a').forEach(function(a) {
+    if (a.getAttribute('data-uuid') === uuid) a.classList.add('selected');
+  });
+  const edit = document.getElementById('pp-prompt-edit');
+  if (uuid) { edit.href = '/prompt?id=' + encodeURIComponent(uuid); edit.style.display = ''; }
+  else { edit.style.display = 'none'; }
+  // The server reads this cookie to open the page with the same prompt.
+  document.cookie = {{ prompt_cookie | tojson }} + '='
+    + (uuid ? encodeURIComponent(uuid) + '; max-age=31536000' : '; max-age=0')
+    + '; path=/demo/multimodal; samesite=lax';
+  ppPromptEdited();
+}
+
+function ppFetchPrompt(uuid) {
+  return fetch('/prompt/api/prompts/' + encodeURIComponent(uuid))
+    .then(function(r) { return r.ok ? r.json() : null; });
+}
+
+// Picking "(none)" keeps the text that is there and only stops following
+// the catalog; picking a prompt replaces the System prompt with its text.
+function ppSelectPrompt(event, el) {
+  event.preventDefault();
+  document.getElementById('pp-prompt-picker').open = false;
+  const uuid = el.getAttribute('data-uuid');
+  if (!uuid) { ppPrompt = null; ppShowPrompt('', '(none)'); return false; }
+  ppFetchPrompt(uuid).then(function(d) {
+    if (!d) { document.getElementById('status').textContent = 'that prompt is gone from the catalog'; return; }
+    document.getElementById('system').value = d.content;
+    ppPrompt = {uuid: uuid, content: d.content};
+    ppShowPrompt(uuid, d.name || '(unnamed)');
+  }).catch(function(e) { document.getElementById('status').textContent = 'could not load the prompt: ' + e; });
+  return false;
+}
+
+document.getElementById('system').addEventListener('input', ppPromptEdited);
+// A reload brings back what was typed in the System prompt (the browser
+// restores form fields after the scripts ran); say so if it differs.
+window.addEventListener('pageshow', ppPromptEdited);
+
+// Back from editing the prompt in /prompt: take its saved text, unless the
+// System prompt was changed here in the meantime.
+window.addEventListener('focus', function() {
+  if (!ppPrompt || document.getElementById('system').value !== ppPrompt.content) return;
+  const uuid = ppPrompt.uuid;
+  ppFetchPrompt(uuid).then(function(d) {
+    const ta = document.getElementById('system');
+    if (!d || !ppPrompt || ppPrompt.uuid !== uuid || ta.value !== ppPrompt.content) return;
+    ta.value = d.content;
+    ppPrompt.content = d.content;
+    document.getElementById('pp-prompt-summary').textContent = d.name || '(unnamed)';
+  }).catch(function() {});
+});
 
 // Persist the prompts across reloads so a page refresh doesn't lose typed text.
 // (Attached files aren't stored — they can't survive a reload.)
@@ -705,13 +802,46 @@ def demo_multimodal() -> str:
     # Only offer models the provider currently exposes; unavailable configs
     # (and their overrides) are hidden from the picker.
     tree = [(cfg, ovs) for cfg, ovs in list_model_configs_with_overrides() if cfg.available]
+    picked_uuid = _uuid_or_none(request.cookies.get(PROMPT_COOKIE))
+    picked = prompt_get(picked_uuid) if picked_uuid else None
     return render_template_string(
         MULTIMODAL_TEMPLATE,
         target=target,
         model_id=model_id,
         model_cookie=MODEL_COOKIE,
         tree=tree,
+        catalog=_prompt_catalog(),
+        picked=picked,
+        picked_state={"uuid": picked["uuid"], "content": picked["content"]} if picked else None,
+        prompt_cookie=PROMPT_COOKIE,
     )
+
+
+def _prompt_catalog() -> list[dict]:
+    """The prompt catalog as nested nodes for the System prompt picker: in
+    each folder its subfolders, then its prompts, in the catalog's own order.
+    Prompts outside any folder sit at the top level; a folder with no prompt
+    anywhere below it is left out, since there is nothing in it to pick."""
+    tree = prompt_load_tree()
+    folders_in: dict[str | None, list[dict]] = defaultdict(list)
+    for f in tree["folders"]:
+        folders_in[f["parentId"]].append(f)
+    prompts_in: dict[str | None, list[dict]] = defaultdict(list)
+    for p in tree["prompts"]:
+        prompts_in[p["folderId"]].append(p)
+
+    def nodes(parent: str | None) -> list[dict]:
+        out = []
+        for f in folders_in[parent]:
+            children = nodes(f["id"])
+            if children:
+                out.append({"kind": "folder", "name": f["name"] or "(unnamed)",
+                            "children": children})
+        out += [{"kind": "prompt", "uuid": p["uuid"], "name": p["name"] or "(unnamed)"}
+                for p in prompts_in[parent]]
+        return out
+
+    return nodes(None)
 
 
 @app.route("/demo/multimodal/complete", methods=["POST"])
@@ -746,7 +876,7 @@ def demo_multimodal_complete() -> Response | tuple[Response, int]:
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
-    run = _run_uuid(request.form.get("run"))
+    run = _uuid_or_none(request.form.get("run"))
     stopped = threading.Event()
 
     activity = {
@@ -822,7 +952,7 @@ def demo_multimodal_complete() -> Response | tuple[Response, int]:
     )
 
 
-def _run_uuid(value: str | None) -> UUID | None:
+def _uuid_or_none(value: str | None) -> UUID | None:
     try:
         return UUID(value) if value else None
     except ValueError:
@@ -833,7 +963,7 @@ def _run_uuid(value: str | None) -> UUID | None:
 def demo_multimodal_stop() -> Response | tuple[Response, int]:
     """Flag a streaming run to stop. The answer says whether a run by that
     name was streaming; one that already ended has nothing left to stop."""
-    run = _run_uuid(request.args.get("run"))
+    run = _uuid_or_none(request.args.get("run"))
     if run is None:
         return jsonify({"error": "run must be a uuid"}), 400
     with _running_lock:
