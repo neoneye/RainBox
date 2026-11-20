@@ -94,15 +94,23 @@ Per-provider quirks live inside the provider module. Examples:
   `fetch_native_models()` returns `None`, sync skips. `llm.prepare_llm` and
   `providers.request_api_key` inject it.
 - Unsloth Studio's `/v1/models` lists every model the Studio can serve
-  (loaded plus downloaded/cached) with a `loaded` flag. Entries that declare
-  `output_modalities` without `text` (image, audio models) are left out.
+  (loaded plus downloaded/cached, including the models it finds in Ollama's
+  store as `ollama/<name>`) with a `loaded` flag. It doesn't say which are
+  chat models — its `output_modalities` filter returns the same list for
+  every value — so embedding and TTS models become rows too, as Ollama's
+  embedding models do.
 - Unsloth Studio's `ensure_loaded` reads `GET /api/inference/status` and, when
   the model isn't resident or is resident with a smaller `context_length`,
   calls `POST /api/inference/load` with `max_seq_length` and
   `use_saved_settings: true` — so everything else (GGUF variant, KV cache
   type, GPU layers) comes from what the operator saved for that model in
-  Studio. Both routes need a **full**-access key; with an inference-only key
+  Studio. Those routes need a **full**-access key; with an inference-only key
   they answer 403 and `ensure_loaded` logs once and leaves loading to Studio.
+  Two quirks shape the code: the load route takes an Ollama-store model only
+  by its opaque inventory reference (`ref:<hash>`, paired with the public id
+  in `GET /api/models/local`), and status then reports that reference; and a
+  failed load still answers HTTP 200, with the error in a `_deferred_error`
+  field of the body.
 - Unsloth Studio's `fetch_model_sizes` returns `{}`.
 - OpenRouter is the only **curated** provider (`curated = True`): its catalog
   runs to several hundred cloud models, so rows are created one at a time

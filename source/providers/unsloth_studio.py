@@ -4,8 +4,10 @@ Unsloth Studio (https://unsloth.ai) is a local web app for running and
 fine-tuning models. Besides its own UI it serves an OpenAI-compatible API at
 `<base>/v1` (an alias of `/api/inference/...`) whose `/v1/models` lists every
 model the Studio can serve — the loaded one(s) plus everything downloaded or
-cached — with a `loaded` flag on each entry. Every model it lists becomes a
-row, as with the other local providers.
+cached, including the models it finds in Ollama's store (`ollama/<name>`) —
+with a `loaded` flag on each entry. Every model it lists becomes a row, as
+with the other local providers; that includes Studio's embedding and TTS
+models, because the listing doesn't say which models are chat models.
 
 Two things set it apart from Jan and LM Studio:
 
@@ -23,9 +25,17 @@ Two things set it apart from Jan and LM Studio:
   `POST /api/inference/load` (`max_seq_length`). `ensure_loaded` reads
   `GET /api/inference/status` and loads the model only when it isn't the
   resident one or is resident with a smaller window — the same contract as LM
-  Studio's `lms load`. Those two routes need a key with **full** access; an
+  Studio's `lms load`. Those routes need a key with **full** access; an
   inference-only key gets 403 on them, in which case `ensure_loaded` logs it
   once and leaves loading to whatever is resident in Studio.
+
+  The load route doesn't take every public id: a model Studio found in
+  Ollama's store is listed as `ollama/<name>` but loads only by its opaque
+  inventory reference (`ref:<hash>`), which `GET /api/models/local` pairs with
+  the public id (`model_id`). Status then reports the reference, so a model
+  counts as resident under either name. And the load route answers HTTP 200
+  even when the load fails — the error is in a `_deferred_error` field of the
+  body, so that is what decides success.
 """
 
 from __future__ import annotations
@@ -86,15 +96,15 @@ def _get_models_payload() -> list[dict[str, Any]]:
     return [m for m in data if isinstance(m, dict) and m.get("id")]
 
 
-def _is_text_model(entry: dict[str, Any]) -> bool:
-    """Studio also serves image, audio and embedding models from the same
-    listing. Rainbox only calls chat models, so an entry that declares
-    output modalities without text is left out. An entry that declares none
-    is kept — older Studio builds don't send the field."""
-    modalities = entry.get("output_modalities")
-    if not isinstance(modalities, list) or not modalities:
-        return True
-    return "text" in modalities
+def load_identifier(model: str, local_models: list[dict[str, Any]]) -> str:
+    """The id `POST /api/inference/load` accepts for the public id `model`:
+    the inventory entry's `id` whose `model_id` is `model` (a `ref:<hash>`
+    for an Ollama-store model, the repo id itself for a Hugging Face one), or
+    `model` unchanged when the inventory doesn't list it."""
+    for entry in local_models:
+        if entry.get("model_id") == model and isinstance(entry.get("id"), str):
+            return entry["id"]
+    return model
 
 
 def _loaded_identifiers(status: dict[str, Any]) -> set[str]:
@@ -120,12 +130,15 @@ def _loaded_identifiers(status: dict[str, Any]) -> set[str]:
     return out
 
 
-def needs_load(status: dict[str, Any], model: str, context_window: int) -> bool:
-    """True when `model` must be (re)loaded to serve `context_window` tokens:
-    it isn't resident, or it is resident with a smaller runtime window. A
-    resident model whose window Studio doesn't report is left alone — a
-    reload can't be shown to help, and it costs a cold start."""
-    if model not in _loaded_identifiers(status):
+def needs_load(
+    status: dict[str, Any], names: set[str], context_window: int
+) -> bool:
+    """True when the model known by any of `names` (its public id and its
+    load id) must be (re)loaded to serve `context_window` tokens: it isn't
+    resident, or it is resident with a smaller runtime window. A resident
+    model whose window Studio doesn't report is left alone — a reload can't be
+    shown to help, and it costs a cold start."""
+    if not names & _loaded_identifiers(status):
         return True
     ctx = status.get("context_length")
     if not isinstance(ctx, int) or ctx <= 0:
@@ -142,11 +155,11 @@ class _UnslothStudioProvider:
         return _base_url()
 
     def list_models(self) -> list[str]:
-        return [str(m["id"]) for m in _get_models_payload() if _is_text_model(m)]
+        return [str(m["id"]) for m in _get_models_payload()]
 
     def fetch_native_models(self) -> list[dict[str, Any]] | None:
         try:
-            return [m for m in _get_models_payload() if _is_text_model(m)]
+            return _get_models_payload()
         except (requests.RequestException, RuntimeError, ValueError):
             return None
 
@@ -190,7 +203,13 @@ class _UnslothStudioProvider:
             return
         resp.raise_for_status()
         status = resp.json()
-        if not needs_load(status, model, context_window):
+        local = requests.get(
+            f"{base}/api/models/local", headers=_headers(),
+            timeout=_STATUS_TIMEOUT,
+        )
+        local.raise_for_status()
+        load_id = load_identifier(model, list(local.json().get("models") or []))
+        if not needs_load(status, {model, load_id}, context_window):
             _log.debug(
                 "unsloth_studio: %s already loaded with >= %d ctx; skipping load",
                 model, context_window,
@@ -206,7 +225,7 @@ class _UnslothStudioProvider:
             f"{base}/api/inference/load",
             headers=_headers(),
             json={
-                "model_path": model,
+                "model_path": load_id,
                 "max_seq_length": int(context_window),
                 # Everything else (GGUF variant, KV cache type, GPU layers…)
                 # comes from what the operator saved for this model in Studio.
@@ -219,6 +238,14 @@ class _UnslothStudioProvider:
                 f"Unsloth Studio could not load {model!r} "
                 f"(HTTP {load.status_code}): {load.text[:300]}"
             )
+        try:
+            body = load.json()
+        except ValueError:
+            body = {}
+        deferred = body.get("_deferred_error") if isinstance(body, dict) else None
+        if deferred:
+            detail = deferred.get("detail") if isinstance(deferred, dict) else deferred
+            raise RuntimeError(f"Unsloth Studio could not load {model!r}: {detail}")
 
 
 PROVIDER: Provider = _UnslothStudioProvider()
