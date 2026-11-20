@@ -22,7 +22,7 @@ Live-model guard
     Tests stub the model seams; a test that reaches a real model is a
     mistake, and an expensive one — a local model at a 131 072-token context
     turns a millisecond test into a minute and pins 25 GB. The guard blocks
-    every socket connection to the local model ports (Ollama, LM Studio) and
+    every socket connection to the local model ports (Ollama, LM Studio, Unsloth Studio) and
     every connection that leaves the loopback interface, raising a
     `ConnectionRefusedError` that names the test so the offender is one
     line of output away. Postgres on loopback stays reachable. Set
@@ -50,7 +50,7 @@ from typing import Any
 import pytest
 
 LIVE_ENV = "RAINBOX_TEST_LIVE_MODELS"
-MODEL_PORTS = frozenset({11434, 1234})          # Ollama, LM Studio
+MODEL_PORTS = frozenset({11434, 1234, 8888})    # Ollama, LM Studio, Unsloth Studio
 LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "0.0.0.0", ""})
 SLOW_SECONDS = 2.0
 REDRAW_SECONDS = 0.5

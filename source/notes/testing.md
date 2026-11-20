@@ -44,7 +44,7 @@ model is a bug, and an expensive one — the assistant's code-driven calls
 resolve whatever model group is bound in `rainbox_claude`, and a model bound
 there for a sandbox experiment turns a millisecond test into a minute at a
 131 072-token context. The guard refuses every socket connection to the
-local model ports (Ollama 11434, LM Studio 1234) and every connection that
+local model ports (Ollama 11434, LM Studio 1234, Unsloth Studio 8888) and every connection that
 leaves loopback, raising `ConnectionRefusedError` with the test's name;
 Postgres on loopback is unaffected. The summary lists every refused
 connection. `RAINBOX_TEST_LIVE_MODELS=1` lifts the guard for a run that

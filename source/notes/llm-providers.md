@@ -3,9 +3,9 @@
 ## Purpose
 
 `rainbox` talks to LLM servers through a small **provider registry**.
-**Ollama is the preferred default**; Jan and LM Studio are supported local
-alternatives, and OpenRouter reaches several hundred cloud models. All four can
-be active at the same time. Adding a future backend is a matter of dropping in
+**Ollama is the preferred default**; Jan, LM Studio and Unsloth Studio are
+supported local alternatives, and OpenRouter reaches several hundred cloud
+models. All five can be active at the same time. Adding a future backend is a matter of dropping in
 one module.
 
 This doc covers:
@@ -34,7 +34,7 @@ A provider is a Python class that satisfies the `Provider` Protocol in
 
 ```python
 class Provider(Protocol):
-    id: ProviderId            # "ollama" | "jan" | "lm_studio" | "openrouter"
+    id: ProviderId            # "ollama" | "jan" | "lm_studio" | "unsloth_studio" | "openrouter"
     display_name: str         # "Ollama", "Jan", … — badges/logs
     curated: bool             # True => sync never creates rows (see below)
 
@@ -61,6 +61,7 @@ providers/
   ollama.py           Ollama (REST only, ensure_loaded is a no-op)
   jan.py              Jan (REST only, ensure_loaded is a no-op)
   lm_studio.py        LM Studio (REST + `lms` CLI)
+  unsloth_studio.py   Unsloth Studio (REST, keyed; loads via its load API)
   openrouter.py       OpenRouter (cloud, curated — rows are added by hand)
 ```
 
@@ -86,6 +87,23 @@ Per-provider quirks live inside the provider module. Examples:
   because its OpenAI-compat endpoint won't let you change context size
   per request.
 - LM Studio's `fetch_model_sizes` calls `lms ls --json`.
+- Unsloth Studio's `/v1` routes all require a bearer key, read from
+  `UNSLOTH_STUDIO_API_KEY` and kept out of `default_arguments()` for the same
+  reason as OpenRouter's (see [The repo-root `.env`](#the-repo-root-env)). A
+  missing key is reported like an unreachable server: `list_models()` raises,
+  `fetch_native_models()` returns `None`, sync skips. `llm.prepare_llm` and
+  `providers.request_api_key` inject it.
+- Unsloth Studio's `/v1/models` lists every model the Studio can serve
+  (loaded plus downloaded/cached) with a `loaded` flag. Entries that declare
+  `output_modalities` without `text` (image, audio models) are left out.
+- Unsloth Studio's `ensure_loaded` reads `GET /api/inference/status` and, when
+  the model isn't resident or is resident with a smaller `context_length`,
+  calls `POST /api/inference/load` with `max_seq_length` and
+  `use_saved_settings: true` — so everything else (GGUF variant, KV cache
+  type, GPU layers) comes from what the operator saved for that model in
+  Studio. Both routes need a **full**-access key; with an inference-only key
+  they answer 403 and `ensure_loaded` logs once and leaves loading to Studio.
+- Unsloth Studio's `fetch_model_sizes` returns `{}`.
 - OpenRouter is the only **curated** provider (`curated = True`): its catalog
   runs to several hundred cloud models, so rows are created one at a time
   through the Add-model overlay on `/model` and sync never creates. See
@@ -112,11 +130,13 @@ Per-provider quirks live inside the provider module. Examples:
 - `LM_STUDIO_BASE_URL` — defaults to `http://127.0.0.1:1234`.
 - `LMS` — explicit path to LM Studio's `lms` CLI. Otherwise PATH, then
   `~/.cache/lm-studio/bin/lms`.
+- `UNSLOTH_STUDIO_BASE_URL` — defaults to `http://127.0.0.1:8888`.
+- `UNSLOTH_STUDIO_API_KEY` — required to use any Unsloth Studio model. No default.
 - `OPENROUTER_API_KEY` — required to use any OpenRouter model. No default.
 
 ### The repo-root `.env`
 
-`OPENROUTER_API_KEY` is a secret, so it lives in a gitignored `.env` at the
+`OPENROUTER_API_KEY` and `UNSLOTH_STUDIO_API_KEY` are secrets, so they live in a gitignored `.env` at the
 repo root (next to `source/`), documented by the committed `.env.example`.
 `env_file.load_env_file()` loads it at import of `providers/__init__.py` — the
 one choke point every process that builds an LLM passes through, including the
@@ -124,11 +144,12 @@ killable `/model` test-worker subprocess. Variables already set in the
 environment win, so `OPENROUTER_API_KEY=… python main.py` still overrides the
 file.
 
-The key is deliberately **absent** from `openrouter.default_arguments()`.
+Each key is deliberately **absent** from its provider's `default_arguments()`.
 `ModelConfig.arguments` is JSONB that `/model` renders verbatim in its
 `arguments` block, so a key stored there would be both persisted to the
 database and printed on screen. `llm.prepare_llm` injects it from the
-environment at construction time instead.
+environment at construction time instead, and `providers.request_api_key`
+hands it to anything making a raw HTTP call.
 
 ## DB schema
 
@@ -157,7 +178,7 @@ Two things keep `model_config` in step with what each backend exposes:
    the same function.
 
 `sync_models_from_providers()` iterates every registered provider in preferred
-order (Ollama, Jan, LM Studio, OpenRouter) and runs `_sync_one_provider`
+order (Ollama, Jan, LM Studio, Unsloth Studio, OpenRouter) and runs `_sync_one_provider`
 against each. **Providers are independent**: one being unreachable does not
 flip another's rows.
 
@@ -236,7 +257,8 @@ the resolution path is:
 3. `llm.prepare_llm(provider_id, model_name, args)`:
    - Looks up the provider: `providers.get(provider_id)`.
    - Calls `provider.ensure_loaded(model_name, args["context_window"])`
-     — no-op on Jan and Ollama, may trigger an `lms load` on LM Studio.
+     — no-op on Jan and Ollama, may trigger an `lms load` on LM Studio or a
+     load-API call on Unsloth Studio.
    - For **Ollama**, builds the native `llama-index-llms-ollama` `Ollama`
      wrapper (talks to `/api/chat`, so chain-of-thought surfaces as a
      `ThinkingBlock`). `thinking` is **off by default** and opt-in via a
@@ -248,7 +270,8 @@ the resolution path is:
      app-info header (merged, so an override's
      `additional_kwargs.extra_body` survives). For **every other provider**,
      builds a `ThinkingAwareOpenAILike(model=model_name, **args)` over the
-     OpenAI-compat endpoint.
+     OpenAI-compat endpoint — for Unsloth Studio with `api_key` injected from
+     the environment.
    - Returns it.
 
 Both `ThinkingAwareOpenAILike` and `ThinkingAwareOpenRouter` share

@@ -103,6 +103,7 @@ _PROVIDER_LABELS = {
     "ollama": "Ollama",
     "jan": "Jan",
     "lm_studio": "LM Studio",
+    "unsloth_studio": "Unsloth Studio",
     "openrouter": "OpenRouter",
 }
 

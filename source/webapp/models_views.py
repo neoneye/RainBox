@@ -180,7 +180,7 @@ MODELS_TEMPLATE: str = """
                        or overrides | selectattr('uuid', 'equalto', selected_uuid) | list %}
       <li{% if not cfg.available and not in_view %} class="pp-deleted"{% endif %}>
         <a href="{{ url_for('models_page', id=cfg.uuid) }}" class="{% if selected_kind == 'config' and selected_uuid == cfg.uuid %}selected{% endif %}">
-          <span class="pp-provider-badge">{% if cfg.provider == 'ollama' %}Ollama{% elif cfg.provider == 'jan' %}Jan{% elif cfg.provider == 'lm_studio' %}LM Studio{% elif cfg.provider == 'openrouter' %}OpenRouter{% else %}{{ cfg.provider }}{% endif %}</span>
+          <span class="pp-provider-badge">{% if cfg.provider == 'ollama' %}Ollama{% elif cfg.provider == 'jan' %}Jan{% elif cfg.provider == 'lm_studio' %}LM Studio{% elif cfg.provider == 'unsloth_studio' %}Unsloth Studio{% elif cfg.provider == 'openrouter' %}OpenRouter{% else %}{{ cfg.provider }}{% endif %}</span>
           <b>{{ cfg.effective_display_name }}</b>
           {% if not cfg.available %}<span class="badge unavailable">unavailable</span>{% endif %}
         </a>

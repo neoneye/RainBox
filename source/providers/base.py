@@ -10,12 +10,13 @@ from __future__ import annotations
 
 from typing import Any, Literal, Protocol
 
-ProviderId = Literal["ollama", "jan", "lm_studio", "openrouter"]
+ProviderId = Literal["ollama", "jan", "lm_studio", "unsloth_studio", "openrouter"]
 PREFERRED_PROVIDER_ID: ProviderId = "ollama"
 PROVIDER_ORDER: tuple[ProviderId, ...] = (
     PREFERRED_PROVIDER_ID,
     "jan",
     "lm_studio",
+    "unsloth_studio",
     "openrouter",
 )
 

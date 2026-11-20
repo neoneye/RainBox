@@ -97,6 +97,7 @@ function providerLabel(id) {
   if (id === 'ollama') return 'Ollama';
   if (id === 'jan') return 'Jan';
   if (id === 'lm_studio') return 'LM Studio';
+  if (id === 'unsloth_studio') return 'Unsloth Studio';
   if (id === 'openrouter') return 'OpenRouter';
   return id || '';
 }
@@ -525,7 +526,7 @@ MODELGROUPPRIORITIES_TEMPLATE: str = """
       {% for cfg, overrides in tree %}
       <li>
         <span class="row">
-          <span class="label"><span class="pp-provider-badge">{% if cfg.provider == 'ollama' %}Ollama{% elif cfg.provider == 'jan' %}Jan{% elif cfg.provider == 'lm_studio' %}LM Studio{% elif cfg.provider == 'openrouter' %}OpenRouter{% else %}{{ cfg.provider }}{% endif %}</span><b>{{ cfg.effective_display_name }}</b></span>
+          <span class="label"><span class="pp-provider-badge">{% if cfg.provider == 'ollama' %}Ollama{% elif cfg.provider == 'jan' %}Jan{% elif cfg.provider == 'lm_studio' %}LM Studio{% elif cfg.provider == 'unsloth_studio' %}Unsloth Studio{% elif cfg.provider == 'openrouter' %}OpenRouter{% else %}{{ cfg.provider }}{% endif %}</span><b>{{ cfg.effective_display_name }}</b></span>
           <button class="select-btn" data-uuid="{{ cfg.uuid }}" data-kind="config" data-provider="{{ cfg.provider }}" data-model-name="{{ cfg.model_name }}" data-model-display-name="{{ cfg.effective_display_name }}" data-display-name="" data-systemone="{{ '1' if cfg.systemone else '0' }}" data-fc="{{ '1' if (cfg.uuid|string) in fc_uuids else '0' }}" data-struct="{{ '1' if (cfg.uuid|string) in struct_uuids else '0' }}" data-reasoning="{{ '1' if (cfg.uuid|string) in reasoning_uuids else '0' }}">Select</button>
         </span>
         <ul>
@@ -600,6 +601,7 @@ function providerLabel(id) {
   if (id === 'ollama') return 'Ollama';
   if (id === 'jan') return 'Jan';
   if (id === 'lm_studio') return 'LM Studio';
+  if (id === 'unsloth_studio') return 'Unsloth Studio';
   if (id === 'openrouter') return 'OpenRouter';
   return id || '';
 }

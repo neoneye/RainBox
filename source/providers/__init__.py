@@ -17,6 +17,7 @@ from .base import (  # noqa: E402  .env must be in place before providers read i
 )
 from .registry import (  # noqa: E402
     all_providers,
+    env_api_key,
     get,
     request_api_key,
     request_base_url,
@@ -28,6 +29,7 @@ __all__ = [
     "Provider",
     "ProviderId",
     "all_providers",
+    "env_api_key",
     "get",
     "provider_sort_key",
     "request_api_key",

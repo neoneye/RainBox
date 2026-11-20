@@ -7,7 +7,7 @@ import providers
 
 def test_registry_lists_all_known_providers():
     ids = [p.id for p in providers.all_providers()]
-    assert ids == ["ollama", "jan", "lm_studio", "openrouter"]
+    assert ids == ["ollama", "jan", "lm_studio", "unsloth_studio", "openrouter"]
 
 
 def test_ollama_is_the_preferred_provider():
@@ -90,3 +90,17 @@ def test_request_api_key_raises_when_openrouter_has_no_key(monkeypatch):
 
     with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY"):
         providers.request_api_key("openrouter", {})
+
+
+def test_request_api_key_reads_unsloth_studio_from_the_environment(monkeypatch):
+    """Unsloth Studio's key, like OpenRouter's, never lives on the row."""
+    monkeypatch.setenv("UNSLOTH_STUDIO_API_KEY", "sk-unsloth-test")
+
+    assert providers.request_api_key("unsloth_studio", {}) == "sk-unsloth-test"
+
+
+def test_request_api_key_raises_when_unsloth_studio_has_no_key(monkeypatch):
+    monkeypatch.delenv("UNSLOTH_STUDIO_API_KEY", raising=False)
+
+    with pytest.raises(RuntimeError, match="UNSLOTH_STUDIO_API_KEY"):
+        providers.request_api_key("unsloth_studio", {})

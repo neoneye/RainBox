@@ -42,14 +42,15 @@ def prepare_llm(
     Centralizing the load here means every UI test button, benchmark, and
     agent that goes through this constructor automatically gets the right
     context_length on providers that support it. Jan's ensure_loaded is a
-    no-op; LM Studio's drives the `lms` CLI.
+    no-op; LM Studio's drives the `lms` CLI; Unsloth Studio's calls its
+    load API.
 
     Ollama uses the native `llama-index-llms-ollama` wrapper (see
     `_prepare_ollama_llm`) so chain-of-thought surfaces as a ThinkingBlock;
     OpenRouter uses the `llama-index-llms-openrouter` wrapper (see
     `_prepare_openrouter_llm`), which is where the API key is injected; every
     other provider uses ThinkingAwareOpenAILike over its OpenAI-compat
-    endpoint. This is a pure constructor — it makes no capability decisions at
+    endpoint, with Unsloth Studio's key injected from the environment. This is a pure constructor — it makes no capability decisions at
     runtime; thinking and structured-output settling happen on /model when the
     config is saved."""
     # Record this call on /activity. Registered here, at the one place every
@@ -75,6 +76,11 @@ def prepare_llm(
     # and would reject it. Drop it so callers can pass it uniformly.
     merged.pop("thinking", None)
     merged["model"] = model
+    if provider_id == "unsloth_studio":
+        # Like OpenRouter's, Unsloth Studio's key is a secret kept out of the
+        # row's saved arguments (persisted JSONB, printed on /model) and
+        # injected from the environment here.
+        merged["api_key"] = providers.env_api_key(provider_id)
     return ThinkingAwareOpenAILike(**merged)
 
 
