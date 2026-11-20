@@ -18,10 +18,19 @@ the answer's text and the usage chunk that `stream_options.include_usage`
 asks the backend to send last (Ollama adds llama.cpp-style `timings` to it,
 which give the row its prefill and decode times). The prompt on that row shows each file as a
 line, never its bytes.
+
+Stop is an explicit request, not a dropped connection: the page names each
+run with a uuid, and Stop posts that name to /demo/multimodal/stop, which
+flags the run; the relay checks the flag on every chunk and closes the
+backend stream, and the backend cancels the generation when its client goes.
+The browser's own abort cannot be relied on for this: Firefox keeps the
+connection open after an aborted fetch, so the relay went on reading, and the
+model went on generating, to the end of the answer.
 """
 
 import base64
 import json
+import threading
 from collections import namedtuple
 from datetime import UTC, datetime
 from uuid import UUID
@@ -46,6 +55,11 @@ DEFAULT_MODEL_UUID = "00ea3152-ff12-40e1-a63b-8f572de49edf"
 # The last model picked on the page; it opens there when the URL has no ?id.
 MODEL_COOKIE = "pp_mm_model"
 PROXY_TIMEOUT = 300  # seconds; multimodal generation on a local box can be slow
+
+# The runs streaming right now, by the uuid the page named each with; the
+# event is set by Stop and read by that run's relay.
+_running: dict[UUID, threading.Event] = {}
+_running_lock = threading.Lock()
 
 _AUDIO_FORMATS = {
     "audio/wav": "wav",
@@ -543,12 +557,18 @@ window.addEventListener('drop', function(e) {
   }
 });
 
-// Holds the in-flight request's AbortController so the Stop button can cancel
-// it. Aborting closes the response stream, which the proxy relays as a client
-// disconnect — halting the backend's generation too.
+// The in-flight run: its AbortController, which ends the page's reading at
+// once, and the uuid the proxy knows it by. Stop tells the proxy by that
+// uuid, since an aborted fetch does not reliably drop the connection
+// (Firefox keeps it open) and the model would go on to the end of its answer.
 let ppController = null;
+let ppRun = null;
 
 function ppStop() {
+  if (ppRun) {
+    fetch('/demo/multimodal/stop?run=' + encodeURIComponent(ppRun),
+          {method: 'POST', keepalive: true}).catch(() => {});
+  }
   if (ppController) ppController.abort();
 }
 
@@ -568,8 +588,10 @@ async function ppSend() {
   status.textContent = 'sending\\u2026';
 
   ppController = new AbortController();
+  ppRun = crypto.randomUUID();
   const signal = ppController.signal;
   const fd = new FormData();
+  fd.append('run', ppRun);
   fd.append('system', document.getElementById('system').value);
   fd.append('user', document.getElementById('user').value);
   for (const f of ppFiles) fd.append('file', f, f.name);
@@ -632,6 +654,7 @@ async function ppSend() {
     btn.disabled = false;
     stop.style.display = 'none';
     ppController = null;
+    ppRun = null;
   }
 }
 </script>
@@ -694,6 +717,9 @@ def demo_multimodal_complete() -> Response | tuple[Response, int]:
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
+    run = _run_uuid(request.form.get("run"))
+    stopped = threading.Event()
+
     activity = {
         "started_at": datetime.now(UTC), "provider": target.provider,
         "model": target.model_name, "model_uuid": target.uuid,
@@ -724,11 +750,17 @@ def demo_multimodal_complete() -> Response | tuple[Response, int]:
             mimetype=mimetype,
         )
 
+    if run is not None:
+        with _running_lock:
+            _running[run] = stopped
+
     def relay():
         tally = _StreamTally()
         failure: BaseException | None = None
         try:
             for chunk in upstream.iter_content(chunk_size=None):
+                if stopped.is_set():
+                    break
                 if chunk:
                     tally.feed(chunk)
                     yield chunk
@@ -738,10 +770,14 @@ def demo_multimodal_complete() -> Response | tuple[Response, int]:
             failure = e
             raise
         finally:
+            if run is not None:
+                with _running_lock:
+                    _running.pop(run, None)
             upstream.close()
             error = None
             if failure is None and not tally.done:
-                error = "the stream ended before [DONE] (the browser stopped reading, or the backend closed it)"
+                error = ("stopped with the Stop button before [DONE]" if stopped.is_set() else
+                         "the stream ended before [DONE] (the browser stopped reading, or the backend closed it)")
             record_direct_call(
                 **activity,
                 raw={"usage": tally.usage, "timings": tally.timings},
@@ -755,3 +791,25 @@ def demo_multimodal_complete() -> Response | tuple[Response, int]:
         mimetype="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+def _run_uuid(value: str | None) -> UUID | None:
+    try:
+        return UUID(value) if value else None
+    except ValueError:
+        return None
+
+
+@app.route("/demo/multimodal/stop", methods=["POST"])
+def demo_multimodal_stop() -> Response | tuple[Response, int]:
+    """Flag a streaming run to stop. The answer says whether a run by that
+    name was streaming; one that already ended has nothing left to stop."""
+    run = _run_uuid(request.args.get("run"))
+    if run is None:
+        return jsonify({"error": "run must be a uuid"}), 400
+    with _running_lock:
+        event = _running.get(run)
+    if event is None:
+        return jsonify({"stopped": False})
+    event.set()
+    return jsonify({"stopped": True})

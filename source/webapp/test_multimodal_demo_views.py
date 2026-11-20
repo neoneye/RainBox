@@ -816,3 +816,61 @@ def test_a_backend_refusal_is_recorded_as_failed(seeded_model):
                                data={"user": "hi"}, content_type="multipart/form-data")
     assert "backend answered 400" in record.call_args.kwargs["error"]
     assert "no audio support" in record.call_args.kwargs["error"]
+
+
+class _StoppableStream(FakeStreamResponse):
+    """An upstream that would go on for a long time, and runs `between`
+    after its first chunk: the moment the operator presses Stop."""
+
+    def __init__(self, between):
+        super().__init__()
+        self.between = between
+        self.closed = False
+        self.sent = 0
+
+    def iter_content(self, chunk_size=None):
+        for i in range(1000):
+            if i == 1:
+                self.between()
+            self.sent += 1
+            yield f'data: {{"choices":[{{"delta":{{"content":"w{i} "}}}}]}}\n\n'.encode()
+
+    def close(self):
+        self.closed = True
+
+
+RUN = "6b1f3a52-0c1e-4c1d-9a55-3f7f0e9d2b11"
+
+
+def test_stop_ends_the_relay_and_closes_the_backend_stream(seeded_model):
+    client = app.test_client()
+    stop_answers = []
+
+    def press_stop():
+        stop_answers.append(client.post(f"/demo/multimodal/stop?run={RUN}").get_json())
+
+    upstream = _StoppableStream(press_stop)
+    with patch("webapp.multimodal_demo_views.requests.post", return_value=upstream), \
+            patch("webapp.multimodal_demo_views.record_direct_call") as record:
+        streamed = client.post(
+            f"/demo/multimodal/complete?id={seeded_model}",
+            data={"user": "hi", "run": RUN},
+            content_type="multipart/form-data",
+        ).get_data(as_text=True)
+
+    assert stop_answers == [{"stopped": True}]
+    assert upstream.closed
+    assert upstream.sent < 5
+    assert "w0 " in streamed and "w5 " not in streamed
+    assert "Stop" in record.call_args.kwargs["error"]
+    assert record.call_args.kwargs["response"].startswith("w0 ")
+
+
+def test_stop_for_a_run_that_is_not_streaming_says_so():
+    resp = app.test_client().post(f"/demo/multimodal/stop?run={RUN}")
+    assert resp.status_code == 200
+    assert resp.get_json() == {"stopped": False}
+
+
+def test_stop_without_a_valid_run_is_a_400():
+    assert app.test_client().post("/demo/multimodal/stop?run=nope").status_code == 400
