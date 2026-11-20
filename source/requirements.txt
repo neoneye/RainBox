@@ -17,6 +17,7 @@ croniter==6.2.2                                # cron-expression parser for the 
 python-dotenv==1.2.2                        # repo-root .env loading (env_file.py)
 lingua-language-detector==2.2.0             # statistical language detection for the response-language gate
 language_data==1.4.0                        # CLDR language names + endonyms the gate reads
+pillow-heif==1.8.1                          # HEIC/HEIF photos on /demo/multimodal
 
 # Test dependencies
 pytest==9.0.3

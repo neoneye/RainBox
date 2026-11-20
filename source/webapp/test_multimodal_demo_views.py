@@ -122,6 +122,32 @@ def test_image_non_png_transcoded_to_png(fmt, mime):
     assert reopened.format == "PNG" and reopened.size == (24, 16)
 
 
+def _encode_heic(size=(24, 16), color=(10, 120, 200)) -> bytes:
+    """A real single-color HEIC, encoded through pillow_heif directly so the
+    test does not register the opener the code under test must register."""
+    import pillow_heif
+    from PIL import Image
+
+    buf = io.BytesIO()
+    pillow_heif.from_pillow(Image.new("RGB", size, color)).save(buf)
+    return buf.getvalue()
+
+
+@pytest.mark.parametrize("mime", ["image/heic", "image/heif"])
+def test_image_heic_transcoded_to_png(mime):
+    from PIL import Image
+
+    out_mime, out_raw = _image_to_model_format(mime, _encode_heic())
+    assert out_mime == "image/png"
+    reopened = Image.open(io.BytesIO(out_raw))
+    assert reopened.format == "PNG" and reopened.size == (24, 16)
+
+
+def test_page_accepts_heic_files(seeded_model):
+    html = app.test_client().get(f"/demo/multimodal?id={seeded_model}").get_data(as_text=True)
+    assert ".heic" in html and ".heif" in html
+
+
 def test_image_undecodable_raises_conversion_error():
     with pytest.raises(ImageConversionError):
         _image_to_model_format("image/webp", b"not really a webp")

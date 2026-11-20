@@ -33,6 +33,7 @@ import json
 import threading
 from collections import namedtuple
 from datetime import UTC, datetime
+from functools import cache
 from uuid import UUID
 
 import requests
@@ -95,16 +96,26 @@ class ImageConversionError(Exception):
     format (unsupported or corrupt image)."""
 
 
+@cache
+def _register_heif() -> None:
+    """Teach Pillow to open HEIC/HEIF, the format iPhones take photos in."""
+    from pillow_heif import register_heif_opener
+
+    register_heif_opener()
+
+
 def _image_to_model_format(mime: str, raw: bytes) -> tuple[str, bytes]:
     """Return (mime, bytes) for an image the model accepts. PNG passes through
-    untouched; every other image type (jpeg, webp, avif, gif, …) is decoded and
-    re-encoded as PNG, applying EXIF orientation. Raises ImageConversionError if
-    the bytes cannot be decoded as an image."""
+    untouched; every other image type (jpeg, webp, avif, heic, gif, …) is
+    decoded and re-encoded as PNG, applying EXIF orientation. Raises
+    ImageConversionError if the bytes cannot be decoded as an image."""
     if mime in _MODEL_IMAGE_MIMES:
         return mime, raw
     import io
 
     from PIL import Image, ImageOps
+
+    _register_heif()
 
     try:
         img = Image.open(io.BytesIO(raw))
@@ -127,7 +138,7 @@ def _build_completion_body(
     """OpenAI-compatible /chat/completions body. The user message is a
     content-parts array: a text part followed by one part per attached file —
     an image_url (image/*) or input_audio (audio/*) — in the order given. Every
-    image except PNG (jpeg, webp, avif, …) is transcoded to PNG first."""
+    image except PNG (jpeg, webp, avif, heic, …) is transcoded to PNG first."""
     parts: list[dict] = [{"type": "text", "text": user}]
     for file in files:
         if file is None or not file.filename:
@@ -349,7 +360,7 @@ response. Nothing is saved.</p>
 </div>
 <div class="row">
   <label for="file">Image or audio files</label>
-  <input type="file" id="file" accept="image/*,.avif,.webp,audio/*" multiple onchange="ppPick(this)">
+  <input type="file" id="file" accept="image/*,.avif,.webp,.heic,.heif,audio/*" multiple onchange="ppPick(this)">
   <button type="button" onclick="ppClearFiles()" style="background:#6b7280">Clear all</button>
   <div id="preview" style="margin-top:0.6em"></div>
 </div>
@@ -490,9 +501,19 @@ function ppPick(input) {
   input.value = '';
 }
 
+// A browser that has no MIME type for HEIC/HEIF gives the file an empty one,
+// and it would be sent as application/octet-stream; name it from the extension.
+function ppWithType(f) {
+  if (f.type && f.type !== 'application/octet-stream') return f;
+  const ext = (f.name || '').toLowerCase().split('.').pop();
+  if (ext === 'heic' || ext === 'heif') return new File([f], f.name, {type: 'image/' + ext});
+  return f;
+}
+
 function ppAddFiles(list) {
   const ignored = [];
-  for (const f of list) {
+  for (const picked of list) {
+    const f = ppWithType(picked);
     if (f.type.startsWith('image/') || f.type.startsWith('audio/')) ppFiles.push(f);
     else ignored.push(f.name || '(unnamed)');
   }
@@ -512,7 +533,15 @@ function ppRenderFiles() {
     card.className = 'pp-file';
     const url = URL.createObjectURL(f);
     if (f.type.startsWith('image/')) {
-      const img = document.createElement('img'); img.src = url; card.appendChild(img);
+      const img = document.createElement('img');
+      // Only Safari draws HEIC; elsewhere the card says so, and the proxy
+      // still converts the file for the model.
+      img.onerror = function() {
+        const note = document.createElement('div');
+        note.textContent = 'no preview in this browser';
+        img.replaceWith(note);
+      };
+      img.src = url; card.appendChild(img);
     } else {
       const a = document.createElement('audio'); a.controls = true; a.src = url; card.appendChild(a);
     }
