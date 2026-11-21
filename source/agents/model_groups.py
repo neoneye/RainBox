@@ -529,6 +529,22 @@ def assistant_models_all_local() -> tuple[bool, str | None]:
     return True, None
 
 
+def assistant_context_window(slot_uuid: UUID) -> int | None:
+    """The smallest `context_window` declared among the members of an
+    assistant slot's group, fallback members included, or None when a member
+    declares none: its window is then set at its provider, where it cannot
+    be read from here."""
+    members, _label = resolve_assistant_model_uuids(slot_uuid)
+    windows: list[int] = []
+    for member in members or []:
+        _provider, _name, arguments = db.resolved_model_kwargs(member)
+        declared = arguments.get("context_window")
+        if not declared:
+            return None
+        windows.append(int(declared))
+    return min(windows) if windows else None
+
+
 def decision_slot_uuids() -> list[UUID]:
     """The slots bound to a decision model (llm/systemone.py)."""
     from agents.config import ASSISTANT_REPEAT_CHECK_UUID, ASSISTANT_TOPIC_MATCH_UUID

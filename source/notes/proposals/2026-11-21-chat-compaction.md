@@ -1,9 +1,10 @@
 # Chat compaction: a room's background in the prompt
 
-**Status:** Proposal. Build steps 1 and 2 of §9 are built: the blocks are
+**Status:** Proposal. Build steps 1 to 3 of §9 are built: the blocks are
 written by `agents/room_background.py` and shown on a room's Housekeeping
-page, and a chunk keeps what the user stated, as
-`notes/housekeeping-design.md` describes. No prompt holds them.
+page, a chunk keeps what the user stated, and a turn is given the blocks
+when `assistant.room_background` is on, as `notes/housekeeping-design.md`
+describes. The setting is off, and no real turn has run with it.
 **Date:** 2026-11-21
 **Related:**
 - [Roadmap: conversation awareness](2026-11-09-conversation-awareness-roadmap.md):
@@ -316,27 +317,29 @@ floor on the model's context would check the wrong thing: a model can have
 the context and the turn's own prompt can already fill it. So once, at the
 start of the turn, before the first call:
 
-1. `C` is the smallest `context_window` among the members of the decide
-   slot's group, fallback members included (`db.resolved_model_kwargs`).
-2. `base` is the characters the turn already has: the request, the window as
-   it will render, and the static head.
+1. `C` is the smallest `context_window` declared among the members of the
+   decide slot's group, fallback members included
+   (`model_groups.assistant_context_window`). Where a member declares none
+   there is no `C`, and no check (§7).
+2. `base` is the characters the turn already has: the request and the
+   window as they will render.
 3. The background is sent only if
    `(base + background + PROMPT_RESERVE_CHARS) / CHARS_PER_TOKEN <= C`,
-   with `PROMPT_RESERVE_CHARS` 16,000 for the instructions, the steps and
-   the reply, and `CHARS_PER_TOKEN` 3, low on purpose.
+   with `PROMPT_RESERVE_CHARS` 44,000 for the static head, the
+   instructions, the steps and the reply, and `CHARS_PER_TOKEN` 3, low on
+   purpose.
 4. If both blocks do not fit, `room_earlier` is tried alone, then nothing.
 
-**On a small context this will usually say no.** At 8,192 tokens the reserve
-alone is 5,333 of them, which leaves 8,576 characters for the request, the
-window and the static head before any background. That is the safe answer
-only if the instructions, steps and reply really take that much. Build step
-3 reads their actual sizes off stored decide calls and sets the reserve from
-them, so the check does not switch the feature off where it would have fit.
+**The reserve is measured.** Over 150 stored decide calls, what a call
+carried beside the request and the window was 33,000 characters at the
+median and 41,930 at most, and the longest replies ran to about 2,400. So
+a declared window under about 16,000 tokens gets no background, which is
+right: the decide call alone does not fit one. The calls measured 4
+characters a token.
 
 The choice holds for the whole turn. It is an estimate in characters, since
-no token count exists before a call, and the record keeps `base`, `C` and
-the decide call's reported prompt tokens so the 3 and the 16,000 can be
-corrected from use.
+no token count exists before a call, and the record keeps `base` and `C`,
+so the 3 and the 44,000 can be corrected from use.
 
 **What this does not fix.** The window is capped by count and per message
 (`HISTORY_MESSAGE_MAX_CHARS`, 2,000), so 30 pasted messages are 60,000
@@ -698,7 +701,7 @@ when the reply shows the explanation is known.
 | A chunk's messages changed | its dates, `(changed since it was summarized)` |
 | No topics yet (no decision model bound) | `room_earlier` alone |
 | The prompt would not fit with both blocks | `room_earlier` alone, or neither (§3.5) |
-| A model's `context_window` is not set | the provider default (3,900) is assumed, so no background |
+| A member of the decide slot's group declares no `context_window` | no check: the blocks are sent at their own limits, as the rest of the prompt is |
 | A remote model is configured | parts answered from the diary show no result |
 | Loading raises | as today, `error` on the record |
 
@@ -756,8 +759,23 @@ part that read the diary.
    and read again**, on its Housekeeping page (**Summarize the rest**, in
    the new series).
 3. **The setting, the load in the turn, the fit check, the instruction
-   paragraph, the record.** Off in production. `PROMPT_RESERVE_CHARS` is set
-   here, from the sizes of stored decide calls.
+   paragraph, the record** (built). Off in production.
+   `PROMPT_RESERVE_CHARS` is 44,000, from the sizes of stored decide calls.
+   Three things came out other than written above:
+   - The paragraph of §3.7 is a section of its own beside the blocks
+     (`room_background_note`), not text added to the decide and audit
+     instructions. Those are constants every turn carries, and would speak
+     of blocks a turn without a background does not have. The
+     source-priority sections are unchanged for the same reason; the note
+     says the blocks rank with the history.
+   - `base` is the request and the window. The static head is not built
+     when the load runs (it has to run before the first call), so it is in
+     the reserve.
+   - A group with a member that declares no `context_window` is not
+     checked (§7). The local models in use declare none, so with the
+     provider default assumed the background would never be sent.
+   - Not built: the run page's line showing the record. The record is on
+     the run's metadata.
 4. **The probe room, in the sandbox**, off against on, with the three
    probes for what the user explained. The three probes that
    guard against harm (Rejected answer, Current state, Never discussed) have

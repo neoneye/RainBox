@@ -39,9 +39,11 @@ STATED_MAX_CHARS = 200
 #: of the newest are kept under "Before this", and their characters.
 SAID_BEFORE = 6
 SAID_BEFORE_MAX_CHARS = 900
-#: What a turn's prompt needs beside the request, the window and the static
-#: head: the instructions, the steps and the reply.
-PROMPT_RESERVE_CHARS = 16_000
+#: What a turn's prompt needs beside the request and the window: the static
+#: head, the instructions, the steps and the reply. The largest decide call
+#: of 150 stored ones carried 41,930 characters beside those two, and the
+#: longest replies ran to about 2,400.
+PROMPT_RESERVE_CHARS = 44_000
 #: Low on purpose: markup and text outside English run to more tokens per
 #: character than English prose.
 CHARS_PER_TOKEN = 3

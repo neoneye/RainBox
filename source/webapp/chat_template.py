@@ -3229,7 +3229,7 @@ const CONTEXT_PAGES = [
     href: room => '/assistant/housekeeping/room/' + encodeURIComponent(room),
     note: 'The room’s messages in chunks, each summarized after a turn. '
       + 'The page also shows the summaries as text for the assistant’s prompt, '
-      + 'with the number of characters. No prompt holds them yet.',
+      + 'with the number of characters. A turn is given them when assistant.room_background is on.',
   },
 ];
 function renderContext(){

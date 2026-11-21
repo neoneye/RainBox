@@ -1493,14 +1493,14 @@ _ROOM_FRAGMENT = """
 {% endif %}
 {% if as_prompt %}
 <p class="hk-lede">The room's background as a turn would be given it now, the way the
-  personal assistant's prompt is going to hold it: ahead of the room's last 30
+  personal assistant's prompt holds it: ahead of the room's last 30
   messages, which it reads in full. It is the room's recurring topics, and the
   {{ block_chunks }} chunk{{ '' if block_chunks == 1 else 's' }} of this series before those messages:
   the nearest part by part, the ones before them a line each. Together
   <b>{{ '{:,}'.format(prompt_chars) }} characters</b>{% if background.trimmed %}, after
   {{ background.trimmed }} of the oldest line{{ '' if background.trimmed == 1 else 's' }} gave way to the limit{% endif %}{% if background.results_withheld %};
   {{ background.results_withheld }} result{{ '' if background.results_withheld == 1 else 's' }} withheld{% endif %}.
-  No prompt holds it yet.</p>
+  A turn in this room is given it when <code>assistant.room_background</code> is on.</p>
 {% if not prompt_chars %}
 <p class="hk-lede">This room has no summarized chunk before its last 30 messages, so a turn
   would be given no background.</p>
@@ -1592,11 +1592,11 @@ _ROOM_FRAGMENT = """
   </div>
 </div>
 {% endfor %}
-<p class="hk-lede">The recurring topics the way a prompt is going to hold them, ahead of
+<p class="hk-lede">The recurring topics the way a prompt holds them, ahead of
   the chunks: the ones that came up in the chunks just before the room's last
   messages first, then the largest, each with how many times it came up. A share
   and the tools stay on this page. <b>{{ '{:,}'.format(topics.chars) }} characters</b>{% if topics.percent %},
-  {{ topics.percent }} of the summarized messages' own text{% endif %}. No prompt holds it yet.</p>
+  {{ topics.percent }} of the summarized messages' own text{% endif %}. A turn in this room is given it when <code>assistant.room_background</code> is on.</p>
 <div class="tb-scope">{{ topics.block }}</div>
 {% else %}
 {% for c in chunks %}
@@ -1731,7 +1731,7 @@ _ROOM_PAGE = """
     assistant was, decided by rule from your reaction and those records.
     A grey "uncontested" means you went on without saying whether the
     answer was right; a vote on the reply in the room settles it.
-    The summaries are shown here and reach no prompt. <a class="hk-back" href="/chat?id={{ room_uuid }}">Open the room</a></p>
+    The summaries are shown here, and reach a turn's prompt when <code>assistant.room_background</code> is on. <a class="hk-back" href="/chat?id={{ room_uuid }}">Open the room</a></p>
   <div class="hk-filters">
     <div class="hk-field">
       <label>Series</label>

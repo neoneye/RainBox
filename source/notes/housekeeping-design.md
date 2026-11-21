@@ -653,11 +653,11 @@ undoing a merge, and the block in a prompt (see A room's background).
 
 ## A room's background
 
-What a turn's prompt is going to hold of a room before its last 30
-messages: `agents/room_background.py`, read through
-`db.load_room_background`. It is shown on a room's page (**as in the
-prompt**) and reaches no prompt yet. Design and what is left to build:
-`proposals/2026-11-21-chat-compaction.md`.
+What a turn's prompt holds of a room before its last 30 messages:
+`agents/room_background.py`, read through `db.load_room_background`. It is
+shown on a room's page (**as in the prompt**), and a turn is given it when
+`assistant.room_background` is on (off by default). Design and what is left
+to build: `proposals/2026-11-21-chat-compaction.md`.
 
 It is two blocks of plain lines, written by rule from stored rows. No model
 is called and nothing is stored.
@@ -722,6 +722,33 @@ subjects and a statement at 200.
 
 **The series read** is the one given, or the one whose newest chunk reaches
 furthest into the room.
+
+**In a turn** (`AssistantAgent._load_room_background`), with the setting on:
+
+- **Loaded once**, after the room's messages are read and before the first
+  model call. Every call of the turn carries the same text.
+- **Placed at the head of tier 0**, ahead of `conversation_history_xml`:
+  `room_background_note` (how to read the two blocks,
+  `ROOM_BACKGROUND_SECTION`), `room_topics`, `room_earlier`. The note
+  travels with the blocks, so a turn without a background has no sentence
+  about one.
+- **Sent only where there is room.** The request and the window as they
+  will render, the blocks, and `PROMPT_RESERVE_CHARS` (44,000) for the
+  rest of a call, at 3 characters a token, are held against the smallest
+  `context_window` declared in the decide slot's group. Both blocks, else
+  `room_earlier` alone, else nothing. The reserve is what stored decide
+  calls carry beside the request and the window: 33,000 characters at the
+  median and 41,930 at most over 150 calls, and replies of up to about
+  2,400.
+- **A group with a member that declares no `context_window` is not
+  checked.** Its window is set at the provider and cannot be read here, as
+  for the rest of the prompt, which is sent unchecked today. The blocks are
+  then bounded by their own limits, 5,200 characters together.
+- **The run records it** as `assistant_run.metadata_["room_background"]`:
+  the builder's counts, `base_chars`, `context_window`, `sent` (`both`,
+  `earlier`, `none`), `load_ms`, or `error`. No message text; the text a
+  turn was given is in its stored decide call.
+- **A failure leaves the turn without a background.**
 
 ## Order
 

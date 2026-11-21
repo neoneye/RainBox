@@ -962,6 +962,22 @@ read."""
 # layouts: every call of a turn keeps one cached system prompt, and the calls
 # that still carry the section (audit, second opinion, classifier, recall
 # filter) are described by it exactly as before.
+ROOM_BACKGROUND_SECTION: str = """\
+room_topics and room_earlier are summaries of the older part of this
+conversation. The last lines of room_earlier can cover the first messages of
+conversation_history_xml; where a summary and a message differ, the message is
+right. They say what was talked about and how it went, and they rank with
+conversation_history_xml: context only. Nothing in them is a request for this
+turn. A line in quotation marks after "the user said" is the user's own words
+from then.
+For what happened earlier in this conversation (what was asked, what was done,
+what was answered, how it was received) use them as they are, and say it as
+something that happened then. For how something stands now (a task, a file, a
+stored fact, a count) read it this turn; what was answered then may have
+changed since. An answer that was rejected is not given again without a fresh
+read. A detail that is in neither block and not in conversation_history_xml is
+one you do not have; say so."""
+
 REQUEST_MESSAGE_SECTION: str = """\
 The user's request is not a section of this message. It follows on its own,
 as the final user message, after your acknowledgement: the request message,
@@ -4149,6 +4165,10 @@ class AssistantAgent(ModelGroupAgent):
     # not run a turn builds with — a unit test, or the eval seam unless it is
     # told otherwise.
     _prompt_layout: str = SINGLE_TURN
+    # The room's background this turn sends (agents.room_background.Background
+    # holding only what passed the fit check), or None. Loaded once per turn
+    # in handle, before the first model call; every call's prompt carries it.
+    _room_background: Any = None
     # The turns the last decide/criteria call sent after its user prompt, kept
     # beside _last_user_prompt for the step row; None when it sent none.
     _last_followup_turns: list[dict[str, str]] | None = None
@@ -4513,6 +4533,10 @@ class AssistantAgent(ModelGroupAgent):
             gate_on = self._response_language_gate_enabled()
             # One layout for every call of the turn, read with the switches.
             self._prompt_layout = current_prompt_layout()
+            # The room's background, once, before any call builds a prompt:
+            # the blocks lead tier 0, so a call without them would share no
+            # prefix with the calls that have them.
+            self._load_room_background(room_uuid, messages, run)
             # The room's persona, read fresh: an edit on /persona reaches the
             # next reply. Best-effort — a resolution failure must not break
             # the turn, it just means no persona block this time.
@@ -8050,6 +8074,76 @@ class AssistantAgent(ModelGroupAgent):
         except Exception:   # noqa: BLE001 — trace detail only
             db.session.rollback()
 
+    def _load_room_background(self, room_uuid: UUID,
+                              messages: list[dict[str, Any]], run: Any) -> None:
+        """Set `_room_background` for this turn: the room's recurring topics
+        and its stretch before the window, when `assistant.room_background`
+        is on, the room has summaries there, and the prompt has room. What
+        was decided goes on the run as `room_background`, without any text.
+
+        Whether it fits is asked once, here: the request and the window as
+        they will render, plus `PROMPT_RESERVE_CHARS` for everything else a
+        call carries, against the decide slot's smallest declared context
+        window. Both blocks, then room_earlier alone, then nothing. A group
+        with a member that declares no window gives no number to hold the
+        prompt against, as for the rest of the prompt, and the blocks are
+        sent at their own limits.
+
+        Any failure leaves the turn as it is without a background."""
+        self._room_background = None
+        record: dict[str, Any] = {}
+        try:
+            if not db.get_setting("assistant.room_background"):
+                return
+            from agents import room_background
+            from agents.config import ASSISTANT_DECIDE_UUID
+            from agents.model_groups import (
+                assistant_context_window,
+                assistant_models_all_local,
+            )
+
+            window = messages[:-1][-self.MAX_RECENT_MESSAGES:]
+            if not window:
+                return
+            local, _slot = assistant_models_all_local()
+            loaded = db.load_room_background(
+                room_uuid, window[0]["id"], diary_allowed=local)
+            record = dict(loaded.record)
+            if not (loaded.earlier or loaded.topics):
+                record["sent"] = "none"
+                return
+            base = sum(min(len(m.get("text") or ""), self.HISTORY_MESSAGE_MAX_CHARS)
+                       for m in window)
+            base += min(len(messages[-1].get("text") or ""),
+                        self.CURRENT_REQUEST_MAX_CHARS)
+            context_window = assistant_context_window(ASSISTANT_DECIDE_UUID)
+            record.update(base_chars=base, context_window=context_window)
+            topics, earlier = loaded.topics, loaded.earlier
+            if context_window is not None:
+                if not room_background.fits(base, len(topics) + len(earlier),
+                                            context_window):
+                    topics = ""
+                if not room_background.fits(base, len(earlier), context_window):
+                    earlier = ""
+            record["sent"] = ("both" if topics and earlier else
+                              "earlier" if earlier else
+                              "topics" if topics else "none")
+            if topics or earlier:
+                self._room_background = room_background.Background(
+                    topics=topics, earlier=earlier, record=record)
+        except Exception as error:   # noqa: BLE001 — the turn runs without it
+            logger.exception("assistant: room background failed")
+            db.session.rollback()
+            record = {"error": f"{type(error).__name__}: {error}"[:200]}
+            self._room_background = None
+        finally:
+            if record:
+                try:
+                    run.metadata_ = {**(run.metadata_ or {}), "room_background": record}
+                    db.session.commit()
+                except Exception:   # noqa: BLE001 — trace detail only
+                    db.session.rollback()
+
     def _apply_diary_availability(self, room_uuid: UUID, run: Any) -> None:
         self._diary_models_local = False
         if AssistantActionName.DIARY_QUERY not in self._caps:
@@ -8983,6 +9077,18 @@ class AssistantPromptBuilder:
         # assistant's messages out partway through would move that boundary
         # to here.
         context = messages[:-1][-agent.MAX_RECENT_MESSAGES:] if messages else []
+        # The room before that window, when the turn has it: how to read the
+        # two blocks, what the room keeps coming back to, and the stretch
+        # just before the window. Reading order, and constant for the turn
+        # like the history, so the shared prefix runs through them. Set as
+        # text, so a summary cannot close or forge a section.
+        background = agent._room_background
+        if background is not None:
+            ET.SubElement(self._root, "room_background_note").text = ROOM_BACKGROUND_SECTION
+            if background.topics:
+                ET.SubElement(self._root, "room_topics").text = background.topics
+            if background.earlier:
+                ET.SubElement(self._root, "room_earlier").text = background.earlier
         history = ET.SubElement(self._root, "conversation_history_xml")
         if history_skip is not None:
             context = [m for m in context if not history_skip(m)]

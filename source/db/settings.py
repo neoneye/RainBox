@@ -318,7 +318,17 @@ SETTINGS.update({
         description="After a turn, summarize the room's messages in chunks "
                     "with a local model (the assistant.room_summarizer "
                     "slot). The summaries are shown on the Housekeeping "
-                    "page and reach no prompt.",
+                    "page, and reach a turn's prompt when "
+                    "assistant.room_background is on.",
+    ),
+    "assistant.room_background": Setting(
+        "assistant.room_background", None, "bool", False,
+        description="Give a turn the room's background ahead of its last 30 "
+                    "messages: the room's recurring topics, and what was "
+                    "wanted and how it went in the summarized chunks before "
+                    "them. Read from the room's chunk summaries, so a room "
+                    "with none gets nothing. A room's Housekeeping page "
+                    "shows the text under \"as in the prompt\".",
     ),
     "housekeeping.room_chunk_size": Setting(
         "housekeeping.room_chunk_size", None, "int", 10,

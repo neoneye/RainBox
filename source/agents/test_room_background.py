@@ -312,10 +312,10 @@ def test_the_same_rows_give_the_same_bytes():
 
 
 def test_the_background_is_sent_only_where_the_prompt_has_room():
-    # 20,000 + 5,000 + the reserve is 41,000 characters: 13,667 tokens at 3.
-    assert rb.fits(20_000, 5_000, 13_667)
-    assert not rb.fits(20_000, 5_000, 13_666)
-    assert not rb.fits(60_000, 5_000, 16_384)
+    # 20,000 + 5,000 + the reserve is 69,000 characters: 23,000 tokens at 3.
+    assert rb.fits(20_000, 5_000, 23_000)
+    assert not rb.fits(20_000, 5_000, 22_999)
+    assert not rb.fits(60_000, 5_000, 32_768)
 
 
 def test_what_the_user_stated_outlasts_its_chunk():
