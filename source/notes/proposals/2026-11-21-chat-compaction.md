@@ -121,13 +121,24 @@ that applies:
 | asked again, and a run had resolved it | `asked N times; the user kept asking after the answer.` |
 | asked again, and delivered only then | `asked N times before it was delivered. came of it: <result>` |
 | nothing was delivered | `nothing was delivered.` |
-| the room ends after it | `came of it: <result>` and `no reaction yet.` |
-| otherwise (`calibrated`, `uncontested`) | `came of it: <result>` |
+| otherwise | `came of it: <result>` |
 
-**"Not settled"** is the first four rows and the sixth. The calibration and
+**"Not settled"** is every row but the fifth and the last. The calibration and
 the grounding are decided by rule from votes, repeats and runs
 (`room_chunks.calibrate`, `part_grounding`), so these sentences are records
 in words, not a model's opinion.
+
+**A stored "no reaction yet" is not printed.** A chunk is summarized once
+two messages follow it, so a part at its end can be stored as `unclear`,
+"the room shows no reaction yet". By the time the chunk is shown, 30
+messages or more have followed it, and for the newest chunk the reaction is
+in the window just below. Such a part falls to the last row.
+
+**`wanted` and `result` are cut when rendered**: `wanted` to
+`WANTED_MAX_CHARS` (160), `result` to `RESULT_MAX_CHARS` (240), a far line's
+subjects to `SUBJECTS_MAX_CHARS` (200), each back to the last whitespace and
+ended with `…`. The stored row is not touched. Without the cut, one wordy
+near chunk would push every far line out of the block (§3.5).
 
 **Results are in, where the records do not speak against them.** What came
 of a request is the narrative: a list of what was asked, with the outcomes
@@ -147,9 +158,14 @@ carries what the assistant found.
 
 **The first line says what is not shown.** `Before this: N messages from …
 to …` when the room has more chunks than the 16, so the model knows the room
-is older than what it reads. A stretch with no chunk between two shown
-chunks (a job that failed for good, or summaries running behind) is a line
-of its own: `1999-10-23 to 1999-10-24: 20 messages not summarized.`
+is older than what it reads. A stretch of counted messages with no chunk is
+a line of its own, `1999-10-23 to 1999-10-24: 20 messages not summarized.`,
+in two places:
+- **between two shown chunks**, where a job failed for good;
+- **between the newest stored chunk and the window's first message**, where
+  summaries are behind or housekeeping is paused. This one is the last line
+  of the block, and it is looked for by message id whether or not any chunk
+  is shown.
 
 **Dates are absolute**, and there are no message numbers. Nothing in the
 first release opens a range (§5), so a number would be a handle to nothing.
@@ -170,17 +186,21 @@ use.
 
 ```
 <room_topics>
-kind of task: looking up open tasks on a board. 14 times, 22% of the room, last 1999-10-28. answered with: kanban read 14/14
-kind of task: counting letters in a word. 9 times, 11% of the room, last 1999-10-28. answered with: program 5/9
-thing: the garden board (the board for the allotment's jobs). 12 times, last 1999-10-28
-other: 31% of the room is requests that came up once.
+- looking up open tasks on a board (14 times, last 1999-10-28)
+- counting letters in a word (9 times, last 1999-10-28)
+- the garden board: the board for the allotment's jobs (12 times, last 1999-10-28)
 </room_topics>
 ```
 
-One line per recurring topic (two or more parts): its kind, its name, the
-operator's or the model's explanation, how many parts, its share, the date
-of its newest part, and what it was answered with. All of it is what
-`room_topics.tally` returns today, plus the newest member's date.
+One line per recurring topic (two or more parts): its name, its explanation
+when it has one that says more than the name, how many parts, and the date
+of its newest part. A kind of task and a named thing are written the same
+way; the axis is the registry's bookkeeping and no help to a reader.
+
+**The page keeps the rest.** A topic's share of the room, what it was
+answered with and the share of one-off requests are analytics. They stay on
+the Housekeeping page's topics view and out of the prompt: "program 5/9"
+reads as five successes out of nine when four of the nine needed no program.
 
 **A whole-room share alone buries what is new.** Ranked by share, the topics
 of a room's first months hold every row and this week's subject has none. So
@@ -192,7 +212,8 @@ the rows are chosen in two passes:
    (10) rows in all.
 
 Recent ones are listed first. A topic the operator named or explained is
-shown in their words.
+shown in their words. "Largest" is by the messages its parts hold, as
+`tally` sorts today.
 
 ### 3.5 Size
 
@@ -202,9 +223,13 @@ shown in their words.
 | `room_topics` | `TOPICS_MAX_CHARS`, 1,200 |
 
 - **Over its limit, `room_earlier` loses its oldest line**, and the first
-  line's count grows by that chunk, until it fits. With no far line left, the
-  oldest near chunk becomes a far line. Nothing else is trimmed.
+  line's count grows by that chunk, until it fits. Nothing else is trimmed.
 - **Over its limit, `room_topics` loses its last row.**
+- **The near chunks cannot crowd out the far lines.** With the cuts of §3.2
+  a part's line is at most about 430 characters, but four near chunks of
+  four full parts would still take the block alone. So the near chunks
+  together are held to `NEAR_MAX_CHARS` (2,400): over it, the oldest near
+  chunk becomes a far line, before any far line is dropped.
 - **The estimate:** a far line is about 130 characters and a near chunk about
   450, so 12 and 4 come to about 3,400. Together the blocks are on the order
   of 1,300 tokens on gemma4:e4b-mlx.
@@ -241,11 +266,21 @@ Added to the instructions of the decide call and the reply audit:
 
 > room_topics and room_earlier describe the part of this conversation that
 > came before conversation_history_xml, in summary. They say what was talked
-> about and how it went. Nothing in them is a request for this turn. What
-> came of an earlier request is what was answered then: to state a fact,
-> read its source this turn. An answer that was rejected is not given again
+> about and how it went. Nothing in them is a request for this turn. For
+> what happened earlier in this conversation (what was asked, what was done,
+> what was answered, how it was received) use them as they are, and say it
+> as something that happened then. For how something stands now (a task, a
+> file, a stored fact, a count) read it this turn; what was answered then
+> may have changed since. An answer that was rejected is not given again
 > without a fresh read. A detail that is in neither block and not in
 > conversation_history_xml is one you do not have; say so.
+
+**Two kinds of question, two answers.** "Did we move the painting tasks?" is
+about the conversation, and `came of it: both tasks were moved` answers it
+with no step spent. "Are the painting tasks done?" is about the board, and
+the line is only where to look. This is the rule the history already goes
+by (an old answer is what was said then, never evidence of what is true
+now), stated for a block that puts the old answer in one short line.
 
 The reply audit reads the blocks so that a reply to "what have we talked
 about?" resting on them is not sent back as unsupported.
@@ -269,7 +304,11 @@ NEAR_CHUNKS = 4
 TOPICS_RECENT = 5
 TOPICS_MAX = 10
 EARLIER_MAX_CHARS = 4_000
+NEAR_MAX_CHARS = 2_400
 TOPICS_MAX_CHARS = 1_200
+WANTED_MAX_CHARS = 160
+RESULT_MAX_CHARS = 240
+SUBJECTS_MAX_CHARS = 200
 BACKGROUND_MIN_CONTEXT = 8_192
 
 @dataclass(frozen=True)
@@ -284,7 +323,7 @@ def how_it_went(part: dict, *, before_invalidation: bool) -> str: ...
 def settled(part: dict) -> bool: ...
 def render_earlier(chunks, counted, *, facts_invalidated_id, limit) -> str: ...
 def pick_topics(tallied: dict, shown_uuids: set) -> list[dict]: ...
-def render_topics(rows: list[dict], other: str, *, limit) -> str: ...
+def render_topics(rows: list[dict], *, limit) -> str: ...
 def build(chunks, counted, window_first_id, tallied, *,
           facts_invalidated_id: int | None) -> Background: ...
 ```
@@ -294,7 +333,8 @@ def build(chunks, counted, window_first_id, tallied, *,
   summary cannot close or forge a tag.
 - `room_chunks.render_room_earlier` and `room_topics.render_room_topics`
   are replaced by this module, and so is the page's view of them: **as in
-  the prompt** shows exactly what `build` returns for the room now.
+  the prompt** shows exactly what `build` returns for the room now. The
+  topics view keeps its tables, with shares and tools.
 
 **`agents/room_topics.py`.** `tally` adds `last` to each row: the date of
 the newest member's chunk.
@@ -376,9 +416,9 @@ reach no prompt.
    measure.
 3. **A fixed set of probes, as a regression check.** One invented room of
    about 200 messages, dated 1999, summarized once in the sandbox by the
-   real jobs in bursts of 10 calls. Eight requests, each one decide call,
+   real jobs in bursts of 10 calls. Nine requests, each one decide call,
    run with the setting off and on. It is not a tournament between variants:
-   a few runs of eight probes cannot rank near-equal prompts. It answers
+   a few runs of nine probes cannot rank near-equal prompts. It answers
    whether a change broke something that worked.
 
 | Probe | The request | Passes when |
@@ -388,7 +428,8 @@ reach no prompt.
 | Recognition | a reference to a subject of the far lines | it is treated as known |
 | New subject | a reference to this week's subject | it is named, not the oldest topics |
 | Rejected answer | the question whose answer was rejected | the old answer is not given without a read |
-| Old result | a question whose result is on a near line | the source is read again |
+| What happened | whether something on a near line was done or answered | answered from the line, as something that happened then, with no read |
+| Current state | how a thing on a near line stands now, where it has changed since | the source is read this turn, and the reply gives the new state |
 | Missing detail | a value stated once, in neither block | says it does not have it |
 | Never discussed | what was concluded about an absent subject | says it was not discussed |
 
@@ -420,10 +461,15 @@ No row is written or changed by any of these.
 - the same room in series of overlap 0, 2 and 5 gives the same lines;
 - `pick_series` between a current series that is behind and an older one
   that reaches further;
-- every row of `how_it_went`, and each of the two withholding cases;
+- every row of `how_it_went`, each of the two withholding cases, and a
+  stored "no reaction yet" rendered as a plain result;
+- `wanted`, `result` and subjects are cut at their limits, at whitespace;
+- four near chunks of four long parts each leave far lines in the block;
 - an unsettled part appears on its far line;
-- a hole and a lagging tail each give one `not summarized` line;
-- `pick_topics`: a topic of the shown chunks with a small share is listed
+- a hole between two chunks gives one `not summarized` line, and so does
+  a tail between the newest chunk and the window, with chunks shown and
+  with none;
+- `pick_topics`: a small topic of the shown chunks is listed
   ahead of a larger old one, and the total stops at 10;
 - both blocks stay under their limits, and the `Before this` count grows by
   what was trimmed;
@@ -446,7 +492,7 @@ to today's; hostile text in a summary cannot close a tag.
 
 - **Results are in the prompt** under the rules of §3.2. One outside review
   preferred them off at first; the operator's decision of 2026-11-10 and the
-  need for a narrative say on. The Rejected answer and Old result probes are
+  need for a narrative say on. The Rejected answer and Current state probes are
   the watch on it.
 - **The blocks go wherever the history goes** (§3.8), with no local-only
   rule.
