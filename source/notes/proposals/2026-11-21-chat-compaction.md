@@ -107,7 +107,9 @@ Before this: 140 messages from 1999-10-04 to 1999-10-21.
 
 **A far chunk** (the 12) is one line: its dates and its stored subjects
 (`room_chunk.summary`). A part of it that was not settled is added to the
-line, so an open thread stays visible at any distance shown.
+line as `not settled: <wanted> (<why>)`, and a part that was asked again as
+`asked N times: <wanted>`, so an open thread stays visible at any distance
+shown.
 
 **A near chunk** (the 4) is a line of dates and a line per part: what was
 wanted, then how it went.
@@ -125,7 +127,23 @@ that applies:
 | a tool ran for it (grounding `tool`) | `came of it: <result>` |
 | otherwise | `answered then: <result>` |
 
-**"Not settled"** is the first five rows. The calibration and the grounding
+**"Not settled"** is the first four rows. Asked again is its own case, and
+is not called unsettled.
+
+**The rows come before any withholding.** A result is withheld (below, and
+§3.8) only in the last three rows, where there is one to withhold. A part
+that read the diary and was rejected says `the answer was rejected.`, not
+that it was answered from the diary: the failure is the news. What a
+withheld result leaves behind:
+
+| Why it is withheld | The line ends |
+|---|---|
+| the part read the diary, and a remote model is configured | `answered from the diary.` |
+| no tools are recorded for the part, and a remote model is configured | `answered then.` |
+| the part is older than a facts invalidation | `answered then, before stored facts were declared stale.` |
+
+After `asked N times.` the same endings apply in place of `the last
+answer`. The calibration and the grounding
 are decided by rule from votes, repeats and runs (`room_chunks.calibrate`,
 `part_grounding`), so these sentences are records in words, not a model's
 opinion.
@@ -163,21 +181,27 @@ carries what the assistant found.
 **Two cases withhold a result that the table would show:**
 - **After a facts invalidation.** A part older than the room's newest
   facts-invalidation marker (`meta.facts_invalidation`) shows what was wanted
-  and no result: what was true then may have been declared stale.
+  and the ending in the table above: what was true then may have been
+  declared stale.
 - **A changed chunk.** A chunk whose `content_hash` no longer matches its
   messages (an edit, a deletion, a retry that rewound into it) is one line of
   dates with `(changed since it was summarized)`.
 
 **The first line says what is not shown.** `Before this: N messages from …
-to …` when the room has more chunks than the 16, so the model knows the room
-is older than what it reads. A stretch of counted messages with no chunk is
+to …` whenever counted messages lie before the oldest chunk shown: because
+the room has more than 16 chunks, or because trimming dropped a line (§3.5).
+The model then knows the room is older than what it reads. A stretch of counted messages with no chunk is
 a line of its own, `1999-10-23 to 1999-10-24: 20 messages not summarized.`,
 in two places:
 - **between two shown chunks**, where a job failed for good;
 - **between the newest stored chunk and the window's first message**, where
   summaries are behind or housekeeping is paused. This one is the last line
-  of the block, and it is looked for by message id whether or not any chunk
-  is shown.
+  of the block, and it is looked for by message id, not by a missing `seq`.
+
+**A room with no chunk has no block.** A room never summarized would
+otherwise get a block that says only that its messages are not summarized.
+With no chunk in the picked series, `build` returns nothing and the turn is
+as today.
 
 **Dates are absolute**, and there are no message numbers. Nothing in the
 first release opens a range (§5), so a number would be a handle to nothing.
@@ -241,8 +265,10 @@ shown in their words. "Largest" is by the messages its parts hold, as
 | `room_earlier` | `EARLIER_MAX_CHARS`, 4,000 |
 | `room_topics` | `TOPICS_MAX_CHARS`, 1,200 |
 
-- **Over its limit, `room_earlier` loses its oldest line**, and the first
-  line's count grows by that chunk, until it fits. Nothing else is trimmed.
+- **Over its limit, `room_earlier` loses its oldest line**, until it fits.
+  The `Before this` line is written after trimming, from what is then the
+  oldest chunk shown, so it appears when the first line is dropped and
+  counts every one dropped after. Nothing else is trimmed.
 - **Over its limit, `room_topics` loses its last row.**
 - **The near chunks cannot crowd out the far lines.** With the cuts of §3.2
   a part's line is at most about 430 characters, but four near chunks of
@@ -267,6 +293,13 @@ start of the turn, before the first call:
    with `PROMPT_RESERVE_CHARS` 16,000 for the instructions, the steps and
    the reply, and `CHARS_PER_TOKEN` 3, low on purpose.
 4. If both blocks do not fit, `room_earlier` is tried alone, then nothing.
+
+**On a small context this will usually say no.** At 8,192 tokens the reserve
+alone is 5,333 of them, which leaves 8,576 characters for the request, the
+window and the static head before any background. That is the safe answer
+only if the instructions, steps and reply really take that much. Build step
+3 reads their actual sizes off stored decide calls and sets the reserve from
+them, so the check does not switch the feature off where it would have fit.
 
 The choice holds for the whole turn. It is an estimate in characters, since
 no token count exists before a call, and the record keeps `base`, `C` and
@@ -348,7 +381,8 @@ so no fallback inside a call can carry a withheld result out.
 
 **Parts summarized before the tools were recorded** (chunk prompts older
 than 19) have no `signals.tools`. With a remote model configured they show
-no result.
+no result, and the line says `answered then.`: nothing says they read the
+diary, so the line does not say so either.
 
 ## 4. Code
 
@@ -551,7 +585,12 @@ No row is written or changed by any of these.
   "no reaction yet" rendered as a plain result, and a part asked again that
   is never called rejected;
 - a part answered from the diary shows no result when `diary_allowed` is
-  false, and a part with no recorded tools likewise;
+  false, with its own ending; a part with no recorded tools likewise, with
+  the neutral one; and a diary part that was rejected says rejected;
+- a room with messages and no chunk gives no block;
+- a room of 10 chunks trimmed by one gains a `Before this` line;
+- on a far line an asked-again part reads `asked N times`, not `not
+  settled`;
 - `fits` on either side of its boundary, and that `room_earlier` alone is
   tried before nothing;
 - a topic of the shown chunks has no date, and an old one has `last
@@ -580,7 +619,8 @@ part that read the diary.
    tests, and the page's view on it.** In no prompt.
 2. **The operator reads it** for their own rooms; wording is adjusted.
 3. **The setting, the load in the turn, the fit check, the instruction
-   paragraph, the record.** Off in production.
+   paragraph, the record.** Off in production. `PROMPT_RESERVE_CHARS` is set
+   here, from the sizes of stored decide calls.
 4. **The probe room, in the sandbox**, off against on. The three probes that
    guard against harm (Rejected answer, Current state, Never discussed) have
    to pass before the next step; the others say how much it helps.
