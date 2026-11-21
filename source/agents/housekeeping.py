@@ -466,6 +466,8 @@ class HousekeepingAgent(Agent):
         # and stored is in the room's.
         summary, topics, parts, problems = room_chunks.settle(
             room_numbers(reply), first, last, chunk, after, retries)
+        statements, stated_problems = room_chunks.settle_statements(
+            reply.statements, chunk)  # type: ignore[attr-defined]
 
         # The check, and one rewrite when it finds a part's request or result
         # wrong. The rewrite is checked too, so what is stored always carries
@@ -499,6 +501,8 @@ class HousekeepingAgent(Agent):
                  "reasoning": p["audit"]["reasoning"]} for p in failed]
             summary, topics, parts, problems = room_chunks.settle(
                 room_numbers(reply), first, last, chunk, after, retries)
+            statements, stated_problems = room_chunks.settle_statements(
+                reply.statements, chunk)  # type: ignore[attr-defined]
             audit["attempts"] = 2
         _provider, model_name, _args = db.resolved_model_kwargs(model_uuid)
         stored = db.store_room_chunk(
@@ -506,7 +510,8 @@ class HousekeepingAgent(Agent):
             first_message_id=chunk[0]["id"], last_message_id=chunk[-1]["id"],
             message_count=len(chunk),
             content_hash=room_chunks.content_hash(chunk),
-            summary=summary, topics=topics, parts=parts, problems=problems,
+            summary=summary, topics=topics, parts=parts,
+            problems=problems + stated_problems, statements=statements,
             audit=audit,
             model=model_name, prompt_version=room_chunks.PROMPT_VERSION,
             job_uuid=job.uuid)

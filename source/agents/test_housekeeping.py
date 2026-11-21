@@ -374,7 +374,7 @@ def _fake_chunk_model(monkeypatch, reply=None, check=None):
     return prompts
 
 
-V = 19   # agents.room_chunks.PROMPT_VERSION
+V = 20   # agents.room_chunks.PROMPT_VERSION
 
 
 def test_chunks_are_cut_in_order_and_wait_for_their_context(app_ctx):
@@ -415,6 +415,8 @@ def test_a_run_end_queues_two_chunks_and_each_is_summarized_once(app_ctx, monkey
             (0, 10, "weather questions", V), (1, 10, "weather questions", V)]
         assert chunks[0].topics == ["weather-talk"] and chunks[0].model == "model-a"
         assert chunks[0].problems == [] and chunks[0].job_uuid is not None
+        # The reply stated nothing, which is the usual case.
+        assert chunks[0].statements == []
         # Each summary was checked once, found right, and not written again.
         # No decision model is bound, so the follow-ups were read by rule.
         assert chunks[0].audit == {"attempts": 1, "repeat_check": {"reason": "unbound"}}
@@ -1111,3 +1113,29 @@ def test_a_part_keeps_its_tools_and_takes_the_worst_of_its_replies():
     assert rc.part_tools_text({"signals": {"tools": {
         "program": {"ran": 0, "failed": 1}, "diary query": {"ran": 1, "failed": 0}}}}) == (
         "a program failed and none ran, diary query")
+
+
+def test_a_statement_is_kept_where_its_words_are_the_users_own():
+    from agents import room_chunks as chunks
+
+    messages = [
+        {"sender": "human", "text": "I run everything locally because I do not trust the cloud with my diary"},
+        {"sender": "agent", "text": "Your diary mentions a greenhouse built behind the garage in spring"},
+        {"sender": "human", "text": "what is the weather tomorrow"}]
+    kept, problems = chunks.settle_statements([
+        "Everything runs locally because the cloud is not trusted with the diary.",
+        "A greenhouse was built behind the garage in spring.",        # from the reply
+        "  ", "Everything runs locally because the cloud is not trusted with the diary."],
+        messages)
+    assert kept == ["Everything runs locally because the cloud is not trusted with the diary."]
+    assert problems == ["a statement is not in the user's messages: "
+                        "A greenhouse was built behind the garage in spring."]
+    # None is the usual answer, and no problem.
+    assert chunks.settle_statements([], messages) == ([], [])
+    assert chunks.settle_statements(None, messages) == ([], [])
+    # More than the limit: the first ones, and it is said.
+    many = [f"I do not trust the cloud with my diary, reason {n}" for n in range(5)]
+    kept, problems = chunks.settle_statements(many, messages)
+    assert len(kept) == chunks.MAX_STATEMENTS and problems == ["5 statements, kept 3"]
+    # A reply that leaves the list out is a reply with none.
+    assert chunks.ChunkSummary(parts=[], subjects=[], topics=[]).statements == []

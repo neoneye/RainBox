@@ -33,6 +33,7 @@ TOPICS_MAX_CHARS = 1_200
 WANTED_MAX_CHARS = 160
 RESULT_MAX_CHARS = 240
 SUBJECTS_MAX_CHARS = 200
+STATED_MAX_CHARS = 200
 #: What a turn's prompt needs beside the request, the window and the static
 #: head: the instructions, the steps and the reply.
 PROMPT_RESERVE_CHARS = 16_000
@@ -211,8 +212,14 @@ def _dates(messages: list[dict[str, Any]]) -> str:
     return first if first == last else f"{first} to {last}"
 
 
+def _said(chunk: dict[str, Any]) -> list[str]:
+    """What the user stated in the chunk, each cut to a line."""
+    return [s for s in (_cut(t, STATED_MAX_CHARS) for t in chunk.get("statements") or []) if s]
+
+
 def _far_line(dates: str, chunk: dict[str, Any]) -> str:
     out = [_cut(chunk.get("summary"), SUBJECTS_MAX_CHARS)]
+    out += [f"the user said: {_sentence(s)}".rstrip(".") for s in _said(chunk)]
     for part in chunk.get("parts") or []:
         wanted = _cut(part.get("summary"), WANTED_MAX_CHARS)
         if not wanted:
@@ -230,6 +237,7 @@ def _far_line(dates: str, chunk: dict[str, Any]) -> str:
 def _near_lines(dates: str, chunk: dict[str, Any], **rules: Any) -> tuple[str, int]:
     """A near chunk's lines, and how many results its rules withheld."""
     lines, held = [f"{dates}:"], 0
+    lines += [f"- the user said: {_sentence(s)}" for s in _said(chunk)]
     for part in chunk.get("parts") or []:
         wanted = _cut(part.get("summary"), WANTED_MAX_CHARS)
         if not wanted:
@@ -256,7 +264,8 @@ def render_earlier(chunks: list[dict[str, Any]], counted: list[dict[str, Any]],
     near, trimmed, results_withheld}`.
 
     `chunks` are the shown chunks, oldest first, each `{uuid, first_id,
-    last_id, content_hash, summary, parts, prompt_version}`; `counted` the
+    last_id, content_hash, summary, parts, statements, prompt_version}`;
+    `counted` the
     room's counted messages from the oldest of them on, `{id, text,
     created_at}`; `older` what lies before those."""
     record = {"chunks": 0, "near": 0, "trimmed": 0, "results_withheld": 0}

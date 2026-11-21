@@ -190,6 +190,7 @@ def _migrate_room_chunk_parts() -> None:
         db.session.execute(sa.text("ALTER TABLE room_chunk RENAME COLUMN asked TO summary"))
     _add_column_if_missing("room_chunk", "parts", "parts JSONB")
     _add_column_if_missing("room_chunk", "audit", "audit JSONB")
+    _add_column_if_missing("room_chunk", "statements", "statements JSONB")
     old_key = db.session.execute(sa.text(
         "SELECT 1 FROM pg_constraint WHERE conname = 'room_chunk_key'")).scalar()
     if old_key:

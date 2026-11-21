@@ -204,6 +204,25 @@ def test_near_chunks_are_part_by_part_and_far_ones_a_line():
     assert "Before this" not in out.earlier
 
 
+def test_what_the_user_stated_is_on_the_chunks_lines():
+    messages, chunks, window = _room(90)
+    said = ["Tasks run in child processes so a hung one can be stopped.",
+            "The cloud is not trusted with the diary"]
+    chunks[0]["statements"] = said                 # far
+    chunks[2]["statements"] = said[:1]             # near
+    lines = rb.build(chunks, messages, window, None).earlier.split("\n")
+    assert lines[0] == ("1999-10-04: subject 0; the user said: Tasks run in child "
+                        "processes so a hung one can be stopped; the user said: "
+                        "The cloud is not trusted with the diary")
+    assert lines[2:5] == [
+        "1999-10-06:",
+        "- the user said: Tasks run in child processes so a hung one can be stopped.",
+        "- wanted: the opening hours of the harbour office. answered then: it opens at nine."]
+    # A chunk written before statements were kept has none, and no line.
+    chunks[2]["statements"] = None
+    assert "the user said" not in rb.build(chunks, messages, window, None).earlier.split("\n")[3]
+
+
 def test_a_hole_and_a_lagging_tail_are_each_one_line():
     messages = _messages(120)
     chunks = _chunks(messages, 6)

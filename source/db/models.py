@@ -1243,6 +1243,12 @@ class RoomChunk(db.Model):
     # replies). From prompt 4 the calibration is decided by rule and carries
     # its `calibration_basis`. NULL for a chunk written before parts existed.
     parts: Mapped[list | None] = mapped_column(JSONB)
+    # What the user stated in the chunk that is not a request: something
+    # about themselves or their work, how a thing is built and why, a
+    # decision. A sentence each, written by the model from prompt 20 and
+    # kept only where its words are the user's own
+    # (`room_chunks.settle_statements`). NULL for a chunk written before.
+    statements: Mapped[list | None] = mapped_column(JSONB)
     # Where its reply strayed from the asked-for format.
     problems: Mapped[list] = mapped_column(JSONB, default=list)
     # The check of the summary by a second call: `{attempts, rewritten,

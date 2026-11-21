@@ -1018,6 +1018,7 @@ _CHUNK_BODY = """  {# What is taken from a message's number in the room before i
   <div class="bd">
     <dl class="hk-kv">
       <dt>Summary</dt><dd>{{ c.row.summary or '' }}</dd>
+      {% if c.row.statements %}<dt title="What the user stated in these messages that is not a request, as the model wrote it. Kept only where its words are the user's own.">You said</dt><dd>{% for s in c.row.statements %}{{ s }}{% if not loop.last %}<br>{% endif %}{% endfor %}</dd>{% endif %}
       <dt>Topics</dt><dd>{% for t in c.row.topics %}<span class="hk-chip">{{ t }}</span> {% endfor %}</dd>
       {% if c.row.parts %}
       <dt>Parts</dt>

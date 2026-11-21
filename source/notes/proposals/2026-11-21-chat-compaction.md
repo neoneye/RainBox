@@ -1,7 +1,8 @@
 # Chat compaction: a room's background in the prompt
 
-**Status:** Proposal. Build step 1 of §9 is built: the blocks are written by
-`agents/room_background.py` and shown on a room's Housekeeping page, as
+**Status:** Proposal. Build steps 1 and 2 of §9 are built: the blocks are
+written by `agents/room_background.py` and shown on a room's Housekeeping
+page, and a chunk keeps what the user stated, as
 `notes/housekeeping-design.md` describes. No prompt holds them.
 **Date:** 2026-11-21
 **Related:**
@@ -524,10 +525,13 @@ reach no prompt.
   put decisions on the near lines with no new job. It changes the chunk
   prompt, so it starts a new series and needs its own replay on stored
   calls. **§6 showed the big picture is missing without it, so it is build
-  step 2.** How it is rendered: a near part's line gains `the user said:
-  <stated>` ahead of how it went, and a far line carries its chunk's
-  statements after its subjects, cut as the subjects are. A part made only
-  of statements, with no request, is allowed: its line is the statement.
+  step 2.** It was built at the chunk's level and not the part's: a list
+  of at most three `statements`, last in the schema. Asked for inside each
+  part, the model copied plain requests into it. A near chunk gains a line
+  `- the user said: …` for each, ahead of its parts, and a far line carries
+  them after its subjects. The replay's numbers and the rule that keeps a
+  statement only where its words are the user's own are in
+  `notes/housekeeping-design.md`.
 - **A record-only phase.** The block is a pure function of rows, and the
   page shows it for any room at any time. Reading it there is the dry run.
 - **Clustering by embedding, a compaction cursor with locks, a per-room
@@ -655,13 +659,11 @@ part that read the diary.
 
 1. **`agents/room_background.py`, `tally`'s `last`, the bounded load, the
    tests, and the page's view on it.** In no prompt.
-2. **`stated` in the chunk prompt** (`agents/room_chunks.py`, a new prompt
-   version and so a new series): what the user stated, decided or explained
-   in a part, in at most two short sentences, empty for a part that is only
-   a request. Replayed on stored chunk calls before it is kept: the parts,
-   results and ranges must not get worse, and the explanations the first
-   read missed must appear. Then the room is summarized again and read
-   again.
+2. **What the user stated, in the chunk prompt** (`agents/room_chunks.py`,
+   prompt 20 and so a new series; built). Replayed on stored chunk calls:
+   the parts did not get worse, and the explanations the first read missed
+   appear. **Next: the room is summarized again and read again**, on its
+   Housekeeping page (**Summarize the rest**, in the new series).
 3. **The setting, the load in the turn, the fit check, the instruction
    paragraph, the record.** Off in production. `PROMPT_RESERVE_CHARS` is set
    here, from the sizes of stored decide calls.

@@ -879,6 +879,7 @@ def load_room_background(room_uuid: UUID, window_first_id: int | None, *,
     chunks = [{"uuid": r.uuid, "first_id": r.first_message_id,
                "last_id": r.last_message_id, "content_hash": r.content_hash,
                "summary": r.summary, "parts": r.parts,
+               "statements": r.statements,
                "prompt_version": r.prompt_version} for r in rows]
     first = shown[0]["first_id"]
     counted = counted_room_messages(

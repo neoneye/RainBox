@@ -117,7 +117,7 @@ in two levels:
 | level | fields |
 |---|---|
 | each part | `first_message`, `last_message`, `summary`, `result`, `follow_up`, `topics` (one or two) |
-| the chunk | `subjects` (a phrase for each part's subject), `topics` (one to three, broader) |
+| the chunk | `subjects` (a phrase for each part's subject), `topics` (one to three, broader), `statements` (what the user stated, at most three) |
 
 **Every prompt numbers its chunk from m1.** A chunk's messages are m1 to
 m10 wherever the chunk stands in its room, and the context on each side has
@@ -159,6 +159,38 @@ are named with them in view.
 - **`follow_up`** is a choice: `corrected`, `retried`, `thanked`, `none`.
   It is what the user's messages in the part say about the replies, and
   the only part of the user's reaction left to the model.
+
+**`statements` are what the user told the assistant that is not a
+request**: something about themselves or their work, how a thing is built
+and why, a decision, a plan, a preference. A part holds a request and what
+came of it, and an explanation is neither: a stretch where the user
+explained how their system is built was stored as one subject and nothing
+of what was said. The list stands last in the schema and its instruction
+last before the rules, so the parts are written before it and as they were.
+Most chunks have none.
+
+- **A statement is kept where its words are the user's own**
+  (`room_chunks.settle_statements`): at least half of its words of four
+  letters or more are in the user's messages of the chunk. The prompt says
+  to take nothing from a reply, and the model does anyway: what a reply had
+  read out of the diary came back as something the user said. One that is
+  dropped is listed in the chunk's `problems`. The rule reads words apart by
+  spaces, so it keeps nothing of a language written without them.
+- **Replayed on one room's 16 stored chunk prompts**, on gemma4:e4b-mlx:
+  statements in 4 chunks, 8 in all. Five were the user's explanations, the
+  ones the room's summaries had lost. Two came from a reply, at 0.40 and
+  0.11 of their words the user's, and the rule drops them; the five stood at
+  0.50 to 0.88. One was a request written as a statement, at 0.57, which
+  the rule keeps.
+- **A statement put as a question is missed.** The user proposing a design
+  by asking what the assistant thought of it gave no statement.
+- **The parts did not change by it.** With the list asked for inside each
+  part instead, the model copied plain requests into it. At the chunk's
+  end, the new prompt's parts differed from the stored ones no more than
+  the old prompt's did when run again: the same chunks came out merged or
+  split either way.
+- **A reply that leaves the list out stated nothing.** The field has a
+  default, so such a reply does not lose the chunk.
 
 **What the user did after each reply is read by rule** (`room_chunks.react`),
 and stored as the part's `reactions`, in order. Whether a message follows a
@@ -467,8 +499,8 @@ out. With none left the job fails and says so.
 
 **What is stored.** One `room_chunk` row per chunk, written once: its series
 and `seq`, its edges as message ids, a `content_hash` of its messages,
-`summary`, `topics`, `parts`, `problems`, `audit`, the model and the prompt
-version. The page recomputes
+`summary`, `topics`, `parts`, `statements`, `problems`, `audit`, the model
+and the prompt version. The page recomputes
 the hash and marks a chunk whose messages have changed since.
 
 **Where it goes.** The summaries are shown on the room's page. They reach no
@@ -604,10 +636,11 @@ is called and nothing is stored.
 
 **`room_earlier`** is the newest 16 chunks that begin before the window
 does, oldest first. The newest of them can hold the window's first message.
-- **The 4 nearest are part by part**: a line of dates, then for each part
-  what was wanted and how it went.
+- **The 4 nearest are part by part**: a line of dates, a line for each
+  thing the user stated, then for each part what was wanted and how it went.
 - **The 12 before them are a line each**: the dates and the chunk's
-  subjects, with any part that was not settled, or was asked again.
+  subjects, what the user stated, and any part that was not settled, was
+  corrected or was asked again.
 - **A stretch with no chunk** is a line saying how many messages are not
   summarized: between two chunks, and between the newest chunk and the
   window.
@@ -644,7 +677,7 @@ chunks carries the date it was last summarized.
 1,200. The near chunks may take 2,400 between them; over that the oldest
 becomes a line. Then the oldest lines are dropped and counted in `Before
 this`. What was wanted is cut at 160 characters, a result at 240, a chunk's
-subjects at 200.
+subjects and a statement at 200.
 
 **The series read** is the one given, or the one whose newest chunk reaches
 furthest into the room.
@@ -750,6 +783,7 @@ The inbox item is a hint. The rows say what is due.
 | `first_message_id`, `last_message_id`, `message_count` | its edges and size |
 | `content_hash` | over its messages' ids and texts when it was written |
 | `summary`, `topics` | the chunk's subjects, joined, and broader topics |
+| `statements` | what the user stated in the chunk, a sentence each; NULL for a chunk written before prompt 20 |
 | `parts` | its parts: `{first_message, last_message, summary, topics, requests}`, and from prompt 3 `result`, the reactions, `calibration`, `signals`; from prompt 4 `calibration_basis`; from prompt 6 `audit`; from prompt 7 the reactions are read by rule; from prompt 12 `asked_again_at`; from prompt 19 `grounding`, and `tools` in its `signals`; NULL for a chunk of the first prompt |
 | `problems` | what was off in the reply, and in the check's reply |
 | `audit` | the check: `{attempts, rewritten, error}`, and `repeat_check`, what the decision model was asked; NULL for a chunk written before the check existed |

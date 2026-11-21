@@ -35,10 +35,16 @@ from pydantic import BaseModel, Field
 #: Bumped when the prompt, the schema or the parsing changes. A chunk belongs
 #: to the series of the version that wrote it, so a new version summarizes a
 #: room again beside the old series, and the two can be compared.
-PROMPT_VERSION = 19
+PROMPT_VERSION = 20
 
 SUMMARY_MAX_CHARS = 120
 RESULT_MAX_CHARS = 160
+STATED_MAX_CHARS = 240
+MAX_STATEMENTS = 3
+#: A statement is the user's when this share of its words of
+#: `STATEMENT_WORD_MIN` letters or more are in the user's own messages.
+STATEMENT_MIN_OWN = 0.5
+STATEMENT_WORD_MIN = 4
 TOPIC_MAX_CHARS = 32
 SUBJECT_MAX_CHARS = 64
 MAX_PARTS = 5
@@ -85,6 +91,11 @@ class ChunkSummary(BaseModel):
     parts: list[ChunkPart] = Field(description="The chunk's parts, in order.")
     subjects: list[str] = Field(description="A phrase for each part's subject, in order.")
     topics: list[str] = Field(description="Broader names that group the parts' subjects.")
+    # A reply that leaves the list out stated nothing: that is not a reason
+    # to lose the chunk.
+    statements: list[str] = Field(
+        default_factory=list,
+        description="What the user stated in the chunk, a sentence each. Empty when the user only asked.")
 
 
 # No sample answers and no sample topic names anywhere in this prompt: a small
@@ -130,6 +141,14 @@ SYSTEM_PROMPT = (
     "the user's whole request is too much. It is a phrase and not a "
     "sentence: it has no speaker, and it does not say that something was "
     "asked, wanted or discussed.\n\n"
+    "Last, statements: what the user told the assistant in the chunk "
+    "about themselves, their work, or how a thing is built and why; a "
+    "decision, a plan or a preference of theirs. A message that asks for "
+    "something, or tells the assistant to do something, holds no "
+    "statement: it is already a part. Most chunks hold none, and the list "
+    "is then empty. Otherwise at most three, each one sentence of at most "
+    "twenty-five words that gives what was said, shorter than the user "
+    "said it. Only what the user wrote, nothing from a reply.\n\n"
     "Rules:\n"
     "- A phrase is at most fourteen words unless said otherwise. It does "
     "not begin by naming who spoke, and it does not announce itself.\n"
@@ -417,6 +436,39 @@ def _sentence(text: str, where: str, problems: list[str],
     elif len(text) > limit:
         problems.append(f"{where}: {len(text)} characters")
     return text
+
+
+def settle_statements(raw: list[str] | None,
+                      chunk: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
+    """What is stored of the statements a reply gave: `(statements,
+    problems)`. None is the usual answer, and not a problem: most chunks
+    are requests and nothing more.
+
+    A statement is kept when at least half of its longer words are in the
+    user's own messages of the chunk (`STATEMENT_MIN_OWN`). The model is
+    told to take nothing from a reply, and does anyway: what a reply read
+    out of the diary came back as something the user had said. A statement
+    in the user's words shares most of them with what the user wrote; one
+    lifted from a reply shares few. The rule reads words apart by spaces,
+    so it keeps nothing of a language written without them."""
+    own = {t for m in chunk if m.get("sender") == "human"
+           for t in _tokens(m.get("text") or "") if len(t) >= STATEMENT_WORD_MIN}
+    out: list[str] = []
+    problems: list[str] = []
+    for text in raw or []:
+        text = " ".join(str(text or "").split())
+        if not text or text in out:
+            continue
+        words = [t for t in _tokens(text) if len(t) >= STATEMENT_WORD_MIN]
+        if not words or sum(t in own for t in words) / len(words) < STATEMENT_MIN_OWN:
+            problems.append(f"a statement is not in the user's messages: {text[:80]}")
+            continue
+        if len(text) > STATED_MAX_CHARS:
+            problems.append(f"a statement: {len(text)} characters")
+        out.append(text)
+    if len(out) > MAX_STATEMENTS:
+        problems.append(f"{len(out)} statements, kept {MAX_STATEMENTS}")
+    return out[:MAX_STATEMENTS], problems
 
 
 def _join_repeats(parts: list[dict[str, Any]], chunk: list[dict[str, Any]],
