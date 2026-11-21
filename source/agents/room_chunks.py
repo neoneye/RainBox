@@ -35,7 +35,7 @@ from pydantic import BaseModel, Field
 #: Bumped when the prompt, the schema or the parsing changes. A chunk belongs
 #: to the series of the version that wrote it, so a new version summarizes a
 #: room again beside the old series, and the two can be compared.
-PROMPT_VERSION = 21
+PROMPT_VERSION = 22
 
 SUMMARY_MAX_CHARS = 120
 RESULT_MAX_CHARS = 160
@@ -48,6 +48,9 @@ STATEMENT_WORD_MIN = 4
 #: A statement with this share of its longer words in one part's subject
 #: repeats that part's request.
 STATEMENT_MAX_REQUEST = 0.5
+#: A statement that is this share of the message it was copied from is
+#: the message, and a whole message is a part's request.
+STATEMENT_MAX_OF_MESSAGE = 0.8
 TOPIC_MAX_CHARS = 32
 SUBJECT_MAX_CHARS = 64
 MAX_PARTS = 5
@@ -473,9 +476,12 @@ def settle_statements(raw: list[str] | None, chunk: list[dict[str, Any]],
     few. The rule reads words apart by spaces, so it keeps nothing of a
     language written without them.
 
-    One that repeats a request of the chunk's `parts` is dropped too
-    (`restates_request`): the part already holds it."""
-    own = [set(_tokens(m.get("text") or "")) for m in chunk if m.get("sender") == "human"]
+    One that is the whole of its message is dropped (`STATEMENT_MAX_OF_MESSAGE`):
+    a question or an instruction is a message of its own and a part
+    already holds it, while what the user explains is a sentence among
+    others. One that repeats a request of the chunk's `parts` is dropped
+    too (`restates_request`)."""
+    own = [_tokens(m.get("text") or "") for m in chunk if m.get("sender") == "human"]
     out: list[str] = []
     problems: list[str] = []
     for text in raw or []:
@@ -483,9 +489,13 @@ def settle_statements(raw: list[str] | None, chunk: list[dict[str, Any]],
         if not text or text in out:
             continue
         words = [t for t in _tokens(text) if len(t) >= STATEMENT_WORD_MIN]
-        if not words or max((sum(t in message for t in words) for message in own),
-                            default=0) / len(words) < STATEMENT_MIN_OWN:
+        source = max(own, key=lambda message: sum(t in message for t in words),
+                     default=[])
+        if not words or sum(t in source for t in words) / len(words) < STATEMENT_MIN_OWN:
             problems.append(f"a statement is not in the user's messages: {text[:80]}")
+            continue
+        if len(_tokens(text)) >= STATEMENT_MAX_OF_MESSAGE * len(source):
+            problems.append(f"a statement is a whole message: {text[:80]}")
             continue
         if restates_request(text, parts):
             problems.append(f"a statement repeats a request: {text[:80]}")

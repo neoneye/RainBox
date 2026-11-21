@@ -183,6 +183,15 @@ Most chunks have none.
   One that is dropped is listed in the chunk's `problems`. The rule reads
   words apart by spaces, so it keeps nothing of a language written without
   them.
+- **A statement that is its whole message is dropped**: its words number
+  at least 0.8 of the words of the message it was copied from. A question
+  or an instruction is a message of its own, and a part already holds it as
+  what was wanted; what the user explains is a sentence among others. On
+  one room's 16 chunks as the job stored them, the four requests copied as
+  statements were each all of their message and a fifth was a question
+  with an aside, while the seven explanations were between 0.14 and 0.43
+  of theirs. A statement the user makes in a message of one sentence is
+  lost to this rule as a statement, and stays as its part's request.
 - **A statement that repeats a request is dropped**
   (`room_chunks.restates_request`): at least half of its words of four
   letters or more are in the subject of one part of the chunk. The prompt
@@ -809,7 +818,7 @@ The inbox item is a hint. The rows say what is due.
 | `first_message_id`, `last_message_id`, `message_count` | its edges and size |
 | `content_hash` | over its messages' ids and texts when it was written |
 | `summary`, `topics` | the chunk's subjects, joined, and broader topics |
-| `statements` | what the user stated in the chunk: their own words from prompt 21 on, the model's wording at prompt 20; NULL for a chunk written before that |
+| `statements` | what the user stated in the chunk: their own words from prompt 21 on (from 22 never a whole message), the model's wording at prompt 20; NULL for a chunk written before that |
 | `parts` | its parts: `{first_message, last_message, summary, topics, requests}`, and from prompt 3 `result`, the reactions, `calibration`, `signals`; from prompt 4 `calibration_basis`; from prompt 6 `audit`; from prompt 7 the reactions are read by rule; from prompt 12 `asked_again_at`; from prompt 19 `grounding`, and `tools` in its `signals`; NULL for a chunk of the first prompt |
 | `problems` | what was off in the reply, and in the check's reply |
 | `audit` | the check: `{attempts, rewritten, error}`, and `repeat_check`, what the decision model was asked; NULL for a chunk written before the check existed |

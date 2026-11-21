@@ -645,6 +645,27 @@ The same room, summarized again with `statements` and reviewed again:
   turn must not take as answered); topics rewritten as themes (a generated
   overview, §5).
 
+### What the third read showed
+
+The room summarized under the copying prompt:
+
+- **The old explanations are in the block**, in the user's words, under
+  `Before this`. This is what the first two reads lacked.
+- **Five of twelve statements were requests copied whole** ("when did I
+  ..."). Each was all of its message; every explanation was a sentence
+  out of a longer one. A statement that is its whole message is now dropped
+  when the chunk is stored (chunk prompt 22,
+  `notes/housekeeping-design.md`).
+- **`room_topics` had two rows because the topics job had not finished**
+  when the block was read. Finished, it has five.
+- **Not taken from the review:** statements reworded by the model to say
+  more (the second read's rewordings could not be told from a reply's
+  words, and two real ones were lost for it); runs of failed requests in
+  one sentence (as before).
+- **Open:** a quoted sentence can leave its reason in the next one; a
+  corrected part says that it was corrected and not what the correction
+  was.
+
 Three probes are added for it, each a question about something the user
 explained before the window and never asked for: why a design choice was
 made, how a part of the system works, what the user finds hard. Each passes
@@ -713,7 +734,7 @@ part that read the diary.
 1. **`agents/room_background.py`, `tally`'s `last`, the bounded load, the
    tests, and the page's view on it.** In no prompt.
 2. **What the user stated, in the chunk prompt** (`agents/room_chunks.py`,
-   prompt 21 and so a new series; built). Replayed on stored chunk calls:
+   prompt 22 and so a new series; built). Replayed on stored chunk calls:
    the parts did not get worse, and the explanations the first read missed
    appear, in the user's own words. **Next: the room is summarized again
    and read again**, on its Housekeeping page (**Summarize the rest**, in
