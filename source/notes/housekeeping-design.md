@@ -117,7 +117,7 @@ in two levels:
 | level | fields |
 |---|---|
 | each part | `first_message`, `last_message`, `summary`, `result`, `follow_up`, `topics` (one or two) |
-| the chunk | `subjects` (a phrase for each part's subject), `topics` (one to three, broader), `statements` (what the user stated, at most three) |
+| the chunk | `subjects` (a phrase for each part's subject), `topics` (one to three, broader), `statements` (what the user stated, three asked for and up to five kept) |
 
 **Every prompt numbers its chunk from m1.** A chunk's messages are m1 to
 m10 wherever the chunk stands in its room, and the context on each side has
@@ -192,24 +192,26 @@ Most chunks have none.
   with an aside, while the seven explanations were between 0.14 and 0.43
   of theirs. A statement the user makes in a message of one sentence is
   lost to this rule as a statement, and stays as its part's request.
-- **A statement that repeats a request is dropped**
-  (`room_chunks.restates_request`): at least half of its words of four
-  letters or more are in the subject of one part of the chunk. The prompt
-  says a request holds no statement, and the model copies one all the same.
-  It is listed in `problems` too. `room_background` applies the rule again
-  when it reads a chunk, so a background shows no such line whatever the
-  row holds.
+- **A statement is not held against the parts' subjects.** A rule that
+  dropped one sharing half its words with a part's subject caught a few
+  requests, all of which the whole-message rule catches too, and dropped a
+  real statement: where the user explains, the explanation is the part's
+  subject.
 - **Replayed on one room's 16 stored chunk prompts**, on gemma4:e4b-mlx,
   with only the instruction changed: 16 statements in 8 chunks. Fourteen
   were word for word from a message of the user's, all of their words in
   it. Two were sentences of a reply, with 0.05 and 0.08 of their words in
   any message of the user's, so the 0.8 floor has room on both sides. Of
   the fourteen, nine were explanations, plans or reasons, three were
-  corrections of a reply, and two were requests, which the request rule
-  drops. Every explanation the reworded statements had lost to the old
+  corrections of a reply, and two were requests, each the whole of
+  its message. Every explanation the reworded statements had lost to the old
   floor of 0.5 came back.
-- **The limit of three cuts a chunk that says more.** The model gave four
-  for the densest chunk, and a fifth explanation in it was not given.
+- **Up to five are stored, though the prompt asks for three**
+  (`MAX_STATEMENTS`). The model gives a fourth for a chunk where the user
+  explains at length, and with the rules above a fourth costs nothing.
+- **Which sentences are picked varies by run.** Three runs of the densest
+  chunk each gave three or four of its six or so sentences worth keeping,
+  and no two runs the same ones. The first was in all three.
 - **The parts did not change by it.** With the list asked for inside each
   part instead, the model copied plain requests into it. At the chunk's
   end, the parts written under the copying instruction numbered the same as
@@ -664,9 +666,10 @@ is called and nothing is stored.
 does, oldest first. The newest of them can hold the window's first message.
 - **The 4 nearest are part by part**: a line of dates, a line for each
   thing the user stated, then for each part what was wanted and how it went.
-- **The 12 before them are a line each**: the dates and the chunk's
-  subjects, what the user stated, and any part that was not settled, was
-  corrected or was asked again.
+- **The 12 before them are a line each**: the dates, what each part
+  wanted, with `(not settled: why)`, `(corrected by the user)` or `(asked
+  N times)` beside it where that applies, and what the user stated. A
+  chunk stored without parts is its subjects.
 - **A stretch with no chunk** is a line saying how many messages are not
   summarized: between two chunks, and between the newest chunk and the
   window.
@@ -702,7 +705,10 @@ place, for a part older than the room's newest facts invalidation, and
 whose chunk prompt is older than the one that records tools.
 
 **`room_topics`** is a line per recurring topic: the 5 newest with a part
-in the shown chunks, then the largest, 10 in all. A topic outside the shown
+in the shown chunks, then the largest, a named thing and a kind of task by
+turns, 10 in all. Ranked together, the kinds of task (looking things up,
+computing), which every room has, left no row for the things this room is
+about. A topic outside the shown
 chunks carries the date it was last summarized. A topic whose parts are all
 counted by a larger topic is not listed, and of two over the same parts the
 named thing is (`_without_doubles`): a kind of task and a named thing are
@@ -818,7 +824,7 @@ The inbox item is a hint. The rows say what is due.
 | `first_message_id`, `last_message_id`, `message_count` | its edges and size |
 | `content_hash` | over its messages' ids and texts when it was written |
 | `summary`, `topics` | the chunk's subjects, joined, and broader topics |
-| `statements` | what the user stated in the chunk: their own words from prompt 21 on (from 22 never a whole message), the model's wording at prompt 20; NULL for a chunk written before that |
+| `statements` | what the user stated in the chunk: their own words from prompt 21 on (from 22 never a whole message; from 23 up to five), the model's wording at prompt 20; NULL for a chunk written before that |
 | `parts` | its parts: `{first_message, last_message, summary, topics, requests}`, and from prompt 3 `result`, the reactions, `calibration`, `signals`; from prompt 4 `calibration_basis`; from prompt 6 `audit`; from prompt 7 the reactions are read by rule; from prompt 12 `asked_again_at`; from prompt 19 `grounding`, and `tools` in its `signals`; NULL for a chunk of the first prompt |
 | `problems` | what was off in the reply, and in the check's reply |
 | `audit` | the check: `{attempts, rewritten, error}`, and `repeat_check`, what the decision model was asked; NULL for a chunk written before the check existed |

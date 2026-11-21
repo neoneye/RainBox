@@ -96,7 +96,7 @@ misread, and gemma4 copies the shape of what it is shown.
 <room_earlier>
 Before this: 140 messages from 1999-10-04 to 1999-10-21.
 1999-10-21: open tasks on the garden board, counting a letter in a word
-1999-10-22: unit conversions; not settled: how many times a letter occurs in a word (the answer was rejected)
+1999-10-22: unit conversions, how many times a letter occurs in a word (not settled: the answer was rejected)
 …
 1999-10-27 to 1999-10-28:
 - wanted: move the two painting tasks to done. came of it: both tasks were moved.
@@ -107,11 +107,10 @@ Before this: 140 messages from 1999-10-04 to 1999-10-21.
 </room_earlier>
 ```
 
-**A far chunk** (the 12) is one line: its dates and its stored subjects
-(`room_chunk.summary`). A part of it that was not settled is added to the
-line as `not settled: <wanted> (<why>)`, and a part that was asked again as
-`asked N times: <wanted>`, so an open thread stays visible at any distance
-shown.
+**A far chunk** (the 12) is one line: its dates and what each part
+wanted. A part that was not settled has `(not settled: <why>)` beside it,
+and one that was asked again `(asked N times)`, so an open thread stays
+visible at any distance shown and nothing is named twice.
 
 **A near chunk** (the 4) is a line of dates and a line per part: what was
 wanted, then how it went.
@@ -132,7 +131,7 @@ that applies:
 
 **"Not settled"** is the first four rows. Corrected and asked again are
 their own cases, and are not called unsettled: on a far line they read
-`corrected by the user: <wanted>` and `asked N times: <wanted>`.
+`<wanted> (corrected by the user)` and `<wanted> (asked N times)`.
 
 **A correction is not a rejection.** When the user corrects a reply and the
 exchange goes on from the correction, the part's result is where it ended.
@@ -284,8 +283,8 @@ the rows are chosen in two passes:
 
 1. every topic with a part in the 16 shown chunks, newest first, at most
    `TOPICS_RECENT` (5);
-2. then the largest by share that are not yet listed, up to `TOPICS_MAX`
-   (10) rows in all.
+2. then the largest by share that are not yet listed, a named thing and a
+   kind of task by turns, up to `TOPICS_MAX` (10) rows in all.
 
 Recent ones are listed first. A topic the operator named or explained is
 shown in their words. "Largest" is by the messages its parts hold, as
@@ -550,13 +549,13 @@ reach no prompt.
   prompt, so it starts a new series and needs its own replay on stored
   calls. **§6 showed the big picture is missing without it, so it is build
   step 2.** It was built at the chunk's level and not the part's: a list
-  of at most three `statements`, last in the schema. Asked for inside each
+  of `statements` (three asked for, up to five kept), last in the schema. Asked for inside each
   part, the model copied plain requests into it. A near chunk gains a line
   `- the user said: …` for each, ahead of its parts, and a far line carries
   them after its subjects. A statement is a sentence copied from the user's
   message and is shown in quotation marks: `- the user said: "…"`. The
   replay's numbers and the rules that keep a statement only where its words
-  are in one message of the user's, and drop one that repeats a request,
+  are in one message of the user's, and drop one that is its whole message,
   are in `notes/housekeeping-design.md`.
 - **A record-only phase.** The block is a pure function of rows, and the
   page shows it for any room at any time. Reading it there is the dry run.
@@ -666,6 +665,23 @@ The room summarized under the copying prompt:
   corrected part says that it was corrected and not what the correction
   was.
 
+### What the fourth read showed
+
+- **Requests are no longer quoted as statements.**
+- **The room's own subject had no topic row**, though the registry held it
+  with three parts: ranked by size, kinds of task filled the rows. The rest
+  of the list now takes a named thing and a kind of task by turns (§3.4).
+- **A real statement was dropped as repeating a request.** That rule is
+  removed; the whole-message rule covers what it caught.
+- **Which statements a chunk keeps varies by run**, as three stored runs of
+  the same chunk show. Up to five are kept now. Choosing among them for
+  variety would take a model call and is not done.
+- **A far line named an unsettled part twice.** The mark now stands beside
+  the part, which on this room let one more chunk into the block.
+- **Not taken, for the third time of asking:** one sentence for a run of
+  similar requests. The far lines are the short form; an unsettled request
+  stays named so a later turn does not take it as answered.
+
 Three probes are added for it, each a question about something the user
 explained before the window and never asked for: why a design choice was
 made, how a part of the system works, what the user finds hard. Each passes
@@ -734,7 +750,7 @@ part that read the diary.
 1. **`agents/room_background.py`, `tally`'s `last`, the bounded load, the
    tests, and the page's view on it.** In no prompt.
 2. **What the user stated, in the chunk prompt** (`agents/room_chunks.py`,
-   prompt 22 and so a new series; built). Replayed on stored chunk calls:
+   prompt 23 and so a new series; built). Replayed on stored chunk calls:
    the parts did not get worse, and the explanations the first read missed
    appear, in the user's own words. **Next: the room is summarized again
    and read again**, on its Housekeeping page (**Summarize the rest**, in

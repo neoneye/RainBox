@@ -35,19 +35,18 @@ from pydantic import BaseModel, Field
 #: Bumped when the prompt, the schema or the parsing changes. A chunk belongs
 #: to the series of the version that wrote it, so a new version summarizes a
 #: room again beside the old series, and the two can be compared.
-PROMPT_VERSION = 22
+PROMPT_VERSION = 23
 
 SUMMARY_MAX_CHARS = 120
 RESULT_MAX_CHARS = 160
 STATED_MAX_CHARS = 240
-MAX_STATEMENTS = 3
+#: More than the prompt asks for: a chunk where the user explains holds
+#: more than three sentences worth keeping, and the model gives a fourth.
+MAX_STATEMENTS = 5
 #: A statement is the user's when this share of its words of
 #: `STATEMENT_WORD_MIN` letters or more are in one of the user's messages.
 STATEMENT_MIN_OWN = 0.8
 STATEMENT_WORD_MIN = 4
-#: A statement with this share of its longer words in one part's subject
-#: repeats that part's request.
-STATEMENT_MAX_REQUEST = 0.5
 #: A statement that is this share of the message it was copied from is
 #: the message, and a whole message is a part's request.
 STATEMENT_MAX_OF_MESSAGE = 0.8
@@ -445,24 +444,8 @@ def _sentence(text: str, where: str, problems: list[str],
     return text
 
 
-def restates_request(statement: str, parts: list[dict[str, Any]] | None) -> bool:
-    """Whether a statement only says what one of the chunk's parts already
-    says was wanted: at least `STATEMENT_MAX_REQUEST` of its longer words
-    are in that part's subject. The model is told that a request holds no
-    statement, and writes "the user asked for ..." all the same."""
-    words = [t for t in _tokens(statement) if len(t) >= STATEMENT_WORD_MIN]
-    if not words:
-        return False
-    for part in parts or []:
-        subject = set(_tokens(str(part.get("summary") or "")))
-        if sum(t in subject for t in words) / len(words) >= STATEMENT_MAX_REQUEST:
-            return True
-    return False
-
-
-def settle_statements(raw: list[str] | None, chunk: list[dict[str, Any]],
-                      parts: list[dict[str, Any]] | None = None,
-                      ) -> tuple[list[str], list[str]]:
+def settle_statements(raw: list[str] | None,
+                      chunk: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
     """What is stored of the statements a reply gave: `(statements,
     problems)`. None is the usual answer, and not a problem: most chunks
     are requests and nothing more.
@@ -479,8 +462,7 @@ def settle_statements(raw: list[str] | None, chunk: list[dict[str, Any]],
     One that is the whole of its message is dropped (`STATEMENT_MAX_OF_MESSAGE`):
     a question or an instruction is a message of its own and a part
     already holds it, while what the user explains is a sentence among
-    others. One that repeats a request of the chunk's `parts` is dropped
-    too (`restates_request`)."""
+    others."""
     own = [_tokens(m.get("text") or "") for m in chunk if m.get("sender") == "human"]
     out: list[str] = []
     problems: list[str] = []
@@ -496,9 +478,6 @@ def settle_statements(raw: list[str] | None, chunk: list[dict[str, Any]],
             continue
         if len(_tokens(text)) >= STATEMENT_MAX_OF_MESSAGE * len(source):
             problems.append(f"a statement is a whole message: {text[:80]}")
-            continue
-        if restates_request(text, parts):
-            problems.append(f"a statement repeats a request: {text[:80]}")
             continue
         if len(text) > STATED_MAX_CHARS:
             problems.append(f"a statement: {len(text)} characters")

@@ -13,9 +13,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from itertools import zip_longest
 from typing import Any
 
-from agents.room_chunks import PROGRAM, content_hash, part_grounding, restates_request
+from agents.room_chunks import PROGRAM, content_hash, part_grounding
 from agents.room_topics import AXES
 
 #: The chunks before the window that `room_earlier` shows, and how many of
@@ -221,30 +222,27 @@ def _dates(messages: list[dict[str, Any]]) -> str:
 def said(chunk: dict[str, Any]) -> list[str]:
     """What the user stated in the chunk, each cut to a line: in quotation
     marks where it is the user's own words (`QUOTED_FROM`), a sentence
-    where the model worded it. One that repeats a request of the chunk is
-    left out, as it is when a chunk is stored: the part's own line says
-    it."""
-    parts = chunk.get("parts")
+    where the model worded it."""
     quoted = int(chunk.get("prompt_version") or 0) >= QUOTED_FROM
     return [f'"{s}"' if quoted else _sentence(s)
-            for s in (_cut(t, STATED_MAX_CHARS) for t in chunk.get("statements") or []
-                      if not restates_request(str(t or ""), parts)) if s]
+            for s in (_cut(t, STATED_MAX_CHARS) for t in chunk.get("statements") or []) if s]
 
 
 def _far_line(dates: str, chunk: dict[str, Any]) -> str:
-    out = [_cut(chunk.get("summary"), SUBJECTS_MAX_CHARS)]
-    out += [f"the user said: {s}".rstrip(".") for s in said(chunk)]
+    """A far chunk's line: what each part wanted, with how it stands
+    beside it where it did not simply get an answer, then what the user
+    stated. A chunk with no parts is its subjects."""
+    wants = []
     for part in chunk.get("parts") or []:
         wanted = _cut(part.get("summary"), WANTED_MAX_CHARS)
         if not wanted:
             continue
         why = _unsettled(part)
-        if why:
-            out.append(f"not settled: {wanted} ({why})")
-        elif _corrected(part):
-            out.append(f"corrected by the user: {wanted}")
-        elif _asked(part):
-            out.append(f"asked {_asked(part)} times: {wanted}")
+        mark = (f"not settled: {why}" if why else "corrected by the user" if _corrected(part)
+                else f"asked {_asked(part)} times" if _asked(part) else "")
+        wants.append(f"{wanted} ({mark})" if mark else wanted)
+    out = [", ".join(wants) or _cut(chunk.get("summary"), SUBJECTS_MAX_CHARS)]
+    out += [f"the user said: {s}".rstrip(".") for s in said(chunk)]
     return f"{dates}: " + "; ".join(o for o in out if o)
 
 
@@ -397,10 +395,11 @@ def _without_doubles(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def pick_topics(tallied: dict[str, Any], shown_uuids: set[Any]) -> list[dict[str, Any]]:
     """The rows of `room_topics`: the topics with a part in the shown
     chunks first, newest first, at most `TOPICS_RECENT`; then the largest
-    of the rest, up to `TOPICS_MAX` in all. Each row gains `recent`.
+    of the rest, a named thing and a kind of task by turns, up to `TOPICS_MAX` in all. Each row gains `recent`.
     Ranked by size alone, a room's first months would hold every row."""
     # Named things first: of two rows over the same parts, the name stays.
-    rows = [dict(row) for axis in reversed(AXES) for row in tallied["axes"].get(axis, [])]
+    rows = [dict(row, axis=axis) for axis in reversed(AXES)
+            for row in tallied["axes"].get(axis, [])]
     rows = _without_doubles(rows)
     for row in rows:
         row["recent"] = any(m.chunk_uuid in shown_uuids for m in row["members"])
@@ -410,6 +409,11 @@ def pick_topics(tallied: dict[str, Any], shown_uuids: set[Any]) -> list[dict[str
     listed = {id(r) for r in recent}
     rest = sorted((r for r in rows if id(r) not in listed),
                   key=lambda r: (-r["messages"], -r["parts"]))
+    # A named thing and a kind of task by turns: ranked together, the
+    # kinds of task, which every room has, leave no row for what this room
+    # is about.
+    by_axis = [[r for r in rest if r["axis"] == axis] for axis in reversed(AXES)]
+    rest = [r for pair in zip_longest(*by_axis) for r in pair if r is not None]
     return (recent + rest)[:TOPICS_MAX]
 
 

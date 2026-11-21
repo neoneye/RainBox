@@ -374,7 +374,7 @@ def _fake_chunk_model(monkeypatch, reply=None, check=None):
     return prompts
 
 
-V = 22   # agents.room_chunks.PROMPT_VERSION
+V = 23   # agents.room_chunks.PROMPT_VERSION
 
 
 def test_chunks_are_cut_in_order_and_wait_for_their_context(app_ctx):
@@ -1141,17 +1141,13 @@ def test_a_statement_is_kept_where_its_words_are_the_users_own():
     assert chunks.settle_statements([], messages) == ([], [])
     assert chunks.settle_statements(None, messages) == ([], [])
     # More than the limit: the first ones, and it is said.
-    many = [own + "," * n for n in range(5)]
+    many = [own + "," * n for n in range(7)]
     kept, problems = chunks.settle_statements(many, messages)
-    assert len(kept) == chunks.MAX_STATEMENTS and problems == ["5 statements, kept 3"]
+    assert len(kept) == chunks.MAX_STATEMENTS and problems == ["7 statements, kept 5"]
     # A message copied whole is a request, and a part holds it.
     kept, problems = chunks.settle_statements(
         ["what is the weather tomorrow", own], messages)
     assert kept == [own]
     assert problems == ["a statement is a whole message: what is the weather tomorrow"]
-    # One that says again what a part of the chunk says was wanted is dropped.
-    parts = [{"summary": "trust in the cloud with a diary"}]
-    kept, problems = chunks.settle_statements([own], messages, parts)
-    assert kept == [] and problems == ["a statement repeats a request: " + own]
     # A reply that leaves the list out is a reply with none.
     assert chunks.ChunkSummary(parts=[], subjects=[], topics=[]).statements == []

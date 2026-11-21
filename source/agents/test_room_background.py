@@ -134,7 +134,7 @@ def test_a_correction_is_not_a_rejection():
     messages, chunks, window = _room(90)
     chunks[0]["parts"] = [dict(part, summary="the opening hours")]
     far = rb.build(chunks, messages, window, None).earlier.split("\n")[0]
-    assert far == "1999-10-04: subject 0; corrected by the user: the opening hours"
+    assert far == "1999-10-04: the opening hours (corrected by the user)"
     # No result stored: the line says nothing more.
     assert rb.how_it_went(_part(result="")) == ""
 
@@ -177,7 +177,7 @@ def test_wanted_result_and_subjects_are_cut_at_whitespace():
     line = rb.how_it_went(_part(result=long))
     assert len(line) <= len("answered then: ") + rb.RESULT_MAX_CHARS and line.endswith("word…")
     messages, chunks, window = _room(90)        # two far chunks, then four near
-    chunks[0]["summary"] = long
+    chunks[0].update(summary=long, parts=[])     # no parts: its subjects
     chunks[2]["parts"] = [_part(wanted=long)]
     far, _far, _dates, near = rb.build(chunks, messages, window, None).earlier.split("\n")[:4]
     assert len(far) <= len("1999-10-04: ") + rb.SUBJECTS_MAX_CHARS and far.endswith("word…")
@@ -194,9 +194,9 @@ def test_near_chunks_are_part_by_part_and_far_ones_a_line():
         _part(wanted="a settled thing")]
     out = rb.build(chunks, messages, window, None)
     lines = out.earlier.split("\n")
-    assert lines[0] == ("1999-10-04: subject 0; not settled: the tide table "
-                        "(the answer was rejected); asked 3 times: the ferry times")
-    assert lines[1] == "1999-10-05: subject 1"
+    assert lines[0] == ("1999-10-04: the tide table (not settled: the answer was rejected), "
+                        "the ferry times (asked 3 times), a settled thing")
+    assert lines[1] == "1999-10-05: the opening hours of the harbour office"
     assert lines[2:4] == [
         "1999-10-06:",
         "- wanted: the opening hours of the harbour office. answered then: it opens at nine."]
@@ -211,7 +211,8 @@ def test_what_the_user_stated_is_on_the_chunks_lines():
     chunks[0]["statements"] = said                 # far
     chunks[2]["statements"] = said[:1]             # near
     lines = rb.build(chunks, messages, window, None).earlier.split("\n")
-    assert lines[0] == ("1999-10-04: subject 0; the user said: Tasks run in child "
+    assert lines[0] == ("1999-10-04: the opening hours of the harbour office; "
+                        "the user said: Tasks run in child "
                         "processes so a hung one can be stopped; the user said: "
                         "The cloud is not trusted with the diary")
     assert lines[2:5] == [
@@ -272,7 +273,7 @@ def test_parts_of_an_older_chunk_prompt_show_no_result_to_a_remote_model():
 
 def test_wordy_near_chunks_leave_the_far_lines_in_the_block():
     messages, chunks, window = _room(200)
-    wordy = [_part(wanted="w" * 300, result="r" * 300) for _ in range(4)]
+    wordy = [_part(wanted="a thing wanted", result="r" * 300) for _ in range(4)]
     for chunk in chunks:
         chunk["parts"] = wordy
         chunk["summary"] = "a subject"
@@ -285,23 +286,23 @@ def test_wordy_near_chunks_leave_the_far_lines_in_the_block():
 
 def test_trimming_drops_the_oldest_line_and_says_so():
     messages = _messages(130)
-    chunks = _chunks(messages, 10, summary="s" * 200)
+    chunks = _chunks(messages, 10, parts=[_part("s" * 150)])
     window = messages[-30]["id"]
     # A room of ten chunks has no such line until one is dropped.
     assert "Before this" not in rb.render_earlier(chunks, messages, window)[0]
-    text, record = rb.render_earlier(chunks, messages, window, limit=1_500)
-    assert len(text) <= 1_500 and record["trimmed"] == 1
+    text, record = rb.render_earlier(chunks, messages, window, limit=1_700)
+    assert len(text) <= 1_700 and record["trimmed"] == 1
     lines = text.split("\n")
     assert lines[0] == "Before this: 10 messages on 1999-10-04."
     assert lines[1].startswith("1999-10-05: ")
-    text, record = rb.render_earlier(chunks, messages, window, limit=1_000)
-    assert record["trimmed"] == 4
-    assert text.startswith("Before this: 40 messages from 1999-10-04 to 1999-10-07.")
+    text, record = rb.render_earlier(chunks, messages, window, limit=1_500)
+    assert record["trimmed"] == 3
+    assert text.startswith("Before this: 30 messages from 1999-10-04 to 1999-10-06.")
     # What was already before the chunks is counted with what was dropped.
     text, _record = rb.render_earlier(
-        chunks, messages, window, limit=1_500,
+        chunks, messages, window, limit=1_700,
         older=rb.Older(25, "1999-09-01", "1999-10-03"))
-    assert text.startswith("Before this: 45 messages from 1999-09-01 to 1999-10-05.")
+    assert text.startswith("Before this: 35 messages from 1999-09-01 to 1999-10-04.")
 
 
 def test_the_same_rows_give_the_same_bytes():
@@ -319,11 +320,11 @@ def test_the_background_is_sent_only_where_the_prompt_has_room():
 
 def test_what_the_user_stated_outlasts_its_chunk():
     messages = _messages(130)
-    chunks = _chunks(messages, 10, summary="s" * 200)
+    chunks = _chunks(messages, 10, parts=[_part("s" * 150)])
     window = messages[-30]["id"]
     chunks[0]["statements"] = ["Tasks run in child processes so a hung one can be stopped."]
     chunks[1]["statements"] = ["The assistant is small local models composed together."]
-    text, record = rb.render_earlier(chunks, messages, window, limit=1_000)
+    text, record = rb.render_earlier(chunks, messages, window, limit=1_500)
     assert record["trimmed"] >= 2 and record["said_before"] == 2
     lines = text.split("\n")
     assert lines[0].startswith("Before this: ") and lines[0].endswith(" The user said in them:")
@@ -334,7 +335,7 @@ def test_what_the_user_stated_outlasts_its_chunk():
     # and the newest are the ones kept.
     before = [f"A thing said long ago, number {n}." for n in range(rb.SAID_BEFORE)]
     text, record = rb.render_earlier(
-        chunks, messages, window, limit=1_600, said_before=before,
+        chunks, messages, window, limit=1_800, said_before=before,
         older=rb.Older(25, "1999-09-01", "1999-10-03"))
     lines = text.split("\n")
     assert record["said_before"] == rb.SAID_BEFORE
@@ -343,16 +344,6 @@ def test_what_the_user_stated_outlasts_its_chunk():
     # Nothing was dropped and nothing lies before: no such lines.
     text, record = rb.render_earlier(chunks, messages, window)
     assert "said in them" not in text and record["said_before"] == 0
-
-
-def test_a_statement_that_repeats_a_request_is_left_out():
-    messages, chunks, window = _room(60)
-    chunks[2]["parts"] = [_part("the opening hours of the harbour office")]
-    chunks[2]["statements"] = ["The user asked for the opening hours of the harbour office.",
-                               "The office moved to the north pier last winter."]
-    text = rb.build(chunks, messages, window, None).earlier
-    assert "The office moved to the north pier" in text
-    assert "The user asked for" not in text
 
 
 # --- topics ----------------------------------------------------------------------
@@ -395,12 +386,13 @@ def test_a_small_recent_topic_is_listed_ahead_of_a_larger_old_one():
                  _row("planning the trip", 2, 8, shown, "1999-10-20")],
         "thing": [_row("the ferry", 9, 60, old, "1999-07-11", about="the boat to the island")]}}
     rows = rb.pick_topics(tallied, {shown})
+    # After the recent one, a named thing and a kind of task by turns.
     assert [r["topic"].name for r in rows] == [
-        "planning the trip", "looking up tides", "the ferry"]
+        "planning the trip", "the ferry", "looking up tides"]
     assert rb.render_topics(rows).split("\n") == [
         "- planning the trip (2 times)",
-        "- looking up tides (40 times, last summarized 1999-06-02)",
-        "- the ferry: the boat to the island (9 times, last summarized 1999-07-11)"]
+        "- the ferry: the boat to the island (9 times, last summarized 1999-07-11)",
+        "- looking up tides (40 times, last summarized 1999-06-02)"]
 
 
 def test_topics_stop_at_their_number_and_their_size():
