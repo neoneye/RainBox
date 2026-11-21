@@ -35,8 +35,10 @@ where they end.
   whatever the room's length.
 - **G3. Nothing on the request path.** A turn reads rows that exist. It never
   waits for a summary and never writes one.
-- **G4. Old subjects stay represented.** A subject from the room's first
-  weeks is still named when the room is a year old.
+- **G4. Old stretches stay represented.** However old the room is, every
+  message before the window is under a line that gives its range and dates,
+  and a subject the room came back to keeps its row. A subject raised once,
+  long ago, may not be named; its stretch can still be opened.
 - **G5. A stable prompt head.** Between two chunk edges the bytes ahead of
   the newest message do not change, so the model server's cached prefix
   survives from turn to turn.
@@ -74,11 +76,21 @@ Counting from the newest message backwards, a turn's view of its room is:
 
 | Region | Holds | From |
 |---|---|---|
-| The window | the newest 30 to 39 messages, verbatim | `conversation_history_xml`, as today |
+| The window | the newest 30 to 39 messages, verbatim (the newest 30, with the window setting on `last`) | `conversation_history_xml`, as today |
 | `room_earlier` | every message before the window, as chunks at three grains | `room_chunk` rows |
 | `room_topics` | what the whole room keeps coming back to | the topic registry |
 
-No message is in both the window and `room_earlier`.
+With the aligned window no message is in both the window and
+`room_earlier`.
+
+**A chunk covers its own messages only.** A series' `overlap` is how many
+messages on each side the summarizer read as context. They are not
+summarized, and they belong to the neighbouring chunks: chunk *n* of a series
+of 10 covers counted messages 10*n* to 10*n*+9 whatever the overlap
+(`due_room_chunks` advances by `chunk_size`). So chunks never share a
+message, and only the covered range sets an edge, a count or a range that
+`room_history` opens. The overlap decides one thing: a chunk can be written
+once that many messages follow it.
 
 ### 3.2 The edge, and the aligned window
 
@@ -107,6 +119,14 @@ turn only appends to the end of the history.
 **A window can start in the middle of an exchange**, as it can today: a chunk
 is 10 messages, not 5 exchanges. The request that reply answers is then in
 the nearest chunk's last part.
+
+**The alignment is a setting of its own** (`assistant.room_window`: `last`
+or `aligned`, §6), because what it buys is prefill time and what it costs is
+4.5 more messages in the average window, and both have to be measured. On
+`last` the window is the last 30, as today. The background then ends with
+the chunk that holds the message just before the window, shown at the near
+grain. Up to 9 of that chunk's messages are also in the window, which is the
+one place a message is under both. Nothing is left under neither.
 
 **Chunk sizes above 20 are not aligned.** `housekeeping.room_chunk_size`
 accepts up to 100. A window of 30 to 129 messages is not a window, so such a
@@ -137,13 +157,20 @@ Detail falls off with distance from the window. With `E` the edge chunk's
 | Grain | Chunks | Each renders as |
 |---|---|---|
 | Near | the `NEAR_CHUNKS` (4) newest: `E-3 … E` | the chunk with every part |
-| Mid | from `M` to `E-4`, where `M = max(0, ((E-4) // 10 - 1) * 10)`: 10 to 19 chunks | one line: range, dates, subjects |
+| Mid | from `M` to `E-4`, where `M = max(0, ((E-4) // 10 - 1) * 10)`: 11 to 20 chunks once the room has that many (`E` = 24 gives 11, `E` = 23 gives 20) | one line: range, dates, subjects |
 | Far | every whole group of ten chunks before `M` | one line per hundred messages: range, dates, its topics with counts |
+| Farther | every whole group of ten far lines, by the same rule one level up, and so on | one line per thousand messages, of the same shape |
 
 **A group of ten is folded one group late.** `M` is set so the hundred
 messages just behind the near chunks always keep a line per chunk. Folded at
 its tenth chunk, a hundred would become one line exactly where the turn needs
 it finest.
+
+**The block grows with the logarithm of the room.** Ten hundreds fold into a
+thousand one group late as well, so each level shows 11 to 20 lines and a
+room of 20,000 messages has four levels. Nothing is left out for age: the
+oldest stretch of any room is under some line with its range, its dates and
+its largest topics.
 
 **No grain is generated from another.** Near and mid print fields of the
 chunk's own row. A far line is counted: the names of the registry topics its
@@ -180,12 +207,19 @@ times it was asked, its calibration, its grounding and what was wanted.
 - the grounding is not `tool failed` or `output not used`;
 - the part's last message is newer than the room's newest facts-invalidation
   marker (`meta.facts_invalidation`), when there is one;
-- the turn's model is local (§3.9).
+- the results setting is on (§6), and every model the turn can reach is
+  local (§3.9).
 
 Otherwise the part has no `result` attribute. An answer the user rejected,
 kept asking about, or that was written after its program failed is named and
-not repeated. This is the position on roadmap decision 11: results go in,
-beside their records, and only where the records do not speak against them.
+not repeated.
+
+**`uncontested` is not correct.** The user may have read a wrong answer and
+moved on. So results are off until the replay shows they help (§9), and the
+first release is the background without them: ranges, topics, calibration,
+grounding and what was wanted. This is the position on roadmap decision 11:
+results may go in, beside their records, only where the records do not speak
+against them, and only after that is measured.
 
 **A changed chunk shows no generated text.** A chunk whose `content_hash` no
 longer matches its messages (an edit, a deletion, a retry that rewound into
@@ -221,9 +255,11 @@ Two rules are new:
 - **It keeps the `TOPICS_MAX` (8) largest per axis**, and says how many it
   left out in a `more` attribute on `<other>`.
 
-This is the room's enduring themes, and G4: a topic's share is counted over
-every chunk of the room, so a subject from the first weeks keeps its row
-however old it is. A name or explanation the operator wrote is shown as
+This is the room's enduring themes. A topic's share is counted over every
+chunk of the room, so a subject the room came back to keeps its row however
+old it is, while it is among the 8 largest of its axis. A subject raised
+once has no row here by design: one-offs are most of a room's topics (70 of
+79 names in one room), and listing them is the chunk lines' job. A name or explanation the operator wrote is shown as
 written, which is how the operator says "this is what that was".
 
 ### 3.6 Budget
@@ -233,7 +269,7 @@ characters, and no token count is available before a call.
 
 | Block | Limit | Starting value |
 |---|---|---|
-| `room_earlier` | `EARLIER_MAX_CHARS` | 6,000 |
+| `room_earlier` | `EARLIER_MAX_CHARS` | 8,000 |
 | `room_topics` | `TOPICS_MAX_CHARS` | 1,500 |
 
 **When `room_earlier` is over its limit, detail goes before coverage.** Each
@@ -243,18 +279,49 @@ block fits:
 1. a near chunk loses its parts' `result`;
 2. a near chunk loses its parts, and is a mid line;
 3. a mid group of ten is folded into its far line early;
-4. a far line loses its `topics`;
-5. the oldest far lines are left out, counted in an `omitted` attribute on
-   the block.
+4. a group of ten far lines is folded into its line of the next level
+   early;
+5. a far line loses its `topics`.
 
-After steps 1 to 4 every range of the room is still named, so it can still be
-opened. `room_topics` over its limit drops its smallest topics into `more`.
+No step leaves a line out. After every step each message before the window
+is still under a line that names its range, so it can still be opened. A
+room would need millions of messages to exceed the limit after step 5; the
+block is then sent over its limit and the record says so. `room_topics` over its limit drops its smallest topics into `more`.
 
 The trimming is a pure function of the rows and the limits, so the same rows
 give the same bytes on every call of a turn and on the next turn.
 
-**What it costs.** On gemma4:e4b-mlx 7,500 characters are on the order of
-2,000 tokens of prefill, paid in full on the turn after an edge and reused in
+**The estimate behind 8,000.** A mid line is about 180 characters and a near
+chunk about 700, so 20 mid lines and 4 near chunks come to about 6,400
+before any far line. A limit under that would trim on every turn.
+
+**The limits are scaled to the smallest model the turn can reach.** A
+character limit bounds the block and says nothing about whether the prompt
+fits. So once, at the start of the turn:
+
+1. `C` is the smallest `context_window` among the members of the decide
+   slot's model group, fallback members included
+   (`db.resolved_model_kwargs`).
+2. The background may take `BACKGROUND_SHARE` (15%) of it, at
+   `CHARS_PER_TOKEN` (3, deliberately low: markup and text outside English
+   run to more tokens per character than English prose).
+3. Both limits are scaled down together to fit `0.15 × C × 3` characters,
+   and never up. Under `BACKGROUND_MIN_CHARS` (2,000) the turn has no
+   background.
+
+The allocation holds for the whole turn, on every call and every step. At a
+context of 16,384 tokens it is 7,373 characters; at 32,768 the limits above
+apply unscaled. The record phase stores the decide call's prompt tokens as
+the provider reported them beside the prompt's characters, which is the
+measured ratio that replaces the 3.
+
+**What this does not settle.** A turn's prompt also grows with every
+observation, and nothing in the assistant holds a whole prompt against its
+model's context today. That check belongs to the loop and to every section
+of the prompt. This proposal makes its own share bounded and known.
+
+**What it costs.** On gemma4:e4b-mlx 9,500 characters are on the order of
+2,500 tokens of prefill, paid in full on the turn after an edge and reused in
 between. The limits are set from the record phase (§6), not from this
 estimate.
 
@@ -319,11 +386,18 @@ no instruction about them.
 - **Ranges, dates, topics, calibration, grounding and `wanted`** go wherever
   the history window goes. They are this room's own text and records, and
   every model that reads the turn already reads 30 of its messages verbatim.
-- **`result`** goes to local models only (`_is_local_model`, moved from
-  `agents/housekeeping.py` to where both agents can call it). It is
-  model-written from replies, and a reply can restate what was read from the
-  diary or memory. The window holds 30 such replies; `room_earlier` would
-  hold a room's worth.
+- **`result`** is sent only when every model the turn can reach is local.
+  It is model-written from replies, and a reply can restate what was read
+  from the diary or memory. The window holds 30 such replies; `room_earlier`
+  would hold a room's worth.
+- **"Can reach" counts fallback members.** A slot's group falls back across
+  its members inside one call, and the prompt is built before the call. So
+  the test is on the groups, once per turn, and not on the model that
+  happens to answer: `model_groups.assistant_models_all_local()`, which
+  diary text already goes by, with the `:cloud` name check that
+  `housekeeping._is_local_model` has added to it. One remote member anywhere
+  means no `result` for the turn. The block is then the same bytes for every
+  call and every member, and no call can carry a result to a remote model.
 - **Chunks from before a profile switch** render as any other. A profile
   switch is not an audience boundary. A facts invalidation withholds
   `result` (§3.4).
@@ -336,15 +410,24 @@ something to read. One read-only action, in `ActionType` beside
 
 | | |
 |---|---|
-| Argument | `messages`: a range one of the blocks printed, at most 20 counted messages |
+| Argument | `messages`: a range of positions before the window, at most 20 counted messages; a line's own range, or a piece of a longer one |
 | Returns | those messages verbatim, each with its position, role and timestamp, each cut in the middle at `HISTORY_MESSAGE_MAX_CHARS`, as an observation |
 | Offered | only in a turn whose prompt holds a `room_earlier` block |
-| Reads | this room, as it is now: an edited message reads as edited, a deleted one is gone |
+| Reads | this room only, by the message ids the turn began with |
 | Authority | the history window's: an old reply read this way is still an old answer |
 
-- **The range is resolved against the turn's own counted messages**, the
-  list the blocks were rendered from, so a number means the same message in
-  the block and in the action.
+- **A position means one message for the whole turn.** The turn keeps the
+  list of counted message ids its blocks were rendered from. A range is
+  turned into ids through that list, and the rows are fetched by id. A
+  message deleted since the turn began is returned as
+  `<message position="…" unavailable="true"/>` in its place, so no later
+  message moves up into its position. A message edited since reads as
+  edited.
+- **A line of a hundred or a thousand messages is opened 20 at a time.** The
+  line says which topics the stretch holds and not where in it. Finding a
+  detail inside a far stretch takes several reads or is not done; that is
+  the limit of an index without search, and the far grain is for
+  orientation.
 - **A range outside the room, or longer than 20, is refused by the decide
   validator** (`ARGUMENT_REJECTIONS`), with the valid span in the refusal.
 - **The step keeps the message uuids it returned**, so the trace shows what
@@ -353,9 +436,11 @@ something to read. One read-only action, in `ActionType` beside
   such messages (roadmap decision 7).
 - **It is not search.** It opens a range a block named.
 
-It adds an action to the decide prompt of long rooms only. It ships with the
-blocks: every choice above that leaves detail out is acceptable only while
-the detail can still be reached.
+It adds an action to the decide prompt of long rooms only, and it is
+measured as its own step (§11). Until it is on, the blocks name stretches the
+turn cannot open, and the instruction of §3.8 loses its two sentences about
+`room_history`: a detail that is in neither block is one the assistant says
+it does not have.
 
 ## 4. Designs considered, and not taken
 
@@ -400,24 +485,31 @@ WINDOW_MIN = 30
 WINDOW_MAX = 49
 NEAR_CHUNKS = 4
 TOPICS_MAX = 8
-EARLIER_MAX_CHARS = 6_000
+EARLIER_MAX_CHARS = 8_000
 TOPICS_MAX_CHARS = 1_500
+BACKGROUND_SHARE = 0.15
+CHARS_PER_TOKEN = 3
+BACKGROUND_MIN_CHARS = 2_000
 
 @dataclass(frozen=True)
 class Background:
     window_after_id: int | None   # None: the window is the last 30
     topics: str                   # "" when there is nothing to show
     earlier: str
+    positions: list[int]          # counted message ids; index = position
     record: dict[str, Any]        # what §6 stores on the run
 
 def pick_series(series: list[Series]) -> Series | None: ...
-def find_edge(chunks: list[Chunk], history_ids: list[int]) -> Chunk | None: ...
-def grains(chunks: list[Chunk], edge: Chunk) -> tuple[list, list, list]: ...
-def show_result(part: dict, *, local: bool, facts_invalidated_id: int | None,
+def limits(context_window: int | None) -> tuple[int, int] | None: ...
+def find_edge(chunks: list[Chunk], history_ids: list[int], *,
+              aligned: bool) -> Chunk | None: ...
+def grains(chunks: list[Chunk], edge: Chunk) -> list[list]: ...   # near, mid, far, farther…
+def show_result(part: dict, *, results: bool, facts_invalidated_id: int | None,
                 last_message_id: int) -> bool: ...
 def rebase(parts: list[dict], first_index: int, last_index: int) -> list[dict]: ...
-def trim(far, mid, near, limit: int) -> tuple[str, list[str]]: ...
-def build(chunks, counted, history_ids, topics, members, *, local: bool,
+def trim(levels: list[list], limit: int) -> tuple[str, list[str]]: ...
+def build(chunks, counted, history_ids, topics, members, *, aligned: bool,
+          results: bool, context_window: int | None,
           facts_invalidated_id: int | None) -> Background: ...
 ```
 
@@ -430,7 +522,7 @@ def build(chunks, counted, history_ids, topics, members, *, local: bool,
   and shows exactly what a turn would get.
 
 **`db/housekeeping.py`.** `load_room_background(room_uuid, history_ids, *,
-local)` reads the series list, the chunks of the picked series, the counted
+aligned, results, context_window)` reads the series list, the chunks of the picked series, the counted
 messages, the room's topics and members, and calls `build`. One function, so
 the page and the agent cannot differ. It reads only: four queries, no write.
 
@@ -438,7 +530,9 @@ the page and the agent cannot differ. It reads only: four queries, no write.
 
 - The turn loads the background once, after `messages` is filtered and
   before the first model call, and keeps it on the agent as it keeps the
-  five static blocks.
+  five static blocks. `results` is the results setting and
+  `assistant_models_all_local()` together; `context_window` is the smallest
+  among the decide slot's group.
 - `AssistantPromptBuilder.__init__` replaces
   `messages[:-1][-agent.MAX_RECENT_MESSAGES:]` with the window of §3.2, and
   emits `room_topics` and `room_earlier` ahead of the history when the
@@ -451,8 +545,7 @@ the page and the agent cannot differ. It reads only: four queries, no write.
 - The load is wrapped: any exception is logged, the turn runs with the last
   30 and no blocks, and the run's record says `error`.
 
-**`db/settings.py`.** `assistant.room_background`, a string with
-`choices=("off", "record", "on")`, default `off`. The description of
+**`db/settings.py`.** The four settings of §6. The description of
 `housekeeping.room_summaries` stops saying the summaries reach no prompt.
 
 **`webapp/housekeeping_views.py`.** The **as in the prompt** view renders
@@ -470,7 +563,7 @@ trimming steps taken. A run's page on `/assistant` shows the record of §6.
 |---|---|
 | `off` | as today |
 | `record` | builds the background, stores its record on the run, and sends today's prompt |
-| `on` | sends the blocks and the aligned window, offers `room_history`, and stores the same record |
+| `on` | sends the blocks and stores the same record; the window and `room_history` follow their own switches |
 
 The record, in `assistant_run.metadata_["room_background"]`:
 
@@ -481,6 +574,19 @@ The record, in `assistant_run.metadata_["room_background"]`:
  "earlier_chars": 5120, "topics_chars": 940, "trim": [],
  "sha256": "…"}
 ```
+
+Three more settings, each one switch of the evaluation, to be removed once it
+is decided:
+
+| Setting | Values | Default |
+|---|---|---|
+| `assistant.room_window` | `last`, `aligned` | `last` |
+| `assistant.room_history` | bool | off |
+| `assistant.room_background_results` | bool | off |
+
+The record also holds `window` (`last` or `aligned`), `limits` (the two
+limits after scaling, and the `context_window` they were scaled to),
+`over_limit`, and from the decide call `prompt_chars` and `prompt_tokens`.
 
 It holds no message text. The blocks are re-rendered from the rows for
 display, and `sha256` says whether the rows have changed since.
@@ -495,12 +601,14 @@ rules withheld. The limits and `NEAR_CHUNKS` are set from that before `on`.
 | Situation | The turn |
 |---|---|
 | The room has no chunks | last 30, no blocks, no `room_history` |
-| Summaries are one chunk behind | the window is up to 49 messages |
+| Summaries are one chunk behind (aligned window) | the window is up to 49 messages |
 | Summaries are further behind, or housekeeping is paused | last 30, and a `<gap>` for the stretch between |
 | A chunk job failed for good | a `<gap>` in its place |
 | A chunk's messages changed | the chunk's range and dates, `changed="true"` |
 | No topics yet (no decision model bound) | `room_earlier` alone; far lines use the chunks' own topic names |
-| The turn's model is not local | no `result` anywhere |
+| A model the turn can reach is not local, fallback members included | no `result` anywhere |
+| The smallest context leaves under 2,000 characters | last 30, no blocks |
+| A message is deleted while the turn runs | `room_history` returns it as `unavailable`, in its position |
 | Loading the background raises | last 30, no blocks, `error` on the record |
 | A retry rewinds past the edge | the next turn finds an older edge; chunks beyond the rewind are `changed` or empty and render as such |
 
@@ -514,13 +622,19 @@ No row is written or changed by any of these.
   newest one and two chunks missing;
 - `pick_series` between a current series that is behind and an older one
   that reaches further;
-- the grains at `E` = 3, 4, 13, 14, 23, 24, and that every message before
-  the window is under exactly one line;
+- the grains at `E` = 3, 4, 13, 14, 23, 24, 123 and 124, with the exact
+  number of mid lines at each (4 → 1, 13 → 10, 14 → 11, 23 → 20, 24 → 11),
+  and that every message before the window is under exactly one line;
+- the same room in series of overlap 0, 2 and 5 gives the same ranges;
+- the unaligned window: the straddling chunk is shown, and no message is
+  under neither;
+- `limits` at context windows of 4,096, 16,384 and 32,768, and with none
+  known;
 - each `show_result` rule alone;
 - `rebase` after a deletion before a chunk, and a `changed` chunk after one
   inside it;
-- `trim`: each step in order, that steps 1 to 4 leave every range named, and
-  that the output is under the limit;
+- `trim`: each step in order, and that after every step each position
+  before the window is under exactly one line;
 - a hole and a lagging tail each render one `<gap>`;
 - hostile text in a `wanted` or a topic name cannot close a tag.
 
@@ -531,9 +645,13 @@ No row is written or changed by any of these.
 - every call of one turn carries identical tier 0;
 - `record` sends a prompt byte-identical to `off`.
 
-`agents/test_assistant_actions.py`: `room_history` returns the range, refuses
-one outside the room or over 20, and is absent from the catalog of a turn
-with no `room_earlier`.
+- with one remote fallback member in any assistant slot's group, no call's
+  prompt holds a `result`.
+
+`agents/test_assistant_actions.py`: `room_history` returns the range, opens a
+piece of a far line, refuses one outside the room or over 20, returns a
+message deleted after the turn began as `unavailable` without moving the
+others, and is absent from the catalog of a turn with no `room_earlier`.
 
 ## 9. Evaluation
 
@@ -549,19 +667,49 @@ subjects that recur, one that appears only in the first tenth, an answer the
 user rejected, a value stated once in an old user message, and a subject that
 was never discussed.
 
-**Arms.** Each probe is one decide call on the same model and the same room
-state, replayed per arm:
+**A real room beside them.** One room of the operator's own, with probes
+they write, since a real room has what an invented one lacks: pasted text,
+retries, slips of the keys, subjects that drift. It is read on their
+go-ahead, and its probes and output stay outside the repository.
 
-| Arm | The prompt holds |
+**Variants.** Each probe is one decide call on the same model and the same
+room state, replayed per variant. All use the last-30 window, so that the
+blocks are measured apart from the alignment:
+
+| Variant | `room_earlier` | `room_topics` | `room_history` |
+|---|---|---|---|
+| 0 (today) | no | no | no |
+| A | yes | no | no |
+| B | no | yes | no |
+| C | yes | yes | no |
+| D | yes | yes | yes |
+
+Three questions follow, each a pair, each only once the one before is
+settled:
+
+| Question | Compared |
 |---|---|
-| 0 | the last 30 messages (today) |
-| 1 | the aligned window and `room_earlier`, without `result` |
-| 2 | arm 1 with `result` under the rules of §3.4 |
-| 3 | arm 2 with `room_topics` |
-| 4 | arm 3 with `room_history` offered |
+| Results | the best of A to D, with and without `result` |
+| Alignment | that variant, with the window `last` and `aligned`, over five consecutive turns from an edge |
+| An overview | reopened only if Coverage and Old subject fail with both blocks present (§4) |
 
-Each arm ships only if it beats the one before it on some probe and is worse
-on none. Arms 1 and 2 are roadmap decision 11, measured.
+**Trials and the rule.** Each probe runs 3 times per variant, with the seed
+varied, in bursts of 10 calls. A variant is kept over another when it passes
+more probe runs in total, and no probe goes from passing most of its runs to
+failing most of them. One lost run of one probe decides nothing. The three
+safety probes (Rejected answer, Stale answer, Never discussed) are held to
+more: a variant that fails one of them in most runs is not sent to a prompt,
+whatever it gains elsewhere.
+
+**The variants are not held to one size.** B is a fifth the size of A, and
+padding it to match would measure the padding. Behaviour is compared at each
+variant's own size, and its size and prefill time are reported beside it.
+
+**The alignment's own gate.** It stays on `last` unless, on the turns
+between two edges, the decide call's prefill time drops by more than the
+extra 4.5 messages cost on the turn after an edge, with housekeeping running
+as it does in ordinary use. Total turn time decides, not the share of the
+prefix that was reused.
 
 **Probes.** Scored by code where a planted string or the chosen action
 decides it, and by the operator otherwise:
@@ -572,14 +720,13 @@ decides it, and by the operator otherwise:
 | Continuity | a reference to a subject from before the window | the subject is recognized, with no invented detail |
 | Old subject | a reference to the subject from the first tenth | it is recognized |
 | Recent direction | what was discussed just before the window's first message | it matches the near chunks |
-| Missing detail | the value stated once, absent from both blocks | arm 4: `room_history` on the right range; arms 1 to 3: says it does not have it |
+| Missing detail | the value stated once, absent from both blocks | D: `room_history` on the right range; the others: says it does not have it |
 | Rejected answer | the question whose answer was rejected | the old answer is not given without a read |
-| Stale answer | a question whose `result` is in the block | the answer is read again, not quoted from the block |
+| Stale answer | a question whose `result` is in the block (the results pair only) | the answer is read again, not quoted from the block |
 | Never discussed | what was concluded about the absent subject | says it was not discussed |
 
-**Counted on every arm:** the decide call's prefill and total time on the
-turn after an edge and on the three turns that follow; the characters of each
-block; the trimming steps.
+**Counted on every variant:** the decide call's prompt tokens, prefill and
+total time; the characters of each block; the trimming steps.
 
 **After `on`.** The operator's votes on replies in long rooms, before and
 after, and every run where `room_history` was used: was the range the right
@@ -592,10 +739,13 @@ one.
 | `WINDOW_MIN` | 30 | today's window |
 | `WINDOW_MAX` | 49 | one missing chunk of 10 |
 | `NEAR_CHUNKS` | 4 | the record phase |
-| Mid | 10 to 19 chunks | the fold rule of §3.4 |
+| Mid | 11 to 20 chunks | the fold rule of §3.4 |
 | `TOPICS_MAX` | 8 per axis | the record phase |
-| `EARLIER_MAX_CHARS` | 6,000 | the record phase |
+| `EARLIER_MAX_CHARS` | 8,000 | the record phase |
 | `TOPICS_MAX_CHARS` | 1,500 | the record phase |
+| `BACKGROUND_SHARE` | 15% of the smallest context | the record phase |
+| `CHARS_PER_TOKEN` | 3 | prompt tokens against characters, in the record |
+| `BACKGROUND_MIN_CHARS` | 2,000 | |
 | `room_history` range | 20 counted messages | |
 | Chunk size, overlap | `housekeeping.room_chunk_size`, `…_overlap` | roadmap decision 9 |
 
@@ -603,21 +753,33 @@ one.
 
 1. **`agents/room_background.py` and its tests.** The Housekeeping page's
    **as in the prompt** view moves onto it. Visible, in no prompt.
-2. **The setting, the load in the turn, and `record`.** The record on a
-   run's page. A week of use.
-3. **The scripted rooms and the replay**, arms 0 to 3. The limits are set.
-4. **`room_history`**, and arm 4.
-5. **`on`**, for the rooms the operator has read the background of.
+2. **The settings, the load in the turn, and `record`.** The record on a
+   run's page. A week of use, and the limits are set from it.
+3. **The scripted rooms and the replay of variants 0, A, B and C**, on the
+   last-30 window, without `result` and without `room_history`.
+4. **`on`, with the winner of step 3**, for the rooms whose background the
+   operator has read. This is the first release: the simplest background.
+5. **`room_history`**, with the turn's position list, and variant D.
+6. **The aligned window**, against its gate.
+7. **Results**, as their pair.
 
-Steps 1 and 2 change no prompt.
+Steps 1 and 2 change no prompt. Steps 5 to 7 are independent of each other
+and each is dropped if its measurement does not carry it.
 
 ## 12. What the operator may want to overrule
 
-- **`result` in the prompt, under rules** (§3.4), where the room digest
-  proposal kept every answer out. Arm 1 against arm 2 is the evidence.
-- **`result` to local models only** (§3.9). The looser choice is the history
-  window's audience.
+- **Results are off in the first release** (§3.4, §9). On 2026-11-10 the
+  operator wanted the compaction to carry what the assistant found. The
+  chunks do carry it, and the pages show it; whether a prompt should is step
+  7's measurement. The other choice is to turn them on with step 4.
+- **`result` only when every reachable model is local** (§3.9). The looser
+  choice is the history window's audience.
 - **No generated overview** (§4).
+- **A subject raised once, long ago, may go unnamed** (G4). Naming it would
+  take a rule for which one-offs matter, and nothing in the records says.
+  The operator's own hand does: a topic they name is kept. Whether one-off
+  topics the operator wrote should have a row in `room_topics` is a small
+  addition if it is missed.
 - **The furthest-reaching series wins** over the current one (§3.3). The
   stricter choice is the current series only, with an empty background after
   every prompt change until the room is summarized again.
