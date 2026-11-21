@@ -176,6 +176,21 @@ Most chunks have none.
   read out of the diary came back as something the user said. One that is
   dropped is listed in the chunk's `problems`. The rule reads words apart by
   spaces, so it keeps nothing of a language written without them.
+- **A statement that repeats a request is dropped**
+  (`room_chunks.restates_request`): at least half of its words of four
+  letters or more are in the subject of one part of the chunk. The prompt
+  says a request holds no statement, and the model writes that the user
+  asked for it all the same. It is listed in `problems` too.
+  `room_background` applies the rule again when it reads a chunk, so a
+  background shows no such line whatever the row holds.
+- **On one room's 16 chunks as the job stored them**, 8 statements were
+  kept and 12 dropped. Of the kept, five were the user's own explanations
+  or plans, one a correction worded loosely, and two repeated a request (at
+  0.57 and 0.75 of their words in a part's subject; the five stood at 0.22
+  or less), which is what this rule drops. Of the dropped, ten came from a
+  reply or said what was asked, and two were the user's own, at 0.40 and
+  0.43 of their words: the words "the user stated that" count against a
+  short statement.
 - **Replayed on one room's 16 stored chunk prompts**, on gemma4:e4b-mlx:
   statements in 4 chunks, 8 in all. Five were the user's explanations, the
   ones the room's summaries had lost. Two came from a reply, at 0.40 and
@@ -648,6 +663,12 @@ does, oldest first. The newest of them can hold the window's first message.
   alone.
 - **`Before this: N messages from … to …`** is the first line when the room
   is older than what is shown.
+- **What the user stated outlasts its chunk.** A chunk that gives way to the
+  limit, or lies before the 16 shown, leaves its statements under that first
+  line, `The user said in them:` and a line each: the newest 6
+  (`SAID_BEFORE`), in 900 characters. A request fades with its chunk; why
+  the user built a thing the way they did is what a later turn most needs
+  and is said once.
 
 **How a part went** (`how_it_went`), the first that applies:
 
@@ -671,7 +692,10 @@ whose chunk prompt is older than the one that records tools.
 
 **`room_topics`** is a line per recurring topic: the 5 newest with a part
 in the shown chunks, then the largest, 10 in all. A topic outside the shown
-chunks carries the date it was last summarized.
+chunks carries the date it was last summarized. A topic whose parts are all
+counted by a larger topic is not listed, and of two over the same parts the
+named thing is (`_without_doubles`): a kind of task and a named thing are
+often one subject seen twice, and both would take a row.
 
 **Size.** `room_earlier` is held to 4,000 characters and `room_topics` to
 1,200. The near chunks may take 2,400 between them; over that the oldest

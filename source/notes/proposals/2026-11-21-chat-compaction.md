@@ -199,7 +199,24 @@ carries what the assistant found.
 **The first line says what is not shown.** `Before this: N messages from …
 to …` whenever counted messages lie before the oldest chunk shown: because
 the room has more than 16 chunks, or because trimming dropped a line (§3.5).
-The model then knows the room is older than what it reads. A stretch of counted messages with no chunk is
+The model then knows the room is older than what it reads.
+
+**What the user stated outlasts its chunk.** Under that first line stay the
+statements of the chunks no longer shown, the newest 6 in at most 900
+characters:
+
+```
+Before this: 40 messages from 1999-10-04 to 1999-10-07. The user said in them:
+- Tasks run in child processes so a hung one can be stopped.
+- The assistant is small local models composed together.
+```
+
+A request fades with its chunk, and some amnesia about it is fine. Why the
+user built a thing the way they did is said once, early, and is the big
+picture a later turn needs. On the first real room the statements were
+captured and then trimmed away with the room's first 40 messages (§6).
+
+A stretch of counted messages with no chunk is
 a line of its own, `1999-10-23 to 1999-10-24: 20 messages not summarized.`,
 in two places:
 - **between two shown chunks**, where a job failed for good;
@@ -242,6 +259,13 @@ One line per recurring topic (two or more parts): its name, its explanation
 when it has one that says more than the name, and how many parts. A kind
 of task and a named thing are written the same
 way; the axis is the registry's bookkeeping and no help to a reader.
+
+**One row for the same parts.** A topic whose parts are all counted by a
+larger topic is left out, and of two over the same parts the named thing
+stays. On the first real room four of ten rows were two subjects listed
+twice, a kind of task and the thing it was done to. Two topics that overlap
+only in part are the registry's to join ("Look for topics that are one" on
+the page), not the renderer's.
 
 **A date only where it says the topic is old.** A topic with no part in the
 16 shown chunks gets `last summarized` and the date of its newest part. A
@@ -591,6 +615,29 @@ against the room's messages by an outside reviewer:
 The first three are not the renderer's to fix: the lines can only say what
 the chunk rows hold. So `stated` (§5) is no longer conditional. It is build
 step 2 (§9), ahead of any prompt.
+
+### What the second read showed
+
+The same room, summarized again with `statements` and reviewed again:
+
+- **The explanations were captured and then dropped.** The chunk holding
+  them was one of four that gave way to the limit, so the block began
+  `Before this: 40 messages` and said nothing of them. Statements now stay
+  under that line (§3.2).
+- **Two of the eight kept statements repeated a request** ("the user asked
+  for ..."). The prompt already forbids it; a rule on the stored parts now
+  drops them (`notes/housekeeping-design.md`).
+- **Two of the user's own statements were dropped** by the rule that keeps
+  a statement only where its words are the user's, at 0.40 and 0.43 against
+  a floor of 0.50. Lowering the floor lets a reply's words through: the
+  replay had one of those at 0.40. Not changed.
+- **Topics doubled.** A kind of task and the thing it was done to held a
+  row each. One row is now listed for the same parts (§3.4).
+- **Not taken from the review:** rewriting the statement instruction (it
+  says the same as the one in place, and the model does not follow it); one
+  line for a run of failed requests (an unsettled request is what a later
+  turn must not take as answered); topics rewritten as themes (a generated
+  overview, §5).
 
 Three probes are added for it, each a question about something the user
 explained before the window and never asked for: why a design choice was

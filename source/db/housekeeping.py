@@ -11,6 +11,7 @@ from typing import Any
 from uuid import UUID
 
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -845,7 +846,7 @@ def load_room_background(room_uuid: UUID, window_first_id: int | None, *,
     room. `record["load_ms"]` is what it took."""
     import time
 
-    from agents import room_background, room_topics
+    from agents import room_background, room_chunks, room_topics
     from db.room_topics import list_room_topic_members, list_room_topics
 
     started = time.monotonic()
@@ -892,6 +893,17 @@ def load_room_background(room_uuid: UUID, window_first_id: int | None, *,
     older = room_background.Older(
         count, date_from.strftime("%Y-%m-%d"), date_to.strftime("%Y-%m-%d")
     ) if count else None
+    # What the user stated in the chunks before the shown ones: the newest.
+    said_before = [s for statements, parts in reversed(
+        db.session.query(RoomChunk.statements, RoomChunk.parts)
+        .filter_by(room_uuid=room_uuid, chunk_size=size, overlap=overlap,
+                   prompt_version=version)
+        .filter(RoomChunk.first_message_id < first,
+                sa.func.jsonb_typeof(RoomChunk.statements) == "array",
+                RoomChunk.statements != sa.cast("[]", JSONB))
+        .order_by(RoomChunk.first_message_id.desc())
+        .limit(room_background.SAID_BEFORE).all())
+        for s in statements if not room_chunks.restates_request(str(s or ""), parts)]
     invalidated = (db.session.query(sa.func.max(ChatMessage.id))
                    .filter(ChatMessage.room_uuid == room_uuid,
                            ChatMessage.meta["facts_invalidation"].astext.isnot(None))
@@ -905,7 +917,8 @@ def load_room_background(room_uuid: UUID, window_first_id: int | None, *,
         {r[0] for r in light}, sum(r[3] for r in light), None, chunk_last)
     background = room_background.build(
         chunks, counted, window_first_id, tallied, older=older,
-        facts_invalidated_id=invalidated, diary_allowed=diary_allowed)
+        facts_invalidated_id=invalidated, diary_allowed=diary_allowed,
+        said_before=said_before)
     background.record.update(
         series=[size, overlap, version],
         load_ms=round((time.monotonic() - started) * 1000))

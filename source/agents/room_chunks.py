@@ -45,6 +45,9 @@ MAX_STATEMENTS = 3
 #: `STATEMENT_WORD_MIN` letters or more are in the user's own messages.
 STATEMENT_MIN_OWN = 0.5
 STATEMENT_WORD_MIN = 4
+#: A statement with this share of its longer words in one part's subject
+#: repeats that part's request.
+STATEMENT_MAX_REQUEST = 0.5
 TOPIC_MAX_CHARS = 32
 SUBJECT_MAX_CHARS = 64
 MAX_PARTS = 5
@@ -438,8 +441,24 @@ def _sentence(text: str, where: str, problems: list[str],
     return text
 
 
-def settle_statements(raw: list[str] | None,
-                      chunk: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
+def restates_request(statement: str, parts: list[dict[str, Any]] | None) -> bool:
+    """Whether a statement only says what one of the chunk's parts already
+    says was wanted: at least `STATEMENT_MAX_REQUEST` of its longer words
+    are in that part's subject. The model is told that a request holds no
+    statement, and writes "the user asked for ..." all the same."""
+    words = [t for t in _tokens(statement) if len(t) >= STATEMENT_WORD_MIN]
+    if not words:
+        return False
+    for part in parts or []:
+        subject = set(_tokens(str(part.get("summary") or "")))
+        if sum(t in subject for t in words) / len(words) >= STATEMENT_MAX_REQUEST:
+            return True
+    return False
+
+
+def settle_statements(raw: list[str] | None, chunk: list[dict[str, Any]],
+                      parts: list[dict[str, Any]] | None = None,
+                      ) -> tuple[list[str], list[str]]:
     """What is stored of the statements a reply gave: `(statements,
     problems)`. None is the usual answer, and not a problem: most chunks
     are requests and nothing more.
@@ -450,7 +469,10 @@ def settle_statements(raw: list[str] | None,
     out of the diary came back as something the user had said. A statement
     in the user's words shares most of them with what the user wrote; one
     lifted from a reply shares few. The rule reads words apart by spaces,
-    so it keeps nothing of a language written without them."""
+    so it keeps nothing of a language written without them.
+
+    One that repeats a request of the chunk's `parts` is dropped too
+    (`restates_request`): the part already holds it."""
     own = {t for m in chunk if m.get("sender") == "human"
            for t in _tokens(m.get("text") or "") if len(t) >= STATEMENT_WORD_MIN}
     out: list[str] = []
@@ -462,6 +484,9 @@ def settle_statements(raw: list[str] | None,
         words = [t for t in _tokens(text) if len(t) >= STATEMENT_WORD_MIN]
         if not words or sum(t in own for t in words) / len(words) < STATEMENT_MIN_OWN:
             problems.append(f"a statement is not in the user's messages: {text[:80]}")
+            continue
+        if restates_request(text, parts):
+            problems.append(f"a statement repeats a request: {text[:80]}")
             continue
         if len(text) > STATED_MAX_CHARS:
             problems.append(f"a statement: {len(text)} characters")

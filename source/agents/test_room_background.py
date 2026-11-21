@@ -313,12 +313,75 @@ def test_the_background_is_sent_only_where_the_prompt_has_room():
     assert not rb.fits(60_000, 5_000, 16_384)
 
 
+def test_what_the_user_stated_outlasts_its_chunk():
+    messages = _messages(130)
+    chunks = _chunks(messages, 10, summary="s" * 200)
+    window = messages[-30]["id"]
+    chunks[0]["statements"] = ["Tasks run in child processes so a hung one can be stopped."]
+    chunks[1]["statements"] = ["The assistant is small local models composed together."]
+    text, record = rb.render_earlier(chunks, messages, window, limit=1_000)
+    assert record["trimmed"] >= 2 and record["said_before"] == 2
+    lines = text.split("\n")
+    assert lines[0].startswith("Before this: ") and lines[0].endswith(" The user said in them:")
+    assert lines[1:3] == [
+        "- Tasks run in child processes so a hung one can be stopped.",
+        "- The assistant is small local models composed together."]
+    # The statements of the chunks before the shown ones come ahead of them,
+    # and the newest are the ones kept.
+    before = [f"A thing said long ago, number {n}." for n in range(rb.SAID_BEFORE)]
+    text, record = rb.render_earlier(
+        chunks, messages, window, limit=1_600, said_before=before,
+        older=rb.Older(25, "1999-09-01", "1999-10-03"))
+    lines = text.split("\n")
+    assert record["said_before"] == rb.SAID_BEFORE
+    assert lines[1] == "- A thing said long ago, number 2."
+    assert lines[rb.SAID_BEFORE] == "- The assistant is small local models composed together."
+    # Nothing was dropped and nothing lies before: no such lines.
+    text, record = rb.render_earlier(chunks, messages, window)
+    assert "said in them" not in text and record["said_before"] == 0
+
+
+def test_a_statement_that_repeats_a_request_is_left_out():
+    messages, chunks, window = _room(60)
+    chunks[2]["parts"] = [_part("the opening hours of the harbour office")]
+    chunks[2]["statements"] = ["The user asked for the opening hours of the harbour office.",
+                               "The office moved to the north pier last winter."]
+    text = rb.build(chunks, messages, window, None).earlier
+    assert "The office moved to the north pier" in text
+    assert "The user asked for" not in text
+
+
 # --- topics ----------------------------------------------------------------------
 
-def _row(name: str, parts: int, messages: int, chunk, last: str, about: str = "") -> dict:
+_part_numbers = iter(range(1_000, 10_000))
+
+
+def _row(name: str, parts: int, messages: int, chunk, last: str, about: str = "",
+         members: list | None = None) -> dict:
+    """A tallied topic. Its one member is a part of its own unless
+    `members` gives the `(chunk, part)` pairs it counts."""
+    pairs = members or [(chunk, next(_part_numbers))]
     return {"topic": SimpleNamespace(name=name, explanation=about), "parts": parts,
             "messages": messages, "last": last,
-            "members": [SimpleNamespace(chunk_uuid=chunk)]}
+            "members": [SimpleNamespace(chunk_uuid=c, part_index=i) for c, i in pairs]}
+
+
+def test_two_topics_over_the_same_parts_are_listed_once():
+    shown = uuid4()
+    five = [(shown, i) for i in range(5)]
+    tallied = {"axes": {
+        "task": [_row("working out a root", 5, 20, shown, "1999-10-20", members=five),
+                 _row("counting letters", 2, 8, shown, "1999-10-21", members=five[:2]),
+                 _row("planning the trip", 2, 8, shown, "1999-10-19")],
+        "thing": [_row("the root of a number", 2, 8, shown, "1999-10-20", members=five[3:]),
+                  _row("the word harbour", 2, 8, shown, "1999-10-21", members=five[:2])]}}
+    names = {r["topic"].name for r in rb.pick_topics(tallied, {shown})}
+    # A topic inside a larger one goes; of two that are the same parts, the
+    # named thing stays.
+    assert names == {"working out a root", "planning the trip"}
+    tallied["axes"]["task"].pop(0)
+    names = {r["topic"].name for r in rb.pick_topics(tallied, {shown})}
+    assert names == {"the root of a number", "the word harbour", "planning the trip"}
 
 
 def test_a_small_recent_topic_is_listed_ahead_of_a_larger_old_one():

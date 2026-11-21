@@ -467,7 +467,7 @@ class HousekeepingAgent(Agent):
         summary, topics, parts, problems = room_chunks.settle(
             room_numbers(reply), first, last, chunk, after, retries)
         statements, stated_problems = room_chunks.settle_statements(
-            reply.statements, chunk)  # type: ignore[attr-defined]
+            reply.statements, chunk, parts)  # type: ignore[attr-defined]
 
         # The check, and one rewrite when it finds a part's request or result
         # wrong. The rewrite is checked too, so what is stored always carries
@@ -502,7 +502,7 @@ class HousekeepingAgent(Agent):
             summary, topics, parts, problems = room_chunks.settle(
                 room_numbers(reply), first, last, chunk, after, retries)
             statements, stated_problems = room_chunks.settle_statements(
-                reply.statements, chunk)  # type: ignore[attr-defined]
+                reply.statements, chunk, parts)  # type: ignore[attr-defined]
             audit["attempts"] = 2
         _provider, model_name, _args = db.resolved_model_kwargs(model_uuid)
         stored = db.store_room_chunk(

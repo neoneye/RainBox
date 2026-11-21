@@ -1137,5 +1137,13 @@ def test_a_statement_is_kept_where_its_words_are_the_users_own():
     many = [f"I do not trust the cloud with my diary, reason {n}" for n in range(5)]
     kept, problems = chunks.settle_statements(many, messages)
     assert len(kept) == chunks.MAX_STATEMENTS and problems == ["5 statements, kept 3"]
+    # One that says again what a part of the chunk says was wanted is dropped.
+    parts = [{"summary": "the weather tomorrow"}]
+    kept, problems = chunks.settle_statements([
+        "The weather tomorrow was wanted.",
+        "Everything runs locally because the cloud is not trusted with the diary."],
+        messages, parts)
+    assert kept == ["Everything runs locally because the cloud is not trusted with the diary."]
+    assert problems == ["a statement repeats a request: The weather tomorrow was wanted."]
     # A reply that leaves the list out is a reply with none.
     assert chunks.ChunkSummary(parts=[], subjects=[], topics=[]).statements == []
