@@ -44,6 +44,8 @@ __all__ = [
     "ensure_room_chunk_jobs",
     "ensure_room_topic_jobs",
     "list_room_chunk_series",
+    "load_room_background",
+    "room_window_first_id",
     "job_room_chunk",
     "list_room_chunks",
     "parse_chunk_subject",
@@ -810,3 +812,100 @@ def list_room_chunk_series(room_uuid: UUID) -> list[tuple[int, int, int, int]]:
             .order_by(RoomChunk.chunk_size, RoomChunk.overlap,
                       RoomChunk.prompt_version).all())
     return [(r[0], r[1], r[2], r[3]) for r in rows]
+
+
+# --- a room's background, for a prompt ------------------------------------------
+
+def _counted(room_uuid: UUID):
+    """The filter of `counted_room_messages`, as a query over the rows."""
+    return db.session.query(ChatMessage).filter(
+        ChatMessage.room_uuid == room_uuid, ChatMessage.kind == "message",
+        ChatMessage.streaming.is_(False))
+
+
+def room_window_first_id(room_uuid: UUID, window: int = 30) -> int | None:
+    """The id of the first of the room's last `window` counted messages, or
+    None when the room has no message before them."""
+    ids = [r[0] for r in _counted(room_uuid).with_entities(ChatMessage.id)
+           .order_by(ChatMessage.id.desc()).limit(window + 1).all()]
+    return ids[window - 1] if len(ids) > window else None
+
+
+def load_room_background(room_uuid: UUID, window_first_id: int | None, *,
+                         diary_allowed: bool = True,
+                         series: tuple[int, int, int] | None = None):
+    """A room's background (`agents.room_background.Background`) for a
+    window that begins at `window_first_id`: what a turn's prompt holds of
+    the room before its last messages, and what the Housekeeping page shows
+    of it. `series` is the series of chunks to read; None picks the one that
+    reaches furthest.
+
+    It writes nothing, and reads no more of the room's messages than the
+    blocks show. The topics' members are the one read that grows with the
+    room. `record["load_ms"]` is what it took."""
+    import time
+
+    from agents import room_background, room_topics
+    from db.room_topics import list_room_topic_members, list_room_topics
+
+    started = time.monotonic()
+    if window_first_id is None:
+        return room_background.Background()
+    if series is None:
+        series = room_background.pick_series([
+            (r[0], r[1], r[2], r[3]) for r in db.session.query(
+                RoomChunk.chunk_size, RoomChunk.overlap, RoomChunk.prompt_version,
+                sa.func.max(RoomChunk.last_message_id))
+            .filter(RoomChunk.room_uuid == room_uuid)
+            .group_by(RoomChunk.chunk_size, RoomChunk.overlap,
+                      RoomChunk.prompt_version).all()])
+        if series is None:
+            return room_background.Background()
+    size, overlap, version = series
+    # Every chunk of the series, without its text: which are shown, and
+    # what the topics are counted over.
+    light = (db.session.query(RoomChunk.uuid, RoomChunk.first_message_id,
+                              RoomChunk.last_message_id, RoomChunk.message_count)
+             .filter_by(room_uuid=room_uuid, chunk_size=size, overlap=overlap,
+                        prompt_version=version)
+             .order_by(RoomChunk.first_message_id.asc()).all())
+    shown = room_background.shown_chunks(
+        [{"uuid": r[0], "first_id": r[1], "last_id": r[2]} for r in light],
+        window_first_id)
+    if not shown:
+        return room_background.Background()
+    rows = (db.session.query(RoomChunk)
+            .filter(RoomChunk.uuid.in_([c["uuid"] for c in shown])).all())
+    chunks = [{"uuid": r.uuid, "first_id": r.first_message_id,
+               "last_id": r.last_message_id, "content_hash": r.content_hash,
+               "summary": r.summary, "parts": r.parts,
+               "prompt_version": r.prompt_version} for r in rows]
+    first = shown[0]["first_id"]
+    counted = counted_room_messages(
+        room_uuid, first_id=first,
+        last_id=max(shown[-1]["last_id"], window_first_id))
+    count, date_from, date_to = (
+        _counted(room_uuid).filter(ChatMessage.id < first).with_entities(
+            sa.func.count(), sa.func.min(ChatMessage.created_at),
+            sa.func.max(ChatMessage.created_at)).one())
+    older = room_background.Older(
+        count, date_from.strftime("%Y-%m-%d"), date_to.strftime("%Y-%m-%d")
+    ) if count else None
+    invalidated = (db.session.query(sa.func.max(ChatMessage.id))
+                   .filter(ChatMessage.room_uuid == room_uuid,
+                           ChatMessage.meta["facts_invalidation"].astext.isnot(None))
+                   .scalar())
+    # The date of each chunk's last message: how lately a topic came up.
+    dates = dict(db.session.query(ChatMessage.id, ChatMessage.created_at)
+                 .filter(ChatMessage.id.in_([r[2] for r in light])).all())
+    chunk_last = {r[0]: dates[r[2]].strftime("%Y-%m-%d") for r in light if r[2] in dates}
+    tallied = room_topics.tally(
+        list_room_topics(room_uuid), list_room_topic_members(room_uuid),
+        {r[0] for r in light}, sum(r[3] for r in light), None, chunk_last)
+    background = room_background.build(
+        chunks, counted, window_first_id, tallied, older=older,
+        facts_invalidated_id=invalidated, diary_allowed=diary_allowed)
+    background.record.update(
+        series=[size, overlap, version],
+        load_ms=round((time.monotonic() - started) * 1000))
+    return background

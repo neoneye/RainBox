@@ -26,6 +26,7 @@ exists.
 | The Housekeeping page and a job's page | `webapp/housekeeping_views.py` |
 | The assistant summary's model call | `agents/assistant_run_summarizer.py` |
 | The chunk summary's prompt and parsing | `agents/room_chunks.py` |
+| A room's background for a prompt | `agents/room_background.py` |
 | `room_chunk` | `db/models.py` |
 
 ## From a run ending to a summary
@@ -588,7 +589,62 @@ the fruit and the computer apart and called those halves one, and called
 12 of the 14 one, a project and a board it has among them.
 
 **Not built:** topics across rooms, moving one part to another topic,
-undoing a merge, and the block in a prompt.
+undoing a merge, and the block in a prompt (see A room's background).
+
+## A room's background
+
+What a turn's prompt is going to hold of a room before its last 30
+messages: `agents/room_background.py`, read through
+`db.load_room_background`. It is shown on a room's page (**as in the
+prompt**) and reaches no prompt yet. Design and what is left to build:
+`proposals/2026-11-21-chat-compaction.md`.
+
+It is two blocks of plain lines, written by rule from stored rows. No model
+is called and nothing is stored.
+
+**`room_earlier`** is the newest 16 chunks that begin before the window
+does, oldest first. The newest of them can hold the window's first message.
+- **The 4 nearest are part by part**: a line of dates, then for each part
+  what was wanted and how it went.
+- **The 12 before them are a line each**: the dates and the chunk's
+  subjects, with any part that was not settled, or was asked again.
+- **A stretch with no chunk** is a line saying how many messages are not
+  summarized: between two chunks, and between the newest chunk and the
+  window.
+- **A chunk whose messages changed** since it was summarized is its dates
+  alone.
+- **`Before this: N messages from … to …`** is the first line when the room
+  is older than what is shown.
+
+**How a part went** (`how_it_went`), the first that applies:
+
+| the part's records | the line says |
+|---|---|
+| grounding `tool failed` | answered after its program (or its tool) failed |
+| grounding `output not used` | the answer does not match what its program printed |
+| a reply voted down, corrected or quoted back | the answer was rejected |
+| runs, and none resolved | nothing was delivered, or it was only partly delivered |
+| asked again | asked N times, then the last answer |
+| a tool ran for it | came of it: the result |
+| otherwise | answered then: the result |
+
+The first four give no result. A result is also left out, with words in its
+place, for a part older than the room's newest facts invalidation, and
+(when an assistant model is not local) for a part that read the diary or
+whose chunk prompt is older than the one that records tools.
+
+**`room_topics`** is a line per recurring topic: the 5 newest with a part
+in the shown chunks, then the largest, 10 in all. A topic outside the shown
+chunks carries the date it was last summarized.
+
+**Size.** `room_earlier` is held to 4,000 characters and `room_topics` to
+1,200. The near chunks may take 2,400 between them; over that the oldest
+becomes a line. Then the oldest lines are dropped and counted in `Before
+this`. What was wanted is cut at 160 characters, a result at 240, a chunk's
+subjects at 200.
+
+**The series read** is the one given, or the one whose newest chunk reaches
+furthest into the room.
 
 ## Order
 
@@ -842,24 +898,19 @@ its kind. Above the tables, the pairs that look like one topic, each with
 Merge and Not the same, and **Look for topics that are one**, which queues
 the job that finds them. **Assign topics** queues a job for each chunk
   whose parts have no topic yet, and summarizes nothing. Under the tables
-  is the `<room_topics>` block a prompt could hold in place of every chunk
-  (`agents/room_topics.render_room_topics`): a `<topic>` per recurring
-  topic with `kind`, `share`, `asked`, `name` and `about`, then `<other>`
-  with the share no recurring kind of task holds; with its number of
-  characters against the messages' own.
-  The second (`&view=prompt`) puts
-  the series' chunks into one `<room_earlier>` block of text, in place of the
-  cards: a `<chunk>` per chunk with its message range, dates, topics and
-  phrase, and inside it a `<part>` per part with its range, topics, how many
-  times it was asked, its calibration, what was wanted and what came of it.
-  `agents/room_chunks.render_room_earlier` writes it from the stored rows.
-  A topic name is stored with hyphens between its words and written here
-  with spaces, the names apart by a comma with no space after it.
-  The page gives the block's number of characters and a copy button. A
-  table above it gives the size of the messages the chunks cover (the
+  is the `<room_topics>` block as a prompt is going to hold it
+  (`agents/room_background.render_topics`): a line per recurring topic
+  with its name, what it is and how many times it came up, the topics of
+  the chunks just before the room's last messages first; with its number
+  of characters against the messages' own. The share and the tools stay in
+  the tables.
+  The second (`&view=prompt`) shows, in place of the cards, the room's
+  background as a turn would be given it now: see **A room's background**
+  below. The page gives its number of characters and a copy button. A
+  table above it gives the size of the messages its chunks cover (the
   user's, the replies, both together), then the summaries' sentences
-  alone and the whole block, each as a share of that. It is
-  how a prompt is going to hold the summaries; no prompt holds them yet.
+  alone and the whole text, each as a share of that. No prompt holds it
+  yet.
 
 The room's page is reached from the room itself: the chat sidebar's
 **Context** panel lists the pages that show what the assistant is given

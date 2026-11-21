@@ -1491,18 +1491,27 @@ _ROOM_FRAGMENT = """
   prompt {{ cur_version }}), so no new chunks are added to it.</p>
 {% endif %}
 {% if as_prompt %}
-<p class="hk-lede">The {{ chunks|length }} summarized chunk{{ '' if chunks|length == 1 else 's' }} of this series as one block of text,
-  the way the personal assistant's prompt is going to hold them: ahead of the
-  room's newest messages, which it reads in full. The block is
-  <b>{{ '{:,}'.format(prompt_chars) }} characters</b>. No prompt holds it yet.</p>
+<p class="hk-lede">The room's background as a turn would be given it now, the way the
+  personal assistant's prompt is going to hold it: ahead of the room's last 30
+  messages, which it reads in full. It is the room's recurring topics, and the
+  {{ block_chunks }} chunk{{ '' if block_chunks == 1 else 's' }} of this series before those messages:
+  the nearest part by part, the ones before them a line each. Together
+  <b>{{ '{:,}'.format(prompt_chars) }} characters</b>{% if background.trimmed %}, after
+  {{ background.trimmed }} of the oldest line{{ '' if background.trimmed == 1 else 's' }} gave way to the limit{% endif %}{% if background.results_withheld %};
+  {{ background.results_withheld }} result{{ '' if background.results_withheld == 1 else 's' }} withheld{% endif %}.
+  No prompt holds it yet.</p>
+{% if not prompt_chars %}
+<p class="hk-lede">This room has no summarized chunk before its last 30 messages, so a turn
+  would be given no background.</p>
+{% endif %}
 <table class="hk-log hk-sizes">
   <thead><tr><th>Text</th><th class="hk-right">Messages</th><th class="hk-right">Characters</th><th class="hk-right">Of the original</th></tr></thead>
   <tbody>
     <tr><td>Your messages</td><td class="hk-num hk-right">{{ sizes.human_count }}</td><td class="hk-num hk-right">{{ '{:,}'.format(sizes.human) }}</td><td></td></tr>
     <tr><td>The assistant's replies</td><td class="hk-num hk-right">{{ sizes.reply_count }}</td><td class="hk-num hk-right">{{ '{:,}'.format(sizes.replies) }}</td><td></td></tr>
-    <tr><td title="The text of every message inside the summarized chunks. Messages not summarized yet are not counted.">Original, in total</td><td class="hk-num hk-right">{{ sizes.human_count + sizes.reply_count }}</td><td class="hk-num hk-right">{{ '{:,}'.format(sizes.total) }}</td><td class="hk-num hk-right">100%</td></tr>
+    <tr><td title="The text of every message inside the chunks the background covers. Messages not summarized, and chunks older than it shows, are not counted.">Original, in total</td><td class="hk-num hk-right">{{ sizes.human_count + sizes.reply_count }}</td><td class="hk-num hk-right">{{ '{:,}'.format(sizes.total) }}</td><td class="hk-num hk-right">100%</td></tr>
     <tr><td title="Only the sentences the model wrote: each chunk's summary, and for each part what was wanted and what came of it. No tags, message numbers, dates, topics or labels.">Summary text only</td><td></td><td class="hk-num hk-right">{{ '{:,}'.format(sizes.written) }}</td><td class="hk-num hk-right">{{ sizes.written_percent }}</td></tr>
-    <tr><td title="The block below: the summary text with its tags, message numbers, dates, topics and labels."><b>Summarized, as the block</b></td><td></td><td class="hk-num hk-right"><b>{{ '{:,}'.format(prompt_chars) }}</b></td><td class="hk-num hk-right"><b>{{ sizes.percent }}</b></td></tr>
+    <tr><td title="The text below: the topics, and the chunks as lines with their dates."><b>The background, as below</b></td><td></td><td class="hk-num hk-right"><b>{{ '{:,}'.format(prompt_chars) }}</b></td><td class="hk-num hk-right"><b>{{ sizes.percent }}</b></td></tr>
   </tbody>
 </table>
 <div class="tb-scope">{{ prompt_block }}</div>
@@ -1582,8 +1591,10 @@ _ROOM_FRAGMENT = """
   </div>
 </div>
 {% endfor %}
-<p class="hk-lede">The recurring topics as one block of text, the way a prompt could hold
-  them in place of every chunk: <b>{{ '{:,}'.format(topics.chars) }} characters</b>{% if topics.percent %},
+<p class="hk-lede">The recurring topics the way a prompt is going to hold them, ahead of
+  the chunks: the ones that came up in the chunks just before the room's last
+  messages first, then the largest, each with how many times it came up. A share
+  and the tools stay on this page. <b>{{ '{:,}'.format(topics.chars) }} characters</b>{% if topics.percent %},
   {{ topics.percent }} of the summarized messages' own text{% endif %}. No prompt holds it yet.</p>
 <div class="tb-scope">{{ topics.block }}</div>
 {% else %}
@@ -1758,7 +1769,9 @@ def _int_arg(name: str, default: int) -> int:
 @app.route("/assistant/housekeeping/room/<uuid:room_uuid>")
 def housekeeping_room_page(room_uuid: UUID) -> str:
     from agents import room_topics
-    from agents.room_chunks import PROMPT_VERSION, render_room_earlier
+    from agents import room_background
+    from agents.model_groups import assistant_models_all_local
+    from agents.room_chunks import PROMPT_VERSION
 
     names = db.housekeeping_room_names([room_uuid])
     if room_uuid not in names:
@@ -1787,9 +1800,22 @@ def housekeeping_room_page(room_uuid: UUID) -> str:
         if is_current else 0
     as_prompt = request.args.get("view") == "prompt"
     as_topics = request.args.get("view") == "topics"
-    # What the summarized chunks' own messages come to, to hold the block's
-    # size against. A message of the human's is theirs; every other is a reply.
-    inside_all = [m for c in chunks for m in c["messages"]]
+    # The background as a turn would be given it now: the chunks of this
+    # series before the room's last 30 messages, and the recurring topics.
+    window_first_id = db.room_window_first_id(room_uuid)
+    background = room_background.Background()
+    if as_prompt:
+        background = db.load_room_background(
+            room_uuid, window_first_id, series=(size, overlap, version),
+            diary_allowed=assistant_models_all_local()[0])
+    covered_by_block = {
+        c["uuid"] for c in room_background.shown_chunks(
+            [{"uuid": c["row"].uuid, "first_id": c["row"].first_message_id}
+             for c in chunks], window_first_id or 0)}
+    in_block = [c for c in chunks if c["row"].uuid in covered_by_block]
+    # What the block's own messages come to, to hold its size against. A
+    # message of the human's is theirs; every other is a reply.
+    inside_all = [m for c in (in_block if as_prompt else chunks) for m in c["messages"]]
     human = [len(m["text"] or "") for m in inside_all if m["sender"] == "human"]
     replies = [len(m["text"] or "") for m in inside_all if m["sender"] != "human"]
     original = sum(human) + sum(replies)
@@ -1798,15 +1824,13 @@ def housekeeping_room_page(room_uuid: UUID) -> str:
         len(c["row"].summary or "") + sum(
             len(p.get("summary") or "") + len(p.get("result") or "")
             for p in c["row"].parts or [])
-        for c in chunks)
+        for c in (in_block if as_prompt else chunks))
 
     def share(n: int) -> str:
         return f"{100 * n / original:.0f}%" if original else ""
-    prompt_text = render_room_earlier([
-        {"first": c["first_index"], "last": c["last_index"],
-         "date_from": c["date_from"], "date_to": c["date_to"],
-         "summary": c["row"].summary, "topics": c["row"].topics,
-         "parts": c["row"].parts} for c in chunks]) if as_prompt else ""
+    prompt_text = "\n".join(filter(None, [
+        room_background.as_block("room_topics", background.topics),
+        room_background.as_block("room_earlier", background.earlier)]))
     topics: dict = {}
     if as_topics:
         covered_messages = sum(c["row"].message_count for c in chunks)
@@ -1814,8 +1838,10 @@ def housekeeping_room_page(room_uuid: UUID) -> str:
         members = db.list_room_topic_members(room_uuid)
         tallied = room_topics.tally(
             db.list_room_topics(room_uuid), members, chunk_uuids, covered_messages,
-            {c["row"].uuid: c["row"].parts or [] for c in chunks})
-        topics_text = room_topics.render_room_topics(tallied)
+            {c["row"].uuid: c["row"].parts or [] for c in chunks},
+            {c["row"].uuid: c["date_to"] for c in chunks})
+        topics_text = room_background.as_block("room_topics", room_background.render_topics(
+            room_background.pick_topics(tallied, covered_by_block)))
         assigned = len({m.chunk_uuid for m in members} & chunk_uuids)
         topics = {
             "axes": (("task", "Kinds of task", "What you are doing"),
@@ -1844,7 +1870,8 @@ def housekeeping_room_page(room_uuid: UUID) -> str:
             "written_percent": share(written),
             "percent": share(len(prompt_text))},
         prompt_block=text_block(
-            f"room_earlier ({len(prompt_text):,} chars)", prompt_text, whole=True),
+            f"room background ({len(prompt_text):,} chars)", prompt_text, whole=True),
+        background=background.record, block_chunks=len(in_block),
         room_uuid=room_uuid, room_name=names[room_uuid], chunks=chunks,
         counted=len(messages), covered=sum(c["row"].message_count for c in chunks),
         size=size, overlap=overlap, version=version, cur_size=cur_size,

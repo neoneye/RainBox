@@ -1,7 +1,8 @@
 # Chat compaction: a room's background in the prompt
 
-**Status:** Proposal. Nothing here is built. Everything it reads is: the
-chunk summaries and the topic registry (`notes/housekeeping-design.md`).
+**Status:** Proposal. Build step 1 of §9 is built: the blocks are written by
+`agents/room_background.py` and shown on a room's Housekeeping page, as
+`notes/housekeeping-design.md` describes. No prompt holds them.
 **Date:** 2026-11-21
 **Related:**
 - [Roadmap: conversation awareness](2026-11-09-conversation-awareness-roadmap.md):
@@ -119,10 +120,10 @@ that applies:
 
 | The part's records | The line says |
 |---|---|
-| grounding `tool failed` | `answered after its program failed.` and no result |
+| grounding `tool failed` | `answered after its program failed.` (`its tool`, where no program was involved) and no result |
 | grounding `output not used` | `the answer does not match what its program printed.` and no result |
 | a reply was voted down, corrected or quoted back | `the answer was rejected.` and no result |
-| nothing was delivered | `nothing was delivered.` |
+| runs are recorded, and none resolved | `nothing was delivered.`, or `it was only partly delivered.` |
 | asked again | `asked N times.` then `the last answer: <result>` |
 | a tool ran for it (grounding `tool`) | `came of it: <result>` |
 | otherwise | `answered then: <result>` |

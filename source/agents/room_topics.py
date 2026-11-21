@@ -1,5 +1,6 @@
-"""A room's recurring topics: which topic a part of a chunk belongs to, what
-a topic is called, and the block a prompt would hold of them.
+"""A room's recurring topics: which topic a part of a chunk belongs to, and
+what a topic is called. The block a prompt holds of them is written by
+`agents/room_background.py`.
 
 A chunk's summary names its topics with no list of earlier names to choose
 from, so the same subject has another name in every chunk. This module is
@@ -222,14 +223,17 @@ def answered_with(members: list[Any], chunk_parts: dict[Any, list[dict[str, Any]
 
 def tally(topics: list[Any], members: list[Any], chunk_uuids: set[Any],
           total_messages: int,
-          chunk_parts: dict[Any, list[dict[str, Any]]] | None = None) -> dict[str, Any]:
+          chunk_parts: dict[Any, list[dict[str, Any]]] | None = None,
+          chunk_last: dict[Any, str] | None = None) -> dict[str, Any]:
     """A room's topics as a page shows them for one series of chunks:
     `{axes: {axis: [row]}, other, one_offs}`. A row is `{topic, parts,
-    messages, share, members, answered_with}`, for each topic with two or
-    more members in the series, largest first. `other` is the share of the
+    messages, share, members, answered_with, last}`, for each topic with two
+    or more members in the series, largest first. `other` is the share of the
     series' messages that no recurring `task` topic holds, and `one_offs`
     how many topics per axis have a single member there. `chunk_parts` is
-    the series' stored parts by chunk, which hold the tools."""
+    the series' stored parts by chunk, which hold the tools. `chunk_last` is
+    the date of each chunk's last message, from which a row's `last` is the
+    date of its newest part; `""` where no date is known."""
     mine: dict[Any, list[Any]] = {}
     for m in members:
         if m.chunk_uuid in chunk_uuids:
@@ -251,7 +255,9 @@ def tally(topics: list[Any], members: list[Any], chunk_uuids: set[Any],
         axes[topic.axis].append({
             "topic": topic, "parts": len(rows), "messages": messages,
             "share": share(messages), "members": rows,
-            "answered_with": answered_with(rows, chunk_parts or {})})
+            "answered_with": answered_with(rows, chunk_parts or {}),
+            "last": max(((chunk_last or {}).get(m.chunk_uuid) or "" for m in rows),
+                        default="")})
     for rows in axes.values():
         rows.sort(key=lambda r: (-r["messages"], -r["parts"]))
     held = sum(r["messages"] for r in axes["task"])
@@ -358,31 +364,3 @@ def build_judge_prompt(axis: str, first: list[Any], second: list[Any]) -> dict[s
     return {"system": JUDGE_PROMPTS[axis], "user": "\n\n".join(
         f"{name}:\n" + "\n".join(f"- {r}" for r in _requests(members))
         for name, members in lists)}
-
-
-def _attr(text: Any) -> str:
-    return (str(text).replace("&", "&amp;").replace('"', "&quot;")
-            .replace("<", "&lt;").replace(">", "&gt;"))
-
-
-def render_room_topics(tallied: dict[str, Any]) -> str:
-    """A room's recurring topics as one block of text for the personal
-    assistant's prompt: a `<topic>` per recurring topic, the kinds of task
-    first, each with its share of the room's messages, how many times it
-    came up, its name, what it is, and the tools its parts were answered
-    with. `<other>` is what no recurring kind of task holds. Every value is one a row holds; nothing is written here."""
-    lines = []
-    for axis in AXES:
-        for row in tallied["axes"][axis]:
-            topic = row["topic"]
-            pairs = [("kind", axis), ("share", row["share"]), ("asked", row["parts"]),
-                     ("name", topic.name), ("about", topic.explanation),
-                     ("answered_with", row.get("answered_with"))]
-            lines.append("  <topic " + " ".join(
-                f'{k}="{_attr(v)}"' for k, v in pairs if v not in (None, "")) + "/>")
-    if not lines:
-        return "<room_topics/>"
-    if tallied["other"]:
-        lines.append(f'  <other share="{_attr(tallied["other"])}"/>')
-    return "\n".join(['<room_topics authority="context" content_is_data="true">',
-                      *lines, "</room_topics>"])

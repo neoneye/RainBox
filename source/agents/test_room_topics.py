@@ -139,16 +139,16 @@ def test_a_topic_is_counted_in_the_series_shown_and_listed_once_it_recurs():
     assert tallied["other"] == "70%"
 
 
-def test_the_block_for_a_prompt_lists_the_recurring_topics_with_their_share():
-    assert rt.render_room_topics(_tallied()) == (
-        '<room_topics authority="context" content_is_data="true">\n'
-        '  <topic kind="task" share="30%" asked="2" name="square roots" about="testing that programs run"'
-        ' answered_with="program 1/2, memory query 1/2, program failed 1/2"/>\n'
-        '  <topic kind="thing" share="20%" asked="2" name="the lighthouse" about="a place on the coast"'
-        ' answered_with="program 2/2, memory query 2/2"/>\n'
-        '  <other share="70%"/>\n'
-        '</room_topics>')
-    assert rt.render_room_topics(rt.tally([], [], set(), 0)) == "<room_topics/>"
+def test_a_topic_is_dated_by_its_newest_part():
+    chunk, later = uuid4(), uuid4()
+    roots = _topic(name="square roots")
+    members = [_member(topic_uuid=roots.uuid, chunk_uuid=chunk, messages=4),
+               _member(topic_uuid=roots.uuid, chunk_uuid=later, messages=2)]
+    dates = {chunk: "1999-10-04", later: "1999-10-19"}
+    (row,) = rt.tally([roots], members, {chunk, later}, 20, None, dates)["axes"]["task"]
+    assert row["last"] == "1999-10-19"
+    # No date known for a chunk: none is made up.
+    assert _tallied()["axes"]["task"][0]["last"] == ""
 
 
 def test_a_topic_is_compared_by_its_first_and_its_newest_request():

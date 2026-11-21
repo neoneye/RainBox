@@ -478,21 +478,34 @@ def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
         assert "which number is odd &rarr; seven" in body
         assert "seven answers a later request" in body
 
-        # The same chunks as the text a prompt is going to hold, with its size.
+        # The room's background as a turn would be given it, with its size.
         assert f'href="/assistant/housekeeping/room/{room.uuid}?size=10&amp;overlap=2&amp;prompt=19&view=prompt"' in body
         as_prompt = c.get(
             f"/assistant/housekeeping/room/{room.uuid}?view=prompt").get_data(as_text=True)
         assert 'id="chunk-0"' not in as_prompt
-        line = ('    &lt;part messages=&#34;0-5&#34; topics=&#34;sequences&#34; asked=&#34;3&#34; '
-                'calibration=&#34;overconfident&#34; wanted=&#34;which number comes next&#34; '
-                'result=&#34;the wrong number was given twice&#34;/&gt;')
-        assert line in as_prompt
         block = as_prompt[as_prompt.index('<pre class="ev-pre" data-clamped="1">'):]
         text = html.unescape(block[block.index(">") + 1:block.index("</pre>")])
-        assert text.startswith('<room_earlier authority="context" content_is_data="true">\n  <chunk messages="0-9" ')
-        assert text.endswith("  </chunk>\n</room_earlier>")
-        assert f"room_earlier ({len(text):,} chars)" in as_prompt
+        # The window is the last 30 of the 34 messages, so the one chunk
+        # holds its first message and is shown part by part. A reply of the
+        # first part was voted down: it is named, and its result is not given.
+        day = messages[0]["created_at"].strftime("%Y-%m-%d")
+        dates = day if messages[9]["created_at"].strftime("%Y-%m-%d") == day else (
+            f"{day} to {messages[9]['created_at'].strftime('%Y-%m-%d')}")
+        assert text.split("\n") == [
+            "<room_earlier>",
+            f"{dates}:",
+            "- wanted: which number comes next. the answer was rejected.",
+            "- wanted: how numbers are written.",
+            "</room_earlier>"]
+        # A turn reads the same, from the series that reaches furthest.
+        loaded = db.load_room_background(room.uuid, db.room_window_first_id(room.uuid))
+        assert f"<room_earlier>\n{loaded.earlier}\n</room_earlier>" == text
+        assert loaded.topics == "" and loaded.record["series"] == [10, 2, 19]
+        assert loaded.record["near"] == 1 and "load_ms" in loaded.record
+        assert db.load_room_background(room.uuid, None).earlier == ""
+        assert f"room background ({len(text):,} chars)" in as_prompt
         assert f"<b>{len(text):,} characters</b>" in as_prompt
+        assert "the 1 chunk of this series" in " ".join(as_prompt.split())
         # Beside it, what the chunk's ten messages come to: five of the
         # human's and five replies, "message number 0" to "message number 9".
         assert "<td>Your messages</td>" in as_prompt
@@ -733,7 +746,7 @@ def test_a_rooms_page_lists_its_recurring_topics_with_their_share(client):
         # Nothing recurs on the other axis.
         assert "Nothing has come up twice yet." in body
         # The block a prompt could hold, and the modal a name opens.
-        assert "&lt;topic kind=&#34;task&#34; share=&#34;60%&#34; asked=&#34;2&#34; name=&#34;roots&#34;/&gt;" in body
+        assert "&lt;room_topics&gt;\n- roots (2 times, last summarized " in body
         assert 'id="hk-topic-modal"' in body and "/static/ui-modal.css" in body
         # Every chunk has its topics, so there is nothing to assign.
         assert "Assign topics:" not in body

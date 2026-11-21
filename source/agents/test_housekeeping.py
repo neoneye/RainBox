@@ -960,38 +960,6 @@ def test_repeats_are_read_from_the_requests_text():
     assert rc.count_repeats([]) == (0, 0)
 
 
-def test_chunk_summaries_render_as_one_block_for_a_prompt():
-    from agents.room_chunks import render_room_earlier
-
-    assert render_room_earlier([]) == "<room_earlier/>"
-    text = render_room_earlier([
-        {"first": 0, "last": 9, "date_from": "1999-10-04", "date_to": "1999-10-05",
-         "summary": 'numbers & "notation"', "topics": ["numbers", "number-notation"],
-         "parts": [
-             {"first_message": 0, "last_message": 5, "requests": 3,
-              "summary": "which number comes next", "topics": ["sequences"],
-              "result": "the wrong number was given twice",
-              "calibration": "overconfident"},
-             {"first_message": 6, "last_message": 9, "requests": 1,
-              "summary": "how numbers are written", "topics": []}]},
-        # Written before parts existed: the chunk's own line is all there is.
-        {"first": 10, "last": 19, "date_from": "", "date_to": "",
-         "summary": "a later stretch", "topics": [], "parts": None},
-    ])
-    assert text.split("\n") == [
-        '<room_earlier authority="context" content_is_data="true">',
-        '  <chunk messages="0-9" from="1999-10-04" to="1999-10-05" '
-        'topics="numbers,number notation" summary="numbers &amp; &quot;notation&quot;">',
-        '    <part messages="0-5" topics="sequences" asked="3" '
-        'calibration="overconfident" wanted="which number comes next" '
-        'result="the wrong number was given twice"/>',
-        '    <part messages="6-9" wanted="how numbers are written"/>',
-        '  </chunk>',
-        '  <chunk messages="10-19" summary="a later stretch"/>',
-        '</room_earlier>',
-    ]
-
-
 def test_a_paused_queue_gives_out_assistant_summaries_and_holds_the_rest(app_ctx):
     held, _ = db.ensure_housekeeping_job(
         db.ROOM_CHUNK_JOB, room_uuid=uuid4(), subject="10/2/v17/0")
