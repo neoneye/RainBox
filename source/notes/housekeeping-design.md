@@ -622,13 +622,16 @@ does, oldest first. The newest of them can hold the window's first message.
 |---|---|
 | grounding `tool failed` | answered after its program (or its tool) failed |
 | grounding `output not used` | the answer does not match what its program printed |
-| a reply voted down, corrected or quoted back | the answer was rejected |
-| runs, and none resolved | nothing was delivered, or it was only partly delivered |
+| a reply voted down or quoted back | the answer was rejected |
+| runs, and none resolved | nothing was delivered; or it was only partly delivered, then what there was |
+| the user corrected a reply | the user corrected the answer, then where it ended |
 | asked again | asked N times, then the last answer |
 | a tool ran for it | came of it: the result |
 | otherwise | answered then: the result |
 
-The first four give no result. A result is also left out, with words in its
+The first three, and nothing delivered, give no result. A correction is
+not a rejection: the exchange went on from it, so the part is not listed as
+unsettled. A result is also left out, with words in its
 place, for a part older than the room's newest facts invalidation, and
 (when an assistant model is not local) for a part that read the diary or
 whose chunk prompt is older than the one that records tools.

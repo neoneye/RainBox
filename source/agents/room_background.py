@@ -41,6 +41,8 @@ PROMPT_RESERVE_CHARS = 16_000
 CHARS_PER_TOKEN = 3
 #: The chunk prompt from which a part records the tools its replies used.
 TOOLS_RECORDED_FROM = 19
+#: A part whose runs got partway: unsettled, and what there was is shown.
+PARTLY = "it was only partly delivered"
 #: The diary's read, as a part's `signals.tools` names it.
 DIARY_TOOL = "diary query"
 
@@ -126,17 +128,23 @@ def _unsettled(part: dict[str, Any]) -> str | None:
                 else "answered after its tool failed")
     if grounding == "output not used":
         return "the answer does not match what its program printed"
-    if signals.get("down") or reactions & {"corrected", "questioned"}:
+    if signals.get("down") or "questioned" in reactions:
         return "the answer was rejected"
     runs = signals.get("runs") or {}
     if runs and not runs.get("resolved"):
-        return ("it was only partly delivered" if runs.get("partial")
-                else "nothing was delivered")
+        return PARTLY if runs.get("partial") else "nothing was delivered"
     return None
 
 
 def settled(part: dict[str, Any]) -> bool:
     return _unsettled(part) is None
+
+
+def _corrected(part: dict[str, Any]) -> bool:
+    """Whether the user corrected a reply in the part. That is not a
+    rejection: the exchange went on from the correction, and where it ended
+    is the part's result."""
+    return "corrected" in (part.get("reactions") or [])
 
 
 def _asked(part: dict[str, Any]) -> int:
@@ -164,13 +172,19 @@ def _withheld(part: dict[str, Any], *, before_invalidation: bool,
 def how_it_went(part: dict[str, Any], *, before_invalidation: bool = False,
                 diary_allowed: bool = True, tools_recorded: bool = True) -> str:
     """How a part went, in words, from its records. A part the records
-    speak against says so and gives no result. A result is `came of it`
-    only where a tool ran for it; otherwise it is what was answered then."""
+    speak against says so and gives no result, but for one that was partly
+    delivered, which says what there was. A reply the user corrected is
+    said to be corrected, with where the exchange ended. A result is `came
+    of it` only where a tool ran for it; otherwise it is what was answered
+    then."""
     why = _unsettled(part)
-    if why:
+    if why and why != PARTLY:
         return _sentence(why)
     asked = _asked(part)
-    lead = f"asked {asked} times. " if asked else ""
+    corrected = _corrected(part)
+    lead = (_sentence(why) + " " if why
+            else "the user corrected the answer. " if corrected
+            else f"asked {asked} times. " if asked else "")
     held = _withheld(part, before_invalidation=before_invalidation,
                      diary_allowed=diary_allowed, tools_recorded=tools_recorded)
     if held:
@@ -180,7 +194,8 @@ def how_it_went(part: dict[str, Any], *, before_invalidation: bool = False,
         return lead.rstrip()
     signals = part.get("signals") or {}
     grounding = part.get("grounding") or part_grounding(signals)
-    label = ("the last answer" if asked
+    label = ("what there was" if why else "after that" if corrected
+             else "the last answer" if asked
              else "came of it" if grounding == "tool" else "answered then")
     return f"{lead}{label}: {_sentence(result)}"
 
@@ -205,6 +220,8 @@ def _far_line(dates: str, chunk: dict[str, Any]) -> str:
         why = _unsettled(part)
         if why:
             out.append(f"not settled: {wanted} ({why})")
+        elif _corrected(part):
+            out.append(f"corrected by the user: {wanted}")
         elif _asked(part):
             out.append(f"asked {_asked(part)} times: {wanted}")
     return f"{dates}: " + "; ".join(o for o in out if o)

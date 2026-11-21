@@ -117,12 +117,26 @@ def test_how_a_part_went_is_said_from_its_records():
     assert said(_part(grounding="output not used")) == (
         "the answer does not match what its program printed.")
     for rejected in (_part(signals={"down": 1, "runs": {"resolved": 1}}),
-                     _part(reactions=["corrected"]), _part(reactions=["questioned"])):
+                     _part(reactions=["questioned"]),
+                     _part(reactions=["corrected"], signals={"down": 1})):
         assert said(rejected) == "the answer was rejected."
     assert said(_part(signals={"runs": {"failed": 1}})) == "nothing was delivered."
-    assert said(_part(signals={"runs": {"partial": 1}})) == "it was only partly delivered."
+    # Partway is not nothing: the line says what there was.
+    assert said(_part(signals={"runs": {"partial": 1}})) == (
+        "it was only partly delivered. what there was: it opens at nine.")
+    assert not rb.settled(_part(signals={"runs": {"partial": 1}}))
+
+
+def test_a_correction_is_not_a_rejection():
+    part = _part(reactions=["corrected", "moved_on"], result="it opens at ten")
+    assert rb.how_it_went(part) == "the user corrected the answer. after that: it opens at ten."
+    assert rb.settled(part)
+    messages, chunks, window = _room(90)
+    chunks[0]["parts"] = [dict(part, summary="the opening hours")]
+    far = rb.build(chunks, messages, window, None).earlier.split("\n")[0]
+    assert far == "1999-10-04: subject 0; corrected by the user: the opening hours"
     # No result stored: the line says nothing more.
-    assert said(_part(result="")) == ""
+    assert rb.how_it_went(_part(result="")) == ""
 
 
 def test_asking_again_is_counted_and_not_called_rejecting():

@@ -122,14 +122,21 @@ that applies:
 |---|---|
 | grounding `tool failed` | `answered after its program failed.` (`its tool`, where no program was involved) and no result |
 | grounding `output not used` | `the answer does not match what its program printed.` and no result |
-| a reply was voted down, corrected or quoted back | `the answer was rejected.` and no result |
-| runs are recorded, and none resolved | `nothing was delivered.`, or `it was only partly delivered.` |
+| a reply was voted down or quoted back | `the answer was rejected.` and no result |
+| runs are recorded, and none resolved | `nothing was delivered.`, or `it was only partly delivered. what there was: <result>` |
+| the user corrected a reply | `the user corrected the answer. after that: <result>` |
 | asked again | `asked N times.` then `the last answer: <result>` |
 | a tool ran for it (grounding `tool`) | `came of it: <result>` |
 | otherwise | `answered then: <result>` |
 
-**"Not settled"** is the first four rows. Asked again is its own case, and
-is not called unsettled.
+**"Not settled"** is the first four rows. Corrected and asked again are
+their own cases, and are not called unsettled: on a far line they read
+`corrected by the user: <wanted>` and `asked N times: <wanted>`.
+
+**A correction is not a rejection.** When the user corrects a reply and the
+exchange goes on from the correction, the part's result is where it ended.
+Calling that "rejected" and hiding the result described an accepted
+correction as a failure, on the first real room read (§6).
 
 **The rows come before any withholding.** A result is withheld (below, and
 §3.8) only in the last three rows, where there is one to withhold. A part
@@ -157,7 +164,7 @@ opinion.
 - **Asking again is not rejecting.** A request asked again can mean the
   answer was wrong, or that the user wanted more, or was testing. The line
   gives the count and the last answer, and calls neither right nor wrong.
-  Only a vote down, a correction or a reply quoted back is `rejected`.
+  Only a vote down or a reply quoted back is `rejected`.
 
 **A stored "no reaction yet" is not printed.** A chunk is summarized once
 two messages follow it, so a part at its end can be stored as `unclear`,
@@ -516,8 +523,11 @@ reach no prompt.
   `stated` field on the part, written by the call that already runs, would
   put decisions on the near lines with no new job. It changes the chunk
   prompt, so it starts a new series and needs its own replay on stored
-  calls. **It is the next thing to build if §6 shows the big picture is
-  still missing.**
+  calls. **§6 showed the big picture is missing without it, so it is build
+  step 2.** How it is rendered: a near part's line gains `the user said:
+  <stated>` ahead of how it went, and a far line carries its chunk's
+  statements after its subjects, cut as the subjects are. A part made only
+  of statements, with no request, is allowed: its line is the statement.
 - **A record-only phase.** The block is a pure function of rows, and the
   page shows it for any room at any time. Reading it there is the dry run.
 - **Clustering by embedding, a compaction cursor with locks, a per-room
@@ -555,6 +565,33 @@ reach no prompt.
 4. **A failure seen in use is replayed.** The run's stored decide call, with
    and without the blocks, on the same model, before any wording is changed
    to fix it.
+
+### What the first read of a real room showed
+
+The operator's own room, read on the **as in the prompt** view and held
+against the room's messages by an outside reviewer:
+
+- **Subjects are recognizable.** Names of things looked up, and what kind
+  of request each was, survive.
+- **What the user explained is gone.** The room's most informative stretch
+  was the user explaining how the system is built and why. It came out as
+  one far line naming a subject. A part is a request and what came of it; an
+  explanation is neither.
+- **Counting favours the trivial.** Small requests made many times (a
+  computation, a conversion) hold several rows of `room_topics`, and a
+  discussion held once holds none.
+- **Two outcome wordings misled**: a correction the conversation accepted
+  read as rejected, and "partly delivered" did not say what there was. Both
+  are changed (§3.2).
+
+The first three are not the renderer's to fix: the lines can only say what
+the chunk rows hold. So `stated` (§5) is no longer conditional. It is build
+step 2 (§9), ahead of any prompt.
+
+Three probes are added for it, each a question about something the user
+explained before the window and never asked for: why a design choice was
+made, how a part of the system works, what the user finds hard. Each passes
+when the reply shows the explanation is known.
 
 ## 7. When something is missing
 
@@ -618,11 +655,18 @@ part that read the diary.
 
 1. **`agents/room_background.py`, `tally`'s `last`, the bounded load, the
    tests, and the page's view on it.** In no prompt.
-2. **The operator reads it** for their own rooms; wording is adjusted.
+2. **`stated` in the chunk prompt** (`agents/room_chunks.py`, a new prompt
+   version and so a new series): what the user stated, decided or explained
+   in a part, in at most two short sentences, empty for a part that is only
+   a request. Replayed on stored chunk calls before it is kept: the parts,
+   results and ranges must not get worse, and the explanations the first
+   read missed must appear. Then the room is summarized again and read
+   again.
 3. **The setting, the load in the turn, the fit check, the instruction
    paragraph, the record.** Off in production. `PROMPT_RESERVE_CHARS` is set
    here, from the sizes of stored decide calls.
-4. **The probe room, in the sandbox**, off against on. The three probes that
+4. **The probe room, in the sandbox**, off against on, with the three
+   probes for what the user explained. The three probes that
    guard against harm (Rejected answer, Current state, Never discussed) have
    to pass before the next step; the others say how much it helps.
 5. **On in production.**
