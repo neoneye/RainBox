@@ -442,7 +442,7 @@ def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
                "rewritten": [{
             "first_message": 0, "last_message": 5, "summary": "which number is odd",
             "result": "seven", "reasoning": "seven answers a later request"}]},
-        model="model-a", prompt_version=20, job_uuid=job.uuid)
+        model="model-a", prompt_version=21, job_uuid=job.uuid)
     try:
         body = c.get(f"/assistant/housekeeping/room/{room.uuid}").get_data(as_text=True)
         assert "Messages 0&ndash;9" in body and "questions about numbers" in body
@@ -459,7 +459,7 @@ def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
         assert "if (newest) { select(newestKey()); }" in body
         assert "select(newest ? newestKey() : picked);" in body
         # The heading links to its own chunk in this series.
-        assert 'href="?size=10&amp;overlap=2&amp;prompt=20#chunk-0">Messages 0&ndash;9</a>' in body
+        assert 'href="?size=10&amp;overlap=2&amp;prompt=21#chunk-0">Messages 0&ndash;9</a>' in body
         assert '<span class="hk-chip">numbers</span>' in body
         assert "m0&ndash;m5" in body and "which number comes next" in body
         assert "&times;3" in body and '<span class="hk-chip">notation</span>' in body
@@ -479,7 +479,7 @@ def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
         assert "seven answers a later request" in body
 
         # The room's background as a turn would be given it, with its size.
-        assert f'href="/assistant/housekeeping/room/{room.uuid}?size=10&amp;overlap=2&amp;prompt=20&view=prompt"' in body
+        assert f'href="/assistant/housekeeping/room/{room.uuid}?size=10&amp;overlap=2&amp;prompt=21&view=prompt"' in body
         as_prompt = c.get(
             f"/assistant/housekeeping/room/{room.uuid}?view=prompt").get_data(as_text=True)
         assert 'id="chunk-0"' not in as_prompt
@@ -500,7 +500,7 @@ def test_a_rooms_page_shows_its_chunks_and_offers_the_rest(client):
         # A turn reads the same, from the series that reaches furthest.
         loaded = db.load_room_background(room.uuid, db.room_window_first_id(room.uuid))
         assert f"<room_earlier>\n{loaded.earlier}\n</room_earlier>" == text
-        assert loaded.topics == "" and loaded.record["series"] == [10, 2, 20]
+        assert loaded.topics == "" and loaded.record["series"] == [10, 2, 21]
         assert loaded.record["near"] == 1 and "load_ms" in loaded.record
         assert db.load_room_background(room.uuid, None).earlier == ""
         assert f"room background ({len(text):,} chars)" in as_prompt
@@ -733,7 +733,7 @@ def test_a_rooms_page_lists_its_recurring_topics_with_their_share(client):
         page = f"/assistant/housekeeping/room/{room.uuid}"
         body = c.get(page).get_data(as_text=True)
         # A third view beside the summaries and the prompt's text.
-        assert f'href="{page}?size=10&amp;overlap=2&amp;prompt=20&view=topics"' in body
+        assert f'href="{page}?size=10&amp;overlap=2&amp;prompt=21&view=topics"' in body
         body = c.get(f"{page}?view=topics").get_data(as_text=True)
         assert "<h3>Kinds of task</h3>" in body and "<h3>Named things</h3>" in body
         # Six of the ten summarized messages, in two parts.
@@ -761,9 +761,9 @@ def test_the_operator_writes_a_topics_name_and_explanation(client):
         page = f"/assistant/housekeeping/room/{room.uuid}"
         resp = c.post(f"/assistant/housekeeping/topic/{topic.uuid}", data={
             "name": "  python   check ", "explanation": "testing that programs run",
-            "next": f"{page}?size=10&overlap=2&prompt=20&view=topics"})
+            "next": f"{page}?size=10&overlap=2&prompt=21&view=topics"})
         assert resp.status_code == 302
-        assert resp.headers["Location"] == f"{page}?size=10&overlap=2&prompt=20&view=topics"
+        assert resp.headers["Location"] == f"{page}?size=10&overlap=2&prompt=21&view=topics"
         db.session.refresh(topic)
         assert (topic.name, topic.explanation, topic.operator_edited) == (
             "python check", "testing that programs run", True)

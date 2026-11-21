@@ -169,41 +169,43 @@ of what was said. The list stands last in the schema and its instruction
 last before the rules, so the parts are written before it and as they were.
 Most chunks have none.
 
-- **A statement is kept where its words are the user's own**
-  (`room_chunks.settle_statements`): at least half of its words of four
-  letters or more are in the user's messages of the chunk. The prompt says
-  to take nothing from a reply, and the model does anyway: what a reply had
-  read out of the diary came back as something the user said. One that is
-  dropped is listed in the chunk's `problems`. The rule reads words apart by
-  spaces, so it keeps nothing of a language written without them.
+- **A statement is the user's own words, copied.** The model is told to
+  copy a sentence from the user's message word for word and not to reword
+  it. Asked to say it shorter instead, a small model wrote "The user
+  mentioned ..." and "The user asked for ...", and those words made a real
+  statement hard to tell from one taken from a reply. A copy needs no
+  speaker and cannot drift from what was said.
+- **A statement is kept where its words are in one message of the user's**
+  (`room_chunks.settle_statements`): at least 0.8 of its words of four
+  letters or more are in a single message the user wrote in the chunk. The
+  prompt says to take nothing from a reply, and the model does anyway: what
+  a reply had read out of the diary came back as something the user said.
+  One that is dropped is listed in the chunk's `problems`. The rule reads
+  words apart by spaces, so it keeps nothing of a language written without
+  them.
 - **A statement that repeats a request is dropped**
   (`room_chunks.restates_request`): at least half of its words of four
   letters or more are in the subject of one part of the chunk. The prompt
-  says a request holds no statement, and the model writes that the user
-  asked for it all the same. It is listed in `problems` too.
-  `room_background` applies the rule again when it reads a chunk, so a
-  background shows no such line whatever the row holds.
-- **On one room's 16 chunks as the job stored them**, 8 statements were
-  kept and 12 dropped. Of the kept, five were the user's own explanations
-  or plans, one a correction worded loosely, and two repeated a request (at
-  0.57 and 0.75 of their words in a part's subject; the five stood at 0.22
-  or less), which is what this rule drops. Of the dropped, ten came from a
-  reply or said what was asked, and two were the user's own, at 0.40 and
-  0.43 of their words: the words "the user stated that" count against a
-  short statement.
-- **Replayed on one room's 16 stored chunk prompts**, on gemma4:e4b-mlx:
-  statements in 4 chunks, 8 in all. Five were the user's explanations, the
-  ones the room's summaries had lost. Two came from a reply, at 0.40 and
-  0.11 of their words the user's, and the rule drops them; the five stood at
-  0.50 to 0.88. One was a request written as a statement, at 0.57, which
-  the rule keeps.
-- **A statement put as a question is missed.** The user proposing a design
-  by asking what the assistant thought of it gave no statement.
+  says a request holds no statement, and the model copies one all the same.
+  It is listed in `problems` too. `room_background` applies the rule again
+  when it reads a chunk, so a background shows no such line whatever the
+  row holds.
+- **Replayed on one room's 16 stored chunk prompts**, on gemma4:e4b-mlx,
+  with only the instruction changed: 16 statements in 8 chunks. Fourteen
+  were word for word from a message of the user's, all of their words in
+  it. Two were sentences of a reply, with 0.05 and 0.08 of their words in
+  any message of the user's, so the 0.8 floor has room on both sides. Of
+  the fourteen, nine were explanations, plans or reasons, three were
+  corrections of a reply, and two were requests, which the request rule
+  drops. Every explanation the reworded statements had lost to the old
+  floor of 0.5 came back.
+- **The limit of three cuts a chunk that says more.** The model gave four
+  for the densest chunk, and a fifth explanation in it was not given.
 - **The parts did not change by it.** With the list asked for inside each
   part instead, the model copied plain requests into it. At the chunk's
-  end, the new prompt's parts differed from the stored ones no more than
-  the old prompt's did when run again: the same chunks came out merged or
-  split either way.
+  end, the parts written under the copying instruction numbered the same as
+  those written under the one before it when both ran on the same model (25
+  and 25 over the eight chunks compared).
 - **A reply that leaves the list out stated nothing.** The field has a
   default, so such a reply does not lose the chunk.
 
@@ -807,7 +809,7 @@ The inbox item is a hint. The rows say what is due.
 | `first_message_id`, `last_message_id`, `message_count` | its edges and size |
 | `content_hash` | over its messages' ids and texts when it was written |
 | `summary`, `topics` | the chunk's subjects, joined, and broader topics |
-| `statements` | what the user stated in the chunk, a sentence each; NULL for a chunk written before prompt 20 |
+| `statements` | what the user stated in the chunk: their own words from prompt 21 on, the model's wording at prompt 20; NULL for a chunk written before that |
 | `parts` | its parts: `{first_message, last_message, summary, topics, requests}`, and from prompt 3 `result`, the reactions, `calibration`, `signals`; from prompt 4 `calibration_basis`; from prompt 6 `audit`; from prompt 7 the reactions are read by rule; from prompt 12 `asked_again_at`; from prompt 19 `grounding`, and `tools` in its `signals`; NULL for a chunk of the first prompt |
 | `problems` | what was off in the reply, and in the check's reply |
 | `audit` | the check: `{attempts, rewritten, error}`, and `repeat_check`, what the decision model was asked; NULL for a chunk written before the check existed |

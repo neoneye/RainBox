@@ -35,15 +35,15 @@ from pydantic import BaseModel, Field
 #: Bumped when the prompt, the schema or the parsing changes. A chunk belongs
 #: to the series of the version that wrote it, so a new version summarizes a
 #: room again beside the old series, and the two can be compared.
-PROMPT_VERSION = 20
+PROMPT_VERSION = 21
 
 SUMMARY_MAX_CHARS = 120
 RESULT_MAX_CHARS = 160
 STATED_MAX_CHARS = 240
 MAX_STATEMENTS = 3
 #: A statement is the user's when this share of its words of
-#: `STATEMENT_WORD_MIN` letters or more are in the user's own messages.
-STATEMENT_MIN_OWN = 0.5
+#: `STATEMENT_WORD_MIN` letters or more are in one of the user's messages.
+STATEMENT_MIN_OWN = 0.8
 STATEMENT_WORD_MIN = 4
 #: A statement with this share of its longer words in one part's subject
 #: repeats that part's request.
@@ -98,7 +98,7 @@ class ChunkSummary(BaseModel):
     # to lose the chunk.
     statements: list[str] = Field(
         default_factory=list,
-        description="What the user stated in the chunk, a sentence each. Empty when the user only asked.")
+        description="Sentences copied word for word from the user's messages. Empty when the user only asked.")
 
 
 # No sample answers and no sample topic names anywhere in this prompt: a small
@@ -144,14 +144,15 @@ SYSTEM_PROMPT = (
     "the user's whole request is too much. It is a phrase and not a "
     "sentence: it has no speaker, and it does not say that something was "
     "asked, wanted or discussed.\n\n"
-    "Last, statements: what the user told the assistant in the chunk "
-    "about themselves, their work, or how a thing is built and why; a "
-    "decision, a plan or a preference of theirs. A message that asks for "
-    "something, or tells the assistant to do something, holds no "
-    "statement: it is already a part. Most chunks hold none, and the list "
-    "is then empty. Otherwise at most three, each one sentence of at most "
-    "twenty-five words that gives what was said, shorter than the user "
-    "said it. Only what the user wrote, nothing from a reply.\n\n"
+    "Last, statements: sentences the user wrote in the chunk that tell the "
+    "assistant something about themselves, their work, or how a thing is "
+    "built and why; a decision, a plan or a preference of theirs. Copy each "
+    "from the user's message word for word: one sentence, or the part of "
+    "one that holds what was said, at most thirty words. Do not reword it, "
+    "and do not write who said it. A message that asks for something, or "
+    "tells the assistant to do something, holds no statement: it is already "
+    "a part. Most chunks hold none, and the list is then empty. Otherwise at "
+    "most three. Only from the user's messages, nothing from a reply.\n\n"
     "Rules:\n"
     "- A phrase is at most fourteen words unless said otherwise. It does "
     "not begin by naming who spoke, and it does not announce itself.\n"
@@ -463,18 +464,18 @@ def settle_statements(raw: list[str] | None, chunk: list[dict[str, Any]],
     problems)`. None is the usual answer, and not a problem: most chunks
     are requests and nothing more.
 
-    A statement is kept when at least half of its longer words are in the
-    user's own messages of the chunk (`STATEMENT_MIN_OWN`). The model is
-    told to take nothing from a reply, and does anyway: what a reply read
-    out of the diary came back as something the user had said. A statement
-    in the user's words shares most of them with what the user wrote; one
-    lifted from a reply shares few. The rule reads words apart by spaces,
-    so it keeps nothing of a language written without them.
+    The model is asked to copy a statement word for word, so one is kept
+    when nearly all of its longer words are in one message of the user's in
+    the chunk (`STATEMENT_MIN_OWN`). The model is told to take nothing from
+    a reply, and does anyway: what a reply read out of the diary came back
+    as something the user had said. A copy from the user shares all its
+    words with the message it came from; one lifted from a reply shares
+    few. The rule reads words apart by spaces, so it keeps nothing of a
+    language written without them.
 
     One that repeats a request of the chunk's `parts` is dropped too
     (`restates_request`): the part already holds it."""
-    own = {t for m in chunk if m.get("sender") == "human"
-           for t in _tokens(m.get("text") or "") if len(t) >= STATEMENT_WORD_MIN}
+    own = [set(_tokens(m.get("text") or "")) for m in chunk if m.get("sender") == "human"]
     out: list[str] = []
     problems: list[str] = []
     for text in raw or []:
@@ -482,7 +483,8 @@ def settle_statements(raw: list[str] | None, chunk: list[dict[str, Any]],
         if not text or text in out:
             continue
         words = [t for t in _tokens(text) if len(t) >= STATEMENT_WORD_MIN]
-        if not words or sum(t in own for t in words) / len(words) < STATEMENT_MIN_OWN:
+        if not words or max((sum(t in message for t in words) for message in own),
+                            default=0) / len(words) < STATEMENT_MIN_OWN:
             problems.append(f"a statement is not in the user's messages: {text[:80]}")
             continue
         if restates_request(text, parts):

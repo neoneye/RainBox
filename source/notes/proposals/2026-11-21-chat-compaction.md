@@ -553,9 +553,11 @@ reach no prompt.
   of at most three `statements`, last in the schema. Asked for inside each
   part, the model copied plain requests into it. A near chunk gains a line
   `- the user said: …` for each, ahead of its parts, and a far line carries
-  them after its subjects. The replay's numbers and the rule that keeps a
-  statement only where its words are the user's own are in
-  `notes/housekeeping-design.md`.
+  them after its subjects. A statement is a sentence copied from the user's
+  message and is shown in quotation marks: `- the user said: "…"`. The
+  replay's numbers and the rules that keep a statement only where its words
+  are in one message of the user's, and drop one that repeats a request,
+  are in `notes/housekeeping-design.md`.
 - **A record-only phase.** The block is a pure function of rows, and the
   page shows it for any room at any time. Reading it there is the dry run.
 - **Clustering by embedding, a compaction cursor with locks, a per-room
@@ -630,7 +632,11 @@ The same room, summarized again with `statements` and reviewed again:
 - **Two of the user's own statements were dropped** by the rule that keeps
   a statement only where its words are the user's, at 0.40 and 0.43 against
   a floor of 0.50. Lowering the floor lets a reply's words through: the
-  replay had one of those at 0.40. Not changed.
+  replay had one of those at 0.40. The words "the user stated that" were
+  what counted against them, so the statement is now the user's own words,
+  copied (chunk prompt 21). Replayed on the room's 16 chunk prompts, 14 of
+  16 statements were word for word the user's and the other two, from a
+  reply, shared almost no word with any message of the user's.
 - **Topics doubled.** A kind of task and the thing it was done to held a
   row each. One row is now listed for the same parts (§3.4).
 - **Not taken from the review:** rewriting the statement instruction (it
@@ -707,10 +713,11 @@ part that read the diary.
 1. **`agents/room_background.py`, `tally`'s `last`, the bounded load, the
    tests, and the page's view on it.** In no prompt.
 2. **What the user stated, in the chunk prompt** (`agents/room_chunks.py`,
-   prompt 20 and so a new series; built). Replayed on stored chunk calls:
+   prompt 21 and so a new series; built). Replayed on stored chunk calls:
    the parts did not get worse, and the explanations the first read missed
-   appear. **Next: the room is summarized again and read again**, on its
-   Housekeeping page (**Summarize the rest**, in the new series).
+   appear, in the user's own words. **Next: the room is summarized again
+   and read again**, on its Housekeeping page (**Summarize the rest**, in
+   the new series).
 3. **The setting, the load in the turn, the fit check, the instruction
    paragraph, the record.** Off in production. `PROMPT_RESERVE_CHARS` is set
    here, from the sizes of stored decide calls.

@@ -218,6 +218,10 @@ def test_what_the_user_stated_is_on_the_chunks_lines():
         "1999-10-06:",
         "- the user said: Tasks run in child processes so a hung one can be stopped.",
         "- wanted: the opening hours of the harbour office. answered then: it opens at nine."]
+    # From the prompt that has them copied, they are the user's own words.
+    chunks[2]["prompt_version"] = rb.QUOTED_FROM
+    assert ('- the user said: "Tasks run in child processes so a hung one can be stopped."'
+            in rb.build(chunks, messages, window, None).earlier.split("\n"))
     # A chunk written before statements were kept has none, and no line.
     chunks[2]["statements"] = None
     assert "the user said" not in rb.build(chunks, messages, window, None).earlier.split("\n")[3]

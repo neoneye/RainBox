@@ -46,6 +46,8 @@ PROMPT_RESERVE_CHARS = 16_000
 CHARS_PER_TOKEN = 3
 #: The chunk prompt from which a part records the tools its replies used.
 TOOLS_RECORDED_FROM = 19
+#: The chunk prompt from which a statement is the user's own words, copied.
+QUOTED_FROM = 21
 #: A part whose runs got partway: unsettled, and what there was is shown.
 PARTLY = "it was only partly delivered"
 #: The diary's read, as a part's `signals.tools` names it.
@@ -216,18 +218,22 @@ def _dates(messages: list[dict[str, Any]]) -> str:
     return first if first == last else f"{first} to {last}"
 
 
-def _said(chunk: dict[str, Any]) -> list[str]:
-    """What the user stated in the chunk, each cut to a line. One that
-    repeats a request of the chunk is left out, as it is when a chunk is
-    stored: the part's own line says it."""
+def said(chunk: dict[str, Any]) -> list[str]:
+    """What the user stated in the chunk, each cut to a line: in quotation
+    marks where it is the user's own words (`QUOTED_FROM`), a sentence
+    where the model worded it. One that repeats a request of the chunk is
+    left out, as it is when a chunk is stored: the part's own line says
+    it."""
     parts = chunk.get("parts")
-    return [s for s in (_cut(t, STATED_MAX_CHARS) for t in chunk.get("statements") or []
-                        if not restates_request(str(t or ""), parts)) if s]
+    quoted = int(chunk.get("prompt_version") or 0) >= QUOTED_FROM
+    return [f'"{s}"' if quoted else _sentence(s)
+            for s in (_cut(t, STATED_MAX_CHARS) for t in chunk.get("statements") or []
+                      if not restates_request(str(t or ""), parts)) if s]
 
 
 def _far_line(dates: str, chunk: dict[str, Any]) -> str:
     out = [_cut(chunk.get("summary"), SUBJECTS_MAX_CHARS)]
-    out += [f"the user said: {_sentence(s)}".rstrip(".") for s in _said(chunk)]
+    out += [f"the user said: {s}".rstrip(".") for s in said(chunk)]
     for part in chunk.get("parts") or []:
         wanted = _cut(part.get("summary"), WANTED_MAX_CHARS)
         if not wanted:
@@ -245,7 +251,7 @@ def _far_line(dates: str, chunk: dict[str, Any]) -> str:
 def _near_lines(dates: str, chunk: dict[str, Any], **rules: Any) -> tuple[str, int]:
     """A near chunk's lines, and how many results its rules withheld."""
     lines, held = [f"{dates}:"], 0
-    lines += [f"- the user said: {_sentence(s)}" for s in _said(chunk)]
+    lines += [f"- the user said: {s}" for s in said(chunk)]
     for part in chunk.get("parts") or []:
         wanted = _cut(part.get("summary"), WANTED_MAX_CHARS)
         if not wanted:
@@ -274,7 +280,8 @@ def render_earlier(chunks: list[dict[str, Any]], counted: list[dict[str, Any]],
 
     What the user stated outlasts what they asked for: the statements of a
     chunk that gave way to the limit, and `said_before` (those of the chunks
-    before the shown ones, oldest first), stay under "Before this", the
+    before the shown ones as `said` gives them, oldest first), stay under
+    "Before this", the
     newest `SAID_BEFORE` of them.
 
     `chunks` are the shown chunks, oldest first, each `{uuid, first_id,
@@ -339,18 +346,18 @@ def render_earlier(chunks: list[dict[str, Any]], counted: list[dict[str, Any]],
                 else older.date_to if older else "")
         span = f"on {first}" if first == last else f"from {first} to {last}"
         line = f"Before this: {count} message{'' if count == 1 else 's'} {span}."
-        said = said_then(dropped)
-        if said:
-            line += " The user said in them:\n" + "\n".join(f"- {_sentence(s)}" for s in said)
+        then = said_then(dropped)
+        if then:
+            line += " The user said in them:\n" + "\n".join(f"- {s}" for s in then)
         return line
 
     def said_then(dropped: list[dict[str, Any]]) -> list[str]:
-        said = [s for s in (_cut(t, STATED_MAX_CHARS) for t in said_before or []) if s]
-        said += [s for e in dropped if e["kind"] == "chunk" for s in _said(e["chunk"])]
-        said = list(dict.fromkeys(said))[-SAID_BEFORE:]
-        while said and sum(len(s) + 3 for s in said) > SAID_BEFORE_MAX_CHARS:
-            said.pop(0)
-        return said
+        then = list(said_before or [])
+        then += [s for e in dropped if e["kind"] == "chunk" for s in said(e["chunk"])]
+        then = list(dict.fromkeys(then))[-SAID_BEFORE:]
+        while then and sum(len(s) + 3 for s in then) > SAID_BEFORE_MAX_CHARS:
+            then.pop(0)
+        return then
 
     def text_of(dropped: list[dict[str, Any]], kept: list[dict[str, Any]]) -> str:
         return "\n".join(filter(None, [before_line(dropped), *(e["text"] for e in kept)]))
