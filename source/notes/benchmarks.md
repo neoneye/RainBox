@@ -134,6 +134,25 @@ python -m benchmarks.digest_compaction <room-uuid> \
     --database-url postgresql://localhost/<database> --out <dir> [--dry-run]
 ```
 
+**`benchmarks/room_background_probes.py`** asks whether a turn decides
+better with the room's background (`proposals/2026-11-21-chat-compaction.md`,
+§6):
+- **One invented room, dated 1999**: nine hand-written chunks, then a
+  window of 30 messages about another subject.
+- **Twelve requests**, each run as the decide calls of one turn, with the
+  background off and on. A read the model chooses is answered by a fixed
+  observation, and the turn is followed to its reply, at most three calls.
+- **No database.** The assistant's own builder makes the prompts, in the
+  production layout, and they go to a local Ollama server in bursts.
+- **A person judges** `report.md` against what each probe passes on.
+
+```
+python -m benchmarks.room_background_probes --out <dir> [--dry-run]
+```
+
+It does not cover the summarizer (the chunks are given), the reply audit, or
+a real read: what the memory or a board would return is fixed.
+
 **What it does not cover.** It renders one room at one moment. It does not
 replay a turn, so it cannot say whether the block helps the loop orient or
 whether `room_history` gets used. That is the proposal's orientation

@@ -4,7 +4,8 @@
 written by `agents/room_background.py` and shown on a room's Housekeeping
 page, a chunk keeps what the user stated, and a turn is given the blocks
 when `assistant.room_background` is on, as `notes/housekeeping-design.md`
-describes. The setting is off, and no real turn has run with it.
+describes. The probes of §6 have run. The setting is off, and no real turn
+has run with it.
 **Date:** 2026-11-21
 **Related:**
 - [Roadmap: conversation awareness](2026-11-09-conversation-awareness-roadmap.md):
@@ -685,6 +686,46 @@ The room summarized under the copying prompt:
   similar requests. The far lines are the short form; an unsettled request
   stays named so a later turn does not take it as answered.
 
+### What the probes showed
+
+`benchmarks/room_background_probes.py`, on gemma4:e4b-mlx, one run of each
+arm. The room's chunks were written by hand and a turn was followed to its
+reply with fixed observations, so this is the reading of the blocks and
+not the summarizer.
+
+| Probe | Off | On |
+|---|---|---|
+| Coverage | the window's subject only | three of the room's subjects, none invented |
+| Before the window | "no record" of anything before | the room's recurring topics, not the nearest lines |
+| Recognition | known, asks what to do with it | known, offers the earlier draft |
+| New subject | the window's subject | the window's subject |
+| Rejected answer | three reads, no reply | reads, then says it has no year |
+| What happened | reads the board, answers | reads the board, answers |
+| Current state | reads the board | reads the board |
+| Missing detail | says it has none | says it has none |
+| Never discussed | says nothing is known | says nothing is known |
+| Stated: why | three reads, no reply | the user's reason |
+| Stated: how | "no information stored" | the user's description |
+| Stated: hard | asks the user what is hard | what the user said |
+
+- **Five probes pass with the background that fail without it**: coverage,
+  before the window, and all three on what the user explained. None went
+  the other way.
+- **The three that guard against harm pass**: no year for the rejected
+  answer, the board read for the current state, nothing invented for the
+  subject never discussed.
+- **"What happened" is not answered from the line.** The assistant reads
+  the board with the background as without. It costs a step and is not
+  wrong.
+- **"Before the window" is answered from `room_topics`**, not from the
+  near lines of `room_earlier`: true of the room, not of the stretch just
+  before.
+- **The first decide call says nothing.** In 21 of 24 it was a read, in
+  both arms. The difference is in the reply after the read comes back
+  empty. Over the twelve turns the calls were 27 off and 23 on.
+- **One run of each.** It shows the blocks are read and used, and that
+  nothing checked here broke. It does not rank wordings.
+
 Three probes are added for it, each a question about something the user
 explained before the window and never asked for: why a design choice was
 made, how a part of the system works, what the user finds hard. Each passes
@@ -776,8 +817,9 @@ part that read the diary.
      provider default assumed the background would never be sent.
    - Not built: the run page's line showing the record. The record is on
      the run's metadata.
-4. **The probe room, in the sandbox**, off against on, with the three
-   probes for what the user explained. The three probes that
+4. **The probe room**, off against on, with the three
+   probes for what the user explained (run; §6, "What the probes
+   showed"). The three probes that
    guard against harm (Rejected answer, Current state, Never discussed) have
    to pass before the next step; the others say how much it helps.
 5. **On in production.**
