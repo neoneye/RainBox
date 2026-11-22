@@ -144,6 +144,35 @@ Useful responder agents:
 helpers, and `direct_chat` backs one-to-one direct rooms — none of them are
 room responders you add.)
 
+## Long Rooms: The Room's Background
+
+A turn reads a room's last 30 messages. What came before them reaches it as
+the room's background: the topics the room keeps coming back to, and what
+was wanted and how it went in the stretches before the window, with what
+you explained there in your own words. It is written by rule from summaries
+a local model makes of every 10 messages.
+
+1. Bind `assistant.room_summarizer` on `/agentmodel` and turn on
+   `housekeeping.room_summaries` in Settings. Chunks are then summarized
+   after each turn, giving way to a new message.
+2. For a room that already has history, open its page,
+   `/assistant/housekeeping/room/<room uuid>` (linked from the room's Context
+   panel in `/chat` and from its jobs on `/assistant/housekeeping`), and press
+   **Summarize the rest**.
+3. Read **as in the prompt** on that page: it is the text a turn would be
+   given. Topics that are the same thing under two names are merged with
+   **Look for topics that are one**.
+4. Turn on `assistant.room_background` in Settings. Nothing changes on the
+   room's page; the next turn in the room is given the text.
+5. To see what a turn was given, open its run (`/assistant?id=<run>`): the
+   **Before the turn** card says how many chunks, the sizes, and what gave
+   way to the limit or why nothing was sent. The text itself is in the
+   run's decide call.
+
+A change to the summarizer's prompt starts a new series of chunks; the room
+is then summarized again the same way. How it works, and the numbers:
+"A room's background" in `housekeeping-design.md`.
+
 ## Memory Operations
 
 Memory commands are sent as normal chat messages to a room with `query` (or

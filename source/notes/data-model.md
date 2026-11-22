@@ -185,6 +185,9 @@ Key fields:
   resolved model UUID/name, configured timeout, timestamps, and any error so a
   killed worker can be reconstructed before an `assistant_step` exists. The
   checkpoint is cleared after step persistence or interruption recovery.
+  `metadata.room_background` says what room background the turn was given
+  (counts, sizes, `sent`, or `error`; no message text), written when
+  `assistant.room_background` is on; see `housekeeping-design.md`.
 - `summary`: a post-completion JSONB digest (`{trigger, obstacles[], outcome,
   summarized_at}`); failures receive a deterministic digest immediately, while
   the off-path `assistant.run_summarizer` may later replace it with a

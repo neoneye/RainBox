@@ -846,3 +846,10 @@ part that read the diary.
   every result. Looser: none.
 - **No `room_history` and no aligned window** in this cut (§5).
 - **The furthest-reaching series wins** over the current one (§3.3).
+- **The note on how to read the blocks is in the user prompt**, beside
+  them (`room_background_note`). In the system prompt it would be said once
+  for the whole turn and sit in the head every call shares. Against: the
+  system prompt is the same for every turn, so a turn with no background
+  would carry a paragraph about blocks it does not have, unless the head
+  then differs between turns with and without one. To be decided on a
+  replay of stored calls, both placements.

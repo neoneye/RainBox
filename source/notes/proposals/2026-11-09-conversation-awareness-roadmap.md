@@ -1,8 +1,9 @@
 # Roadmap: conversation awareness
 
-**Status:** Roadmap over proposals. Built: the probe, step 0, and from step 7
-the generated chunk summary as an experiment shown on the Housekeeping page
-(`notes/housekeeping-design.md`).
+**Status:** Roadmap over proposals. Built: the probe, step 0, from step 7
+the generated chunk summary, and a first cut of step 1 on those summaries:
+a room's background in a turn's prompt, behind `assistant.room_background`
+(`notes/housekeeping-design.md`, "A room's background").
 **Date:** 2026-11-09
 
 ## Where this started
@@ -22,7 +23,7 @@ each one buys and costs, and lists what is still the operator's to decide.
 | [Noticing a repeated request](2026-11-09-noticing-a-repeated-request.md) | exact repeats, redos and repeated commands, with what each earlier attempt tried; the request profile; reply checklists as diagnostics |
 | [Later verdicts on earlier messages](2026-11-09-later-verdicts-on-earlier-messages.md) | "that was wrong" / "my guess was right" as append-only records, shown on the earlier message |
 | [The room digest](2026-11-09-room-digest.md) | chunks of every 10 messages, counted from message 0, built from records and never invalidated, described thread by thread with the operator's opening words; `room_history` to read a range back; topics, derived status and a timeline for the window; a generated phrase per chunk only if it earns its place |
-| [Chat compaction: a room's background in the prompt](2026-11-21-chat-compaction.md) | a small first cut of step 1, on the generated chunk summaries and the topic registry: the 16 chunks before the window and the recurring topics as plain lines, under a character limit; no aligned window and no `room_history` yet |
+| [Chat compaction: a room's background in the prompt](2026-11-21-chat-compaction.md) | built: a small first cut of step 1, on the generated chunk summaries and the topic registry: the 16 chunks before the window and the recurring topics as plain lines, under a character limit; no aligned window and no `room_history` yet |
 | [Surfacing topic uncertainty while chatting](2026-11-18-surfacing-topic-uncertainty.md) | a request is filed under a topic when its reply has posted, and shown as a chip on the request in /chat, marked when the filing was doubtful against a topic of five or more; a click corrects it; no list of decisions |
 | [Decision-model foundation](2026-11-09-decision-model-foundation.md) | one System One client, two slots, verified local execution, one record per call, the probe as regression suite |
 | [Detector labels](2026-11-09-detector-labels.md) | one place and one UI for "that detection was wrong" or "it missed this", which every promotion gate reads |

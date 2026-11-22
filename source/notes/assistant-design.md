@@ -265,6 +265,14 @@ turn.
   (`<acceptance_criteria_markdown>`, directly after the language block so the
   request and its constraints travel together — present when the step-0 call
   succeeded; see [Acceptance criteria](#acceptance-criteria)), the
+  **room's background** (`<room_background_note>`, `<room_topics>`,
+  `<room_earlier>`, directly ahead of the transcript: what the room keeps
+  coming back to and what was wanted before the last 30 messages, written
+  by rule from the room's chunk summaries — present when
+  `assistant.room_background` is on, the room has summarized chunks before
+  the window, and the prompt has room; every call of the turn carries the
+  same text, and the run records what it was given; see "A room's
+  background" in `housekeeping-design.md`), the
   transcript (`<conversation_history_xml>`, `kind == "message"` rows
   only, newest `MAX_RECENT_MESSAGES = 30`; bare except for
   `assistant_messages="omitted_after_fresh_read"`, which the system prompt
