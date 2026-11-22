@@ -435,6 +435,25 @@ ASSISTANT_TEMPLATE = """
         </div>
       </div>
 
+      {# What the turn was given of the room before its last messages, from
+         the run's record: counts, never the text. The text is in the decide
+         call's prompt below; the room's page shows the background as it is
+         now, which may have moved on. #}
+      {% if room_background %}
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Before the turn</div>
+        </div>
+        <div class="card-body">
+          <div class="hk-line">
+            <span>{{ room_background }}</span>
+            <a href="/assistant/housekeeping/room/{{ selected.room_uuid }}?view=prompt"
+               title="The room's background as a turn would be given it now. This run's own text is in its decide call's prompt.">as it is now</a>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
       {% if log.events %}
       {# Where the run's wall-clock went, in full: one bar per activity, laid
          end to end. Model calls, embedding calls, and each action's own work,
@@ -1271,6 +1290,47 @@ def _run_dashboard(run, steps: list, reviews: list | None = None) -> dict:
 # is decided once, in `webapp.assistant_components`.
 
 
+def room_background_line(record: dict | None) -> str:
+    """What a run's record says of the room's background the turn was
+    given, as one sentence; `""` for a run with no record (the setting was
+    off, or the room was inside its window). Counts only: the text itself is
+    in the turn's stored decide call, and is not rebuilt from rows that may
+    have changed since."""
+    if not record:
+        return ""
+    if record.get("error"):
+        return f"The room's background failed to load, and the turn ran without it: {record['error']}"
+    sent = record.get("sent")
+    chunks = int(record.get("chunks") or 0)
+    if sent in (None, "none"):
+        if not chunks:
+            return "No room background: the room has no summarized chunk before its last 30 messages."
+        window = record.get("context_window")
+        return ("No room background: the prompt had no room for it"
+                + (f" in a context of {window:,} tokens." if window else "."))
+    near = int(record.get("near") or 0)
+    parts = [f"{chunks} chunk{'' if chunks == 1 else 's'} before the last 30 messages"
+             + (f", {near} part by part" if near else "")]
+    sizes = [f"room_earlier {int(record.get('earlier_chars') or 0):,} characters"]
+    if sent == "both":
+        sizes.append(f"room_topics {int(record.get('topics_chars') or 0):,}")
+    parts.append(", ".join(sizes))
+    if sent == "earlier" and record.get("topics_chars"):
+        parts.append("room_topics left out for want of room")
+    if record.get("trimmed"):
+        n = int(record["trimmed"])
+        parts.append(f"{n} oldest line{'' if n == 1 else 's'} gave way to the limit")
+    if record.get("results_withheld"):
+        n = int(record["results_withheld"])
+        parts.append(f"{n} result{'' if n == 1 else 's'} withheld")
+    series = record.get("series")
+    if series and len(series) == 3:
+        parts.append(f"chunk prompt {series[2]}")
+    if record.get("load_ms") is not None:
+        parts.append(f"loaded in {int(record['load_ms'])} ms")
+    return "Given the room's background: " + "; ".join(parts) + "."
+
+
 def _run_markdown(run, ctx: dict) -> str:
     """Serialize a run's detail pane to Markdown, mirroring `.as-main`."""
     dash = ctx["dash"]
@@ -1344,6 +1404,9 @@ def _run_markdown(run, ctx: dict) -> str:
     else:
         out.append("No triggering chat message found.")
     out.append("")
+    background = room_background_line((run.metadata_ or {}).get("room_background"))
+    if background:
+        out += [background, ""]
 
     # Pending controls.
     if ctx["pending_controls"]:
@@ -1496,6 +1559,8 @@ def assistant_page() -> str:
         duration=duration,
         dash=ctx.get("dash"),
         housekeeping=housekeeping,
+        room_background=room_background_line(
+            (selected.metadata_ or {}).get("room_background")) if selected else "",
     )
 
 

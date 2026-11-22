@@ -815,8 +815,9 @@ part that read the diary.
    - A group with a member that declares no `context_window` is not
      checked (§7). The local models in use declare none, so with the
      provider default assumed the background would never be sent.
-   - Not built: the run page's line showing the record. The record is on
-     the run's metadata.
+   - The run's page shows the record as one line under **Before the
+     turn**, in counts. It does not show the two blocks: those are in the
+     run's stored decide call.
 4. **The probe room**, off against on, with the three
    probes for what the user explained (run; §6, "What the probes
    showed"). The three probes that

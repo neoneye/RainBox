@@ -748,6 +748,11 @@ furthest into the room.
   the builder's counts, `base_chars`, `context_window`, `sent` (`both`,
   `earlier`, `none`), `load_ms`, or `error`. No message text; the text a
   turn was given is in its stored decide call.
+- **The run's page says it in one line**, under **Before the turn**
+  (`assistant_views.room_background_line`), and so does the run's markdown
+  export: how many chunks, the sizes, what gave way, or why none was sent.
+  A run with no record has no line. The link beside it opens the room's
+  background as it is now, which is not what the run was given.
 - **A failure leaves the turn without a background.**
 
 ## Order

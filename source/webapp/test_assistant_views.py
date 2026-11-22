@@ -2815,3 +2815,42 @@ def test_a_failed_action_is_red_on_the_timeline(app_ctx, client):
         assert names == [" is-failed", ""]
     finally:
         _cleanup(run.uuid, room.uuid)
+
+
+def test_what_a_run_says_of_the_room_background_it_was_given():
+    from webapp.assistant_views import room_background_line as line
+
+    assert line(None) == "" and line({}) == ""
+    assert line({"chunks": 10, "near": 4, "earlier_chars": 3783, "topics_chars": 751,
+                 "trimmed": 4, "results_withheld": 0, "series": [10, 2, 23],
+                 "load_ms": 12, "sent": "both", "context_window": None}) == (
+        "Given the room's background: 10 chunks before the last 30 messages, "
+        "4 part by part; room_earlier 3,783 characters, room_topics 751; "
+        "4 oldest lines gave way to the limit; chunk prompt 23; loaded in 12 ms.")
+    assert "room_topics left out for want of room" in line(
+        {"chunks": 3, "earlier_chars": 900, "topics_chars": 400, "sent": "earlier"})
+    assert line({"chunks": 3, "sent": "none", "context_window": 8192}) == (
+        "No room background: the prompt had no room for it in a context of 8,192 tokens.")
+    assert line({"load_ms": 1, "sent": "none"}).startswith(
+        "No room background: the room has no summarized chunk")
+    assert line({"error": "RuntimeError: no such table"}).endswith(
+        "ran without it: RuntimeError: no such table")
+
+
+def test_a_run_given_a_room_background_says_so_on_its_page(app_ctx, client):
+    room = _room()
+    run = db.start_assistant_run(journal_id=None, room_uuid=room.uuid,
+                                 agent_uuid=uuid4(), step_limit=4)
+    try:
+        page, markdown = _rendered(client, run)
+        assert "Before the turn" not in page and "room's background" not in markdown
+        run.metadata_ = {**(run.metadata_ or {}), "room_background": {
+            "chunks": 2, "near": 2, "earlier_chars": 500, "topics_chars": 0,
+            "sent": "earlier", "series": [10, 2, 23], "load_ms": 4}}
+        db.session.commit()
+        page, markdown = _rendered(client, run)
+        said = "Given the room's background: 2 chunks before the last 30 messages"
+        assert "Before the turn" in page and said in page and said in markdown
+        assert f"/assistant/housekeeping/room/{room.uuid}?view=prompt" in page
+    finally:
+        _cleanup(run.uuid, room.uuid)
