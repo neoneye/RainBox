@@ -1,11 +1,12 @@
 # Chat compaction: a room's background in the prompt
 
-**Status:** Proposal. Build steps 1 to 3 of §9 are built: the blocks are
-written by `agents/room_background.py` and shown on a room's Housekeeping
-page, a chunk keeps what the user stated, and a turn is given the blocks
-when `assistant.room_background` is on, as `notes/housekeeping-design.md`
-describes. The probes of §6 have run. The setting is off, and no real turn
-has run with it.
+**Status:** Built, all five steps of §9: the blocks are written by
+`agents/room_background.py` and shown on a room's Housekeeping page, a
+chunk keeps what the user stated, and a turn is given the blocks when
+`assistant.room_background` is on, as `notes/housekeeping-design.md`
+describes. The probes of §6 have run. The setting is on in production.
+Open: whether real turns answer better with it, which the operator judges
+turn by turn (§9, step 5).
 **Date:** 2026-11-21
 **Related:**
 - [Roadmap: conversation awareness](2026-11-09-conversation-awareness-roadmap.md):
@@ -61,8 +62,9 @@ easily, and holding that to a size.
 | What the room keeps coming back to | `room_topic`, `room_topic_member`, with names, explanations and the operator's edits | `agents/room_topics.py` |
 | Background work that yields to a turn, with retries and a record | the housekeeping worker and its tables | `agents/housekeeping.py`, `db/housekeeping.py` |
 | A page that shows the summaries as prompt text | the **as in the prompt** view of a room's Housekeeping page | `webapp/housekeeping_views.py` |
-| **Which summaries a turn gets, in what words, at what size** | no | this proposal |
-| **The blocks in the prompt** | no | this proposal |
+| Which summaries a turn gets, in what words, at what size | the two blocks, written by rule | `agents/room_background.py`, `db.load_room_background` |
+| The blocks in the prompt | behind `assistant.room_background` | `AssistantAgent._load_room_background`, `AssistantPromptBuilder` |
+| What a turn was given, on its run's page | one line under **Before the turn** | `webapp/assistant_views.py` |
 
 ## 3. The design
 
@@ -435,7 +437,7 @@ TOPICS_MAX_CHARS = 1_200
 WANTED_MAX_CHARS = 160
 RESULT_MAX_CHARS = 240
 SUBJECTS_MAX_CHARS = 200
-PROMPT_RESERVE_CHARS = 16_000
+PROMPT_RESERVE_CHARS = 44_000
 CHARS_PER_TOKEN = 3
 
 @dataclass(frozen=True)
@@ -796,11 +798,12 @@ part that read the diary.
 2. **What the user stated, in the chunk prompt** (`agents/room_chunks.py`,
    prompt 23 and so a new series; built). Replayed on stored chunk calls:
    the parts did not get worse, and the explanations the first read missed
-   appear, in the user's own words. **Next: the room is summarized again
-   and read again**, on its Housekeeping page (**Summarize the rest**, in
-   the new series).
+   appear, in the user's own words. A room summarized under an earlier
+   prompt is summarized again on its Housekeeping page (**Summarize the
+   rest**, in the new series); a turn reads the series with the most chunks, and
+   between equals the newest prompt.
 3. **The setting, the load in the turn, the fit check, the instruction
-   paragraph, the record** (built). Off in production.
+   paragraph, the record** (built).
    `PROMPT_RESERVE_CHARS` is 44,000, from the sizes of stored decide calls.
    Three things came out other than written above:
    - The paragraph of §3.7 is a section of its own beside the blocks
@@ -813,8 +816,8 @@ part that read the diary.
      when the load runs (it has to run before the first call), so it is in
      the reserve.
    - A group with a member that declares no `context_window` is not
-     checked (§7). The local models in use declare none, so with the
-     provider default assumed the background would never be sent.
+     checked (§7). With the provider default assumed in its place, the
+     background would never be sent to such a group.
    - The run's page shows the record as one line under **Before the
      turn**, in counts. It does not show the two blocks: those are in the
      run's stored decide call.
@@ -823,7 +826,15 @@ part that read the diary.
    showed"). The three probes that
    guard against harm (Rejected answer, Current state, Never discussed) have
    to pass before the next step; the others say how much it helps.
-5. **On in production.**
+5. **On in production.** The decide group there declares a window
+   of 20,480 tokens, so the check runs: 61,440 characters, less the
+   reserve, leaves 17,440 for the request, the window and the blocks. The
+   first turn had 12,561 of request and window and was given both blocks,
+   4,402 together, with 477 to spare. A turn whose last 30 messages run
+   longer gets `room_earlier` alone, or nothing, and its run's page says
+   which. What is left is the operator's reading of real turns: whether a
+   reply shows the room is known, and whether a line in the blocks ever
+   stands in for a read it should have made.
 
 ## 10. What the operator may want to overrule
 

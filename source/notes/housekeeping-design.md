@@ -739,7 +739,9 @@ furthest into the room.
   `room_earlier` alone, else nothing. The reserve is what stored decide
   calls carry beside the request and the window: 33,000 characters at the
   median and 41,930 at most over 150 calls, and replies of up to about
-  2,400.
+  2,400. A window of 20,480 tokens so leaves 17,440 characters for the
+  request, the window and the blocks: both blocks at their full 5,200 go
+  out when the request and the last 30 messages are under 12,240.
 - **A group with a member that declares no `context_window` is not
   checked.** Its window is set at the provider and cannot be read here, as
   for the rest of the prompt, which is sent unchecked today. The blocks are
