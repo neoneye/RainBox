@@ -279,15 +279,19 @@ turn.
   reads to explain the gap it describes; a message shortened by
   [Long requests](#long-requests) carries that section's attributes and may be
   followed by a `<message_summary_markdown>` sibling), the **scratchpad** of steps
-  taken this turn (each step renders its action, the decision's stated
-  reason, the args, and the observation — a rejected step reads as the full
-  decision it was, not an anonymous failure; tail-capped at
+  taken this turn (each step renders its action, the args, and the
+  observation; a step that did not run — rejected or failed — also renders
+  the decision's stated reason, so it reads as the full decision it was, not
+  an anonymous failure, while a step that ran leaves the reason out: it was
+  written before the observation and the next decision copied it over what
+  the observation showed; tail-capped at
   `MAX_SCRATCHPAD_CHARS = 5000`: the newest step stays whole, an older one
   that no longer fits keeps a compact stand-in where its action has one, and
   past that stays as a stub — action, status and arguments (long string
   arguments middle-cut to 300 chars), its observation replaced by a note —
   outside the budget, so the model always sees every action it tried this
-  turn), the step
+  turn; a reply the audit returned is also outside the budget, so it never
+  pushes out the read it was written from), the step
   counter (`decision_request`), the **user settings**
   (`<user_settings_yaml>` — `profile.current`'s fields as YAML, a bare tag
   with no attributes (the system prompt declares it reference data and

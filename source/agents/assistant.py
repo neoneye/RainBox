@@ -8182,11 +8182,23 @@ class AssistantAgent(ModelGroupAgent):
         still sees every action it already tried. Dropping the step whole hid
         exactly that: a run repeated one query six times while the prompt
         showed only the newest attempt and "4 omitted".
+
+        A reply the audit returned is kept whole and outside the budget
+        (MAX_AUDIT_REJECTIONS bounds how many there are). It is the newest
+        event when the rewrite is decided, so charged against the budget it
+        pushed the read it was written from down to its compact stand-in: the
+        rewrite had the audit's complaint and no evidence, and answered that
+        nothing was found. Replayed on gemma4:e4b-mlx, that answer came back
+        in 2 of 3 with the read compacted and 0 of 8 with it whole.
         """
         kept_reversed: list[AssistantTurnEvent] = []
         used = 0
         stubbing = False
         for event in reversed(events):
+            if (isinstance(event, AssistantTurnStep) and event.action == "reply"
+                    and event.status == "rejected"):
+                kept_reversed.append(event)
+                continue
             size = self._turn_event_size(event)
             if stubbing or (kept_reversed
                             and used + size > self.MAX_SCRATCHPAD_CHARS):
@@ -8261,7 +8273,17 @@ class AssistantAgent(ModelGroupAgent):
             "action": event.action,
             "status": event.status,
         })
-        if event.reason:
+        # A step that ran shows its observation without the reason given for
+        # it: the reason was written before the observation existed and says
+        # what the model expected, which the next decision copied even where
+        # the observation showed otherwise. Replayed on gemma4:e4b-mlx (a
+        # retry whose reason said the read "yielded no results", beside the
+        # seven passages that read returned): the next decision repeated the
+        # read in 4 of 4 with the reason and replied from the passages in 4 of
+        # 4 without it. A step that did not run keeps its reason — there it is
+        # the intent the error is about. The step row keeps every reason for
+        # /assistant.
+        if event.reason and event.status != "ok":
             ET.SubElement(step, "reason").text = event.reason
         arguments = ET.SubElement(step, "arguments", {"format": "json"})
         arguments.text = json.dumps(event.args, sort_keys=True, default=str)

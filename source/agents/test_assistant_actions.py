@@ -221,6 +221,40 @@ def test_source_priority_policy_is_in_decide_turn_instructions():
     assert "acceptance_criteria_markdown" not in DECIDE_TURN_INSTRUCTIONS
 
 
+def test_a_returned_reply_does_not_push_out_the_read_it_was_written_from():
+    """An audit-returned reply is the newest event and is kept whole; charged
+    against the budget it pushed the read before it down to its compact
+    stand-in, so the rewrite had the complaint and no evidence."""
+    agent = AssistantAgent(agent_uuid=uuid4(), name="assistant", send=lambda _: None)
+    read = AssistantTurnStep(
+        step_index=0, action="diary_query", args={"mode": "timeline"},
+        status="ok", observation="p" * (agent.MAX_SCRATCHPAD_CHARS - 1000),
+        is_read=True, compact_observation="citations only")
+    returned = [AssistantTurnStep(
+        step_index=i, action="reply", args={"message": "m" * 1500},
+        status="rejected", observation="The reply was audited and returned.")
+        for i in (1, 2)]
+    kept, omitted = agent._bounded_turn_events([read, *returned])
+    assert omitted == 0
+    assert kept == [read, *returned]
+
+
+def test_a_step_that_ran_shows_its_observation_without_the_reason_before_it():
+    """The reason was written before the observation existed. Shown beside an
+    observation that contradicts it, the next decision copied the reason."""
+    import xml.etree.ElementTree as ET
+    parent = ET.Element("current_turn_steps")
+    for status in ("ok", "failed", "rejected"):
+        AssistantAgent._append_turn_event(parent, AssistantTurnStep(
+            step_index=0, action="diary_query", args={}, status=status,
+            observation="seven excerpts", reason="the stated reason"))
+    ran, failed, rejected = parent
+    assert ran.find("reason") is None
+    assert ran.find("observation").text == "seven excerpts"
+    assert failed.find("reason").text == "the stated reason"
+    assert rejected.find("reason").text == "the stated reason"
+
+
 def test_turn_event_budget_keeps_an_old_step_as_a_stub():
     """A step whose observation no longer fits stays as its action and
     arguments, so the model still sees what it already tried — dropped whole,
