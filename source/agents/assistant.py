@@ -391,10 +391,30 @@ class ReplyAudit(BaseModel):
     model states what it found before committing to a call. With `reason`
     leading, it had to summarize a decision it had not made yet, and local
     models overwhelmingly answered with the verdict word itself.
+
+    `request_asks_for` leads all of them: the auditor states what the request
+    asks for before it writes a defect. Without it the audit judged the reply
+    against the request's literal words, so a request to retry had nothing a
+    reply could satisfy: it returned the correct answer as "not a try again"
+    and a wrong answer for the same non-reason. Replayed on gemma4:e4b-mlx
+    (that turn's stored audit): the correct reply was sent in 0 of 4 without
+    the field and 4 of 4 with it, a wrong reply revised in 4 of 4 for
+    contradicting the observations. Sentences in the instructions explaining
+    what a retry asks for measured 4 of 8, and 0 of 4 when longer.
+
+    `problems` is required for the same reason it is not first: left optional
+    behind the new field, the model omitted it, on a revise verdict too.
     """
 
+    request_asks_for: str = Field(
+        min_length=1,
+        description=(
+            "What the request asks the assistant to produce, as one sentence. "
+            "A request with no subject or question of its own is read through "
+            "conversation_history_xml and stated in full."
+        ),
+    )
     problems: str = Field(
-        default="",
         description=(
             "Every defect found, each naming what is wrong and quoting the "
             "phrase that shows it, one per line. Empty when the message is "
@@ -6588,6 +6608,7 @@ class AssistantAgent(ModelGroupAgent):
         audit = cast(ReplyAudit, audit)
         return audit.verdict == "send", {
             "verdict": audit.verdict,
+            "request_asks_for": audit.request_asks_for,
             "reason": audit.reason,
             "problems": audit.problems,
             "group_from": group_from,
@@ -8444,7 +8465,8 @@ class AssistantAgent(ModelGroupAgent):
                           if usage.get("requested_at") else requested_at),
             rejected_attempts=payload.get("attempts") or None,
             observation_preview=json.dumps(
-                {k: payload.get(k) for k in ("verdict", "problems", "reason",
+                {k: payload.get(k) for k in ("verdict", "request_asks_for",
+                                             "problems", "reason",
                                              "skipped", "error")
                  if payload.get(k) is not None},
                 ensure_ascii=False, indent=1),

@@ -81,7 +81,8 @@ def _reply(message: str) -> AssistantStepDecision:
 
 def test_send_verdict_parses_with_no_problems():
     audit = ReplyAudit.model_validate(
-        {"reason": "answers the question in metric", "verdict": "send"})
+        {"request_asks_for": "12 feet in meters", "problems": "",
+         "reason": "answers the question in metric", "verdict": "send"})
     assert audit.verdict == "send"
     assert audit.problems == ""
 
@@ -91,6 +92,7 @@ def test_revise_verdict_carries_its_problems_as_one_text():
     shape asks a small local model to hold a container, a per-item schema and
     two required keys in mind while it is also judging the reply."""
     audit = ReplyAudit.model_validate({
+        "request_asks_for": "12 feet in meters and in centimeters",
         "reason": "the second question is unanswered",
         "problems": ("does not say what 12 feet is in meters — the reply "
                      "only converts to centimeters"),
@@ -106,7 +108,7 @@ def test_a_list_of_problems_is_now_a_schema_error():
     verdict."""
     with pytest.raises(Exception):
         ReplyAudit.model_validate({
-            "reason": "r", "verdict": "revise",
+            "request_asks_for": "a", "reason": "r", "verdict": "revise",
             "problems": [{"problem": "p", "evidence": "e"}]})
 
 
@@ -118,7 +120,33 @@ def test_the_findings_are_declared_before_the_verdict():
     the verdict word itself — 19 of 23 audits in one live database. The
     second-opinion verdict has always been ordered this way."""
     assert list(ReplyAudit.model_json_schema()["properties"]) == [
-        "problems", "reason", "verdict"]
+        "request_asks_for", "problems", "reason", "verdict"]
+
+
+def test_the_request_is_stated_before_anything_is_judged_against_it():
+    """The auditor writes what the request asks for before it writes a defect.
+    Judging against the request's literal words, it returned a correct answer
+    to a retry as "not a try again" and a wrong one for the same non-reason.
+    `problems` is required with it: left optional behind the new field, the
+    model omitted it, on a revise verdict too."""
+    schema = ReplyAudit.model_json_schema()
+    assert list(schema["properties"])[0] == "request_asks_for"
+    assert schema["required"] == [
+        "request_asks_for", "problems", "reason", "verdict"]
+    with pytest.raises(Exception):
+        ReplyAudit.model_validate({
+            "request_asks_for": "", "problems": "", "reason": "r",
+            "verdict": "send"})
+
+
+def test_the_verdict_records_what_the_auditor_took_the_request_to_ask(
+        app_ctx, audit_call):
+    audit_call["verdict"] = ReplyAudit(
+        request_asks_for="what the user did on that day", problems="",
+        reason="sound", verdict="send")
+    _ok, payload = _agent()._reply_audit(
+        _reply("You drove to the falls."), messages=[], scratchpad=[])
+    assert payload["request_asks_for"] == "what the user did on that day"
 
 
 def test_an_unknown_verdict_is_rejected_by_the_schema():
@@ -214,7 +242,7 @@ def audit_call(monkeypatch):
 
 
 def test_a_send_verdict_approves_the_message(app_ctx, audit_call):
-    audit_call["verdict"] = ReplyAudit(reason="sound", verdict="send")
+    audit_call["verdict"] = ReplyAudit(request_asks_for="the answer", problems="", reason="sound", verdict="send")
     ok, payload = _agent()._reply_audit(
         _reply("12 feet is 3.6576 meters."), messages=[], scratchpad=[])
     assert ok is True
@@ -224,6 +252,7 @@ def test_a_send_verdict_approves_the_message(app_ctx, audit_call):
 
 def test_a_revise_verdict_blocks_the_message(app_ctx, audit_call):
     audit_call["verdict"] = ReplyAudit(
+        request_asks_for="12 feet in meters",
         reason="one part unanswered",
         problems=("no metric value given — the reply stops after restating "
                   "the question"),
@@ -264,7 +293,7 @@ def test_the_auditor_sees_the_evidence_and_not_the_argument(
     the rationalization the separate call exists to escape."""
     from agents.assistant import AssistantTurnStep
 
-    audit_call["verdict"] = ReplyAudit(reason="sound", verdict="send")
+    audit_call["verdict"] = ReplyAudit(request_asks_for="the answer", problems="", reason="sound", verdict="send")
     scratchpad = [AssistantTurnStep(
         step_index=0, action="python_run",
         args={"code": "print(12 * 0.3048)"},
@@ -288,7 +317,7 @@ def test_the_auditor_does_not_see_its_own_earlier_bounces(app_ctx, audit_call):
     anchored every later audit of the turn on the same complaint."""
     from agents.assistant import AssistantTurnStep
 
-    audit_call["verdict"] = ReplyAudit(reason="sound", verdict="send")
+    audit_call["verdict"] = ReplyAudit(request_asks_for="the answer", problems="", reason="sound", verdict="send")
     scratchpad = [
         AssistantTurnStep(step_index=0, action="python_run",
                           args={"code": "print(12 * 0.3048)"}, status="ok",
@@ -324,7 +353,7 @@ def test_the_auditor_does_not_see_notices_of_turns_that_did_not_answer(
         journal_id=uuid4(), room_uuid=uuid4(), agent_uuid=ASSISTANT_UUID)
     db.finish_run(finished, "finished", final_summary="answered")
     try:
-        audit_call["verdict"] = ReplyAudit(reason="sound", verdict="send")
+        audit_call["verdict"] = ReplyAudit(request_asks_for="the answer", problems="", reason="sound", verdict="send")
         messages = [
             {"sender_type": "human", "text": "what is 1 foot in meters"},
             {"sender_type": "agent", "sender_uuid": str(ASSISTANT_UUID),
@@ -615,7 +644,7 @@ def test_while_the_audit_runs_the_page_watches_the_audit(room, monkeypatch):
         seen["active"] = (run.metadata_ or {}).get("active_call")
         seen["steps"] = [(s.action, s.phase)
                          for s in db.list_assistant_steps(run.uuid)]
-        return ReplyAudit(reason="sound", verdict="send"), second
+        return ReplyAudit(request_asks_for="the answer", problems="", reason="sound", verdict="send"), second
 
     monkeypatch.setattr(mg, "structured_llm_call", fake_call)
     agent.handle(uuid4(), {"room_uuid": str(room_uuid),

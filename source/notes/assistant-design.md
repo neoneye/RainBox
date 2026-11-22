@@ -50,10 +50,16 @@ consumes the step limit. Each loop iteration:
    and blessed it, so the one check that could have caught the habit was
    reinforcing it; the carve-out is fenced off from tone nitpicking, since
    the auditor is otherwise barred from style complaints), and returns a typed
-   `{problems, reason, verdict}` — findings first, so the auditor states what
+   `{request_asks_for, problems, reason, verdict}` — what the request asks
+   for first, so the auditor resolves a request that only points back (a
+   retry, a short follow-up) before judging the reply against it: read
+   literally, a retry had nothing a reply could satisfy, and a correct answer
+   and a wrong one were both returned as "not a try again". Then findings
+   before the verdict, so the auditor states what
    it found before committing to a call (the ordering `SecondOpinionVerdict`
    already used; with `reason` leading, local models answered it with the
-   verdict word itself). `problems` is one string, a line per defect, rather
+   verdict word itself). `problems` is required — optional behind the first
+   field, the model left it out — and is one string, a line per defect, rather
    than a list of typed objects: the nested shape asked a small local model to
    hold a container, a per-item schema and two required keys in mind while it
    was also judging the reply. A `revise` verdict bounces the reply as a
