@@ -1,6 +1,9 @@
 # Detector labels: one place for the operator to say "that detection was wrong"
 
-**Status:** Proposal. Nothing here is built.
+**Status:** Proposal. Nothing here is built. The digest rows it names
+(`exchange_topic`, `topic_mark`, `digest_node`) were not built; a topic's
+members are `room_topic_member` rows and a chunk is a `room_chunk` row
+(`notes/housekeeping-design.md`).
 **Date:** 2026-11-09
 **Related:**
 - [The decision-model foundation](2026-11-09-decision-model-foundation.md):

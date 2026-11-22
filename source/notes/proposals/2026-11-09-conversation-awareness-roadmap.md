@@ -22,7 +22,7 @@ each one buys and costs, and lists what is still the operator's to decide.
 |---|---|
 | [Noticing a repeated request](2026-11-09-noticing-a-repeated-request.md) | exact repeats, redos and repeated commands, with what each earlier attempt tried; the request profile; reply checklists as diagnostics |
 | [Later verdicts on earlier messages](2026-11-09-later-verdicts-on-earlier-messages.md) | "that was wrong" / "my guess was right" as append-only records, shown on the earlier message |
-| [The room digest](2026-11-09-room-digest.md) | chunks of every 10 messages, counted from message 0, built from records and never invalidated, described thread by thread with the operator's opening words; `room_history` to read a range back; topics, derived status and a timeline for the window; a generated phrase per chunk only if it earns its place |
+| [The room digest](2026-11-09-room-digest.md) | superseded in its compaction parts (see "What was built in place of the digest"): chunks of every 10 messages, counted from message 0, built from records and never invalidated, described thread by thread with the operator's opening words; `room_history` to read a range back; topics, derived status and a timeline for the window; a generated phrase per chunk only if it earns its place |
 | [Chat compaction: a room's background in the prompt](2026-11-21-chat-compaction.md) | built: a small first cut of step 1, on the generated chunk summaries and the topic registry: the 16 chunks before the window and the recurring topics as plain lines, under a character limit; no aligned window and no `room_history` yet |
 | [Surfacing topic uncertainty while chatting](2026-11-18-surfacing-topic-uncertainty.md) | a request is filed under a topic when its reply has posted, and shown as a chip on the request in /chat, marked when the filing was doubtful against a topic of five or more; a click corrects it; no list of decisions |
 | [Decision-model foundation](2026-11-09-decision-model-foundation.md) | one System One client, two slots, verified local execution, one record per call, the probe as regression suite |
@@ -252,6 +252,93 @@ not evaluated at the same time.
 
 These cost little, collect data, and change nothing.
 
+## What was built in place of the digest, and what is worth coming back to
+
+Compaction was built from generated chunk summaries and a topic registry
+([Chat compaction](2026-11-21-chat-compaction.md), as built in
+`notes/housekeeping-design.md`), not from records as steps 1, 5 and 7 below
+describe. Those steps and the proposals behind them stay as written, for
+their reasoning. This section says which of their parts are replaced, and
+which are not built and still worth having.
+
+**Replaced.** Nothing in this table is waiting to be built.
+
+| In the earlier proposals | What stands in its place |
+|---|---|
+| A chunk node rendered from records, with no model (`room_digest_node`; digest, decision 5) | `room_chunk`: a generated summary in parts, each with what was wanted, what came of it and how well calibrated the reply was |
+| "Topics and outcomes, never answers" (digest, first principle; decision 11 here) | results are in the prompt, marked with their records; the Rejected answer and Current state probes watch it |
+| A topic chosen at the start of the turn by a Choice over the room's topics (`exchange_topic`; digest, decision 2) | the topic registry: parts are filed after their chunk is summarized (`room_topic`, `room_topic_member`), on two axes, with the operator's rename and merge |
+| The request excerpt, 80 code points of a thread's opening request (digest, decision 5) | the part's "wanted" line, and the user's own sentences kept verbatim as statements |
+| The `asked` phrase, generated text only if it beats the excerpts (step 7) | the chunk summary is that text, and it was kept because the operator read it and judged it |
+| Levels of 100 and 1,000 messages (digest, decision 5; decision 2 here) | the chunks before the window under a character limit, the oldest lines giving way, and a count of what lies before |
+| `assistant.room_digest` with `off` / `record` / `on` | `assistant.room_background`, off or on; the room's page shows the text for any room, which is the dry run |
+| Pair comparison or bisection to find where a topic changes | not built, and measured not to work (digest, Probe evidence) |
+
+**Worth coming back to**, in the order I would take them. Each is something
+the built background does not do, with the reason it would earn its place.
+
+1. **Reading a stretch back (`room_history`; digest, decision 9).** The
+   background is short by design and every line in it stands for messages
+   that still exist. Three things known to be missing are all a detail that
+   is in those messages and not in the line: a quoted sentence whose reason
+   is in the sentence after it, a part marked as corrected that does not
+   say what the correction was, and "what happened with X", which the
+   assistant answers by reading the board because the line is not enough.
+   A chunk stores its first and last message, so the range a line stands
+   for is known without new records. The digest's own argument holds for
+   what was built: giving up detail for a short, safe line is only
+   acceptable while the detail can still be reached. **When:** real turns
+   are seen to fail for want of something a line pointed at. For the part
+   of a room older than the shown chunks it needs a search and not paging
+   (chat compaction, §5).
+2. **A topic's standing, derived (digest, decision 3; "silence is not
+   success").** A part already carries its marks: not settled, corrected by
+   the user, asked several times. A line in `room_topics` carries none, so
+   the block says what the room is about and not how each thing stands.
+   Rolling the marks of a topic's parts up into one word needs no model and
+   no new record, and it is the difference the note in the prompt asks the
+   model to keep: what happened against how it stands now. The operator's
+   own mark, open or settled, on the topic's row outranks the derived word.
+   That is one click where they already edit topics, not a list of
+   decisions.
+3. **The break (digest, decisions 4 and 6).** "After a break of 3 days;
+   before it: …" comes from two timestamps. A room someone returns to after
+   days is where "where were we" matters most, and the lines carry dates
+   today but nothing says the gap. The other half of that line, the current
+   topic, waits for a request to be filed when it arrives
+   ([surfacing topic uncertainty](2026-11-18-surfacing-topic-uncertainty.md)
+   files it once the reply has posted).
+4. **Pinned room rules (decision 6 below).** Statements now keep the
+   user's sentences word for word, a stated preference among them, which is
+   the exact wording a rule needs. They do not keep it reliably: which
+   sentences a chunk keeps varies from run to run, and only the newest six
+   outlast their chunk. A pin is exact and the operator's own act, so the
+   recommendation in decision 6 stands. What is new is where a suggestion
+   would come from: a kept statement that reads as a rule, offered in the
+   conversation when it is written and never collected on a page.
+5. **Opening words for a stretch with no summary (digest, decision 5).**
+   Such a stretch is one line today: "N messages not summarized." The first
+   words of the user's requests in it cost no model call and say what it
+   was about. It matters when the summarizer is off, behind, or resting
+   for heat, and after a change to its prompt until the room is summarized
+   again.
+6. **A window that starts at a chunk's edge (step 1; decision 8 below).**
+   The background changes only when a chunk leaves the window, every ten
+   messages, so with an aligned window the head of the user prompt would be
+   the same bytes for ten turns. Whether the server then reuses it is a
+   measurement (`tools/measure_prefix_cache.py`), and housekeeping on the
+   same model between turns undoes it. Moving `room_background_note` to the
+   system prompt is the same question and is settled by the same replay.
+7. **A decision model over the messages (decision 10 below).** Its second
+   mark, where a decision was made, is what statements are for, and the
+   run-to-run variance in which sentences are kept is the case for asking
+   it as a calibrated question instead of leaving it to a generative call.
+8. **Topics shown in another room
+   ([cross-room continuity](2026-11-09-cross-room-continuity.md)).** Its
+   rules on which rooms may share are unchanged by what was built. What
+   would cross is now the registry's topics and the standing of item 2.
+   Last, because one room's background has to be judged useful first.
+
 ## Decisions waiting for the operator
 
 1. **Should reply-check scores reach the loop?** Astra's revision made
@@ -295,6 +382,10 @@ These cost little, collect data, and change nothing.
    in fewer words is a different rule. The options are memory, the working
    set extended to instructions, or a room-rules block.
 
+   Statements in the room's background now keep some such sentences word
+   for word, without a guarantee that a given rule is among them (item 4 of
+   "worth coming back to").
+
    **Recommended: a room-rules block the operator pins.**
    - A message is pinned as a rule from its menu in /chat. The block holds
      the pinned messages verbatim, each with its date, ahead of the history,
@@ -336,9 +427,9 @@ These cost little, collect data, and change nothing.
     or overconfident answer. The chunk summary experiment does this now, for
     display. The room digest proposal says the opposite ("topics and
     outcomes, never answers"), because a shortened old answer reaches a
-    small model as a fact. Before any of it reaches a prompt, one of the two
-    has to give: either results stay out of the prompt and only calibration
-    and the records go in, or results go in marked with their records.
+    small model as a fact. One of the two had to give before any of it
+    reached a prompt. **Decided, and built:** results go in, marked with
+    their records, under the rules of chat compaction §3.2.
 
 ## What the probes taught, for whoever builds this
 

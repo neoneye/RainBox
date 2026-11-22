@@ -1,6 +1,11 @@
 # Cross-room continuity: what the operator was doing elsewhere
 
-**Status:** Proposal. Nothing here is built.
+**Status:** Proposal. Nothing here is built. The room digest's topic
+tables and statuses it builds on were not built as written: a room's topics
+are the registry of `notes/housekeeping-design.md`, and no topic has a
+status yet. Which rooms may share is unaffected; what would cross is in the
+[roadmap](2026-11-09-conversation-awareness-roadmap.md), "worth coming back
+to", item 8.
 **Date:** 2026-11-09
 **Related:**
 - [The room digest](2026-11-09-room-digest.md): topics, statuses and the

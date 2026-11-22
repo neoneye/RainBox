@@ -1,6 +1,18 @@
 # The room digest: topics, a compact timeline, and a fading summary
 
-**Status:** Proposal. One part is built as an experiment, to see how a local
+**Status:** Superseded in its compaction parts by
+[Chat compaction: a room's background in the prompt](2026-11-21-chat-compaction.md),
+which is built and described in `notes/housekeeping-design.md`. Chunks are
+generated summaries and not rendered from records, topics are the registry
+filled after a chunk is summarized and not a Choice at the start of the
+turn, and results are in the prompt. Not built, and still worth having:
+`room_history` (decision 9), derived topic status (decision 3), the break
+and the current topic (decisions 4 and 6). The
+[roadmap](2026-11-09-conversation-awareness-roadmap.md) lists what replaced
+what and why each of those is worth coming back to. The text below is the
+proposal as it stood, kept for its reasoning.
+
+**Earlier status:** Proposal. One part is built as an experiment, to see how a local
 model does: a generated two-level breakdown per chunk of a room's messages,
 shown on the Housekeeping page and reaching no prompt
 (`notes/housekeeping-design.md`). The operator decided on 2026-11-10 that

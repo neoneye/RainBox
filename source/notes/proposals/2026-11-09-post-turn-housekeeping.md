@@ -6,6 +6,11 @@ the gate and the kill, the sweep, the job tables, the Housekeeping page and
 the After the turn group. Also built: the chatroom chunk summary job and the
 rest after ten calls. Not built: the other jobs, the hourly budget and
 thermal pause, and catching up with its /chat lock.
+Superseded: the three digest jobs in the tables below (the chunk node
+written with no model, the `asked` phrase, the backfill). The chunk summary
+job and the topic jobs do their work
+([roadmap](2026-11-09-conversation-awareness-roadmap.md), "What was built
+in place of the digest").
 **Date:** 2026-11-09
 **Related:**
 - [The decision-model foundation](2026-11-09-decision-model-foundation.md):
