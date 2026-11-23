@@ -1247,6 +1247,22 @@ def test_a_copy_that_did_nothing_says_so(app_ctx, client):
         _cleanup(run.uuid, room.uuid)
 
 
+def test_the_page_carries_the_prompt_treemap(app_ctx, client):
+    """The analyze button on a prompt block opens an overlay the page itself
+    holds. The script reaches the browser with its backslashes intact: the
+    regular expressions in it are the parser."""
+    room = _room()
+    run = db.start_assistant_run(
+        journal_id=uuid4(), room_uuid=room.uuid, agent_uuid=uuid4())
+    try:
+        body = client.get(f"/assistant?id={run.uuid}").get_data(as_text=True)
+        assert 'id="pt-overlay"' in body
+        assert "ev.target.closest('.ev-analyze')" in body
+        assert r"/\btruncate\d+:/g" in body
+    finally:
+        _cleanup(run.uuid, room.uuid)
+
+
 def test_a_copy_is_reported_from_what_the_browser_did(app_ctx, client):
     """A `true` from document.execCommand is a return value, not evidence: the
     call can be proxied by an extension that returns true and copies nothing

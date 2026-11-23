@@ -254,7 +254,8 @@ def _kpi_html(event: dict) -> Markup:
 
 def _block(title: str, body: Any, *, collapsed: bool = False,
            key: str = "", cache: dict | None = None,
-           same_as: str | None = None) -> dict | None:
+           same_as: str | None = None,
+           analyze: bool = False) -> dict | None:
     """A labelled block of text, or None when there is nothing to show.
 
     None rather than an empty block: an absent field says "not recorded",
@@ -280,12 +281,16 @@ def _block(title: str, body: Any, *, collapsed: bool = False,
     the same body. The page still draws it — the pane is where a call is
     inspected — but the export, which has no fold, writes a pointer instead of
     printing a prompt a second time.
+
+    `analyze` gives the block the button that opens the treemap of what its
+    text is made of (`webapp.prompt_treemap`). For a prompt assembled from
+    sections; on a response there is nothing to break down.
     """
     if body in (None, "", {}, []):
         return None
     return {"title": title, "body": body, "collapsed": collapsed,
             "key": key or title, "note": False, "json": _is_json_text(body),
-            "cache": cache, "same_as": same_as}
+            "cache": cache, "same_as": same_as, "analyze": analyze}
 
 
 def _prompt_cache(event: dict) -> dict[str, dict]:
@@ -407,6 +412,14 @@ _COPY_BUTTON: Markup = Markup(
     'title="Copy this block, exactly as it is shown">copy</button>')
 
 
+#: On a block that asked for it (`_block(analyze=True)`). After `copy`: it
+#: opens an overlay over the page, the furthest-reaching of the three.
+_ANALYZE_BUTTON: Markup = Markup(
+    '<button type="button" class="ev-analyze" '
+    'title="What this prompt is made of, by size: a treemap of its sections, '
+    'with the shortened ones marked">analyze</button>')
+
+
 def _block_html(block: dict | None) -> Markup:
     """One block as the page draws it. Everything is escaped: a body is model
     and tool output, and a title can be an action name that arrived as data.
@@ -421,8 +434,9 @@ def _block_html(block: dict | None) -> Markup:
     if block["note"]:
         return Markup('<p class="ev-note">{}</p>').format(block["body"])
     text = _block_text(block)
-    acts = Markup('<span class="ev-acts">{}{}</span>').format(
-        _VIEW_SWITCH if block.get("json") else Markup(""), _COPY_BUTTON)
+    acts = Markup('<span class="ev-acts">{}{}{}</span>').format(
+        _VIEW_SWITCH if block.get("json") else Markup(""), _COPY_BUTTON,
+        _ANALYZE_BUTTON if block.get("analyze") else Markup(""))
     attrs = Markup(' data-json') if block.get("json") else Markup("")
     if block.get("cache"):
         # One JSON attribute rather than a handful: the page reads it whole,
@@ -564,7 +578,7 @@ def _llm(event: dict) -> list[dict]:
                same_as=same_as),
         _block("user prompt", payload.get("user_prompt"),
                collapsed=True, key=f"{key}-user", cache=cache.get("user"),
-               same_as=same_as),
+               same_as=same_as, analyze=True),
         # The turns sent after the user prompt when the prompt layout gave the
         # request a message of its own: the acknowledgement, then the request.
         _block("request turns", payload.get("followup_turns"),

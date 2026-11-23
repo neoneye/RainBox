@@ -763,6 +763,20 @@ def test_every_block_can_be_copied():
         assert "ev-copy" in block, block[:80]
 
 
+def test_the_user_prompt_can_be_analyzed():
+    """The user prompt is the one block assembled from sections — history,
+    persona, instructions — so it is the one where "what takes up the room"
+    has an answer. After copy, in the same label."""
+    html = render_event_detail(_event("llm", "decide → reply", payload={
+        "system_prompt": "you are the assistant",
+        "user_prompt": "<request>how far is the moon</request>",
+        "model_response": "About 384400 km."}))
+
+    assert html.count('class="ev-analyze"') == 1
+    summary = html.split("<summary>user prompt")[1].split("</summary>")[0]
+    assert summary.index("ev-copy") < summary.index("ev-analyze")
+
+
 def test_a_note_is_not_something_to_copy():
     """The prose a pane writes when there is nothing recorded is the page
     talking, not a record. A copy button on it offers the page's own words as

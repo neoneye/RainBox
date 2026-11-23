@@ -27,6 +27,7 @@ import db
 from .assistant_components import event_markdown, fence
 from .assistant_log_view import log_view
 from .core import app
+from .prompt_treemap import PROMPT_TREEMAP
 
 ASSISTANT_TEMPLATE = """
 <!doctype html>
@@ -265,11 +266,11 @@ ASSISTANT_TEMPLATE = """
   .as-main .ev-acts { display:inline-flex; gap:0.35rem; align-items:center;
                       margin-left:0.5rem; vertical-align:middle; }
   .as-main .ev-acts .ev-view { margin-left:0; }
-  .as-main .ev-copy { border:1px solid #e5e7eb; border-radius:5px; background:#fff;
+  .as-main .ev-copy, .as-main .ev-analyze { border:1px solid #e5e7eb; border-radius:5px; background:#fff;
                       cursor:pointer; font:inherit; font-size:0.62rem;
                       letter-spacing:0.03em; text-transform:lowercase;
                       color:#98a2b3; padding:0 0.4rem; line-height:1.5; }
-  .as-main .ev-copy:hover { color:#1a1a2e; background:#f3f4f6; }
+  .as-main .ev-copy:hover, .as-main .ev-analyze:hover { color:#1a1a2e; background:#f3f4f6; }
   .as-main .ev-block h5 { margin:0 0 0.2rem; font-size:70%;
         letter-spacing:0.05em; text-transform:uppercase; color:#6b7280; }
   /* Only what `.as-main pre` does not already give it. The box and the size
@@ -567,6 +568,7 @@ ASSISTANT_TEMPLATE = """
 
 <div id="as-menu" class="as-menu" hidden></div>
 <div id="as-toast" class="as-toast"></div>
+{{ prompt_treemap|safe }}
 
 <script>
 // The gantt bars and the log rows are the same events, so selecting is one
@@ -1559,6 +1561,7 @@ def assistant_page() -> str:
         duration=duration,
         dash=ctx.get("dash"),
         housekeeping=housekeeping,
+        prompt_treemap=PROMPT_TREEMAP,
         room_background=room_background_line(
             (selected.metadata_ or {}).get("room_background")) if selected else "",
     )
