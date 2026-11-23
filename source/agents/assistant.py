@@ -440,33 +440,24 @@ class ReplyAudit(BaseModel):
 # fragment and an empty sibling. Observed on a conversion request — the call
 # filled `processing` and `assumptions` and returned an empty list for the
 # formatting field, which reached the second-opinion reviewer as "no
-# formatting constraints". `min_length=1` on `processing` and `assumptions`
-# removes that exit: nothing to carry must be SAID, and a stated "nothing
-# here" is a decision the operator can audit where a blank field is
-# indistinguishable from an oversight. `override_formatting` is the one field
-# that IS empty by design: the settings' defaults reach every call as
-# user_settings_yaml and the audit checks the reply against them directly, so
-# the criteria carry formatting only when this reply must deviate from those
-# defaults — and an empty field then has exactly one meaning, "the defaults
-# apply". The docstring below is the schema description the model
-# reads — keep it model-facing.
+# formatting constraints". `min_length=1` on both fields removes that exit:
+# nothing to carry must be SAID, and a stated "nothing here" is a decision
+# the operator can audit where a blank field is indistinguishable from an
+# oversight. The criteria carry no formatting field: the settings' defaults
+# reach every call as user_settings_yaml, the audit checks the reply against
+# them directly, and a request that asks for something else outranks them in
+# the source priority. The docstring below is the schema description the
+# model reads — keep it model-facing.
 class AcceptanceCriteria(BaseModel):
     """The reply's constraints, established before any step runs and revised
-    mid-run when the situation changes. `processing` and `assumptions` are
-    required non-empty prose; `override_formatting` is empty unless the
-    reply must deviate from the settings' formatting defaults."""
+    mid-run when the situation changes. Both fields are required non-empty
+    prose."""
 
     processing: str = Field(min_length=1, description=(
         "What is about to happen to produce the reply: what will be "
         "computed, looked up, compared or asked, in the order it happens. "
         "The plan, never the formatting. One or two sentences. Never "
         "empty — when the reply needs no work beyond answering, say that."))
-    override_formatting: str = Field(default="", description=(
-        "Only when this reply must DEVIATE from the formatting defaults in "
-        "user_settings_yaml: the request asks for another unit, format or "
-        "spelling, exact source notation must be preserved, or the "
-        "conversation established a convention. Say what deviates and why. "
-        "Leave empty when the defaults apply — do not restate them."))
     assumptions: str = Field(min_length=1, description=(
         "Every ambiguity in the request you resolved from a settings "
         "default, and every ambiguity the settings cannot resolve, stated "
@@ -577,22 +568,19 @@ its sources; you state what the reply must satisfy, as structured output:
 - processing: what is about to happen to produce the reply — what will be
   computed, looked up, compared or asked, in the order it happens. The plan,
   never the formatting.
-- override_formatting: ONLY what deviates from the formatting defaults in
-  user_settings_yaml, and why — the request asks for another unit, format or
-  spelling, exact source notation must be preserved, or the conversation
-  established a convention. When the defaults apply, leave it empty.
 - assumptions: every ambiguity you resolved from a settings default, and
   every ambiguity the settings cannot resolve.
 
-`processing` and `assumptions` are prose and required: one or two sentences,
-never an empty string. When one genuinely has nothing to carry, say so in one
-short sentence — a stated "nothing here" is a decision the user can check,
-while a blank field cannot be told apart from an oversight.
+Both are prose and required: one or two sentences, never an empty string.
+When one genuinely has nothing to carry, say so in one short sentence — a
+stated "nothing here" is a decision the user can check, while a blank field
+cannot be told apart from an oversight.
 
-`override_formatting` is the exception: empty is its normal state and means
-the defaults apply. The defaults in user_settings_yaml reach the assistant
-and its reviewers directly, so restating them here adds nothing and costs
-every call that reads these criteria. Fill it only for a deviation.
+Formatting is not part of the criteria. The formatting defaults in
+user_settings_yaml reach the assistant and its reviewers directly, and so
+does the request, which outranks them where it asks for something else.
+Restating either here adds nothing and costs every call that reads these
+criteria.
 
 assistant_persona, when present, is who will answer: its voice, how it treats
 the user, and what it holds about them. Read it as you read the settings —
@@ -964,9 +952,9 @@ ACCEPTANCE_CRITERIA_SOURCE_PRIORITY_SECTION: str = """\
 </source_priority>
 acceptance_criteria_markdown is the established plan for this turn's reply:
 follow it during the steps and when composing the message, unless the
-user's request overrides it. It says what the work is, what deviates from
-the formatting defaults in user_settings_yaml (where it says nothing about
-formatting, those defaults govern), and the ambiguities already settled —
+user's request overrides it. It says what the work is and the ambiguities
+already settled — never how the reply is formatted (the defaults in
+user_settings_yaml govern that, and the request overrides them), and
 never where its facts come from. It is written before any read has run, so it
 cannot know what is stored; a criterion that names a source, or that scopes the
 answer to what the conversation already mentions,
@@ -7602,14 +7590,9 @@ class AssistantAgent(ModelGroupAgent):
         Free-text fields are collapsed to one line each so a model-written
         criterion cannot forge headings or list items into the surrounding
         section — the same containment the language projection applies."""
-        parts = ["## Processing", " ".join(criteria.processing.split()), ""]
-        # Empty means the defaults apply; a section saying so would be the
-        # restatement the field exists to avoid.
-        if criteria.override_formatting.strip():
-            parts += ["## Override formatting",
-                      " ".join(criteria.override_formatting.split()), ""]
-        parts += ["## Assumptions", " ".join(criteria.assumptions.split())]
-        return "\n".join(parts)
+        return "\n".join([
+            "## Processing", " ".join(criteria.processing.split()), "",
+            "## Assumptions", " ".join(criteria.assumptions.split())])
 
     def _run_acceptance_criteria_call(
         self,

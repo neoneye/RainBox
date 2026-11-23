@@ -613,29 +613,25 @@ One structured call returns an `AcceptanceCriteria`:
 - `processing` — what is about to happen to produce the reply: what will
   be computed, looked up, compared or asked, in order. The plan, never the
   formatting.
-- `override_formatting` — only what DEVIATES from the formatting defaults
-  in `user_settings_yaml`, and why: the request asks for another unit,
-  format or spelling, exact source notation must be preserved, or the
-  conversation established a convention. Empty when the defaults apply —
-  the defaults reach the assistant, the second-opinion reviewer and the
-  auditor directly as `user_settings_yaml`, and the audit checks the reply
-  against them there, so restating them here only cost every call that
-  reads the criteria. The Markdown projection omits the section when the
-  field is empty.
 - `assumptions` — every ambiguity resolved by a settings-based assumption,
   stated so the operator can spot a wrong one. Assumptions are made only
   where the settings provide a default; otherwise the ambiguity is recorded
   as unresolved and the normal `ask_clarifying_question` path handles it.
 
+The criteria carry no formatting. The formatting defaults reach the
+assistant, the second-opinion reviewer and the auditor directly as
+`user_settings_yaml`, the audit checks the reply against them there, and a
+request that asks for another unit, format or spelling outranks the settings
+in the source priority — so a formatting field would restate one or the
+other on every call that reads the criteria.
+
 `processing` and `assumptions` are required, non-empty **strings**, not
 lists. A list of terse fragments invites one fragment and an empty sibling:
 a call once returned `[]` for the formatting field on the theory that the
 guide applied itself later, which reached the second-opinion reviewer as
-"no formatting constraints." `min_length=1` closes that exit for the two
-fields that must always say something — a field with nothing to carry must
-say so, which the operator can check, where a blank field cannot be told
-apart from an oversight. `override_formatting` is the deliberate exception:
-its empty state has exactly one meaning. For the same reason the system
+"no formatting constraints." `min_length=1` closes that exit — a field
+with nothing to carry must say so, which the operator can check, where a
+blank field cannot be told apart from an oversight. For the same reason the system
 prompt carries no worked example: a copyable one gets emitted verbatim in
 place of criteria derived from the actual request.
 
