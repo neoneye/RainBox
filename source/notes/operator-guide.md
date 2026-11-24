@@ -57,12 +57,12 @@ fallback.
   screen to someone else, use a fresh room and the demo database.
 - `/assistant` — assistant run inspector (traces, steps, write intents, and
   each step's collapsed debug log: active profile + block switch states).
-  Every run starts with an `acceptance_criteria` step establishing the reply's
-  work-steering preferences, formatting, and disclosed assumptions before any
-  work — inspect its `assumptions` there to spot a wrong guess at a glance.
-  Its `formatting` names the reply language too, but does not choose it: the
-  separate classifier step decides, and the criteria restate. A language named
-  here that disagrees with that step is the defect, not the decision; see
+  Every run starts with an `acceptance_criteria` step stating what you
+  want and what the reply owes you, before any work. Inspect its
+  `interaction_mode` to see how your message was taken, and its
+  `uncertainties` to spot something the reply should not have treated as
+  known. The call never sees the room's persona. It does not choose the
+  reply language either: the separate classifier step decides; see
   `notes/assistant-design.md` §Acceptance criteria.
 
   Reading a run: the **Model calls** card is where the time went — one bar per

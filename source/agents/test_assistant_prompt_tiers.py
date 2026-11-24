@@ -593,7 +593,11 @@ TURN_MESSAGES = [
 #: earlier turn's numbers and rejected a correct one, and the runtime reused
 #: almost none of the shared prefix for it anyway (261 of 4,871 tokens on the
 #: first review of a turn). Its reviews still share a prefix with each other.
-OWN_PREFIX_CALLS = {"second_opinion"}
+#: The criteria call: it reads the user's messages only, so it leaves the
+#: shared prefix at the first assistant message. With the assistant's replies
+#: in view it wrote the persona's voice into the criteria on every replay of
+#: a stored call, and never without them.
+OWN_PREFIX_CALLS = {"second_opinion", "acceptance_criteria"}
 
 
 def test_the_reviewer_carries_no_conversation_history(fully_populated_agent):
@@ -732,12 +736,12 @@ def test_recall_filter_prefix_is_a_prefix_of_the_decide_prompt(
     assert decide.startswith(agent._recall_filter_prefix(TURN_MESSAGES))
 
 
-def test_criteria_prompt_shares_the_decide_prompts_history(
+def test_criteria_prompt_carries_the_user_s_half_of_the_decide_history(
     fully_populated_agent,
 ):
-    """The criteria call is the one that runs immediately before the first
-    decide call, so its history slice is what decides whether decide starts
-    warm or cold."""
+    """The same window the decide call reads, minus the assistant's
+    messages: the filter runs after the window is taken, so the criteria
+    never reach further back than the rest of the turn does."""
     agent = fully_populated_agent
     decide = agent._build_user_prompt(
         messages=TURN_MESSAGES, scratchpad=[], step_index=0)
@@ -747,18 +751,18 @@ def test_criteria_prompt_shares_the_decide_prompts_history(
         start = prompt.index("<conversation_history_xml>")
         return prompt[start:prompt.index("</conversation_history_xml>") + 27]
 
-    assert history(criteria) == history(decide)
+    user_lines = [ln for ln in history(decide).splitlines()
+                  if 'role="assistant"' not in ln]
+    assert history(criteria).splitlines() == user_lines
+    assert len(user_lines) < len(history(decide).splitlines())
 
 
-def test_criteria_and_decide_prompts_share_the_settings_with_their_comments(
+def test_criteria_and_decide_prompts_carry_the_settings_with_their_comments(
     fully_populated_agent,
 ):
     """The formatting guide reaches the criteria call and the decide call
     inside one block — user_settings_yaml, comments included — rendered once
-    per turn, so the two prompts share it byte for byte. Reuse runs up to
-    the point two prompts first differ, so a guide rendered separately for
-    one of them (as a block of its own once was) would end the shared run
-    wherever the two renderings disagreed."""
+    per turn, so the two prompts carry it byte for byte."""
     from user_profile import format_formatting_guide, format_identity_block
 
     agent = fully_populated_agent
@@ -772,9 +776,8 @@ def test_criteria_and_decide_prompts_share_the_settings_with_their_comments(
         messages=TURN_MESSAGES, scratchpad=[], step_index=0)
     criteria = agent._build_acceptance_criteria_prompt(TURN_MESSAGES)
 
-    shared = decide[:common_prefix_len(decide, criteria)]
     block = f"<user_settings_yaml>{agent._identity_block}</user_settings_yaml>"
-    assert block in shared
+    assert block in decide and block in criteria
     assert "<formatting_guide" not in decide and "<formatting_guide" not in criteria
 
 

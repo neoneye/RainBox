@@ -164,8 +164,10 @@ def test_persona_survives_a_mid_run_criteria_refresh(persona_room, monkeypatch):
         agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
 
     criteria_queue = [
-        AcceptanceCriteria(processing="step0", assumptions="a"),
-        AcceptanceCriteria(processing="refreshed", assumptions="a"),
+        AcceptanceCriteria(
+            user_intent=intent, interaction_mode="task", observations=["o"],
+            uncertainties=["u"], acceptance_criteria=["c"])
+        for intent in ("step0", "refreshed")
     ]
 
     def fake_criteria(*, system_prompt, user_prompt, followup_turns=None):
