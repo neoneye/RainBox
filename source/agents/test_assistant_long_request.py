@@ -267,6 +267,68 @@ def test_history_messages_are_cut_too():
     assert len(prompt) < len(old)
 
 
+def test_history_cap_tightens_with_age_in_bands_from_the_newest():
+    agent = _agent()
+    caps = agent.HISTORY_MESSAGE_MAX_CHARS_BY_AGE
+    band = agent.HISTORY_AGE_BAND_MESSAGES
+    assert caps[0] == agent.HISTORY_MESSAGE_MAX_CHARS
+    assert list(caps) == sorted(caps, reverse=True)
+    assert agent._history_message_limit(0) == caps[0]
+    assert agent._history_message_limit(band - 1) == caps[0]
+    assert agent._history_message_limit(band) == caps[1]
+    assert agent._history_message_limit(2 * band) == caps[2]
+    assert agent._history_message_limit(50 * band) == caps[-1]
+
+
+def test_an_older_history_message_is_cut_tighter_than_a_newer_one():
+    agent = _agent()
+    caps = agent.HISTORY_MESSAGE_MAX_CHARS_BY_AGE
+    band = agent.HISTORY_AGE_BAND_MESSAGES
+    paste = _paste(4000)
+    window = [{"sender_type": "human", "text": paste}
+              for _ in range(3 * band)]
+    prompt = agent._build_user_prompt(
+        messages=window + [{"sender_type": "human", "text": "and now?"}],
+        scratchpad=[], step_index=0)
+
+    history = prompt.split("<conversation_history_xml>")[1].split(
+        "</conversation_history_xml>")[0]
+    included = [int(n) for n in re.findall(r'included_chars="(\d+)"', history)]
+    assert included == (
+        [caps[2]] * band + [caps[1]] * band + [caps[0]] * band)
+    assert agent._history_window_chars(window) == band * sum(caps)
+
+
+def test_a_short_window_is_cut_as_its_newest_band():
+    agent = _agent()
+    paste = _paste(4000)
+    prompt = agent._build_user_prompt(
+        messages=[{"sender_type": "human", "text": paste}] * 3
+        + [{"sender_type": "human", "text": "and now?"}],
+        scratchpad=[], step_index=0)
+
+    included = set(re.findall(r'included_chars="(\d+)"', prompt))
+    assert included == {str(agent.HISTORY_MESSAGE_MAX_CHARS)}
+
+
+def test_a_message_left_out_of_a_call_does_not_move_the_others_bands():
+    """The criteria call reads the user's messages only; each is cut as its
+    place in the whole window says, as in every other call of the turn."""
+    agent = _agent()
+    band = agent.HISTORY_AGE_BAND_MESSAGES
+    caps = agent.HISTORY_MESSAGE_MAX_CHARS_BY_AGE
+    paste = _paste(4000)
+    window = [{"sender_type": "human" if i % 2 == 0 else "agent",
+               "sender_uuid": ASSISTANT_UUID, "text": paste}
+              for i in range(3 * band)]
+    context, _turns = agent._build_acceptance_criteria_turns(
+        messages=window + [{"sender_type": "human", "text": "and now?"}])
+
+    included = [int(n) for n in re.findall(r'included_chars="(\d+)"', context)]
+    half = band // 2
+    assert included == [caps[2]] * half + [caps[1]] * half + [caps[0]] * half
+
+
 def test_a_stored_summary_replays_next_to_the_message_it_describes():
     """Three long pastes then "retry": without the replay the model reads
     three cut messages and nothing about what was cut, while the summaries sit

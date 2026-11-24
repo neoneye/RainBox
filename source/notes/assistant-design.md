@@ -399,10 +399,33 @@ are told a shortening is not itself a defect: the reply was written against the
 same shortened copy, and a part that falls in the dropped middle is not
 something it failed to cover.
 
-History messages get the same cut at a tighter
-`HISTORY_MESSAGE_MAX_CHARS = 2000` — an old message is context rather than the
-task, and a paste from an earlier turn would otherwise arrive in every prompt
-of every later turn.
+History messages get the same cut, tighter, and tighter still with age — an
+old message is context rather than the task, and a paste from an earlier turn
+would otherwise arrive in every prompt of every later turn. The cap goes by
+the message's place in the 30-message window, counted back from the newest in
+bands of `HISTORY_AGE_BAND_MESSAGES = 10`
+(`HISTORY_MESSAGE_MAX_CHARS_BY_AGE`):
+
+| Place in the window | Cap |
+|---|---|
+| newest 10 | 2000 chars |
+| the 10 before those | 1000 chars |
+| the oldest 10 | 500 chars |
+
+A window shorter than 30 fills the bands from the newest end, so a room's
+first ten messages are never cut tighter than 2000. The place is counted
+before a call leaves any message out, so every call of a turn cuts a message
+the same; the `included_chars` attribute on the message says which cap it got.
+
+The reason is the room background's budget. With one flat cap of 2000, a
+window where every other message was a long reply measured 20,620 characters
+against the 17,440 a 20,480-token model has for window and background
+together, so the background (4,787 characters) was left out. The same window
+under the banded caps is about 9,800 characters, and both blocks fit. The
+price is that a long message is cut again each time it crosses into an older
+band, which changes the prompt from that message on and costs that turn its
+cached prefix; a room past 30 messages loses the prefix every turn anyway, as
+the window slides.
 
 **The description outlives its turn.** A successful summary call writes its
 Markdown to the triggering message's `meta.request_summary_markdown`, and
