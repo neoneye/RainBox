@@ -606,17 +606,114 @@ recorded when no model group is bound for the slot — both carry
 
 ## Acceptance criteria
 
-On every turn a code-driven **step 0** establishes the reply's constraints
-before the decide loop starts — enforced by the loop, so the model cannot skip or forget it.
-One structured call returns an `AcceptanceCriteria`:
+On every turn a code-driven **step 0** establishes what the user wants and
+what the reply owes them, before the decide loop starts — enforced by the
+loop, so the model cannot skip or forget it. One structured call returns an
+`AcceptanceCriteria`:
 
-- `processing` — what is about to happen to produce the reply: what will
-  be computed, looked up, compared or asked, in order. The plan, never the
-  formatting.
-- `assumptions` — every ambiguity resolved by a settings-based assumption,
-  stated so the operator can spot a wrong one. Assumptions are made only
-  where the settings provide a default; otherwise the ambiguity is recorded
-  as unresolved and the normal `ask_clarifying_question` path handles it.
+- `user_intent` — what the user wants from this turn, in one sentence, read
+  from their own words.
+- `interaction_mode` — how the message is to be taken: `task`,
+  `conversation`, `roleplay`, `meta_discussion`, `behavioral_evaluation`,
+  `correction`, `configuration`, `disengagement` or `mixed`.
+- `observations` — what can be pointed at: what the user wrote, what a
+  settings default settles, what the conversation shows was said.
+- `uncertainties` — what is not known or not verified: an ambiguity no
+  settings default resolves (the normal `ask_clarifying_question` path
+  handles it), or a reading of the user that their words do not establish.
+- `acceptance_criteria` — what the reply must do to be accepted, each a
+  requirement that can be checked against the reply.
+
+### The criteria are written for the user, not the character
+
+The call works on the user's behalf and is kept apart from the persona:
+
+- **It is not shown `assistant_persona`.** The criteria state what the
+  user is owed; the character is subject to them and does not write them.
+- **It reads the user's messages only.** `conversation_history_xml` in this
+  call is the turn's window with the assistant's messages filtered out, and
+  the `exchange_turns` layout sends it the request without the previous
+  exchange. On a question asking whether the persona could be causing the
+  assistant's earlier readings, the call recognized the question as one
+  about the system and then required the answer to keep the persona's voice
+  and frame, and every later call read that as settled, the audit included.
+  Replaying that stored call on the model that produced it (`gemma4:e4b-mlx`
+  at the run's options, three to four samples per variant): the requirement
+  came back every time with the assistant's messages in view, whether or
+  not the persona block was there, and still with only the latest assistant
+  message in view; it never came back with none. An instruction to read
+  those messages as output rather than evidence changed nothing.
+- **A criterion never prescribes a voice, a character or a framing.** How
+  the assistant sounds is the decide prompt's business and no condition of
+  acceptance. On that same replay the model still wrote a tone into the
+  criteria about three times in four, now a neutral one; the audit is told
+  a voice is never a requirement.
+
+Reading the user's side only has two costs. The call leaves the turn's
+shared prefix at the first assistant message, so it reuses none of the cache
+past that point and the decide call after it prefills its own history. And
+a request that points at something the assistant said has its referent out
+of view: `turn_instructions` tells the call to write the criteria in the
+request's own words and leave the referent to the assistant, which sees its
+own messages.
+
+Observations, uncertainties and requirements are separate lists so that a
+premise has nowhere to sit unmarked. One free-text field for whatever the
+call assumed is where the fiction above was written down as fact.
+
+### The interaction mode outranks the persona
+
+The model picks the mode; code says what it means. `INTERACTION_MODE_GUIDANCE`
+holds one sentence per mode, and the Markdown projection prints it beside the
+value under `## Interaction mode`. For `conversation` and `roleplay` the
+persona applies in full. For `meta_discussion` and `behavioral_evaluation`
+the reply answers factually, as the system it is: the persona may color the
+wording, never the content. `correction` accepts the correction as stated,
+`configuration` follows the instruction, `disengagement` drops the persona's
+fiction and voice, and `mixed` takes the plainest reading.
+
+The modes that limit the persona are the ones that matter, and the replay
+picked `meta_discussion` for the question above on every sample. The label
+on ordinary turns is noisy on a small model: a factual question came back as
+`conversation` and a request to try again as `correction`, with sensible
+criteria under both.
+
+In three modes the decide call is not shown the persona at all
+(`PERSONA_WITHHELD_MODES`: `meta_discussion`, `behavioral_evaluation`,
+`disengagement`). Words were not enough there. With the persona block in the
+prompt, live turns on `gemma4:e4b-mlx` answered a question about the system
+from inside the character's fiction on every attempt, through two audit
+bounces that named the mode, and restating the mode last in the prompt
+changed nothing on a replay (three samples). With the block left out, six
+replayed replies of six answered factually, still colored by the voice the
+history carries. Live it is weaker: of three turns, one answered factually
+and two stayed in character, carried by the assistant's own earlier messages
+in the history, and the audit sent them. Withholding the block is necessary
+and not sufficient.
+
+Two further steps were replayed on one of those turns and left out:
+
+- **Taking the assistant's earlier messages out of the decide call too.**
+  The reply turned plain (two of two that replied; the other samples went
+  off to read memory first), and blind: it denied any influence, because it
+  could no longer see what it had said or why. A question about the
+  assistant's own behavior needs that behavior in view.
+- **Showing the persona as the subject of the question**, in a section of
+  its own marked as text to describe from outside. The character came back:
+  one sample of five gave a partly factual answer. `correction` and `configuration` keep the persona: the
+label is not reliable enough on ordinary turns to drop the character on it.
+The persona block sorts last in the head, so withholding it leaves the
+turn's shared prefix as it was.
+
+The decide prompt ranks `acceptance_criteria_markdown` above
+`assistant_persona` and says the interaction mode wins where the two
+disagree, as the one exception to adhering to the persona. The reply audit,
+which never sees the persona, holds the reply to each acceptance criterion
+and to the mode: answering a question about the assistant from inside a
+story is a defect, stating an uncertainty as fact is a defect, and the
+absence of a voice or character never is.
+
+### What the criteria leave out, and why no field is empty
 
 The criteria carry no formatting. The formatting defaults reach the
 assistant, the second-opinion reviewer and the auditor directly as
@@ -625,15 +722,13 @@ request that asks for another unit, format or spelling outranks the settings
 in the source priority — so a formatting field would restate one or the
 other on every call that reads the criteria.
 
-`processing` and `assumptions` are required, non-empty **strings**, not
-lists. A list of terse fragments invites one fragment and an empty sibling:
-a call once returned `[]` for the formatting field on the theory that the
-guide applied itself later, which reached the second-opinion reviewer as
-"no formatting constraints." `min_length=1` closes that exit — a field
-with nothing to carry must say so, which the operator can check, where a
-blank field cannot be told apart from an oversight. For the same reason the system
-prompt carries no worked example: a copyable one gets emitted verbatim in
-place of criteria derived from the actual request.
+Every field is required, and each list has `min_length=1`. An empty list
+cannot be told apart from an oversight: a call once returned `[]` for a list
+field on the theory that the matter applied itself later, which reached the
+second-opinion reviewer as "no constraints." A list with nothing to carry
+must say so in one item, which the operator can check. For the same reason
+the prompt carries no worked example: a copyable one gets emitted verbatim
+in place of criteria derived from the actual request.
 
 Response language is not this call's to decide and not its to restate. The
 preceding `reply_language_markdown` from the dedicated classifier is
@@ -656,16 +751,16 @@ call, with its own job description in `<turn_instructions>` — that is what
 lets it share a cached prefix with them. Inputs: the current request and the
 turn's conversation history of either role, both at the shared window
 (`MAX_RECENT_MESSAGES = 30`, owned by `AssistantPromptBuilder` so tier 0 is
-byte-identical across the turn's calls) — how the assistant has been
-formatting and phrasing its replies is exactly the continuity these criteria
-establish — plus `user_settings_yaml` (the turn's one rendering, formatting
-comments included when that switch is on), `reply_language_markdown`, the
-`user_expertise_yaml` rows when that switch is on, and `assistant_persona`
-when the room binds one — the same text and order as in the decide prompt. Calibration sits directly after `user_settings_yaml` in
+byte-identical across the turn's calls) — a follow-up takes its subject
+from the exchange before it — plus `user_settings_yaml` (the turn's one
+rendering, formatting comments included when that switch is on),
+`reply_language_markdown`, and the `user_expertise_yaml` rows when that
+switch is on. Calibration sits directly after `user_settings_yaml` in
 every call of the turn (classifier and recall filter included): the two are
 "who is asking", and one fixed slot in every prompt keeps them inside the
-head the whole turn shares instead of ending a prefix. Persona is last.
-NOT the action catalog — the call plans constraints, not actions.
+head the whole turn shares instead of ending a prefix.
+NOT the action catalog — the call plans constraints, not actions — and NOT
+`assistant_persona`, which only the decide prompt carries.
 
 The result renders as an `<acceptance_criteria_markdown>` section directly
 after `<current_user_request>` in every decide step: a Markdown projection of

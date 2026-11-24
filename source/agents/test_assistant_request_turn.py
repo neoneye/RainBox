@@ -116,9 +116,11 @@ def test_recall_filter_prefix_ends_with_the_request(agent):
     assert order[-1] == "current_user_request"
 
 
-def test_every_call_shares_the_history_head(agent):
+def test_the_calls_that_read_both_roles_share_the_history_head(agent):
     """The request left tier 0 in every call at once, so the calls' prompts
-    still open with the same bytes: the history, then the identity block."""
+    still open with the same bytes: the history, then the identity block.
+    The criteria call reads the user's messages only and so opens with its
+    own history."""
     messages = _messages()
     decide, _ = agent._build_decide_turns(
         messages=messages, scratchpad=[], step_index=0)
@@ -127,8 +129,9 @@ def test_every_call_shares_the_history_head(agent):
         "it is 4", messages=messages, scratchpad=[])
     head = decide[:decide.index("<user_expertise_yaml")]
 
-    assert criteria.startswith(head)
     assert audit.startswith(head)
+    assert not criteria.startswith(head)
+    assert 'role="assistant"' not in criteria
 
 
 def test_long_request_is_cut_and_described_in_the_context(agent):

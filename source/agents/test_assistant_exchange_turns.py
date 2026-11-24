@@ -68,13 +68,17 @@ def test_the_instructions_say_what_the_exchange_turns_are(agent):
     assert REQUEST_MESSAGE_SECTION in context
     assert EXCHANGE_TURNS_SECTION in context
 
+
+
+def test_the_criteria_call_is_sent_the_request_but_not_the_exchange(agent):
+    """One of the exchange's two turns is the assistant's reply, and the
+    criteria call reads the user's side only."""
     criteria, turns = agent._build_acceptance_criteria_turns(_messages())
-    assert EXCHANGE_TURNS_SECTION in criteria
-    assert turns[1:] == [
-        {"role": "user", "content": "tell me about the moon"},
-        {"role": "assistant", "content": "It orbits the earth."},
-        {"role": "user", "content": "more details"},
-    ]
+    assert REQUEST_MESSAGE_SECTION in criteria
+    assert EXCHANGE_TURNS_SECTION not in criteria
+    assert turns[1:] == [{"role": "user", "content": "more details"}]
+    assert "tell me about the moon" in criteria
+    assert "It orbits the earth." not in criteria
 
 
 def test_a_reply_from_another_agent_is_not_repeated(agent):
