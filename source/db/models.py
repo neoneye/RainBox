@@ -725,6 +725,8 @@ class ChatMessage(db.Model):
     #   "debug-router" — {subject, action} triage output; written by a chat
     #                    triage agent that no longer exists, kept because the
     #                    rows it wrote are still in rooms
+    #   "wake"         — a wake-up: what started an assistant turn that no
+    #                    message of the user's started (chat/wake.py)
     # The UI can fold away non-"message" rows so they don't clutter the chat.
     kind: Mapped[str] = mapped_column(Text, default="message")
     # Structured attachment for interactive messages (default {}). A confirm-tier

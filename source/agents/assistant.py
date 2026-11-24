@@ -37,6 +37,7 @@ from chat.prompt_layout import (
     EXCHANGE_TURNS, REQUEST_MESSAGE_LAYOUTS, SINGLE_TURN,
     current_prompt_layout, latest_exchange, request_turns,
 )
+from chat.wake import WAKE_KIND
 from diary.render import DIARY_SCRATCHPAD_RESERVE
 from agents import response_language_gate
 from agents.base import (
@@ -996,6 +997,29 @@ section is present, the request message was shortened the way the truncation
 rule describes for current_user_request: its middle was dropped, the section's
 attributes give the original and included lengths in characters, and
 current_user_request_summary_markdown describes the whole request."""
+
+# A turn the assistant starts without a message from the user (chat/wake.py).
+# Appended to the instructions of every call that reads the request, on wake
+# turns only: the wake-up notice sits where the request would, and this says
+# what that text is. It names no source — the notice says what woke the
+# assistant and what for, so a new source needs no change here.
+WAKE_SECTION: str = """\
+This turn was not started by a message from the user. You were woken up, and
+the text in the request's place is a wake-up notice written by the system: it
+says what woke you and what the wake-up is for. Where these instructions say
+"the request", read the wake-up notice. Nobody asked a question, so there is
+nothing to answer and nothing to ask the user to clarify: do what the notice
+is for, and send one message on your own initiative. That message takes the
+conversation forward from where your latest message left it, in the language
+reply_language_markdown gives. It must add something the conversation does
+not have yet: never repeat or summarize your earlier messages, never ask
+whether to go on, and never answer an earlier message of the user's again as
+if it had just been asked.
+A wake-up is not a search. What you say next can come from what you know
+yourself. Read at most once, and only for something stored about the user or
+their things; when that read finds nothing, go on from what you know and what
+the conversation already holds, and never make the read that found nothing
+the subject of your message."""
 
 # The exchange_turns layout repeats the conversation's latest exchange as
 # turns of its own before the request message. Said once, after
@@ -4173,6 +4197,9 @@ class AssistantAgent(ModelGroupAgent):
     # not run a turn builds with — a unit test, or the eval seam unless it is
     # told otherwise.
     _prompt_layout: str = SINGLE_TURN
+    # The wake row that started this turn, or None on a turn a message
+    # started (chat/wake.py). Set once per turn, before any prompt is built.
+    _wake: dict[str, Any] | None = None
     # The room's background this turn sends (agents.room_background.Background
     # holding only what passed the fit check), or None. Loaded once per turn
     # in handle, before the first model call; every call's prompt carries it.
@@ -4477,6 +4504,7 @@ class AssistantAgent(ModelGroupAgent):
         # Resolve the operator-effective capability set for this turn.
         self._caps = enabled_capabilities()
         self._steps = []
+        self._wake = None
         # Open the durable run row up front so a crash anywhere below is recorded
         # against it (and the journal, via Agent.run, when we re-raise).
         self._run = db.start_assistant_run(
@@ -4521,10 +4549,15 @@ class AssistantAgent(ModelGroupAgent):
         try:
             # Only real conversation turns feed the prompt; diagnostic rows
             # (debug-*, progress, thinking) are operator-only and excluded.
-            messages = [
-                m for m in db.list_room_messages(room_uuid)
-                if m.get("kind") == "message"
-            ]
+            rows = db.list_room_messages(room_uuid)
+            messages = [m for m in rows if m.get("kind") == "message"]
+            # A wake-up is the turn's trigger and not part of the
+            # conversation: only the one that started this turn is read, and
+            # it goes last, where the request sits.
+            self._wake = next(
+                (m for m in rows if m.get("kind") == WAKE_KIND
+                 and message_uuid is not None
+                 and str(m.get("uuid")) == str(message_uuid)), None)
             # A context marker just posted is the newest row; keep the operator's
             # message as the Current message by demoting it into history.
             messages = _demote_trailing_context_marker(messages)
@@ -4532,6 +4565,8 @@ class AssistantAgent(ModelGroupAgent):
             # context. The system policy already requires a fresh read this turn,
             # and the freshly assembled profile blocks are the model-side signal.
             messages = [m for m in messages if not _is_context_marker(m)]
+            if self._wake is not None:
+                messages.append(self._wake)
             # The per-step debug log is assembled BEFORE the first model call,
             # so every row this turn carries it — including the classifier's,
             # which lands before the prompt blocks exist. A row without the
@@ -4582,7 +4617,8 @@ class AssistantAgent(ModelGroupAgent):
             self._response_language_gate_args = None
             self._set_activity("classifying response language")
             self._run_response_language_classifier(
-                step_index=0, messages=messages, profile=context.profile)
+                step_index=0, messages=self._language_messages(messages),
+                profile=context.profile)
             # Retrieve active procedural skills for this turn (candidates are
             # inert and never injected). Best-effort: a retrieval failure must
             # not break the turn.
@@ -5231,6 +5267,7 @@ class AssistantAgent(ModelGroupAgent):
         (ARGUMENT_REJECTIONS): past it the decision stands and the loop
         records it as a failed step, as before."""
         repeat_read = self._repeat_read_validator()
+        wake_read = self._wake_read_validator()
         refused = 0
 
         def validate(result: BaseModel) -> None:
@@ -5240,6 +5277,41 @@ class AssistantAgent(ModelGroupAgent):
                 refused += 1
                 raise ValueError(error)
             repeat_read(result)
+            wake_read(result)
+        return validate
+
+    # How many reads a wake turn runs before a further one is refused.
+    WAKE_MAX_READS: int = 1
+
+    def _wake_read_validator(self) -> Callable[[BaseModel], None]:
+        """Refuse, inside the decide call, a read past WAKE_MAX_READS on a
+        wake turn.
+
+        Nobody asked anything on a wake turn, so no read ever answers it, and
+        a model told to say something new kept looking for it: one wake-up ran
+        five memory searches in differing words, each finding nothing, before
+        it replied from what the conversation already held — four and a half
+        minutes of model calls for one message. Bounded per call like the
+        repeat-read check (READ_REPEAT_REJECTIONS): past it the decision
+        stands."""
+        done = len(getattr(self, "_turn_reads", {}) or {})
+        refused = 0
+
+        def validate(result: BaseModel) -> None:
+            nonlocal refused
+            if self._wake is None or done < self.WAKE_MAX_READS:
+                return
+            decision = cast(AssistantStepDecision, result)
+            cap = self._caps.get(decision.action)
+            if (cap is None or not cap.read
+                    or refused >= self.READ_REPEAT_REJECTIONS):
+                return
+            refused += 1
+            raise ValueError(
+                "this turn is a wake-up and it has had its read. Nobody is "
+                "waiting for an answer, so there is nothing more to look up: "
+                "choose reply now and carry on from your latest message with "
+                "what the conversation and that read already give you.")
         return validate
 
     def _repeat_read_validator(self) -> Callable[[BaseModel], None]:
@@ -5712,15 +5784,38 @@ class AssistantAgent(ModelGroupAgent):
             base = _rewrite_for_request_turn(
                 base, _DECIDE_REQUEST_TURN_REWRITES)
             base = f"{base}\n{self._request_message_section()}"
-        return f"{base}\n\n{self._action_catalog()}"
+        return f"{self._on_wake(base)}\n\n{self._action_catalog()}"
 
     def _criteria_turn_instructions(self) -> str:
         """The criteria call's tier-2 block. It never names the request's
         section, so the request_turn layout only adds where the request went."""
         if self._prompt_layout in REQUEST_MESSAGE_LAYOUTS:
-            return (f"{ACCEPTANCE_CRITERIA_TURN_INSTRUCTIONS}\n"
-                    f"{self._request_message_section()}")
-        return ACCEPTANCE_CRITERIA_TURN_INSTRUCTIONS
+            return self._on_wake(
+                f"{ACCEPTANCE_CRITERIA_TURN_INSTRUCTIONS}\n"
+                f"{self._request_message_section()}")
+        return self._on_wake(ACCEPTANCE_CRITERIA_TURN_INSTRUCTIONS)
+
+    def _on_wake(self, instructions: str) -> str:
+        """`instructions`, with WAKE_SECTION after them on a wake turn. Every
+        call that reads the request takes its instructions through here, so
+        none of them reads a wake-up notice as something the user wrote."""
+        if self._wake is None:
+            return instructions
+        return f"{instructions}\n{WAKE_SECTION}"
+
+    def _language_messages(
+        self, messages: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """The messages the reply-language classifier reads. On a wake turn
+        the notice is system text in one fixed language and says nothing
+        about the language to reply in, so the classifier reads the
+        conversation up to the user's latest message instead."""
+        if self._wake is None:
+            return messages
+        for at in range(len(messages) - 2, -1, -1):
+            if messages[at].get("sender_type") == "human":
+                return messages[:at + 1]
+        return messages
 
     def _request_message_section(self) -> str:
         """Where the request went, for a call whose subject is the request:
@@ -6054,6 +6149,18 @@ class AssistantAgent(ModelGroupAgent):
         anchor promising the whole of it would contradict the tag saying it
         was cut.
         """
+        if self._wake is not None:
+            # No request to quote. Said again here because this is the last
+            # instruction the model reads before it decides.
+            where = ("the final user message of this call"
+                     if self._prompt_layout in REQUEST_MESSAGE_LAYOUTS
+                     else "the current_user_request section")
+            return (
+                "There is no request from the user this turn: you were woken "
+                f"up, and {where} is the wake-up notice. Do what that notice "
+                "is for — never answer a message from "
+                "conversation_history_xml again, however recent."
+            )
         if self._prompt_layout in REQUEST_MESSAGE_LAYOUTS:
             # Nothing to quote or point across: the request is the final
             # message the model reads.
@@ -6173,8 +6280,13 @@ class AssistantAgent(ModelGroupAgent):
         prompt.append_text(
             "decision_request",
             f"{self._request_anchor(current)} "
-            "Choose exactly one next action. If current_turn_steps already "
-            "answer that request, choose reply now. Never repeat "
+            "Choose exactly one next action. "
+            + ("If current_turn_steps already give you what your message "
+               "needs, choose reply now. "
+               if self._wake is not None else
+               "If current_turn_steps already "
+               "answer that request, choose reply now. ")
+            + "Never repeat "
             "an identical successful or failed action.",
             step=str(step_index + 1), max_steps=str(self._step_budget))
 
@@ -6372,7 +6484,8 @@ class AssistantAgent(ModelGroupAgent):
             self, "second_opinion_review", messages=messages,
             blocks=("identity", "calibration", "profile"),
             history_skip=lambda _message: True)
-        prompt.append_turn_instructions(SECOND_OPINION_TURN_INSTRUCTIONS)
+        prompt.append_turn_instructions(
+            self._on_wake(SECOND_OPINION_TURN_INSTRUCTIONS))
 
         if self._reply_language_markdown:
             prompt.append_text(
@@ -6470,7 +6583,8 @@ class AssistantAgent(ModelGroupAgent):
             blocks=("identity", "calibration"),
             history_skip=lambda m: str(
                 (m.get("meta") or {}).get("assistant_run_uuid")) in unfinished)
-        prompt.append_turn_instructions(REPLY_AUDIT_TURN_INSTRUCTIONS)
+        prompt.append_turn_instructions(
+            self._on_wake(REPLY_AUDIT_TURN_INSTRUCTIONS))
         if self._criteria_markdown:
             prompt.append_text(
                 "acceptance_criteria_markdown", self._criteria_markdown)
@@ -7542,8 +7656,11 @@ class AssistantAgent(ModelGroupAgent):
             "it invalidate? Emit the full revised criteria; keep everything "
             "the change does not touch."
             if revising else
-            f"{self._request_anchor(current)} Establish the acceptance "
-            "criteria the reply to that request must satisfy.")
+            (f"{self._request_anchor(current)} Establish the acceptance "
+             "criteria your message must satisfy."
+             if self._wake is not None else
+             f"{self._request_anchor(current)} Establish the acceptance "
+             "criteria the reply to that request must satisfy."))
         return prompt.render(), prompt.followup_turns()
 
     def _request_acceptance_criteria(

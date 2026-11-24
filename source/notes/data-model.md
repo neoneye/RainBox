@@ -135,7 +135,10 @@ Key fields:
 - `text`
 - `content_type`: `markdown`, `json`
 - `kind`: `message`, `debug-memory`, `debug-query`, `debug-router`, `progress`,
-  `thinking`, etc.
+  `thinking`, `wake`, etc. A `wake` row is what started an assistant turn
+  that no message of the user's started; its text is the notice the assistant
+  reads and `meta["wake"]` says where it came from (`source`, and for the
+  Continue button `index` and `count`).
 - `meta`: JSONB structured attachment for interactive messages — e.g. a
   confirm-tier write proposal stores `{write_intent, capability, step_link}` so
   chat can render confirm/reject controls; the facts-invalidation marker stores

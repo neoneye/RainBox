@@ -21,6 +21,7 @@ from . import benchmark_vision_views  # noqa: F401,E402
 from . import agent_views  # noqa: F401,E402
 from . import chat_views  # noqa: F401,E402
 from . import chat_api  # noqa: F401,E402
+from . import chat_continue  # noqa: F401,E402
 from . import tts_kokoro_views  # noqa: F401,E402
 from . import tts_lfm3_views  # noqa: F401,E402
 from . import tts_dotstts_views  # noqa: F401,E402

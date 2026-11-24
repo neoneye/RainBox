@@ -1248,6 +1248,19 @@ def get_room_message(room_uuid: UUID, message_id: int) -> dict[str, Any] | None:
     return None
 
 
+def human_wrote_after(room_uuid: UUID, message_id: int) -> bool:
+    """Whether a human posted a `message` in the room after row `message_id`."""
+    return db.session.query(
+        db.session.query(ChatMessage.id)
+        .join(ChatUser, ChatUser.uuid == ChatMessage.sender_uuid)
+        .filter(ChatMessage.room_uuid == room_uuid,
+                ChatMessage.id > message_id,
+                ChatMessage.kind == "message",
+                ChatUser.user_type == "human")
+        .exists()
+    ).scalar()
+
+
 def post_progress(room_uuid: UUID, sender_uuid: UUID, text: str) -> ChatMessage:
     """Append a kind='progress' status row for an agent's in-flight work.
     Delivered live via the chat NOTIFY channel. Cleared automatically when

@@ -123,6 +123,12 @@ fallback.
 6. Watch replies stream over SSE.
 7. Hover an assistant reply for its actions; a reply that rests on reads has
    a sources pill there, opening the Sources panel.
+8. To let the assistant carry on by itself, open the sidebar's Settings panel
+   and press Continue. Continue count (1 to 3) is how many times it is woken;
+   the first wake-up is immediate, and Sleep duration (30 s, 1 m, 2 m) is
+   the pause after each reply before the next one, so the machine cools.
+   Writing a message yourself ends the series, as does Cancel (the turn in
+   progress still finishes). Each wake-up shows in the chat as a `wake` row.
 
 Useful responder agents:
 

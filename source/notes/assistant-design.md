@@ -705,6 +705,62 @@ Fail-open: a failed call logs, records a failed step row, injects nothing,
 and the run proceeds exactly as with the switch off. Design rationale and
 rollout plan: `proposals/2026-07-23-reply-acceptance-criteria.md`.
 
+## Wake-ups
+
+A turn usually starts because the user wrote a message. A wake-up starts one
+without: the room gets a row of kind `wake`, and the inbox item names that
+row as `message_uuid`, exactly as it would name a message (`chat/wake.py`).
+
+For that one turn the wake row sits last in the turn's messages, where the
+request sits, so every prompt carries its text in the request's place: the
+`current_user_request` section in `single_turn`, the final user message in
+the other layouts. The text is the notice — what woke the assistant and what
+the wake-up is for. It is written by code, per source; the Continue button's
+says the user pressed Continue without writing, to carry on from the latest
+message, and which wake-up of the series this is.
+
+A wake row is never part of the conversation. It is not a `message` row, so
+the history window, the room's summaries and its topics do not see it, and a
+later turn reads only the assistant's own messages that the wake-ups
+produced.
+
+What changes in the prompts, on wake turns only:
+
+- `WAKE_SECTION` follows the turn instructions of the decide, criteria,
+  second-opinion and audit calls. It says the text in the request's place is
+  a wake-up notice from the system, that nobody asked anything, and that the
+  message to send takes the conversation forward and adds something new. It
+  names no source: a timer or an event needs a notice of its own and nothing
+  here.
+- The closing anchor of the decide and criteria prompts says there is no
+  request this turn, instead of quoting or pointing at one.
+- The response-language classifier reads the conversation up to the user's
+  latest message. The notice is system text in one fixed language and would
+  otherwise decide the reply language.
+
+A wake turn runs one read at most (`WAKE_MAX_READS`). Nobody asked anything,
+so no read answers the turn, and a model told to add something new kept
+searching for it: a wake-up ran five memory searches in different words,
+each finding nothing, before it replied. A further read is refused inside the
+decide call, the way a repeated read is.
+
+The run records the wake row as `metadata["request_message"]`, and
+`/assistant` shows that row as what started the run.
+
+### The Continue button
+
+The chat's Settings sidebar has a Continue button with a count (1 to 3) and
+a sleep duration (30 s, 1 m, 2 m). One press is a series
+(`webapp/chat_continue.py`): the first wake-up is posted before the request
+returns, and a thread of the webapp waits for each wake-up's run to finish,
+sleeps, and posts the next. The sleep is counted from the end of the run, so
+it is time the model is idle.
+
+The series ends early when the user writes a message in the room, when a run
+ends any way other than `finished`, when no worker takes a wake-up, and on
+Cancel, which leaves the turn in progress alone. It lives in the webapp's
+memory: a restart ends it after the turn in progress.
+
 ## The capability registry
 
 `CAPABILITIES` maps each `AssistantActionName` to a `Capability` record:

@@ -1784,6 +1784,15 @@ function peekLabel(text){
 // otherwise. Split out of makeMessage so a streaming update can refresh the
 // text without touching anything else in the row.
 function fillMessageBody(body, m){
+  const wake = m.kind === 'wake' ? ((m.meta || {}).wake || null) : null;
+  if (wake && wake.source === 'continue_button'){
+    // A wake-up's text is the notice the assistant reads; the chat shows
+    // what happened, and keeps the notice on hover.
+    body.textContent = 'Continue' + (wake.count > 1 ? ' ' + wake.index + ' of ' + wake.count : '')
+      + ': woke the assistant.';
+    body.title = m.text;
+    return;
+  }
   if (m.content_type === 'json'){
     // debug-assistant rows are content_type:json — the full step state,
     // inspected as JSON (no markdown rendering to hide anything).
@@ -3413,7 +3422,113 @@ async function renderAgentsSettings(){
     return;
   }
   members.forEach(m => renderPersonaMemberSection(m, members.length > 1));
+  renderContinueSection(room);
   await renderToolsSection(room);
+}
+
+// Continue: wake the assistant without writing to it. One press is a series
+// of 1 to 3 wake-ups, the first at once and each later one a sleep after the
+// reply before it, so the machine cools in between. The server carries the
+// series (webapp/chat_continue.py); this draws its state and asks again only
+// while one is in progress.
+const CONTINUE_COUNT_KEY = 'chat.continueCount';
+const CONTINUE_SLEEP_KEY = 'chat.continueSleep';
+const CONTINUE_SLEEPS = [[30, '30 s'], [60, '1 m'], [120, '2 m']];
+let continuePollTimer = null;
+
+function renderContinueSection(room){
+  const picker = (labelText, key, options, dflt) => {
+    const label = document.createElement('span');
+    label.className = 'ds-label';
+    label.textContent = labelText;
+    sidebarEl.appendChild(label);
+    const sel = document.createElement('select');
+    sel.className = 'ds-model';
+    options.forEach(([value, text]) => {
+      const opt = document.createElement('option');
+      opt.value = String(value);
+      opt.textContent = text;
+      sel.appendChild(opt);
+    });
+    let saved = null;
+    try { saved = localStorage.getItem(key); } catch (_) {}
+    sel.value = options.some(([value]) => String(value) === saved) ? saved : String(dflt);
+    sel.addEventListener('change', () => {
+      try { localStorage.setItem(key, sel.value); } catch (_) {}
+    });
+    sidebarEl.appendChild(sel);
+    return sel;
+  };
+  const head = document.createElement('span');
+  head.className = 'ds-label ds-tools-label';
+  head.textContent = 'Continue';
+  sidebarEl.appendChild(head);
+  const help = document.createElement('p');
+  help.className = 'ds-trouble-help';
+  help.textContent = 'Wakes the assistant to carry on by itself, without a message from you.';
+  sidebarEl.appendChild(help);
+  const countSel = picker('Continue count', CONTINUE_COUNT_KEY,
+    [[1, '1'], [2, '2'], [3, '3']], 1);
+  const sleepSel = picker('Sleep duration', CONTINUE_SLEEP_KEY, CONTINUE_SLEEPS, 60);
+  const row = document.createElement('div');
+  row.className = 'ds-trouble-row';
+  const go = document.createElement('button');
+  go.type = 'button';
+  go.textContent = 'Continue';
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.textContent = 'Cancel';
+  cancel.title = 'Stops the wake-ups still to come. The turn in progress finishes.';
+  cancel.hidden = true;
+  row.append(go, cancel);
+  sidebarEl.appendChild(row);
+  const status = document.createElement('p');
+  status.className = 'ds-note';
+  sidebarEl.appendChild(status);
+
+  const url = '/chat/api/rooms/' + room + '/continue';
+  const shown = () => room === currentRoom && activeSidebarMode() === 'settings'
+    && status.isConnected;
+  function draw(state){
+    const active = !!(state && state.active);
+    go.disabled = active;
+    countSel.disabled = active;
+    sleepSel.disabled = active;
+    cancel.hidden = !active;
+    if (!active){
+      status.textContent = (state && state.ended) || '';
+      return;
+    }
+    const where = state.index + ' of ' + state.count;
+    status.textContent = state.phase === 'sleeping'
+      ? 'Sleeping ' + state.seconds_left + ' s before wake-up ' + (state.index + 1) + ' of ' + state.count + '.'
+      : 'Wake-up ' + where + ': the assistant is working.';
+  }
+  async function refresh(){
+    clearTimeout(continuePollTimer);
+    let state = null;
+    try { state = await getJSON(url); } catch (_) { return; }
+    if (!shown()) return;
+    draw(state);
+    if (state.active) continuePollTimer = setTimeout(refresh, 2000);
+  }
+  go.addEventListener('click', async () => {
+    go.disabled = true;
+    try {
+      draw(await postJSON(url, {
+        count: Number(countSel.value), sleep_seconds: Number(sleepSel.value)}));
+    } catch (e) {
+      status.textContent = 'Could not continue: ' + e.message;
+    }
+    refresh();
+  });
+  cancel.addEventListener('click', async () => {
+    cancel.disabled = true;
+    try { await rainboxFetch(url, {method: 'DELETE'}); } catch (_) {}
+    cancel.disabled = false;
+    refresh();
+  });
+  refresh();
 }
 
 // Families the operator has opened in the Tools list, kept across redraws

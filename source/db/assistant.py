@@ -590,6 +590,18 @@ def get_assistant_run(run_uuid: UUID) -> AssistantRun | None:
     return db.session.get(AssistantRun, run_uuid)
 
 
+def assistant_run_for_request(message_uuid: UUID) -> AssistantRun | None:
+    """The run that answers this chat row (`metadata["request_message"]`), or
+    None while no worker has started one."""
+    return (
+        db.session.query(AssistantRun)
+        .filter(AssistantRun.metadata_["request_message"].astext
+                == str(message_uuid))
+        .order_by(AssistantRun.started_at.desc())
+        .first()
+    )
+
+
 def list_assistant_runs(limit: int = 50) -> list[AssistantRun]:
     """The most recent runs, newest first — the left pane of the /assistant
     inspector. (uuid is a stable tiebreaker for same-instant rows.)"""
@@ -707,23 +719,36 @@ def list_assistant_runs_page(
 
 
 def get_run_trigger_message(run: AssistantRun) -> dict[str, Any] | None:
-    """The chat message that initiated a run: the latest human `message` in the
-    run's room at or before it started. Best-effort — returns None when none is
-    found (e.g. a run seeded outside the chat flow). Returns a small dict
+    """The chat row that initiated a run. A run a wake-up started names that
+    `wake` row in `metadata["request_message"]`, and it is read from there:
+    the latest message of the user's is not what started such a run. Any other
+    run gets the latest human `message` in its room at or before it started.
+    Best-effort — returns None when none is found (e.g. a run seeded outside
+    the chat flow). Returns a small dict
     (uuid/sender_uuid/sender_name/text/timestamp) for the /assistant inspector's
     trigger block; sender_uuid links to that participant's /user page."""
-    row = (
-        db.session.query(ChatMessage, ChatUser.name)
-        .join(ChatUser, ChatUser.uuid == ChatMessage.sender_uuid)
-        .filter(
-            ChatMessage.room_uuid == run.room_uuid,
-            ChatMessage.kind == "message",
-            ChatUser.user_type == "human",
-            ChatMessage.created_at <= run.started_at,
+    row = None
+    linked = (run.metadata_ or {}).get("request_message")
+    if linked:
+        row = (
+            db.session.query(ChatMessage, ChatUser.name)
+            .join(ChatUser, ChatUser.uuid == ChatMessage.sender_uuid)
+            .filter(ChatMessage.uuid == linked, ChatMessage.kind == "wake")
+            .first()
         )
-        .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
-        .first()
-    )
+    if row is None:
+        row = (
+            db.session.query(ChatMessage, ChatUser.name)
+            .join(ChatUser, ChatUser.uuid == ChatMessage.sender_uuid)
+            .filter(
+                ChatMessage.room_uuid == run.room_uuid,
+                ChatMessage.kind == "message",
+                ChatUser.user_type == "human",
+                ChatMessage.created_at <= run.started_at,
+            )
+            .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+            .first()
+        )
     if row is None:
         return None
     msg, sender_name = row
