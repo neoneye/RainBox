@@ -686,10 +686,21 @@ from inside the character's fiction on every attempt, through two audit
 bounces that named the mode, and restating the mode last in the prompt
 changed nothing on a replay (three samples). With the block left out, six
 replayed replies of six answered factually, still colored by the voice the
-history carries. Live it is weaker: of two turns, one answered factually
-and one stayed in character, carried by the assistant's own earlier messages
-in the history, and the audit sent it. Withholding the block is necessary
-and not sufficient. `correction` and `configuration` keep the persona: the
+history carries. Live it is weaker: of three turns, one answered factually
+and two stayed in character, carried by the assistant's own earlier messages
+in the history, and the audit sent them. Withholding the block is necessary
+and not sufficient.
+
+Two further steps were replayed on one of those turns and left out:
+
+- **Taking the assistant's earlier messages out of the decide call too.**
+  The reply turned plain (two of two that replied; the other samples went
+  off to read memory first), and blind: it denied any influence, because it
+  could no longer see what it had said or why. A question about the
+  assistant's own behavior needs that behavior in view.
+- **Showing the persona as the subject of the question**, in a section of
+  its own marked as text to describe from outside. The character came back:
+  one sample of five gave a partly factual answer. `correction` and `configuration` keep the persona: the
 label is not reliable enough on ordinary turns to drop the character on it.
 The persona block sorts last in the head, so withholding it leaves the
 turn's shared prefix as it was.
