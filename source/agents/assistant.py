@@ -4380,6 +4380,16 @@ class AssistantAgent(ModelGroupAgent):
     # an earlier turn keeps arriving in every prompt of every later turn, where
     # no summary call will ever describe it.
     HISTORY_MESSAGE_MAX_CHARS: int = 2000
+    # That cap is for the newest messages only; it tightens with age, a band
+    # of HISTORY_AGE_BAND_MESSAGES at a time, counted back from the newest
+    # message in the window. One flat cap let a window of long replies take
+    # the whole prompt budget of a 20,480-token model and leave no room for
+    # the room background; what the turn is answering is nearly always in
+    # the newest band, and an older message is there for its gist, which the
+    # two ends of it carry. The last entry holds for every band beyond it.
+    HISTORY_AGE_BAND_MESSAGES: int = 10
+    HISTORY_MESSAGE_MAX_CHARS_BY_AGE: tuple[int, ...] = (
+        HISTORY_MESSAGE_MAX_CHARS, 1000, 500)
     # How much of an over-long request the summary call itself reads. Far above
     # the prompt cap because this call exists to see what the others cannot,
     # and still bounded: the paste that triggers it has no size limit, and a
@@ -8258,8 +8268,26 @@ class AssistantAgent(ModelGroupAgent):
         self._append_request_summary(root)
 
     @classmethod
+    def _history_message_limit(cls, age: int) -> int:
+        """The character cap of a history message that has `age` messages
+        after it in the window (0 for the newest)."""
+        caps = cls.HISTORY_MESSAGE_MAX_CHARS_BY_AGE
+        band = max(age, 0) // cls.HISTORY_AGE_BAND_MESSAGES
+        return caps[min(band, len(caps) - 1)]
+
+    @classmethod
+    def _history_window_chars(cls, window: list[dict[str, Any]]) -> int:
+        """How many characters of message text the history window puts in a
+        prompt, after each message's cap."""
+        newest = len(window) - 1
+        return sum(
+            min(len(m.get("text") or ""),
+                cls._history_message_limit(newest - index))
+            for index, m in enumerate(window))
+
+    @classmethod
     def _append_prompt_message(
-        cls, parent: ET.Element, message: dict[str, Any]
+        cls, parent: ET.Element, message: dict[str, Any], age: int = 0
     ) -> None:
         attrs = {"role": cls._message_role(message)}
         timestamp = str(message.get("timestamp") or "").strip()
@@ -8269,13 +8297,14 @@ class AssistantAgent(ModelGroupAgent):
         # History gets the same middle cut as the current request, and a
         # tighter one: an old message is context rather than the task, and a
         # paste from an earlier turn arrives in every prompt of every later
-        # turn.
+        # turn. The older the message, the tighter the cut.
         text = str(message.get("text") or "")
-        if len(text) > cls.HISTORY_MESSAGE_MAX_CHARS:
+        limit = cls._history_message_limit(age)
+        if len(text) > limit:
             node.set("truncated", "middle")
             node.set("original_chars", str(len(text)))
-            node.set("included_chars", str(cls.HISTORY_MESSAGE_MAX_CHARS))
-            text = truncate_middle(text, cls.HISTORY_MESSAGE_MAX_CHARS)
+            node.set("included_chars", str(limit))
+            text = truncate_middle(text, limit)
         node.text = text
         # The description written when this message WAS the request, replayed
         # as a sibling of the message it describes — the same adjacency the
@@ -8401,8 +8430,7 @@ class AssistantAgent(ModelGroupAgent):
             if not (loaded.earlier or loaded.topics):
                 record["sent"] = "none"
                 return
-            base = sum(min(len(m.get("text") or ""), self.HISTORY_MESSAGE_MAX_CHARS)
-                       for m in window)
+            base = self._history_window_chars(window)
             base += min(len(messages[-1].get("text") or ""),
                         self.CURRENT_REQUEST_MAX_CHARS)
             context_window = assistant_context_window(ASSISTANT_DECIDE_UUID)
@@ -9408,11 +9436,15 @@ class AssistantPromptBuilder:
             if background.earlier:
                 ET.SubElement(self._root, "room_earlier").text = background.earlier
         history = ET.SubElement(self._root, "conversation_history_xml")
+        # A message's age is its place in the whole window, counted before
+        # any is left out, so every call of the turn cuts it the same.
+        newest = len(context) - 1
+        aged = [(newest - index, m) for index, m in enumerate(context)]
         if history_skip is not None:
-            context = [m for m in context if not history_skip(m)]
-        if context:
-            for message in context:
-                agent._append_prompt_message(history, message)
+            aged = [(age, m) for age, m in aged if not history_skip(m)]
+        if aged:
+            for age, message in aged:
+                agent._append_prompt_message(history, message, age)
         else:
             ET.SubElement(history, "none")
 
