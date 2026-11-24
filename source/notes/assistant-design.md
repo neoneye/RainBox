@@ -678,6 +678,22 @@ on ordinary turns is noisy on a small model: a factual question came back as
 `conversation` and a request to try again as `correction`, with sensible
 criteria under both.
 
+In three modes the decide call is not shown the persona at all
+(`PERSONA_WITHHELD_MODES`: `meta_discussion`, `behavioral_evaluation`,
+`disengagement`). Words were not enough there. With the persona block in the
+prompt, live turns on `gemma4:e4b-mlx` answered a question about the system
+from inside the character's fiction on every attempt, through two audit
+bounces that named the mode, and restating the mode last in the prompt
+changed nothing on a replay (three samples). With the block left out, six
+replayed replies of six answered factually, still colored by the voice the
+history carries. Live it is weaker: of two turns, one answered factually
+and one stayed in character, carried by the assistant's own earlier messages
+in the history, and the audit sent it. Withholding the block is necessary
+and not sufficient. `correction` and `configuration` keep the persona: the
+label is not reliable enough on ordinary turns to drop the character on it.
+The persona block sorts last in the head, so withholding it leaves the
+turn's shared prefix as it was.
+
 The decide prompt ranks `acceptance_criteria_markdown` above
 `assistant_persona` and says the interaction mode wins where the two
 disagree, as the one exception to adhering to the persona. The reply audit,

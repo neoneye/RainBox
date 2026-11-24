@@ -489,6 +489,19 @@ INTERACTION_MODE_GUIDANCE: dict[str, str] = {
 }
 
 
+# The modes in which the decide call is not shown the persona at all. Saying
+# so in words was not enough: with the persona block in the prompt the reply
+# stayed inside the character's fiction on every live attempt, through two
+# audit bounces that named the mode, and restating the mode as the last thing
+# in the prompt changed nothing on a replay. With the block left out the
+# reply answered factually every time, still colored by the voice the
+# history carries. Only the modes the criteria call picks reliably are here:
+# `correction` came back for ordinary retries, and a persona that drops out
+# on those would be worse than one that outstays a correction.
+PERSONA_WITHHELD_MODES: frozenset[str] = frozenset({
+    "meta_discussion", "behavioral_evaluation", "disengagement"})
+
+
 # Why three lists and not one prose `assumptions` field: a free-text field
 # that holds whatever the call assumed is where a premise gets established
 # that every later call then reads as settled. Observed on a question asking
@@ -5908,6 +5921,16 @@ class AssistantAgent(ModelGroupAgent):
             base = f"{base}\n{self._request_message_section()}"
         return f"{self._on_wake(base)}\n\n{self._action_catalog()}"
 
+    def _decide_blocks(self) -> tuple[str, ...]:
+        """The decide call's tier-1 blocks: all of them, minus the persona on
+        a turn whose interaction mode withholds it (PERSONA_WITHHELD_MODES).
+        Persona sorts last, so the turn's shared prefix is untouched."""
+        criteria = getattr(self, "_acceptance_criteria", None)
+        if (criteria is not None
+                and criteria.interaction_mode in PERSONA_WITHHELD_MODES):
+            return tuple(b for b in self._ALL_STATIC_BLOCKS if b != "persona")
+        return self._ALL_STATIC_BLOCKS
+
     def _criteria_turn_instructions(self) -> str:
         """The criteria call's tier-2 block. It never names the request's
         section, so the request_turn layout only adds where the request went.
@@ -6358,7 +6381,8 @@ class AssistantAgent(ModelGroupAgent):
         AssistantPromptBuilder.followup_turns)."""
         # Tiers 0 and 1 — the request, the history, the full static head.
         prompt = AssistantPromptBuilder(
-            self, "assistant_turn", messages=messages)
+            self, "assistant_turn", messages=messages,
+            blocks=self._decide_blocks())
         current = prompt.current
 
         # Tier 2: what this call is for.

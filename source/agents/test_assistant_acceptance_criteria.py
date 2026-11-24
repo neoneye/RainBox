@@ -22,6 +22,7 @@ from agents.assistant import (
     ACCEPTANCE_CRITERIA_SOURCE_PRIORITY_SECTION,
     ACCEPTANCE_CRITERIA_TURN_INSTRUCTIONS,
     INTERACTION_MODE_GUIDANCE,
+    PERSONA_WITHHELD_MODES,
     AssistantActionName,
     AssistantAgent,
     AssistantObservation,
@@ -422,6 +423,22 @@ def test_the_projection_states_what_the_mode_means_for_the_persona():
             f"{INTERACTION_MODE_GUIDANCE['meta_discussion']}"
             ) in agent._criteria_markdown
     assert "never the content" in INTERACTION_MODE_GUIDANCE["meta_discussion"]
+
+
+@pytest.mark.parametrize("mode", sorted(INTERACTION_MODE_GUIDANCE))
+def test_the_decide_call_loses_the_persona_in_the_modes_that_withhold_it(mode):
+    """Telling the reply writer the mode outranks the persona did not move
+    it; not showing it the persona did."""
+    agent = _agent()
+    agent._persona_block = "Dry, concrete, allergic to filler."
+    agent._set_acceptance_criteria(AcceptanceCriteria(**{
+        **_criteria("x").model_dump(), "interaction_mode": mode}))
+    prompt = agent._build_user_prompt(
+        messages=[{"sender_type": "human", "text": "why did you say that"}],
+        scratchpad=[], step_index=0)
+    assert ("<assistant_persona>" not in prompt) == (
+        mode in PERSONA_WITHHELD_MODES)
+    assert PERSONA_WITHHELD_MODES < set(INTERACTION_MODE_GUIDANCE)
 
 
 def test_the_criteria_are_written_for_the_user_not_the_character():
