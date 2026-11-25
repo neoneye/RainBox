@@ -41,6 +41,7 @@ from flask import Response, jsonify, render_template_string, request, stream_wit
 from werkzeug.datastructures import FileStorage
 
 import providers
+from benchmarks.vision_runner import VisionCheck
 from llm.activity import record_direct_call
 from db import (
     get_model_config,
@@ -799,9 +800,12 @@ def demo_multimodal() -> str:
         # A remembered model that was deleted since falls back to the default.
         target = _resolve_target(request.cookies.get(MODEL_COOKIE)) or target
     model_id = str(target.uuid) if target else (explicit or DEFAULT_MODEL_UUID)
-    # Only offer models the provider currently exposes; unavailable configs
-    # (and their overrides) are hidden from the picker.
-    tree = [(cfg, ovs) for cfg, ovs in list_model_configs_with_overrides() if cfg.available]
+    # Only offer models the provider currently exposes and reports as taking
+    # images; the other configs (and their overrides) are hidden from the
+    # picker. A provider that does not report it (Jan) has none listed.
+    has_vision = VisionCheck()
+    tree = [(cfg, ovs) for cfg, ovs in list_model_configs_with_overrides()
+            if cfg.available and has_vision(cfg.provider, cfg.model_name, cfg.arguments)]
     picked_uuid = _uuid_or_none(request.cookies.get(PROMPT_COOKIE))
     picked = prompt_get(picked_uuid) if picked_uuid else None
     return render_template_string(

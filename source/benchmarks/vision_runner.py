@@ -78,7 +78,7 @@ def openrouter_vision_models() -> set[str]:
             if "image" in ((r.get("architecture") or {}).get("input_modalities") or [])}
 
 
-class _VisionCheck:
+class VisionCheck:
     """Says whether a model takes images, asking each provider at most once
     per page load. A provider that does not report it (Jan) answers no: the
     page lists only models known to be vision-capable."""
@@ -122,7 +122,7 @@ def vision_targets() -> list[dict[str, Any]]:
     OpenRouter (the catalog's input modalities) say which models have
     vision. A model whose provider does not say, or could not be asked, is
     left out."""
-    has_vision = _VisionCheck()
+    has_vision = VisionCheck()
     out: list[dict[str, Any]] = []
     for cfg, overrides in db.list_model_configs_with_overrides():
         if not cfg.available or not has_vision(cfg.provider, cfg.model_name, cfg.arguments):

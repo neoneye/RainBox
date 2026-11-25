@@ -178,6 +178,16 @@ def test_build_body_webp_becomes_png_data_url():
     assert Image.open(io.BytesIO(decoded)).format == "PNG"
 
 
+@pytest.fixture(autouse=True)
+def _every_model_has_vision():
+    """The picker asks each provider whether a model takes images. Here every
+    model does, so no provider is contacted; the test about the filter
+    patches the check again."""
+    with patch("webapp.multimodal_demo_views.VisionCheck",
+               return_value=lambda provider, model_name, arguments: True):
+        yield
+
+
 @pytest.fixture
 def seeded_model():
     """Seed one vision/audio model row in the sandbox DB; clean up after."""
@@ -623,6 +633,14 @@ def test_a_remembered_model_that_is_gone_falls_back_to_the_default():
                       path="/demo/multimodal")
     body = client.get("/demo/multimodal").get_data(as_text=True)
     assert "00ea3152-ff12-40e1-a63b-8f572de49edf" in body
+
+
+def test_picker_hides_a_model_without_vision_and_its_override(seeded_config_with_override):
+    cfg_uid, ov_uid = seeded_config_with_override
+    with patch("webapp.multimodal_demo_views.VisionCheck",
+               return_value=lambda provider, model_name, arguments: False):
+        body = app.test_client().get("/demo/multimodal").get_data(as_text=True)
+    assert f"id={cfg_uid}" not in body and f"id={ov_uid}" not in body
 
 
 def test_picker_hides_unavailable_config_and_its_override():
