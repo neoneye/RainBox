@@ -4536,6 +4536,19 @@ document.addEventListener('keydown', (e) => {
   input.focus();
 });
 
+// The arrows recall earlier messages from anywhere on the page too, under the
+// same rules as inside the composer, and focus lands in it so the recalled
+// text can be edited or sent. The composer's own handler covers the focused
+// case; this one takes the rest.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+  if (e.shiftKey || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+  if (!composerTakesStrayInput(e.target)) return;
+  if (!recallStep(e.key === 'ArrowUp' ? 1 : -1)) return;
+  e.preventDefault();
+  input.focus();
+});
+
 // Paste anywhere on the page and the composer takes it too. Cmd+V / Ctrl+V
 // works like a typed key: focus moves on keydown and the browser's own paste
 // then lands in the textarea, with its undo history intact. Some pastes arrive
