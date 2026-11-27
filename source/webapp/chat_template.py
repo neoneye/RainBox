@@ -4455,11 +4455,49 @@ input.addEventListener('input', autoGrow);
 input.addEventListener('input', draftSave);
 autoGrow();
 
+// Arrow up in an empty composer recalls the newest human message shown in the
+// log; further presses walk to older ones, arrow down walks back and past the
+// newest returns to the empty box. The walk lasts only while the box still
+// holds exactly what was recalled: once the text is edited the arrows move the
+// caret as usual. A recalled text is not saved as a draft until it is edited.
+let recallIndex = -1;    // position in recallTexts(), -1 = not recalling
+let recallShown = '';    // what the last recall put in the box
+function recallTexts(){
+  const texts = [];
+  log.querySelectorAll('.msg').forEach((el) => {
+    const m = el._row;
+    if (!m || m.sender_type !== 'human' || (m.kind || 'message') !== 'message') return;
+    if (m.text && texts[texts.length - 1] !== m.text) texts.push(m.text);
+  });
+  return texts.reverse();  // newest first
+}
+function recallStep(dir){
+  const walking = recallIndex >= 0 && input.value === recallShown;
+  if (!walking){
+    recallIndex = -1;
+    if (input.value !== '' || dir < 0) return false;
+  }
+  const texts = recallTexts();
+  const next = recallIndex + dir;
+  if (next >= texts.length) return walking;  // at the oldest: stay put
+  recallIndex = next;
+  recallShown = next < 0 ? '' : texts[next];
+  input.value = recallShown;
+  autoGrow();
+  input.setSelectionRange(input.value.length, input.value.length);
+  return true;
+}
+
 // Enter sends; Shift+Enter inserts a newline (textarea default).
 input.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey){
     e.preventDefault();
     send();
+    return;
+  }
+  if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.isComposing
+      && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey){
+    if (recallStep(e.key === 'ArrowUp' ? 1 : -1)) e.preventDefault();
   }
 });
 
